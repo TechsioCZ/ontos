@@ -5,9 +5,10 @@ import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
-import { PRODUCT_DETAIL_PAGE_LIMIT } from '../../shared/apis/records.ts';
+import { MOVEMENT_PAGE_LIMIT, PRODUCT_DETAIL_PAGE_LIMIT } from '../../shared/apis/records.ts';
 import type {
   CategoryTrail,
+  LedgerMovement,
   RecordsView,
   StorefrontCatalogQuery,
   StorefrontOrderStatus,
@@ -30,13 +31,8 @@ import {
   VariantSummarySchema,
   mainSourceProductsOnlyFor,
 } from '../../shared/domain/merchandise-model.ts';
-import type {
-  Order,
-  OrderStatus,
-  ProductRecord,
-  SearchMatch,
-  StockMovement,
-} from '../../shared/domain/merchandise-model.ts';
+import type { Order, OrderStatus, ProductRecord, SearchMatch } from '../../shared/domain/merchandise-model.ts';
+import { normalizeQuantity } from '../../shared/domain/order-quantity.ts';
 import {
   catalogHeads,
   categories,
@@ -86,7 +82,6 @@ const storedRowsFailure = (cause: MerchandiseStoreFailure['cause']) =>
 export const DEFAULT_PRODUCT_LIMIT = 50;
 const CART_PAGE_LIMIT = 50;
 export const DEFAULT_ORDER_LIMIT = 100;
-const MOVEMENT_LIMIT = 500;
 
 /** Order statuses that count as open order value. DELIVERED and CANCELLED are closed. */
 const OPEN_ORDER_STATUSES: readonly OrderStatus[] = ['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED'];
@@ -1568,24 +1563,67 @@ export const storefrontCustomerOrders = Effect.fn('MerchandiseQueries.storefront
   },
 );
 
-/** One product's ledger: the newest 500 movements, oldest first. */
+/**
+ * One page of a product's ledger (every variant), oldest first: its newest `limit` movements, or with `before` the
+ * newest ones recorded before that movement; `hasOlder` says whether older ones exist. Ledger order is the ordinal,
+ * the order movements were recorded in. Each row's `balanceAfter` sums its variant's whole ledger (the movements
+ * without a variant form one ledger of their own) up to it, so every page carries the right balances by itself.
+ */
 export const productMovements = Effect.fn('MerchandiseQueries.productMovements')(function* productMovements(
   db: MerchandiseDb,
   scope: StoreScope,
   productId: string,
-): Effect.fn.Return<readonly StockMovement[], MerchandiseStoreFailure> {
+  page: { readonly before?: string | undefined; readonly limit?: number | undefined } = {},
+): Effect.fn.Return<
+  { readonly hasOlder: boolean; readonly movements: readonly LedgerMovement[] },
+  MerchandiseStoreFailure
+> {
+  const limit = page.limit ?? MOVEMENT_PAGE_LIMIT;
+  const ledger = db
+    .select({
+      at: stockMovements.at,
+      balanceAfter: sql<number>`sum(${stockMovements.delta}) over (partition by ${stockMovements.variantId}
+        order by ${stockMovements.ordinal} rows between unbounded preceding and current row)`
+        .mapWith(Number)
+        .as('balance_after'),
+      delta: stockMovements.delta,
+      id: stockMovements.id,
+      legalEntityId: stockMovements.legalEntityId,
+      note: stockMovements.note,
+      ordinal: stockMovements.ordinal,
+      productId: stockMovements.productId,
+      reason: stockMovements.reason,
+      reference: stockMovements.reference,
+      tenantId: stockMovements.tenantId,
+      variantId: stockMovements.variantId,
+    })
+    .from(stockMovements)
+    .where(and(whereScope(stockMovements, scope), eq(stockMovements.productId, productId)))
+    .as('ledger');
   const rows = yield* query(
     db
       .select()
-      .from(stockMovements)
-      .where(and(whereScope(stockMovements, scope), eq(stockMovements.productId, productId)))
-      .orderBy(desc(stockMovements.ordinal))
-      .limit(MOVEMENT_LIMIT),
+      .from(ledger)
+      .where(
+        page.before === undefined
+          ? undefined
+          : sql`${ledger.ordinal} < (select ${stockMovements.ordinal} from ${stockMovements}
+            where ${whereScope(stockMovements, scope)} and ${stockMovements.productId} = ${productId}
+              and ${stockMovements.id} = ${page.before})`,
+      )
+      .orderBy(desc(ledger.ordinal))
+      .limit(limit + 1),
+    'Stock movements could not be read',
   );
-  return yield* Effect.forEach(rows.toReversed(), decodeMovementRow, { concurrency: 1 }).pipe(
-    Effect.tapError(storedDocumentUndecodable(scope, 'stock_movements')),
-    Effect.mapError(storedRowsFailure),
-  );
+  const movements = yield* Effect.forEach(
+    rows.slice(0, limit).toReversed(),
+    (row) =>
+      decodeMovementRow(row).pipe(
+        Effect.map((movement): LedgerMovement => ({ ...movement, balanceAfter: normalizeQuantity(row.balanceAfter) })),
+      ),
+    { concurrency: 1 },
+  ).pipe(Effect.tapError(storedDocumentUndecodable(scope, 'stock_movements')), Effect.mapError(storedRowsFailure));
+  return { hasOlder: rows.length > limit, movements };
 });
 
 /** Company-wide indicators in two aggregate queries; open order value counts CZK orders only (no currency mix). The bigint sums arrive as strings and are mapped to numbers. */

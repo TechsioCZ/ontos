@@ -150,11 +150,14 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
           categoryTrails={state.response.categoryTrails ?? []}
           hasCategoryTree={state.response.hasCategoryTree === true}
           key={state.product.id}
+          ledger={{
+            hasOlder: state.response.hasOlderMovements === true,
+            movements: state.response.movements.filter((movement) => movement.productId === state.product.id),
+          }}
           markets={{
             canManage: state.response.canManageMarkets === true,
             entries: state.response.productMarkets ?? [],
           }}
-          movements={state.response.movements.filter((movement) => movement.productId === state.product.id)}
           onBack={back}
           onCommitted={committed}
           onReload={handleReload}

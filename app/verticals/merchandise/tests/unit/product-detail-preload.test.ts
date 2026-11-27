@@ -98,7 +98,15 @@ const response = Schema.decodeSync(RecordsResponseSchema)({
   hasCategoryTree: true,
   indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 6, stockValueMinor: 4800 },
   movements: [
-    { at: instant, delta: 8, id: 'movement-1', productId: product.id, reason: 'RECEIPT', reference: 'receipt-1' },
+    {
+      at: instant,
+      balanceAfter: 8,
+      delta: 8,
+      id: 'movement-1',
+      productId: product.id,
+      reason: 'RECEIPT',
+      reference: 'receipt-1',
+    },
   ],
   orders: [],
   productMarkets: [

@@ -23,6 +23,7 @@ import {
   ProductIdSchema,
   ProductRecordSchema,
   ProductSchema,
+  StockMovementIdSchema,
   StockMovementSchema,
   ShippingMethodSchema,
   StorefrontAppIdSchema,
@@ -137,13 +138,26 @@ export type MarketExceptionPage = typeof MarketExceptionPageSchema.Type;
 /** Products per page that carry their variants (one AKROS product can hold ~400 variants, ~400 kB). */
 export const PRODUCT_DETAIL_PAGE_LIMIT = 2;
 
+/** Movements per page of one product's ledger: the default and the maximum of `movementsLimit`. */
+export const MOVEMENT_PAGE_LIMIT = 500;
+
+/**
+ * One row of a product's ledger as a staff read returns it: the movement and `balanceAfter`, the stock of its variant
+ * (without a variant: of the product's movements without one) right after it, summed over the whole ledger.
+ */
+export const LedgerMovementSchema = Schema.Struct({ ...StockMovementSchema.fields, balanceAfter: Schema.Finite });
+export type LedgerMovement = typeof LedgerMovementSchema.Type;
+
 /**
  * Optional filters. Every collection is bounded: no read returns the whole catalog.
  * - products: filters combine with AND, paged by `offset`/`limit`, ordered by `productSort` (default: catalog
  *   order). `totalProducts` counts all matches. `summary: true` = list rows without variants, price and content
  *   history (default limit 50, max 250; 0 = none). Without `summary` each product carries its variants (detail) and a
  *   page holds at most {@link PRODUCT_DETAIL_PAGE_LIMIT} products.
- * - movements: only with `productId` (that product's ledger, newest 500, oldest first).
+ * - movements: only with `productId`: that product's ledger (every variant), oldest first, each row with its
+ *   `balanceAfter`. The newest `movementsLimit` movements (default and max {@link MOVEMENT_PAGE_LIMIT}), or with
+ *   `movementsBefore` the newest ones recorded before that movement (the next older page); `hasOlderMovements` says
+ *   whether older ones exist.
  * - orders (staff): newest first, paged by `ordersOffset`/`ordersLimit` (default 100, max 250; 0 = none);
  *   `totalOrders` counts all matches.
  *   `taggedProductIds` / `taggedOrderIds` narrow the list to the subjects carrying the selected tag.
@@ -225,6 +239,9 @@ export const RecordsViewSchema = Schema.Struct({
   ordersLimit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 250, minimum: 0 }))),
   ordersOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   productId: Schema.optionalKey(ProductIdSchema),
+  /** With `productId`: only movements recorded before this one of the product (the next older page). */
+  movementsBefore: Schema.optionalKey(StockMovementIdSchema),
+  movementsLimit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: MOVEMENT_PAGE_LIMIT, minimum: 1 }))),
   productIds: Schema.optionalKey(ProductIdListSchema),
   taggedOrderIds: Schema.optionalKey(TaggedOrderIdListSchema),
   /** Customer projection: only published, active products; no movements; orders only by `orderClientRequestId`. */
@@ -323,7 +340,9 @@ export const RecordsResponseSchema = Schema.Struct({
     productCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     stockValueMinor: Schema.Int,
   }),
-  movements: Schema.Array(StockMovementSchema),
+  movements: Schema.Array(LedgerMovementSchema),
+  /** Staff reads with `productId`: the product has movements older than the returned ones. */
+  hasOlderMovements: Schema.optionalKey(Schema.Boolean),
   orders: Schema.Array(OrderSchema),
   products: Schema.Array(ProductRecordSchema),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

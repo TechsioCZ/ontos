@@ -17,10 +17,10 @@ import { formatDateTime } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
-import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
+import type { LedgerMovement, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { QUANTITY_FORMAT } from '../../../../form-number.ts';
-import { runCommand } from './products-api.ts';
-import { formatDelta } from './products-format.ts';
+import { loadOlderMovements, runCommand } from './products-api.ts';
+import { formatDelta, formatQuantity } from './products-format.ts';
 import { PRODUCT_LIMITS, fieldError, focusFirstInvalid, tooLongMessage } from './product-form-validation.ts';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
 import { EMPTY_MOVEMENT_DRAFT } from './product-movement-draft.ts';
@@ -50,60 +50,117 @@ const signedDelta = (reason: ManualReason, quantity: number): number => {
   return quantity;
 };
 
-/** Stock ledger rows for one product, newest first. Products with variants show which variant moved. */
+/**
+ * Stock ledger rows for one product, newest recorded first, each with the stock right after it; products with variants
+ * show which variant moved. `movements` is the newest page of the ledger in ledger order (oldest first); older pages
+ * load on request and stay below it. Remount it (key) when the newest page changes, so loaded pages never leave a gap.
+ */
 export const MovementsTable = ({
+  hasOlder,
   movements,
+  productId,
   variants = NO_VARIANTS,
 }: {
-  readonly movements: readonly StockMovement[];
+  readonly hasOlder: boolean;
+  readonly movements: readonly LedgerMovement[];
+  readonly productId: ProductRecord['id'];
   readonly variants?: readonly VariantRow[] | undefined;
 }) => {
   const k = useProductLabel();
   const byId = new Map(variants.map((variant) => [variant.id, variant] as const));
   const showVariant = variants.length > 0;
-  const rows = movements.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
+  const [older, setOlder] = useState<{ readonly hasOlder: boolean; readonly rows: readonly LedgerMovement[] }>();
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const rows = [...movements.toReversed(), ...(older?.rows ?? [])];
+  const moreOlder = older?.hasOlder ?? hasOlder;
+  const loadOlder = () => {
+    const oldest = rows.at(-1);
+    if (loading || oldest === undefined) {
+      return;
+    }
+    setLoading(true);
+    setFailed(false);
+    loadOlderMovements(productId, oldest.id, (outcome) => {
+      setLoading(false);
+      if (!outcome.ok) {
+        setFailed(true);
+        return;
+      }
+      setOlder((current) => ({
+        hasOlder: outcome.hasOlder,
+        rows: [...(current?.rows ?? []), ...outcome.movements.toReversed()],
+      }));
+    });
+  };
 
   if (rows.length === 0) {
     return <p className="text-fg-secondary text-sm">{k('movements.empty')}</p>;
   }
   return (
-    <Table size="sm" variant="line">
-      <Table.Header>
-        <Table.Row>
-          <Table.ColumnHeader>{k('movements.columnDate')}</Table.ColumnHeader>
-          <Table.ColumnHeader>{k('movements.columnType')}</Table.ColumnHeader>
-          {showVariant && <Table.ColumnHeader>Varianta</Table.ColumnHeader>}
-          <Table.ColumnHeader align="end">{k('movements.columnDelta')}</Table.ColumnHeader>
-          <Table.ColumnHeader>{k('movements.columnNote')}</Table.ColumnHeader>
-        </Table.Row>
-      </Table.Header>
-      <Table.Body>
-        {rows.map((movement) => (
-          <Table.Row key={movement.id}>
-            <Table.Cell>{formatDateTime(DateTime.formatIso(movement.at))}</Table.Cell>
-            <Table.Cell>
-              <Badge size="sm" variant={movementVariant[movement.reason]}>
-                {k(`movementType.${movement.reason}`)}
-              </Badge>
-            </Table.Cell>
-            {showVariant && (
-              <Table.Cell>
-                {movement.variantId === undefined
-                  ? 'Celý produkt (bez varianty)'
-                  : (() => {
-                      const variant = byId.get(movement.variantId);
-                      return variant === undefined ? movement.variantId : variantLabel(variant);
-                    })()}
-              </Table.Cell>
-            )}
-            <Table.Cell align="end" className="tabular-nums">
-              {formatDelta(movement.delta)}
-            </Table.Cell>
-            <Table.Cell>{movement.note ?? movement.reference ?? '—'}</Table.Cell>
+    <div className="flex flex-col gap-200">
+      <Table size="sm" variant="line">
+        <Table.Header>
+          <Table.Row>
+            <Table.ColumnHeader>{k('movements.columnDate')}</Table.ColumnHeader>
+            <Table.ColumnHeader>{k('movements.columnType')}</Table.ColumnHeader>
+            {showVariant && <Table.ColumnHeader>Varianta</Table.ColumnHeader>}
+            <Table.ColumnHeader align="end">{k('movements.columnDelta')}</Table.ColumnHeader>
+            <Table.ColumnHeader align="end">{k('movements.columnBalance')}</Table.ColumnHeader>
+            <Table.ColumnHeader>{k('movements.columnNote')}</Table.ColumnHeader>
           </Table.Row>
-        ))}
-      </Table.Body>
-    </Table>
+        </Table.Header>
+        <Table.Body>
+          {rows.map((movement) => (
+            <Table.Row key={movement.id}>
+              <Table.Cell>{formatDateTime(DateTime.formatIso(movement.at))}</Table.Cell>
+              <Table.Cell>
+                <Badge size="sm" variant={movementVariant[movement.reason]}>
+                  {k(`movementType.${movement.reason}`)}
+                </Badge>
+              </Table.Cell>
+              {showVariant && (
+                <Table.Cell>
+                  {movement.variantId === undefined
+                    ? 'Celý produkt (bez varianty)'
+                    : (() => {
+                        const variant = byId.get(movement.variantId);
+                        return variant === undefined ? movement.variantId : variantLabel(variant);
+                      })()}
+                </Table.Cell>
+              )}
+              <Table.Cell align="end" className="tabular-nums">
+                {formatDelta(movement.delta)}
+              </Table.Cell>
+              <Table.Cell align="end" className="tabular-nums">
+                {formatQuantity(movement.balanceAfter)}
+              </Table.Cell>
+              <Table.Cell>{movement.note ?? movement.reference ?? '—'}</Table.Cell>
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
+      {failed && (
+        <StatusText showIcon status="error">
+          {k('movements.loadOlderFailed')}
+        </StatusText>
+      )}
+      {moreOlder && (
+        <div className="flex justify-center">
+          <Button
+            isLoading={loading}
+            loadingText={k('movements.loadOlder')}
+            onClick={loadOlder}
+            size="sm"
+            theme="outlined"
+            type="button"
+            variant="secondary"
+          >
+            {k('movements.loadOlder')}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 };
 

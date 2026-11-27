@@ -136,7 +136,7 @@ const catalogWrites: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
 const cleanupWrites: (typeof CleanupDemoPayloadSchema.Encoded)[] = [];
 const defaultRecords = ({ view }: RecordsRequest) => {
   if (view?.productId !== undefined) {
-    return Effect.succeed({ ...base, movements: [movement], orders: [], products: [summary] });
+    return Effect.succeed({ ...base, movements: [{ ...movement, balanceAfter: 6 }], orders: [], products: [summary] });
   }
   if (view?.productIds !== undefined) {
     return Effect.succeed({ ...base, orders: [], products: [view.summary === true ? summary : full] });

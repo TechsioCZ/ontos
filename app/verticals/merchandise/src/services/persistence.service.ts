@@ -3232,6 +3232,20 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return metadata;
     });
+    /** Staff detail of one product (`productId`): one page of its ledger and whether older movements exist. */
+    const readLedger = Effect.fn('Merchandise.readLedger')(function* readLedger(view: RecordsView, staff: boolean) {
+      if (!staff || view.productId === undefined) {
+        return { movements: [] } satisfies Pick<RecordsResponse, 'movements'>;
+      }
+      const page = yield* productMovements(transaction, store, view.productId, {
+        before: view.movementsBefore,
+        limit: view.movementsLimit,
+      });
+      return { hasOlderMovements: page.hasOlder, movements: [...page.movements] } satisfies Pick<
+        RecordsResponse,
+        'hasOlderMovements' | 'movements'
+      >;
+    });
     /** Staff market data a read asks for: the company's markets, one market's exceptions, a product's markets. */
     const readMarketMetadata = Effect.fn('Merchandise.readMarketMetadata')(function* readMarketMetadata(
       view: RecordsView,
@@ -3418,10 +3432,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         Effect.mapError(unavailable),
       );
       const page = staff ? yield* withStorefrontVisibility(staffPage) : staffPage;
-      const movements =
-        staff && view.productId !== undefined
-          ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))
-          : [];
+      const ledger = yield* readLedger(view, staff).pipe(Effect.mapError(unavailable));
       const [orderList, catalogMetadata, marketMetadata] = yield* Effect.all(
         [
           readOrderPage(view, storefront),
@@ -3448,7 +3459,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         ...recordCapabilities(legalEntityId, storefront, grants, canWrite),
         canWrite,
         indicators: totals,
-        movements: [...movements],
+        ...ledger,
         orders: [...orderList.orders],
         products: [...page.products],
         revision: head.revision,

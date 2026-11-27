@@ -116,7 +116,7 @@ const settle = () => browserRuntime.runPromise(uiSettle);
 const element = () => (
   <ProductDetailView
     canWrite
-    movements={[]}
+    ledger={{ hasOlder: false, movements: [] }}
     onBack={constVoid}
     onCommitted={constVoid}
     onReload={constVoid}

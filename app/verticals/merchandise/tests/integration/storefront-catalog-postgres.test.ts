@@ -1251,8 +1251,14 @@ it.live('staff reads page, filter and sort in SQL and indicators cover the whole
       expect(yield* orderIds({ orderSearch: 'OBJ-2026-0002' })).toEqual([0, []]);
       expect(yield* orderIds({ orderStatus: 'CONFIRMED' })).toEqual([0, []]);
 
-      expect((yield* productMovements(db, scope, 'p1')).map((movement) => movement.id)).toEqual(['receipt']);
-      expect(yield* productMovements(db, scope, 'p2')).toEqual([]);
+      const ledger = yield* productMovements(db, scope, 'p1');
+      expect(ledger.movements.map((movement) => [movement.id, movement.balanceAfter])).toEqual([['receipt', 5]]);
+      expect(ledger.hasOlder).toBe(false);
+      expect(yield* productMovements(db, scope, 'p1', { before: 'receipt' })).toEqual({
+        hasOlder: false,
+        movements: [],
+      });
+      expect(yield* productMovements(db, scope, 'p2')).toEqual({ hasOlder: false, movements: [] });
 
       expect(yield* indicators(db, scope)).toEqual({
         lowStockCount: 3,

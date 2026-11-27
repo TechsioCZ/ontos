@@ -9,6 +9,11 @@ const signed = new Intl.NumberFormat('cs-CZ', { ...QUANTITY_FORMAT, signDisplay:
 /** Stock movement quantity with an explicit sign: `+5`, `-2`. Money, counts and dates use `@app/admin-ui`. */
 export const formatDelta = (value: number): string => signed.format(value);
 
+const quantity = new Intl.NumberFormat('cs-CZ', QUANTITY_FORMAT);
+
+/** Stock quantity with every supported decimal digit: `1 250`, `0,25`. */
+export const formatQuantity = (value: number): string => quantity.format(value);
+
 /** DataTable strings from the vertical locale, so no kit English default reaches the screen. */
 export const useTableTranslations = (): DataTableTranslations => {
   const { t } = useModernI18n();

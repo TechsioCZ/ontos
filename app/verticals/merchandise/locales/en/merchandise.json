@@ -427,11 +427,14 @@
           "navigationTimeout": "Opening the page took too long. Try again."
         },
         "movements": {
+          "columnBalance": "Stock after",
           "columnDate": "Date",
           "columnDelta": "Quantity ±",
           "columnNote": "Note",
           "columnType": "Type",
           "empty": "This product has no movements yet.",
+          "loadOlder": "Load older movements",
+          "loadOlderFailed": "Older movements could not be loaded. Try again.",
           "quantityHint": "For an adjustment, enter a negative number to reduce stock.",
           "recordTitle": "Record movement",
           "submit": "Record movement",

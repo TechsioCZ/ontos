@@ -349,9 +349,15 @@ export interface ProductDetail {
   readonly response: RecordsResponse;
 }
 
-/** The one existing governed read carries the product, variants/histories, ledger, category trail and admitted markets. */
+/** Movements per page of the Pohyby table: the detail read carries the newest page, `loadOlderMovements` the next ones. */
+const MOVEMENT_TABLE_PAGE = 50;
+
+/**
+ * The one existing governed read carries the product, variants/histories, the newest page of its ledger, category
+ * trail and admitted markets.
+ */
 const readProductDetail = ({ productId }: ProductDetailInput) =>
-  readView({ categoryTrails: true, ordersLimit: 0, productId }).pipe(
+  readView({ categoryTrails: true, movementsLimit: MOVEMENT_TABLE_PAGE, ordersLimit: 0, productId }).pipe(
     Effect.flatMap((response) => {
       const product = response.products.find((entry) => entry.id === productId);
       // Missing records are retryable on the next opening, not a successful reusable negative result.
@@ -457,6 +463,32 @@ export const productCommandOutcome = (
           : { image: result.image, ok: true, revision: result.revision },
     }),
   );
+
+/** The movements of a product's ledger recorded before `before`, one table page, oldest first; no product rows. */
+export const loadOlderMovements = (
+  productId: ProductId,
+  before: string,
+  onOutcome: (
+    outcome:
+      | { readonly hasOlder: boolean; readonly movements: RecordsResponse['movements']; readonly ok: true }
+      | { readonly ok: false; readonly reason: FailureReason },
+  ) => void,
+): void => {
+  loadView(
+    { limit: 0, movementsBefore: before, movementsLimit: MOVEMENT_TABLE_PAGE, ordersLimit: 0, productId },
+    (outcome) => {
+      onOutcome(
+        outcome.ok
+          ? {
+              hasOlder: outcome.response.hasOlderMovements === true,
+              movements: outcome.response.movements.filter((movement) => movement.productId === productId),
+              ok: true,
+            }
+          : outcome,
+      );
+    },
+  );
+};
 
 export const runCommand = (
   command: ProductCommand,

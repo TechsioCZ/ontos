@@ -20,7 +20,7 @@ import { DateTime, Schema } from 'effect';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { keepDraftOnReload, keptDraft, reloadKeepingDrafts } from '@app/shared-contracts';
 import { useEffect, useState } from 'react';
-import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
+import type { CategoryTrail, LedgerMovement, ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
@@ -72,12 +72,13 @@ export interface ProductDetailViewProps {
   /** Path labels of the product's categories (additional ones included). */
   readonly categoryTrails?: readonly CategoryTrail[];
   readonly hasCategoryTree?: boolean;
+  /** The newest page of the product's ledger (oldest first) and whether older movements exist (loaded on request). */
+  readonly ledger: { readonly hasOlder: boolean; readonly movements: readonly LedgerMovement[] };
   /**
    * The product's offer and price in every configured market of the company, and whether the viewer may switch it
    * (records `canManageMarkets`).
    */
   readonly markets?: ProductMarketsAccess;
-  readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
@@ -458,8 +459,8 @@ export const ProductDetailView = ({
   category = null,
   categoryTrails = [],
   hasCategoryTree = false,
+  ledger,
   markets = NO_MARKETS,
-  movements,
   onBack,
   onCommitted,
   onReload,
@@ -665,7 +666,13 @@ export const ProductDetailView = ({
             <PriceHistory product={product} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
-            <MovementsTable movements={movements} variants={product.variantRecords} />
+            <MovementsTable
+              hasOlder={ledger.hasOlder}
+              key={ledger.movements.at(-1)?.id ?? ''}
+              movements={ledger.movements}
+              productId={product.id}
+              variants={product.variantRecords}
+            />
             {canMoveStock && (
               <MovementForm
                 draft={movementDraft}

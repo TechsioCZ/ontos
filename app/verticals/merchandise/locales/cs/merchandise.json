@@ -431,11 +431,14 @@
           "navigationTimeout": "Otevření stránky trvá příliš dlouho. Zkuste to znovu."
         },
         "movements": {
+          "columnBalance": "Stav po pohybu",
           "columnDate": "Datum",
           "columnDelta": "Množství ±",
           "columnNote": "Poznámka",
           "columnType": "Typ",
           "empty": "Pro tento produkt zatím nejsou žádné pohyby.",
+          "loadOlder": "Načíst starší pohyby",
+          "loadOlderFailed": "Starší pohyby se nepodařilo načíst. Zkuste to znovu.",
           "quantityHint": "U korekce zadejte záporné číslo pro úbytek.",
           "recordTitle": "Zaznamenat pohyb",
           "submit": "Zaznamenat pohyb",
