@@ -6248,6 +6248,11 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
         recursive: true,
       }),
     );
+    yield* Effect.promise(() =>
+      mkdir(path.join(fixture.root, 'node_modules', '@techsio'), {
+        recursive: true,
+      }),
+    );
     // Every generated-runtime dependency is linked from the real workspace so the fixture
     // typechecks and runs against the same modules the shipped verticals resolve.
     yield* Effect.all(
@@ -6257,6 +6262,7 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
           ['packages/core-runtime/node_modules/@effect/sql-pg', 'node_modules/@effect/sql-pg', 'dir'],
           ['packages/core-runtime/node_modules/@effect/platform-node', 'node_modules/@effect/platform-node', 'dir'],
           ['packages/core-runtime/node_modules/@noble/hashes', 'node_modules/@noble/hashes', 'dir'],
+          ['packages/core-runtime/node_modules/@techsio/ui-kit', 'node_modules/@techsio/ui-kit', 'dir'],
           ['apps/shell-super-app/node_modules/jose', 'node_modules/jose', 'dir'],
           ['packages/core-runtime/node_modules/drizzle-orm', 'node_modules/drizzle-orm', 'dir'],
           ['packages/core-runtime/node_modules/dotenv', 'node_modules/dotenv', 'dir'],
@@ -6283,6 +6289,7 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
           ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
           ['packages/core-runtime/src/execution', 'packages/core-runtime/src/execution', 'dir'],
           ['packages/core-runtime/src/sdk', 'packages/core-runtime/src/sdk', 'dir'],
+          ['packages/core-runtime/src/themes', 'packages/core-runtime/src/themes', 'dir'],
           [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
         ] as const
       ).map(([source, target, kind]) =>
