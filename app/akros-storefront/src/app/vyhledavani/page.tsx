@@ -34,8 +34,8 @@ export default async function SearchPage({
   let erpProducts: readonly ErpProduct[] = [];
   // OntOS searches the whole permitted catalog server-side and returns one page plus the total.
   if (term) {
-    // The ERP catalogue (products of „Novinky z ERP“) is searched beside the shop catalogue.
-    const erpSearch = searchErpProductsWithin(term, 24, renderOperation(), 1500);
+    // The ERP catalogue (products of „Novinky z ERP“) is searched beside the shop catalogue, within the page's second.
+    const erpSearch = searchErpProductsWithin(term, 24, renderOperation(), 600);
     let listing = await getCatalogPage({ q: term, page: requested, pageSize: productsPerPage });
     erpProducts = (await erpSearch).products;
     const lastPage = Math.max(1, Math.ceil(listing.total / productsPerPage));
