@@ -27,6 +27,7 @@ export const rule = defineRule({
         type: 'object',
         properties: {
           bypass: { type: 'array', items: { type: 'string' } },
+          excludePaths: { type: 'array', items: { type: 'string' } },
           includePaths: { type: 'array', items: { type: 'string' } },
           surface: { type: 'string' },
         },

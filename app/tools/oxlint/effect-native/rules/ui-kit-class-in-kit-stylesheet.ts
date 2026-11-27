@@ -70,6 +70,7 @@ export const rule = defineRule({
       {
         type: 'object',
         properties: {
+          excludePaths: { type: 'array', items: { type: 'string' } },
           includePaths: { type: 'array', items: { type: 'string' } },
           stylesheet: { type: 'string' },
         },

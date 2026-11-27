@@ -13,9 +13,12 @@ export const UI_SOURCE_PATHS: readonly string[] = ['apps/**', 'verticals/**', 'p
 export const MODULE_SOURCE_PATHS: readonly string[] = ['verticals/**', 'packages/**'];
 
 export function inUiScope(filename: string, options: unknown, defaultPaths: readonly string[]): boolean {
-  const record = typeof options === 'object' && options !== null ? (options as { includePaths?: unknown }) : {};
+  const record =
+    typeof options === 'object' && options !== null
+      ? (options as { excludePaths?: unknown; includePaths?: unknown })
+      : {};
   return includesRuleFile(filename, {
-    allowPaths: [],
+    allowPaths: stringArray(record.excludePaths, []),
     ignoreTestFiles: true,
     includePaths: stringArray(record.includePaths, defaultPaths),
   });

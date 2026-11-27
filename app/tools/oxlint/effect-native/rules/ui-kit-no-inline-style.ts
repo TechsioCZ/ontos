@@ -15,7 +15,15 @@ export const rule = defineRule({
   meta: {
     type: 'problem',
     docs: { description: 'Disallow inline style props in UI source.' },
-    schema: [{ type: 'object', properties: { includePaths: { type: 'array', items: { type: 'string' } } } }],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          excludePaths: { type: 'array', items: { type: 'string' } },
+          includePaths: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    ],
     messages: {
       inlineStyle: 'An inline style bypasses the kit: use a kit component, prop or token class.',
     },
