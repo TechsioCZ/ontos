@@ -164,15 +164,10 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
             crypto,
           ).pipe(
             Effect.flatMap((issued) =>
-              executeSourceProcessingEligibilitySetWithAuthorization(
-                payload,
-                issued.authorization,
-                scope.correlationId,
-                {
-                  baseUrl: new URL(issued.apiBaseUrl),
-                  compositionRevision: issued.compositionRevision,
-                },
-              ),
+              executeSourceProcessingEligibilitySetWithAuthorization(payload, issued.authorization, scope.correlationId, {
+                baseUrl: new URL(issued.apiBaseUrl),
+                compositionRevision: issued.compositionRevision,
+              }),
             ),
             commerceCustomerContextEvidenceCall.sourceProcessingEligibility,
             Effect.mapError(rejected('UNAVAILABLE', 'Current source Privacy authority is unavailable')),

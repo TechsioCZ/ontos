@@ -49,9 +49,9 @@ export const SourceProfileExportResponseSchema = Schema.Union([
   SourceProfileExportAvailableSchema,
   Schema.Struct({
     outcome: Schema.Literal('SET'),
-    items: Schema.Array(
-      Schema.Union([SourceProfileExportNotAvailableSchema, SourceProfileExportAvailableSchema]),
-    ).check(Schema.isMaxLength(SOURCE_PROFILE_EXPORT_SET_MAX)),
+    items: Schema.Array(Schema.Union([SourceProfileExportNotAvailableSchema, SourceProfileExportAvailableSchema])).check(
+      Schema.isMaxLength(SOURCE_PROFILE_EXPORT_SET_MAX),
+    ),
   }),
 ]);
 export type SourceProfileExportResponse = typeof SourceProfileExportResponseSchema.Type;

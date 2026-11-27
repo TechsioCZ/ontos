@@ -33,11 +33,7 @@ const unavailable = (cause?: unknown) =>
 
 type Item = SourceAdmissionSetRequest['items'][number];
 type Loaded =
-  | {
-      readonly kind: 'COUNTERPARTY';
-      readonly counterparty: SourceAdmissionCounterparty;
-      readonly correlated: SourceCorrelatedParty;
-    }
+  | { readonly kind: 'COUNTERPARTY'; readonly counterparty: SourceAdmissionCounterparty; readonly correlated: SourceCorrelatedParty }
   | { readonly kind: 'PERSON'; readonly correlated: SourceCorrelatedParty }
   | undefined;
 
@@ -106,7 +102,7 @@ export const readSourceAdmissionSet = Effect.fn('SourceAdmissionSet.read')(funct
   const loaded: Loaded[] = input.items.map((item, index) => {
     const correlated = correlatedByIndex.get(index);
     if (correlated === undefined) {
-      return;
+      return undefined;
     }
     if (item.kind === 'PERSON') {
       return { correlated, kind: 'PERSON' };

@@ -502,15 +502,13 @@ export const ProductDetailView = ({
   // The Pricing/Inventory variant a stock movement of this Symmy product writes through to; none for other products.
   const symmyStockTarget = (variantId: string | undefined) => {
     if (product.importedVia !== 'symmy' || product.catalogProductId === undefined) {
-      return;
+      return undefined;
     }
     const catalogVariantId =
       variantId === undefined
         ? product.catalogVariantId
         : product.variants?.find((variant) => variant.id === variantId)?.catalogVariantId;
-    return catalogVariantId === undefined
-      ? undefined
-      : { catalogProductId: product.catalogProductId, catalogVariantId };
+    return catalogVariantId === undefined ? undefined : { catalogProductId: product.catalogProductId, catalogVariantId };
   };
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);

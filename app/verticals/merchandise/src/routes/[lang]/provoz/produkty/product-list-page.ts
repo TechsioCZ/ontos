@@ -36,10 +36,10 @@ export const useCategoryChoices = (legalEntityId: string) => {
   return {
     choices: held.state === 'ready' ? held.value : NO_CHOICES,
     /** The choices answered (or failed): whether the company filters by a tree is known. */
+    settled: held.state !== 'pending',
     reload: () => {
       browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
     },
-    settled: held.state !== 'pending',
   };
 };
 
@@ -98,20 +98,7 @@ export const useProductPage = (legalEntityId: string, query: ProductListQuery, c
       },
       scope,
     });
-  }, [
-    archived,
-    category,
-    categoryId,
-    legalEntityId,
-    limit,
-    lowStockOnly,
-    offset,
-    scope,
-    search,
-    sort,
-    symmyOnly,
-    taggedIdsJson,
-  ]);
+  }, [archived, category, categoryId, legalEntityId, limit, lowStockOnly, offset, scope, search, sort, symmyOnly, taggedIdsJson]);
   // The strict store reads as pending while it reloads this request (freshness window, live change, settled write).
   // The table keeps the last ready read of the same request until the reload settles; another request never reuses
   // it, and a failed or refused reload replaces it at once.

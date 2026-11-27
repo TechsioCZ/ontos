@@ -363,46 +363,44 @@ it.effect('keeps eligible SKU work when another ACTIVE row cannot satisfy the re
   }),
 );
 
-it.effect(
-  'activates an ACTIVE product with several variants through its initial variant and prices every variant',
-  () =>
-    Effect.gen(function* severalVariants() {
-      const readyTemplate = decodeTemplate({
-        ...templateInput(priceDefaults),
-        catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
-        items: [
-          enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations),
-          enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
-          enroll('PRICE', 'enrolled-price', priceDefine),
-        ],
-      });
-      const plan = Option.getOrThrow(
-        yield* build(
-          rowsOf(product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] }), variant({ prices: [price()] })])),
-          { template: readyTemplate },
-        ),
-      );
-      const parent = { effectKey: 'product-create', itemKey: 'product-0' };
-      const further = { effectKey: 'variant-create', itemKey: 'product-0-variant-1' };
-      // Catalog holds one ACTIVE Variant per axis combination: no untyped decision, the further Variant stays a draft.
-      expect(itemOf(plan, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual([
-        'product-create',
-        'readiness-axes',
-        'readiness-confirm',
-        'readiness-name',
-        'readiness-activate',
-        'readiness-unit',
-      ]);
-      // Every Variant is created while the Product is still at revision 1.
-      expect(effectOf(plan, 'product-0', 'readiness-axes').dependsOn).toEqual([parent, further]);
-      expect(itemOf(plan, 'product-0').unsupportedBranches).toBeUndefined();
-      expect(itemKeys(plan).filter((key) => key.includes('-price-'))).toHaveLength(2);
-      expect(itemOf(plan, 'product-0-variant-1-price-0').effects[0]?.dependsOn).toEqual([
-        parent,
-        further,
-        { effectKey: 'readiness-unit', itemKey: 'product-0' },
-      ]);
-    }),
+it.effect('activates an ACTIVE product with several variants through its initial variant and prices every variant', () =>
+  Effect.gen(function* severalVariants() {
+    const readyTemplate = decodeTemplate({
+      ...templateInput(priceDefaults),
+      catalogReadiness: { divisible: false, kind: 'AXIS_FREE_UNTYPED', locale: 'cs-CZ', unitRef },
+      items: [
+        enroll('PRODUCT', 'enrolled-product', createProduct, ...readinessOperations),
+        enroll('VARIANT', 'enrolled-variant', createVariant, variantFacts),
+        enroll('PRICE', 'enrolled-price', priceDefine),
+      ],
+    });
+    const plan = Option.getOrThrow(
+      yield* build(
+        rowsOf(product({ lifecycle: 'ACTIVE' }, [variant({ prices: [price()] }), variant({ prices: [price()] })])),
+        { template: readyTemplate },
+      ),
+    );
+    const parent = { effectKey: 'product-create', itemKey: 'product-0' };
+    const further = { effectKey: 'variant-create', itemKey: 'product-0-variant-1' };
+    // Catalog holds one ACTIVE Variant per axis combination: no untyped decision, the further Variant stays a draft.
+    expect(itemOf(plan, 'product-0').effects.map(({ effectKey }) => effectKey)).toEqual([
+      'product-create',
+      'readiness-axes',
+      'readiness-confirm',
+      'readiness-name',
+      'readiness-activate',
+      'readiness-unit',
+    ]);
+    // Every Variant is created while the Product is still at revision 1.
+    expect(effectOf(plan, 'product-0', 'readiness-axes').dependsOn).toEqual([parent, further]);
+    expect(itemOf(plan, 'product-0').unsupportedBranches).toBeUndefined();
+    expect(itemKeys(plan).filter((key) => key.includes('-price-'))).toHaveLength(2);
+    expect(itemOf(plan, 'product-0-variant-1-price-0').effects[0]?.dependsOn).toEqual([
+      parent,
+      further,
+      { effectKey: 'readiness-unit', itemKey: 'product-0' },
+    ]);
+  }),
 );
 const variantCreateOf = (effect: Effect_) =>
   Option.getOrUndefined(

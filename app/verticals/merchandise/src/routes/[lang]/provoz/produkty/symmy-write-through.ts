@@ -15,15 +15,15 @@ export interface SymmyWriteThroughInput {
   readonly catalogVariantId: string;
   /** The new base price without VAT as a decimal text (e.g. `7.33`); omitted when unchanged. */
   readonly priceNet?: string;
-  /** The staff member's reason, kept in the owners' audit. */
-  readonly reason: string;
+  /** The new absolute on-hand as a decimal text (e.g. `37`); omitted when unchanged. Exclusive with stockDelta. */
+  readonly stockOnHand?: string;
   /**
    * A stock movement: the signed change applied to Inventory's CURRENT on-hand of the variant (never to the merchandise
    * figure, which can lag behind the ERP). Exclusive with stockOnHand.
    */
   readonly stockDelta?: number;
-  /** The new absolute on-hand as a decimal text (e.g. `37`); omitted when unchanged. Exclusive with stockDelta. */
-  readonly stockOnHand?: string;
+  /** The staff member's reason, kept in the owners' audit. */
+  readonly reason: string;
 }
 
 const staffSource = 'ontos-staff-erp-editor';
@@ -34,9 +34,7 @@ const grantFrom = '2020-01-01T00:00:00.000Z';
 
 const uuid = Effect.gen(function* fresh() {
   const hex = yield* Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 256));
-  const bytes = hex.map((byte, index) =>
-    index === 6 ? (byte & 0x0f) | 0x40 : index === 8 ? (byte & 0x3f) | 0x80 : byte,
-  );
+  const bytes = hex.map((byte, index) => (index === 6 ? (byte & 0x0f) | 0x40 : index === 8 ? (byte & 0x3f) | 0x80 : byte));
   const text = bytes.map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `${text.slice(0, 8)}-${text.slice(8, 12)}-${text.slice(12, 16)}-${text.slice(16, 20)}-${text.slice(20)}`;
 });
@@ -85,14 +83,18 @@ const call = (
       gateways[audience].invoke((credential, { apiBaseUrl, compositionRevision }) =>
         makeGovernedEffectBffClient(
           {
-            api: endpointApi(label.replaceAll(/[^A-Za-z]/gu, ''), path),
+            api: endpointApi(label.replace(/[^A-Za-z]/gu, ''), path),
             credential: Redacted.make(credential),
             defaultApiPrefix: prefixes[audience],
             ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
             requestCorrelation,
           },
           { baseUrl: apiBaseUrl, compositionRevision },
-        ).pipe(Effect.flatMap((client) => client.owner.execute({ payload }))),
+        ).pipe(
+          Effect.flatMap((client) =>
+client.owner.execute({ payload })
+          ),
+        ),
       ),
     ),
     Effect.mapError((problem) => {
@@ -385,8 +387,8 @@ const StockImportSchema = Schema.Struct({
 
 /** Inventory's on-hand of the variant before and after a stock write; after is what the merchandise row must hold. */
 export interface SymmyStockResult {
-  readonly after: number;
   readonly before: number;
+  readonly after: number;
 }
 
 /**
@@ -538,7 +540,7 @@ export const writeThroughSymmyVariant = Effect.fn('SymmyWriteThrough.variant')(f
     return yield* Effect.fail('Sklad lze zapsat jen jako nový stav, nebo jako pohyb.');
   }
   const change =
-    stock === undefined ? (stockDelta === undefined ? undefined : { delta: stockDelta }) : { absolute: stock };
+    stock !== undefined ? { absolute: stock } : stockDelta !== undefined ? { delta: stockDelta } : undefined;
   if (price === undefined && change === undefined) {
     return noStock;
   }

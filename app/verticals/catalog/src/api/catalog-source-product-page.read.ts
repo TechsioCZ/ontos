@@ -56,9 +56,7 @@ export const readCatalogSourceProductPage = Effect.fn('CatalogSourceProductPage.
           variantId: row.variantId,
           variantSources: variants.map((variant) => ({
             localizedNames: names.flatMap((fact) =>
-              fact.variantId === variant.variantId && fact.name !== null
-                ? [{ locale: fact.locale, name: fact.name }]
-                : [],
+              fact.variantId === variant.variantId && fact.name !== null ? [{ locale: fact.locale, name: fact.name }] : [],
             ),
             source: sourceOf(variant),
             variantId: variant.variantId,

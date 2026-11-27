@@ -73,7 +73,9 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
             <span className="truncate">{product.name}</span>
             {(variants > 0 || note !== null) && (
               <span className="truncate text-fg-secondary text-xs">
-                {[variantsLabel, note].filter((part) => part !== null).join(' · ')}
+                {[variantsLabel, note]
+                  .filter((part) => part !== null)
+                  .join(' · ')}
               </span>
             )}
           </span>

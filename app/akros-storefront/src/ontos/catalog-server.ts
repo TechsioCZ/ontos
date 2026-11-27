@@ -136,8 +136,7 @@ const marketIdOf = async (operation: Operation) =>
 // in time; the navigation tree never waits.
 const OWNER_WAIT_MS = 0;
 const PAGE_WAIT_MS = 2_000;
-const waitMsOf = (operation: Operation) =>
-  pageRenders.has(operation) ? PAGE_WAIT_MS : OWNER_WAIT_MS;
+const waitMsOf = (operation: Operation) => (pageRenders.has(operation) ? PAGE_WAIT_MS : OWNER_WAIT_MS);
 const REVISION_TIMING = {
   maxAgeMs: 1_500,
   intervalMs: 500,
@@ -352,10 +351,7 @@ export async function getCategoryListing(
 ): Promise<ProductPage> {
   return catalogWork(options, async (operation) =>
     query.categorySlug !== undefined && isFirstCategoryPage(query)
-      ? await withCustomerPrices(
-          (await cachedCategoryPage(operation, query.categorySlug)).page,
-          operation,
-        )
+      ? await withCustomerPrices((await cachedCategoryPage(operation, query.categorySlug)).page, operation)
       : await readProducts(query, "card", false, { operation }),
   );
 }

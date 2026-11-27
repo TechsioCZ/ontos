@@ -84,10 +84,7 @@ export const readSourceProfileExportSet = Effect.fn('SourceProfileExport.readSet
   yield* authorizePartyClientSourceReferences(
     correlated.map(({ correlation, entry }) => ({
       assertion: entry.sourceReference,
-      intent: {
-        operation: 'PROFILE_EXPORT' as const,
-        target: { kind: 'PARTY' as const, partyId: correlation.party.partyId },
-      },
+      intent: { operation: 'PROFILE_EXPORT' as const, target: { kind: 'PARTY' as const, partyId: correlation.party.partyId } },
     })),
     scope,
   ).pipe(Effect.mapError(unavailable));
@@ -110,140 +107,138 @@ export const readSourceProfileExportSet = Effect.fn('SourceProfileExport.readSet
  * The same name and contact values as exportSourceCorrelatedProfile for every proven Party of a page, in input order,
  * with three queries for the whole page; any Party its single export would fail fails the whole set.
  */
-const exportSourceCorrelatedProfiles = Effect.fn('SourceProfileExport.exportCorrelatedSet')(
-  function* exportCorrelatedSet(
-    transaction: ExportTransaction,
-    scope: OperationalScope,
-    entries: readonly { readonly input: SourceProfileExportRequest; readonly correlated: SourceCorrelatedParty }[],
-  ): Effect.fn.Return<readonly SourceProfileExportItem[], PartyPersistenceUnavailableError> {
-    if (entries.length === 0) {
-      return [];
-    }
-    const partyIds = [...new Set(entries.map(({ correlated }) => correlated.party.partyId))];
-    const names = yield* transaction
-      .select({
-        partyId: parties.partyId,
-        revision: parties.revision,
-        firstName: parties.firstName,
-        lastName: parties.lastName,
-        businessName: parties.businessName,
-      })
-      .from(parties)
-      .where(
-        and(
-          eq(parties.tenantId, scope.tenantId),
-          inArray(parties.partyId, partyIds),
-          isNull(parties.archivedAt),
-          sql`not exists (select 1 from ${partyAliases} where ${partyAliases.tenantId} = ${parties.tenantId} and ${partyAliases.aliasPartyId} = ${parties.partyId})`,
-        ),
-      )
-      .pipe(Effect.mapError(unavailable));
-    const now = yield* DateTime.nowAsDate;
-    const rowLimit = 257 * partyIds.length;
-    const rows = yield* transaction
-      .select({
-        partyId: partyContactPoints.partyId,
-        contactPointId: partyContactPoints.contactPointId,
-        contactPointType: partyContactPoints.contactPointType,
-        normalizedValue: partyContactPoints.normalizedValue,
-        displayValue: partyContactPoints.displayValue,
-      })
-      .from(partyContactPoints)
-      .where(
-        and(
-          eq(partyContactPoints.tenantId, scope.tenantId),
-          inArray(partyContactPoints.partyId, partyIds),
-          or(eq(partyContactPoints.contactPointType, 'EMAIL'), eq(partyContactPoints.contactPointType, 'PHONE')),
-          eq(partyContactPoints.state, 'ACTIVE'),
-          eq(partyContactPoints.isCurrent, true),
-          lte(partyContactPoints.validFrom, now),
-          or(isNull(partyContactPoints.validTo), gt(partyContactPoints.validTo, now)),
-        ),
-      )
-      .orderBy(partyContactPoints.contactPointId)
-      .limit(rowLimit)
-      .pipe(Effect.mapError(unavailable));
-    // A full batch means some Party has more than 256 current contact points, which its single export refuses.
-    if (rows.length >= rowLimit) {
+const exportSourceCorrelatedProfiles = Effect.fn('SourceProfileExport.exportCorrelatedSet')(function* exportCorrelatedSet(
+  transaction: ExportTransaction,
+  scope: OperationalScope,
+  entries: readonly { readonly input: SourceProfileExportRequest; readonly correlated: SourceCorrelatedParty }[],
+): Effect.fn.Return<readonly SourceProfileExportItem[], PartyPersistenceUnavailableError> {
+  if (entries.length === 0) {
+    return [];
+  }
+  const partyIds = [...new Set(entries.map(({ correlated }) => correlated.party.partyId))];
+  const names = yield* transaction
+    .select({
+      partyId: parties.partyId,
+      revision: parties.revision,
+      firstName: parties.firstName,
+      lastName: parties.lastName,
+      businessName: parties.businessName,
+    })
+    .from(parties)
+    .where(
+      and(
+        eq(parties.tenantId, scope.tenantId),
+        inArray(parties.partyId, partyIds),
+        isNull(parties.archivedAt),
+        sql`not exists (select 1 from ${partyAliases} where ${partyAliases.tenantId} = ${parties.tenantId} and ${partyAliases.aliasPartyId} = ${parties.partyId})`,
+      ),
+    )
+    .pipe(Effect.mapError(unavailable));
+  const now = yield* DateTime.nowAsDate;
+  const rowLimit = 257 * partyIds.length;
+  const rows = yield* transaction
+    .select({
+      partyId: partyContactPoints.partyId,
+      contactPointId: partyContactPoints.contactPointId,
+      contactPointType: partyContactPoints.contactPointType,
+      normalizedValue: partyContactPoints.normalizedValue,
+      displayValue: partyContactPoints.displayValue,
+    })
+    .from(partyContactPoints)
+    .where(
+      and(
+        eq(partyContactPoints.tenantId, scope.tenantId),
+        inArray(partyContactPoints.partyId, partyIds),
+        or(eq(partyContactPoints.contactPointType, 'EMAIL'), eq(partyContactPoints.contactPointType, 'PHONE')),
+        eq(partyContactPoints.state, 'ACTIVE'),
+        eq(partyContactPoints.isCurrent, true),
+        lte(partyContactPoints.validFrom, now),
+        or(isNull(partyContactPoints.validTo), gt(partyContactPoints.validTo, now)),
+      ),
+    )
+    .orderBy(partyContactPoints.contactPointId)
+    .limit(rowLimit)
+    .pipe(Effect.mapError(unavailable));
+  // A full batch means some Party has more than 256 current contact points, which its single export refuses.
+  if (rows.length >= rowLimit) {
+    return yield* unavailable();
+  }
+  const purposes = yield* transaction
+    .select({
+      partyId: partyContactPointPurposes.partyId,
+      contactPointId: partyContactPointPurposes.contactPointId,
+      purposeKey: partyContactPointPurposes.purposeKey,
+    })
+    .from(partyContactPointPurposes)
+    .where(
+      and(
+        eq(partyContactPointPurposes.tenantId, scope.tenantId),
+        inArray(partyContactPointPurposes.partyId, partyIds),
+        eq(partyContactPointPurposes.state, 'ACTIVE'),
+        eq(partyContactPointPurposes.isCurrent, true),
+        lte(partyContactPointPurposes.validFrom, now),
+        or(isNull(partyContactPointPurposes.validTo), gt(partyContactPointPurposes.validTo, now)),
+      ),
+    )
+    .limit(rowLimit)
+    .pipe(Effect.mapError(unavailable));
+  if (purposes.length >= rowLimit) {
+    return yield* unavailable();
+  }
+  const out: SourceProfileExportItem[] = [];
+  for (const { input, correlated } of entries) {
+    const partyId = correlated.party.partyId;
+    const name = names.find((row) => row.partyId === partyId && row.revision === correlated.party.revision);
+    if (name === undefined) {
       return yield* unavailable();
     }
-    const purposes = yield* transaction
-      .select({
-        partyId: partyContactPointPurposes.partyId,
-        contactPointId: partyContactPointPurposes.contactPointId,
-        purposeKey: partyContactPointPurposes.purposeKey,
-      })
-      .from(partyContactPointPurposes)
-      .where(
-        and(
-          eq(partyContactPointPurposes.tenantId, scope.tenantId),
-          inArray(partyContactPointPurposes.partyId, partyIds),
-          eq(partyContactPointPurposes.state, 'ACTIVE'),
-          eq(partyContactPointPurposes.isCurrent, true),
-          lte(partyContactPointPurposes.validFrom, now),
-          or(isNull(partyContactPointPurposes.validTo), gt(partyContactPointPurposes.validTo, now)),
-        ),
-      )
-      .limit(rowLimit)
-      .pipe(Effect.mapError(unavailable));
-    if (purposes.length >= rowLimit) {
+    const partyRows = rows.filter((row) => row.partyId === partyId);
+    const partyPurposes = purposes.filter((purpose) => purpose.partyId === partyId);
+    if (partyRows.length > 256 || partyPurposes.length > 256) {
       return yield* unavailable();
     }
-    const out: SourceProfileExportItem[] = [];
-    for (const { input, correlated } of entries) {
-      const { partyId } = correlated.party;
-      const name = names.find((row) => row.partyId === partyId && row.revision === correlated.party.revision);
-      if (name === undefined) {
+    const contacts: SourceProfileExportContact[] = [];
+    for (const row of partyRows) {
+      if (row.normalizedValue === null || (row.contactPointType !== 'EMAIL' && row.contactPointType !== 'PHONE')) {
         return yield* unavailable();
       }
-      const partyRows = rows.filter((row) => row.partyId === partyId);
-      const partyPurposes = purposes.filter((purpose) => purpose.partyId === partyId);
-      if (partyRows.length > 256 || partyPurposes.length > 256) {
-        return yield* unavailable();
-      }
-      const contacts: SourceProfileExportContact[] = [];
-      for (const row of partyRows) {
-        if (row.normalizedValue === null || (row.contactPointType !== 'EMAIL' && row.contactPointType !== 'PHONE')) {
-          return yield* unavailable();
-        }
-        contacts.push({
-          contactPointRef: {
-            moduleId: 'party.registry',
-            resourceType: 'party.registry.party-contact-point',
-            resourceId: row.contactPointId,
-            tenantId: scope.tenantId,
-          },
-          type: row.contactPointType,
-          normalizedValue: row.normalizedValue,
-          displayValue: row.displayValue,
-          purposes: [
-            ...new Set(
-              partyPurposes
-                .filter((purpose) => purpose.contactPointId === row.contactPointId)
-                .map((purpose) => purpose.purposeKey),
-            ),
-          ].toSorted(),
-        });
-      }
-      const partyType = correlated.party.currentType;
-      if (partyType !== 'PERSON' && partyType !== 'ORGANIZATION' && partyType !== 'UNRESOLVED') {
-        return yield* unavailable();
-      }
-      out.push({
-        outcome: 'AVAILABLE',
-        partyRef: input.partyRef,
-        revision: correlated.party.revision,
-        partyType,
-        firstName: name.firstName,
-        lastName: name.lastName,
-        businessName: name.businessName,
-        contactPoints: contacts,
-        unsupported: ['ADDRESSES'],
+      contacts.push({
+        contactPointRef: {
+          moduleId: 'party.registry',
+          resourceType: 'party.registry.party-contact-point',
+          resourceId: row.contactPointId,
+          tenantId: scope.tenantId,
+        },
+        type: row.contactPointType,
+        normalizedValue: row.normalizedValue,
+        displayValue: row.displayValue,
+        purposes: [
+          ...new Set(
+            partyPurposes
+              .filter((purpose) => purpose.contactPointId === row.contactPointId)
+              .map((purpose) => purpose.purposeKey),
+          ),
+        ].toSorted(),
       });
     }
-    return out;
-  },
-);
+    const partyType = correlated.party.currentType;
+    if (partyType !== 'PERSON' && partyType !== 'ORGANIZATION' && partyType !== 'UNRESOLVED') {
+      return yield* unavailable();
+    }
+    out.push({
+      outcome: 'AVAILABLE',
+      partyRef: input.partyRef,
+      revision: correlated.party.revision,
+      partyType,
+      firstName: name.firstName,
+      lastName: name.lastName,
+      businessName: name.businessName,
+      contactPoints: contacts,
+      unsupported: ['ADDRESSES'],
+    });
+  }
+  return out;
+});
 
 /** The name and contact values of a Party whose correlation and PROFILE_EXPORT Privacy are already proven. */
 const exportSourceCorrelatedProfile = Effect.fn('SourceProfileExport.exportCorrelated')(function* exportCorrelated(

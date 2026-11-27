@@ -80,7 +80,9 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     },
     ResetDemoData: 'hidden',
     // The Symmy connector's source upsert: integration-only, never an agent tool.
+    UpsertSourceProduct: 'hidden',
     RestoreProduct: 'hidden',
+    SetSymmyLink: 'hidden',
     SetMarketProductOffers: {
       agentProposalOnly: true,
       description: {
@@ -98,8 +100,6 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canManageMarkets',
       title: { cs: 'Změnit nabídku produktu v trhu', en: 'Change a product offer in a market' },
     },
-    SetSymmyLink: 'hidden',
-    UpsertSourceProduct: 'hidden',
     // Tax activation and staff run the resync; agents never resync VAT rates themselves.
     SyncTaxRates: 'hidden',
     UpdateCategory: {

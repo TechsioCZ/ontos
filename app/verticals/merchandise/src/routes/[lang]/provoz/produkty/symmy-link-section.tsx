@@ -40,24 +40,20 @@ export const SymmyLinkSection = ({ onCommitted, onReload, product, revision }: S
     setAsking(false);
     setBusy(true);
     setError(null);
-    runCommand(
-      { _tag: 'SetSymmyLink', action, expectedUpdatedAt: product.updatedAt, id: product.id },
-      revision,
-      (outcome) => {
-        setBusy(false);
-        if (!outcome.ok) {
-          const message = failure(outcome.reason, onReload, outcome.proposal);
-          setError(message);
-          toaster.create({ title: message, type: 'error' });
-          return;
-        }
-        onCommitted(
-          action === 'UNLINK'
-            ? 'Produkt je odpojený od Symmy. Cena a sklad už se neřídí ERP.'
-            : 'Propojení se Symmy je povolené. Symmy produkt propojí při příští synchronizaci.',
-        );
-      },
-    );
+    runCommand({ _tag: 'SetSymmyLink', action, expectedUpdatedAt: product.updatedAt, id: product.id }, revision, (outcome) => {
+      setBusy(false);
+      if (!outcome.ok) {
+        const message = failure(outcome.reason, onReload, outcome.proposal);
+        setError(message);
+        toaster.create({ title: message, type: 'error' });
+        return;
+      }
+      onCommitted(
+        action === 'UNLINK'
+          ? 'Produkt je odpojený od Symmy. Cena a sklad už se neřídí ERP.'
+          : 'Propojení se Symmy je povolené. Symmy produkt propojí při příští synchronizaci.',
+      );
+    });
   };
   return (
     <SectionCard title="Propojení se Symmy">

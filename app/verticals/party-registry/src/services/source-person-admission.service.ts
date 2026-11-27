@@ -149,7 +149,7 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
     });
     const liveIds = [...new Set(live.flatMap((party) => (party === undefined ? [] : [party.partyId])))];
     if (liveIds.length === 0) {
-      return inputs.map(() => {});
+      return inputs.map(() => undefined);
     }
     const aliasRows = yield* transaction
       .select({ aliasPartyId: partyAliases.aliasPartyId })
@@ -162,7 +162,7 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
       return party === undefined || aliased.has(party.partyId) ? [] : [{ index, input, party }];
     });
     if (candidates.length === 0) {
-      return inputs.map(() => {});
+      return inputs.map(() => undefined);
     }
     const evidence = sql`${partyMatchDecisions.evidenceEvaluation}->'evidence'`;
     const containments = candidates.map(({ input }) => {
@@ -200,7 +200,7 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
       // The same first 65 matches in the same order as the single query of this input.
       const decisions = decisionRows.filter((row) => String(row.matches).charAt(position) === '1').slice(0, 65);
       if (decisions.length === 0 || decisions.length > 64 || decisions.some((item) => item.partyId !== party.partyId)) {
-        return;
+        return undefined;
       }
       const decision =
         decisions.find((item) => item.operation === 'CREATE') ??
@@ -237,7 +237,7 @@ export const loadAuthorizedSourceCorrelatedParties = Effect.fn('SourcePersonAdmi
             )
             .pipe(Effect.mapError(unavailable));
     const receipts = new Set(receiptRows.map((row) => `${row.actionInvocationId}|${row.matchDecisionId}`));
-    const results: (SourceCorrelatedParty | undefined)[] = inputs.map(() => {});
+    const results: (SourceCorrelatedParty | undefined)[] = inputs.map(() => undefined);
     for (const entry of chosen) {
       if (entry === undefined) {
         continue;

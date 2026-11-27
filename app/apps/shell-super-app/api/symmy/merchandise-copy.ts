@@ -108,7 +108,7 @@ export const symmyUpsertSourceProductCommand = (
       item.variantSources.length > 1
         ? symmyVariantName(name, variant.localizedNames?.find(({ locale }) => /^cs(?:-|$)/iu.test(locale))?.name)
         : undefined;
-    const fields = variantName === undefined ? { catalogVariantId, sku } : { catalogVariantId, name: variantName, sku };
+    const fields = variantName === undefined ? { catalogVariantId, sku } : { catalogVariantId, sku, name: variantName };
     const priced = priceNetMinor === undefined ? fields : { ...fields, priceNetMinor };
     return [stockOnHand === undefined ? priced : { ...priced, stockOnHand }];
   });

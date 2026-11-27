@@ -484,14 +484,14 @@ const SourceIdTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMax
  * Reachable only through the source-catalog import Action.
  */
 export const ApplyUpsertSourceProductCommandSchema = Schema.TaggedStruct('UpsertSourceProduct', {
+  sourceRecordId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   catalogProductId: SourceIdTextSchema,
+  erpCode: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  lifecycle: Schema.Literals(['ACTIVE', 'DRAFT', 'RETIRED']),
   categoryName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
-  erpCode: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
   imageUrl: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
-  lifecycle: Schema.Literals(['ACTIVE', 'DRAFT', 'RETIRED']),
-  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  sourceRecordId: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   /**
    * When the ERP last changed the source product (main Catalog `updatedAt`). A shop product staff unlinked from Symmy
    * is linked again only by a source product changed after the unlink; without it the unlink stays.
@@ -500,11 +500,11 @@ export const ApplyUpsertSourceProductCommandSchema = Schema.TaggedStruct('Upsert
   variants: Schema.Array(
     Schema.Struct({
       catalogVariantId: SourceIdTextSchema,
-      name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
-      priceNetMinor: Schema.optionalKey(Schema.NullOr(MinorAmountSchema)),
       sku: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
-      stockOnHand: Schema.optionalKey(Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)))),
+      name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
       unit: Schema.optionalKey(Schema.String),
+      priceNetMinor: Schema.optionalKey(Schema.NullOr(MinorAmountSchema)),
+      stockOnHand: Schema.optionalKey(Schema.NullOr(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)))),
     }),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
 });

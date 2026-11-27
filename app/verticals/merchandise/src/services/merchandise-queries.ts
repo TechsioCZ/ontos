@@ -1414,9 +1414,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     };
     for (const row of held) {
       keep(row.categoryId);
-      for (const id of row.path ?? []) {
-        keep(id);
-      }
+      for (const id of row.path ?? []) keep(id);
     }
     keep(contentId);
   }

@@ -30,11 +30,9 @@ export const CatalogSourceProductPageResponseSchema = Schema.Struct({
       variantId: ProductUuidSchema,
       variantSources: Schema.Array(
         Schema.Struct({
-          localizedNames: Schema.optionalKey(
-            Schema.Array(Schema.Struct({ locale: Schema.String, name: Schema.String })),
-          ),
           source: CatalogSourceCorrelationSchema,
           variantId: ProductUuidSchema,
+          localizedNames: Schema.optionalKey(Schema.Array(Schema.Struct({ locale: Schema.String, name: Schema.String }))),
         }),
       ),
     }),

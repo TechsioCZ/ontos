@@ -14,12 +14,7 @@ import type { BindInitialVariantSourcePayload } from '../../shared/actions/bind-
 import { BindInitialVariantSourceResultSchema } from '../../shared/actions/bind-initial-variant-source.ts';
 import { recoverCatalogActionResult } from '../api/catalog-action-result-recovery.ts';
 import { ProductPersistenceConflict } from '../../shared/domain/product-errors.ts';
-import {
-  catalogResultSnapshots,
-  catalogSourceCorrelations,
-  products,
-  variantLocalizedFacts,
-} from '../database/schema.ts';
+import { catalogResultSnapshots, catalogSourceCorrelations, products, variantLocalizedFacts } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import type { CatalogSourceProductPageRequest } from '../../shared/apis/catalog-source-product-page.ts';
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
@@ -382,16 +377,6 @@ export const catalogSourceProductPageForScope = (
           .pipe(Effect.mapError(unavailable), Effect.flatMap(onlyTotal)),
       getCurrent,
       // The current names of every Variant of the page's products in one read (the primary key leads with them).
-      rows: (input: CatalogSourceProductPageRequest) =>
-        transaction
-          .select(getTableColumns(catalogSourceCorrelations))
-          .from(catalogSourceCorrelations)
-          .innerJoin(products, sourceProductOf)
-          .where(sourceProductsMatching(scope.tenantId, input))
-          .orderBy(asc(catalogSourceCorrelations.recordId))
-          .limit(input.limit)
-          .offset(input.offset)
-          .pipe(Effect.mapError(unavailable)),
       variantNames: (productIds: readonly string[]) =>
         productIds.length === 0
           ? Effect.succeed([])
@@ -410,6 +395,16 @@ export const catalogSourceProductPageForScope = (
                 ),
               )
               .pipe(Effect.mapError(unavailable)),
+      rows: (input: CatalogSourceProductPageRequest) =>
+        transaction
+          .select(getTableColumns(catalogSourceCorrelations))
+          .from(catalogSourceCorrelations)
+          .innerJoin(products, sourceProductOf)
+          .where(sourceProductsMatching(scope.tenantId, input))
+          .orderBy(asc(catalogSourceCorrelations.recordId))
+          .limit(input.limit)
+          .offset(input.offset)
+          .pipe(Effect.mapError(unavailable)),
       variants,
     })),
   );

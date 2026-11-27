@@ -123,6 +123,11 @@ export interface ProductTabSaveOptions<V> {
   readonly partlyConfirmed?: (value: V, confirmed: V, sent: readonly ProductCommand[]) => V;
   /** Puts `value` (the confirmed version) back into the form's state. */
   readonly reset: (value: V) => void;
+  /**
+   * Writes what another owner keeps first (a Symmy variant's price to Pricing); its Czech failure sentence saves
+   * nothing and becomes the save's error.
+   */
+  readonly writeThrough?: (value: V, confirmed: V) => Effect.Effect<void, string>;
   /** The catalogue revision the page read, sent with every command; a product edit is checked by `version` instead. */
   readonly revision: number;
   /**
@@ -138,11 +143,6 @@ export interface ProductTabSaveOptions<V> {
    * so the server refuses it only when this product changed since, not when another write in the company did.
    */
   readonly version: number;
-  /**
-   * Writes what another owner keeps first (a Symmy variant's price to Pricing); its Czech failure sentence saves
-   * nothing and becomes the save's error.
-   */
-  readonly writeThrough?: (value: V, confirmed: V) => Effect.Effect<void, string>;
 }
 
 export interface ProductTabSave<V> {
@@ -189,42 +189,35 @@ export const useProductTabSave = <V,>(options: ProductTabSaveOptions<V>): Produc
   const refusal = useRef<Refusal<V> | undefined>(undefined);
   const saveCommands = (value: V) =>
     runCommands(Arr.ensure(options.commandOf(value, confirmedNow.current)), base.current, options.revision).pipe(
-      Effect.map(
-        ({
-          committed,
-          outcome,
-          refused,
-          sent,
-        }): DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>> => {
-          // Commands that went through before a refused one moved the version; a retry starts after them.
-          base.current = Math.max(base.current, committed);
-          if (outcome.ok) {
-            base.current = committed;
-            setCommittedVersion(committed);
-            setError(null);
-            options.onSaved();
-            return 'saved';
-          }
-          setError(
-            (refused === null ? undefined : options.failureText?.(outcome, value, refused)) ??
-              (outcome.reason === 'rejected' ? label('messages.rejected') : label('messages.failed')),
-          );
-          const result = tabSaveOutcome(outcome);
-          const { partlyConfirmed } = options;
-          if (sent.length > 0 && partlyConfirmed !== undefined) {
-            confirmedNow.current = partlyConfirmed(value, confirmedNow.current, sent);
-          }
-          if (result === 'conflict') {
-            // Read the version someone else saved; the draft's own changes then go over it.
-            refusal.current = refusedSave(confirmedNow.current, base.current);
-            options.onReload();
-          }
-          if (sent.length === 0 || partlyConfirmed === undefined || result === 'saved') {
-            return result;
-          }
-          return { confirmed: confirmedNow.current, outcome: result, revision: committed };
-        },
-      ),
+      Effect.map(({ committed, outcome, refused, sent }): DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>> => {
+        // Commands that went through before a refused one moved the version; a retry starts after them.
+        base.current = Math.max(base.current, committed);
+        if (outcome.ok) {
+          base.current = committed;
+          setCommittedVersion(committed);
+          setError(null);
+          options.onSaved();
+          return 'saved';
+        }
+        setError(
+          (refused === null ? undefined : options.failureText?.(outcome, value, refused)) ??
+            (outcome.reason === 'rejected' ? label('messages.rejected') : label('messages.failed')),
+        );
+        const result = tabSaveOutcome(outcome);
+        const { partlyConfirmed } = options;
+        if (sent.length > 0 && partlyConfirmed !== undefined) {
+          confirmedNow.current = partlyConfirmed(value, confirmedNow.current, sent);
+        }
+        if (result === 'conflict') {
+          // Read the version someone else saved; the draft's own changes then go over it.
+          refusal.current = refusedSave(confirmedNow.current, base.current);
+          options.onReload();
+        }
+        if (sent.length === 0 || partlyConfirmed === undefined || result === 'saved') {
+          return result;
+        }
+        return { confirmed: confirmedNow.current, outcome: result, revision: committed };
+      }),
     );
   const draft = useDraftSave<V, never>({
     initial: kept?.confirmed,

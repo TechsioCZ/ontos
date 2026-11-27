@@ -592,7 +592,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     variants.length === 1
       ? (['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const)
       : (['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT'] as const);
-  const readinessLast = `readiness-${readinessSteps.at(-1)?.toLowerCase() ?? ''}`;
+  const readinessLast = `readiness-${readinessSteps[readinessSteps.length - 1]?.toLowerCase() ?? ''}`;
   const readinessEffects =
     ready === undefined
       ? []
