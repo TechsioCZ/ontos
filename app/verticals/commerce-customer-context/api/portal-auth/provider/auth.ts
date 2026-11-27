@@ -156,10 +156,6 @@ const databaseFailure = (cause: unknown): APIError =>
     { configurable: true, value: cause },
   );
 const databaseTransactionFailure = (cause: unknown): APIError => (isAPIError(cause) ? cause : databaseFailure(cause));
-const countActiveProviderSessions = (
-  rows: readonly Pick<SessionHookData, 'createdAt' | 'expiresAt'>[],
-  now: number,
-): number => rows.reduce((count, row) => count + (isActiveProviderSession(row, now) ? 1 : 0), 0);
 type CommercePortalAuthDatabaseRecordInput = Parameters<
   ReturnType<CommercePortalAuthDatabaseAdapter>['create']
 >[0]['data'];
@@ -318,7 +314,8 @@ const userCreateBeforeHook = (runDatabaseEffect: typeof Effect.runPromise) =>
  * Better Auth runs the session create hook before its adapter create call. A count in that hook
  * cannot enforce a concurrent-device cap: two requests can observe the same count and then both
  * insert. The adapter boundary is the first place where we can hold a PostgreSQL transaction
- * while locking the account row, counting committed sessions and creating the new session.
+ * while locking the account row, ending its oldest live sessions at the cap and creating the new
+ * session, so concurrent sign-ins all succeed and never leave more than the cap alive.
  */
 const withAtomicSessionCreation = (
   databaseAdapter: ReturnType<CommercePortalAuthDatabaseAdapter>,
@@ -369,24 +366,41 @@ const withAtomicSessionCreation = (
           );
         }
 
-        const findMany = transaction.findMany<Pick<SessionHookData, 'createdAt' | 'expiresAt'>>;
-        const activeSessions = yield* Effect.tryPromise({
+        const now = DateTime.nowUnsafe();
+        const findMany = transaction.findMany<Pick<SessionHookData, 'createdAt' | 'expiresAt' | 'id'>>;
+        const unexpiredSessions = yield* Effect.tryPromise({
           catch: databaseFailure,
           try: findMany.bind(transaction, {
             model: 'session',
-            select: ['createdAt', 'expiresAt'],
-            where: [{ field: 'userId', value: userId }],
+            select: ['id', 'createdAt', 'expiresAt'],
+            where: [
+              { field: 'userId', value: userId },
+              { field: 'expiresAt', operator: 'gt', value: DateTime.toDate(now) },
+            ],
           }),
         }).pipe(databaseBridgeTimeoutPolicy);
-        const activeCount = countActiveProviderSessions(activeSessions, DateTime.toEpochMillis(DateTime.nowUnsafe()));
+        const nowMillis = DateTime.toEpochMillis(now);
         const { maxActiveSessions } = COMMERCE_PORTAL_AUTH_POLICY.session.concurrentDevice;
-        if (maxActiveSessions !== null && activeCount >= maxActiveSessions) {
-          return yield* Effect.fail(
-            new APIError('TOO_MANY_REQUESTS', {
-              code: 'CONCURRENT_DEVICE_LIMIT',
-              message: 'The Commerce portal session limit has been reached',
-            }),
+        const oldestFirst = unexpiredSessions
+          .filter((row) => isActiveProviderSession(row, nowMillis))
+          .toSorted(
+            (left, right) =>
+              epochMillis(left.createdAt) - epochMillis(right.createdAt) || left.id.localeCompare(right.id),
           );
+        // The account row is locked, so these are exactly the live sessions; ending the oldest in
+        // this transaction leaves room for the new one, and a failed insert restores them.
+        const ended =
+          maxActiveSessions === null
+            ? []
+            : oldestFirst.slice(0, Math.max(0, oldestFirst.length - maxActiveSessions + 1));
+        if (ended.length > 0) {
+          yield* Effect.tryPromise({
+            catch: databaseFailure,
+            try: transaction.deleteMany.bind(transaction, {
+              model: 'session',
+              where: [{ field: 'id', operator: 'in', value: ended.map((row) => row.id) }],
+            }),
+          }).pipe(databaseBridgeTimeoutPolicy);
         }
 
         const create = transaction.create<T, R>;

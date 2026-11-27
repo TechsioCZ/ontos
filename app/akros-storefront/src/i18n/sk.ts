@@ -1116,6 +1116,8 @@ export const sk: Dictionary = {
       tooManyAttempts: "Príliš veľa pokusov. Skúste to prosím neskôr.",
       invalidInput: "Skontrolujte zadané údaje. Heslo musí mať 12 až 128 znakov.",
       refused: "Účet nemožno prihlásiť ani vytvoriť. Skontrolujte údaje a skúste to znova.",
+      sessionLimit:
+        "Tento účet je prihlásený na príliš veľkom počte zariadení. Odhláste sa prosím na inom zariadení a skúste to znova.",
       unavailable: "Spojenie s účtom je dočasne nedostupné. Skúste to prosím znova.",
       invalidRegistration: "Skontrolujte údaje, súhlas a zhodu hesiel (12 až 128 znakov).",
       missingRegistrationId: "Chýba identifikátor registrácie.",

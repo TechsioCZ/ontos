@@ -1126,6 +1126,8 @@ export const en: Dictionary = {
       invalidInput:
         "Check the details you entered. The password must be 12 to 128 characters long.",
       refused: "We cannot sign you in or create the account. Check your details and try again.",
+      sessionLimit:
+        "This account is signed in on too many devices. Please sign out on another device and try again.",
       unavailable: "The account service is temporarily unavailable. Please try again.",
       invalidRegistration:
         "Check your details, consent and that the passwords match (12 to 128 characters).",

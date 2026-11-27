@@ -103,6 +103,7 @@ export const PortalOutcomeSchema = Schema.Union([
       "email-verified",
       "mfa-expired",
       "mfa-authentication-required",
+      "session-limit",
     ]),
   }),
 ]);

@@ -127,6 +127,7 @@ export const passwordResetToken = (cookie: string | null): string | null => {
 export const accountMessage = (t: Dictionary, status: number, code?: string): string => {
   const messages = t.server.account;
   if (code === "verification_required") return messages.verificationRequired;
+  if (code === "session_limit_reached") return messages.sessionLimit;
   if (status === 401) return messages.wrongCredentials;
   if (status === 429) return messages.tooManyAttempts;
   if (status === 400) return messages.invalidInput;

@@ -1035,7 +1035,7 @@ it.effect('parses isolated configuration and exposes explicit provider policy', 
         expect(configuration.policy.session.inactivityLifetimeSeconds).toBe(28_800);
         expect(configuration.policy.session.identifierRotation.onSignIn).toBe(true);
         expect(configuration.policy.session.identifierRotation.onRefresh).toBe(false);
-        expect(configuration.policy.session.concurrentDevice.overflow).toBe('reject-new');
+        expect(configuration.policy.session.concurrentDevice.overflow).toBe('end-oldest');
       }),
     ),
   ),

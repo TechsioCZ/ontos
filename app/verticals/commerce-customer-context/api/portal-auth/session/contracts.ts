@@ -168,9 +168,10 @@ export type CommercePortalAuthSessionOutcome =
       readonly outcome: 'RATE_LIMITED';
     }
   /**
-   * The account already holds `COMMERCE_PORTAL_AUTH_SESSION_MAX_ACTIVE_SESSIONS` live sessions and
-   * the overflow policy is `reject-new`. This is a distinct outcome from `RATE_LIMITED` because its
-   * remedy is distinct: ending one of the account's other sessions clears it and waiting never does.
+   * The account holds more than `COMMERCE_PORTAL_AUTH_SESSION_MAX_ACTIVE_SESSIONS` live sessions even
+   * after the provider ended its oldest ones (`end-oldest`). This is a distinct outcome from
+   * `RATE_LIMITED` because its remedy is distinct: ending one of the account's other sessions clears
+   * it and waiting never does.
    */
   | {
       readonly outcome: 'SESSION_LIMIT_REACHED';

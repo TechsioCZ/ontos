@@ -151,6 +151,8 @@ const cs = {
     register: "Zaregistrovat se",
     registering: "Registrujeme…",
     rememberMe: "Zapamatovat",
+    sessionLimit:
+      "Tento účet je přihlášený na příliš mnoha zařízeních. Odhlaste se prosím na jiném zařízení a zkuste to znovu.",
     signIn: "Přihlásit se",
     signingIn: "Přihlašujeme…",
     signInInvitation: "Přihlaste se",
@@ -656,6 +658,8 @@ const en: typeof cs = {
     register: "Register",
     registering: "Registering…",
     rememberMe: "Remember me",
+    sessionLimit:
+      "This account is signed in on too many devices. Please sign out on another device and try again.",
     signIn: "Sign in",
     signingIn: "Signing in…",
     signInInvitation: "Sign in",

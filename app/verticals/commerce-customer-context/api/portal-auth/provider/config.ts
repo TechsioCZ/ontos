@@ -81,7 +81,7 @@ export interface CommercePortalAuthPolicyValue {
     readonly absoluteLifetimeSeconds: number;
     readonly concurrentDevice: {
       readonly maxActiveSessions: number | null;
-      readonly overflow: 'reject-new';
+      readonly overflow: 'end-oldest';
     };
     readonly cookieCacheEnabled: boolean;
     readonly expiresInSeconds: number;
@@ -163,13 +163,13 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
     // Better Auth's expiry is the inactivity window; the absolute bound is checked by the
     // authoritative verifier and must not be inferred from this provider setting.
     inactivityLifetimeSeconds: 28_800,
-    // Five active sessions per account is the Commerce Portal v1 device policy. New sign-ins are
-    // rejected at the cap; existing sessions are never silently evicted. The session lifecycle
-    // enforces this value before provider session creation and repeats it in the provider hook so
-    // a Better Auth default cannot widen the policy.
+    // Five active sessions per account is the Commerce Portal v1 device policy. A sign-in at the
+    // cap ends the account's oldest live sessions in the same transaction that creates the new one,
+    // so a customer is never locked out by browsers or devices they no longer use. The lifecycle
+    // still refuses an admission over the cap so a Better Auth default cannot widen the policy.
     concurrentDevice: Object.freeze({
       maxActiveSessions: 5,
-      overflow: 'reject-new',
+      overflow: 'end-oldest',
     }),
     expiresInSeconds: 28_800,
     freshAgeSeconds: 900,

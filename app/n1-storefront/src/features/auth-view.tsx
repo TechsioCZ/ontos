@@ -417,6 +417,7 @@ const outcomeText = (outcome: PortalOutcome, d: Dictionary) => {
     refused: d.auth.refused,
     "registration-progress":
       outcome.state === "registration-progress" ? d.auth.enrollment[outcome.phase] : "",
+    "session-limit": d.auth.sessionLimit,
     unavailable: d.auth.unavailable,
     unconfirmed: d.auth.unconfirmed,
     "verification-required": d.auth.verificationRequired,
@@ -618,7 +619,7 @@ export const AuthContent = ({
   onNavigate?: (() => void) | undefined;
 }) => {
   const { edit, outcome, pending, run, submit, submitting } = controller;
-  const feedbackError = outcome.state === "refused" || outcome.state === "unavailable";
+  const feedbackError = ["refused", "session-limit", "unavailable"].includes(outcome.state);
   const toaster = useToast();
   const codeError = mfaCodeError(outcome, d);
   const mfaId = useId();

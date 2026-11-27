@@ -570,7 +570,7 @@ it.live('renews cookies on repeated explicit refreshes while keeping DB inactivi
   ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );
 
-it.live('admits exactly one concurrent public sign-in at the five-session cap', () =>
+it.live('admits every concurrent public sign-in at the five-session cap by ending the oldest sessions', () =>
   Effect.scoped(
     Effect.gen(function* providerConcurrentSignInProof() {
       const fixture = yield* makeProviderFixture('cap', '198.51.130.');
@@ -631,24 +631,16 @@ it.live('admits exactly one concurrent public sign-in at the five-session cap', 
         Deferred.succeed(releaseLock, null).pipe(Effect.asVoid),
       );
       yield* Fiber.join(subjectLock);
-      const successful = concurrent.filter((response) => response.status === 200).length;
-      const rejected = concurrent.filter((response) => response.status === 403).length;
       expect(concurrent.length).toBe(5);
-      expect(successful).toBe(1);
-      expect(rejected).toBe(4);
-      for (const response of concurrent.filter((candidate) => candidate.status === 403)) {
-        const body = yield* Effect.tryPromise({
-          catch: (cause) => cause,
-          try: () => response.json(),
-        });
-        // The device cap has its own published code: it is a policy refusal whose remedy is ending
-        // another session, never a throttle window the caller can wait out. The five surviving rows
-        // below are the proof that the cap is what refused these four.
-        expect(body).toMatchObject({ code: 'session_limit_reached', status: 403 });
+      for (const response of concurrent) {
+        yield* assertPublicStatus(fixture, response, 200, 'Concurrent sign-in at the session cap');
       }
 
+      // Each sign-in ended the account's oldest live session under the account row lock, so nine
+      // sign-ins leave exactly the cap alive and the first setup browser is signed out.
       const after = yield* readActiveRows(fixture.database, firstSession.value.userId);
       expect(after.length).toBe(5);
+      expect(Option.isNone(yield* readProviderSession(fixture.auth, firstBrowserHeaders))).toBe(true);
     }),
   ).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
 );

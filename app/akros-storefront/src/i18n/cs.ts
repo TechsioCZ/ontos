@@ -1113,6 +1113,8 @@ export const cs = {
       tooManyAttempts: "Příliš mnoho pokusů. Zkuste to prosím později.",
       invalidInput: "Zkontrolujte zadané údaje. Heslo musí mít 12 až 128 znaků.",
       refused: "Účet nelze přihlásit nebo vytvořit. Zkontrolujte údaje a zkuste to znovu.",
+      sessionLimit:
+        "Tento účet je přihlášený na příliš mnoha zařízeních. Odhlaste se prosím na jiném zařízení a zkuste to znovu.",
       unavailable: "Spojení s účtem je dočasně nedostupné. Zkuste to prosím znovu.",
       invalidRegistration: "Zkontrolujte údaje, souhlas a shodu hesel (12 až 128 znaků).",
       missingRegistrationId: "Chybí identifikátor registrace.",

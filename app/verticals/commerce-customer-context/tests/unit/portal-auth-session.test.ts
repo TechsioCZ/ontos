@@ -231,7 +231,7 @@ it('keeps the Commerce policy explicit and provider signup outside the public se
   expect(COMMERCE_PORTAL_AUTH_POLICY.policyVersion).toBe('commerce-portal-auth-policy.v1');
   expect(COMMERCE_PORTAL_AUTH_POLICY.session.concurrentDevice).toEqual({
     maxActiveSessions: 5,
-    overflow: 'reject-new',
+    overflow: 'end-oldest',
   });
   expect(COMMERCE_PORTAL_AUTH_POLICY.session.absoluteLifetimeSeconds).toBe(86_400);
 });

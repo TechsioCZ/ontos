@@ -37,11 +37,6 @@ const DEFINITIVE_AUTHENTICATION_FAILURE_CODES = new Set([
 ]);
 const VERIFICATION_REQUIRED_CODES = new Set(['EMAIL_NOT_VERIFIED']);
 const RATE_LIMIT_CODES = new Set(['ACCOUNT_TEMPORARILY_LOCKED', 'RATE_LIMITED', 'TOO_MANY_REQUESTS']);
-/**
- * The provider's own session hook repeats the deployment's concurrent-device cap. Its refusal is
- * the device cap, not a throttle, so it keeps the outcome whose remedy is ending another session.
- */
-const SESSION_LIMIT_CODES = new Set(['CONCURRENT_DEVICE_LIMIT']);
 
 const providerUnavailable = (cause: unknown): CommercePortalAuthProviderUnavailable =>
   withCause(
@@ -62,9 +57,6 @@ const classifyProviderError = (cause: unknown): CommercePortalAuthProviderSignIn
   }
   if (code !== undefined && VERIFICATION_REQUIRED_CODES.has(code)) {
     return { outcome: 'VERIFICATION_REQUIRED' };
-  }
-  if (code !== undefined && SESSION_LIMIT_CODES.has(code)) {
-    return { outcome: 'SESSION_LIMIT_REACHED' };
   }
   if ((code !== undefined && RATE_LIMIT_CODES.has(code)) || cause.status === 'TOO_MANY_REQUESTS') {
     return { outcome: 'RATE_LIMITED' };

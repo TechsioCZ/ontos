@@ -413,6 +413,16 @@ type PortalOwnerFailure = Effect.Error<
   | ReturnType<typeof currentPortalServer>
   | ReturnType<typeof logoutPortalServer>
 >;
+/** A refused session names its remedy: confirm the e-mail, or sign out on another device. */
+const sessionForbiddenState = (code: string) => {
+  if (code === "verification_required") {
+    return "verification-required" as const;
+  }
+  if (code === "session_limit_reached") {
+    return "session-limit" as const;
+  }
+  return "refused" as const;
+};
 export const portalFailureOutcome = (error: PortalOwnerFailure): PortalOutcome =>
   Match.value(error).pipe(
     Match.tags({
@@ -435,10 +445,7 @@ export const portalFailureOutcome = (error: PortalOwnerFailure): PortalOutcome =
       }),
       CommercePortalAuthSessionAuthenticationProblem: () => ({ state: "credentials" as const }),
       CommercePortalAuthSessionForbiddenProblem: (problem) => ({
-        state:
-          problem.code === "verification_required"
-            ? ("verification-required" as const)
-            : ("refused" as const),
+        state: sessionForbiddenState(problem.code),
       }),
       CommercePortalAuthSessionInvalidProblem: () => ({ state: "invalid" as const }),
       CommercePortalAuthSessionRateLimitedProblem: (problem) => ({
