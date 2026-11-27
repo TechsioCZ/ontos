@@ -304,6 +304,11 @@ export const ProductSchema = Schema.Struct({
   catalogProductId: Schema.optionalKey(Schema.String),
   /** The main Catalog variant of a product imported with exactly one variant (no merchandise variants). */
   catalogVariantId: Schema.optionalKey(Schema.String),
+  /**
+   * Server-owned: when staff unlinked this shop product from Symmy ("Odpojit od Symmy"). The Symmy copy does not link
+   * it by its SKU again until the ERP changes the source product after this moment, or staff allow the link again.
+   */
+  symmyLinkRefusedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   ...ProductMetadataSchema.fields,
   active: Schema.Boolean,
   category: TextSchema(120),

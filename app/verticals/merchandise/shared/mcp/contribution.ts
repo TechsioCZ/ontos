@@ -82,6 +82,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     // The Symmy connector's source upsert: integration-only, never an agent tool.
     UpsertSourceProduct: 'hidden',
     RestoreProduct: 'hidden',
+    SetSymmyLink: 'hidden',
     SetMarketProductOffers: {
       agentProposalOnly: true,
       description: {

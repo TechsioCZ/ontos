@@ -372,6 +372,19 @@ const ApplyRestoreProductCommandSchema = Schema.TaggedStruct('RestoreProduct', {
   id: ProductIdSchema,
 });
 
+/**
+ * Staff only, from the product editor. UNLINK ("Odpojit od Symmy") undoes the SKU link of a shop product to a Symmy
+ * product: it removes the mark, the ERP code and the Catalog product and variant ids, changes nothing else (price,
+ * stock, texts, pictures, publication stay), and records the refusal (`symmyLinkRefusedAt`) so the Symmy copy does not
+ * link the product again until the ERP changes its source product. ALLOW drops the refusal: the next copy links again.
+ */
+const ApplySetSymmyLinkCommandSchema = Schema.TaggedStruct('SetSymmyLink', {
+  action: Schema.Literals(['UNLINK', 'ALLOW']),
+  /** The product's `updatedAt` the operator saw; as for ArchiveProduct. */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  id: ProductIdSchema,
+});
+
 /** A product edit naming the product version (`expectedUpdatedAt`) it was made against. */
 export const VersionedProductEditCommandSchema = Schema.Union([
   Schema.Struct({ ...ApplyUpdateProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
@@ -379,6 +392,7 @@ export const VersionedProductEditCommandSchema = Schema.Union([
   Schema.Struct({ ...ApplyChangeProductImagesCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
   Schema.Struct({ ...ApplyArchiveProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
   Schema.Struct({ ...ApplyRestoreProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplySetSymmyLinkCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
 ]);
 
 /** Deletes a storefront category that has no subcategory and no live (not archived) product. */
@@ -472,6 +486,11 @@ export const ApplyUpsertSourceProductCommandSchema = Schema.TaggedStruct('Upsert
   categoryName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(20_000))),
   imageUrl: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  /**
+   * When the ERP last changed the source product (main Catalog `updatedAt`). A shop product staff unlinked from Symmy
+   * is linked again only by a source product changed after the unlink; without it the unlink stays.
+   */
+  sourceUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   variants: Schema.Array(
     Schema.Struct({
       catalogVariantId: SourceIdTextSchema,
@@ -486,7 +505,9 @@ export const ApplyUpsertSourceProductCommandSchema = Schema.TaggedStruct('Upsert
 export const SourceUpsertResultSchema = Schema.Struct({
   outcome: Schema.Literals(['CREATED', 'UPDATED', 'UNCHANGED', 'REFUSED']),
   productId: Schema.String,
-  reason: Schema.optionalKey(Schema.Literals(['CODE_HELD_BY_NATIVE_PRODUCT', 'SKU_HELD_BY_NATIVE_PRODUCT'])),
+  reason: Schema.optionalKey(
+    Schema.Literals(['CODE_HELD_BY_NATIVE_PRODUCT', 'SKU_HELD_BY_NATIVE_PRODUCT', 'UNLINKED_BY_STAFF']),
+  ),
 });
 export type SourceUpsertResult = typeof SourceUpsertResultSchema.Type;
 
@@ -510,6 +531,7 @@ export const MerchandiseCommandSchema = Schema.Union([
   ApplyCreateOrderCommandSchema,
   ApplyArchiveProductCommandSchema,
   ApplyRestoreProductCommandSchema,
+  ApplySetSymmyLinkCommandSchema,
   /**
    * AKROS administrators only: replaces this company's catalog, stock and orders with the predictable demo baseline
    * (the same state `demo:seed:akros --reset` writes). Scoped to the caller's tenant and legal entity.
@@ -653,6 +675,7 @@ export const ManageCatalogPayloadSchema = Schema.Struct({
     ApplyDeleteCategoryCommandSchema,
     ApplyArchiveProductCommandSchema,
     ApplyRestoreProductCommandSchema,
+    ApplySetSymmyLinkCommandSchema,
     ApplyCreateOrderCommandSchema,
     ApplyEditOrderCommandSchema,
     ApplyLinkOrderCustomerCommandSchema,
