@@ -13,7 +13,10 @@ import {
   SourceProcessingEligibilityPolicyProblemSchema,
   SourceProcessingEligibilityUnavailableProblemSchema,
 } from '@app/privacy-contracts/source-processing-eligibility';
-import { sourceProcessingEligibilityRead } from '../src/api/source-processing-eligibility.read.ts';
+import {
+  sourceProcessingEligibilityRead,
+  sourceProcessingEligibilitySetRead,
+} from '../src/api/source-processing-eligibility.read.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 
 const problems = makeGovernedReadProblems({
@@ -31,12 +34,21 @@ export const sourceProcessingEligibilityReadApiLive = HttpApiBuilder.group(
   privacyApi,
   'sourceProcessingEligibility',
   (handlers) =>
-    handlers.handle(
-      'execute',
-      makeGovernedReadHttpHandler({
-        authenticatePrincipal: authenticateOperationPrincipal,
-        problems,
-        registration: sourceProcessingEligibilityRead,
-      }),
-    ),
+    handlers
+      .handle(
+        'execute',
+        makeGovernedReadHttpHandler({
+          authenticatePrincipal: authenticateOperationPrincipal,
+          problems,
+          registration: sourceProcessingEligibilityRead,
+        }),
+      )
+      .handle(
+        'executeSet',
+        makeGovernedReadHttpHandler({
+          authenticatePrincipal: authenticateOperationPrincipal,
+          problems,
+          registration: sourceProcessingEligibilitySetRead,
+        }),
+      ),
 );

@@ -83,7 +83,9 @@ beforeAll(() => {
         throw new Error("Expected a storefront catalog query");
       }
       // The catalogue revision head read (no market, no products) is not a catalogue read.
-      if (query.mode !== "categories") reads.push(query);
+      if (query.mode !== "categories") {
+        reads.push(query);
+      }
       return window.Response.json(
         {
           categories: [category],

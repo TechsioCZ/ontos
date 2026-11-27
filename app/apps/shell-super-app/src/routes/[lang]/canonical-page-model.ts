@@ -57,6 +57,8 @@ export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
   ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
   ['/provoz/ukoly', '/ukoly'],
   ['/profil', '/profile'],
+  // The former ERP products screen: Symmy products are ordinary rows of "Produkty", in every company.
+  ['/katalog/produkty', '/provoz/produkty'],
 ]);
 
 const redirectTo = (href: string): never => throwTanstackRedirect(href);

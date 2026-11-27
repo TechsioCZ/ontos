@@ -7,7 +7,8 @@ import {
   passwordResetToken,
   appendPortalCookies,
   portalRequest,
-  readAccount,
+  portalSetCookies,
+  readAccountState,
   registrationInput,
 } from "@/ontos/account";
 import type { AccountSubmissionResponse, PortalRequestOptions } from "@/ontos/account";
@@ -105,15 +106,76 @@ async function passwordResetSubmission(
   return Response.json({ outcome: "PASSWORD_RESET_COMPLETED" }, { headers: clearCookie });
 }
 
+/**
+ * Sign-in is only possible with a verified e-mail. A registration parked on that verification waits for a caller
+ * (the hosted worker does not rediscover it), so the sign-in itself wakes it here on the server, with the session it
+ * just created; the worker then finishes it without anything more from the person or the browser.
+ */
+async function wakeVerifiedEnrollment(
+  origin: string,
+  setCookies: readonly string[],
+  options: PortalRequestOptions,
+): Promise<void> {
+  const cookie = portalSetCookies(setCookies)
+    .map((value) => value.split(";")[0])
+    .join("; ");
+  const current = await portalRequest(
+    "/enrollment/current",
+    origin,
+    cookie,
+    undefined,
+    undefined,
+    options,
+  );
+  // 404: an account without a registration of its own here.
+  if (current.status === 404) return;
+  if (!current.ok) throw new Error(`current enrollment HTTP ${current.status}`);
+  const { state } = (await current.json()) as { state?: string };
+  if (state !== "VERIFICATION_REQUIRED") return;
+  const resumed = await portalRequest(
+    "/enrollment/current/resume",
+    origin,
+    cookie,
+    {},
+    undefined,
+    options,
+  );
+  if (!resumed.ok) throw new Error(`enrollment resume HTTP ${resumed.status}`);
+}
+
 export async function GET(request: Request) {
   const responseHeaders = new Headers(noStore);
   const lifetime = Effect.runSync(createOperation({ signal: request.signal }));
   try {
-    const account = await readAccount(requestOrigin(request), request.headers.get("cookie"), {
-      operation: lifetime,
-      responseHeaders,
-    });
-    return Response.json({ account }, { headers: responseHeaders });
+    const origin = requestOrigin(request);
+    const cookie = request.headers.get("cookie");
+    const options = { operation: lifetime, responseHeaders };
+    const current = await readAccountState(origin, cookie, options);
+    if (current.state !== "enrollment") return Response.json(current, { headers: responseHeaders });
+    // Signed in, not (yet) a customer: the registration's real state, so the shop can offer to finish it.
+    const progress = await portalRequest(
+      "/enrollment/current",
+      origin,
+      cookie,
+      undefined,
+      undefined,
+      options,
+    );
+    if (!progress.ok && progress.status !== 404) throw new Error("Enrollment progress unavailable");
+    const enrollment = progress.ok
+      ? ((await progress.json()) as { state?: unknown; revision?: unknown })
+      : undefined;
+    return Response.json(
+      {
+        ...current,
+        // Never forward Attempt/Party/provider identifiers.
+        enrollment:
+          typeof enrollment?.state === "string" && Number.isSafeInteger(enrollment.revision)
+            ? { state: enrollment.state, revision: enrollment.revision }
+            : null,
+      },
+      { headers: responseHeaders },
+    );
   } catch (error) {
     return problem(error, accountMessage(requestDictionary(request), 503), responseHeaders);
   } finally {
@@ -233,6 +295,16 @@ export async function POST(request: Request) {
       throw new Error("Enrollment start was not acknowledged");
     if (data.operation === "login" || data.operation === "register")
       appendPortalCookies(responseHeaders, response.headers.getSetCookie());
+    // The person is signed in already: a failed wake is logged, and /dokonceni-registrace (where
+    // sign-in lands) resumes the registration again.
+    if (data.operation === "login")
+      await wakeVerifiedEnrollment(origin, response.headers.getSetCookie(), {
+        operation: lifetime,
+        responseHeaders,
+      }).catch((error: unknown) => {
+        lifetime.check();
+        console.error(`[ontos] verified enrollment wake after sign-in failed: ${String(error)}`);
+      });
     return Response.json(
       {
         // The remaining governed owner transitions continue durably; this is not customer completion.

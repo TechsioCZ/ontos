@@ -176,6 +176,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     // Search label projection for the Shell's Search provider, not an independently advertised agent operation.
     'search-labels': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
+    'source-admission-set': OntosMcpHidden,
+    // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'source-counterparty-admission': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'source-party-search': OntosMcpHidden,

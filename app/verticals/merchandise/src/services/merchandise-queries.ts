@@ -452,6 +452,7 @@ const staffProductFilters = (view: RecordsView, storefront: boolean, scope: Stor
   view.productId === undefined ? undefined : eq(products.id, view.productId),
   view.productIds === undefined ? undefined : idsFilter(products.id, view.productIds),
   view.taggedProductIds === undefined ? undefined : idsFilter(products.id, view.taggedProductIds),
+  view.importedVia === undefined ? undefined : sql`${products.document}->>'importedVia' = 'symmy'`,
   view.slug === undefined ? undefined : eq(products.slug, view.slug),
   view.categoryId === undefined
     ? undefined
@@ -1685,6 +1686,7 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
             lowStockCount: sql<number>`count(*) filter (where ${products.lowStock})::int`,
             productCount: sql<number>`count(*)::int`,
             stockValueMinor: sql`coalesce(sum(${products.stockValueMinor}), 0)::bigint`.mapWith(Number),
+            symmyProductCount: sql<number>`count(*) filter (where ${products.document}->>'importedVia' = 'symmy')::int`,
           })
           .from(products)
           .where(and(whereScope(products, scope), eq(products.archived, false))),
@@ -1704,11 +1706,14 @@ export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* i
     { concurrency: 1 },
   );
   return {
-    lowStockCount: catalog?.lowStockCount ?? 0,
-    openOrderValueMinor: sales?.openOrderValueMinor ?? 0,
-    orderCount: sales?.orderCount ?? 0,
-    productCount: catalog?.productCount ?? 0,
-    stockValueMinor: catalog?.stockValueMinor ?? 0,
+    indicators: {
+      lowStockCount: catalog?.lowStockCount ?? 0,
+      openOrderValueMinor: sales?.openOrderValueMinor ?? 0,
+      orderCount: sales?.orderCount ?? 0,
+      productCount: catalog?.productCount ?? 0,
+      stockValueMinor: catalog?.stockValueMinor ?? 0,
+    },
+    symmyProductCount: catalog?.symmyProductCount ?? 0,
   };
 });
 

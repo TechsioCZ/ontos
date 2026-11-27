@@ -1,35 +1,25 @@
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 
-import { ErpProductDetail } from "@/components/erp-product-detail";
-import { StorefrontShell } from "@/components/storefront-shell";
-import { erpCopy } from "@/lib/erp-catalogue";
-import { readErpProduct } from "@/ontos/erp-catalogue-server";
-import { getErpOffer } from "@/ontos/erp-config";
+import { marketHref } from "@/ontos/active-market";
+import { readProducts } from "@/ontos/catalog-server";
 
 interface ErpProductPageProps {
   params: Promise<{ productId: string }>;
 }
 
-const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
-
-const productOf = async (productId: string) =>
-  getErpOffer() === undefined || !UUID.test(productId)
-    ? undefined
-    : await readErpProduct(productId);
-
-export async function generateMetadata({ params }: ErpProductPageProps): Promise<Metadata> {
-  const product = await productOf((await params).productId);
-  return { title: product?.name ?? erpCopy.title };
-}
-
-/** One imported product: its variants with SKU, options, ERP price and ERP stock. */
-export default async function ErpProductPage({ params }: ErpProductPageProps) {
-  const product = await productOf((await params).productId);
-  if (product === undefined) notFound();
-  return (
-    <StorefrontShell>
-      <ErpProductDetail product={product} />
-    </StorefrontShell>
-  );
+/**
+ * An old „Novinky z ERP“ link names a main Catalog product. Its Symmy import is the merchandise product
+ * `symmy-<Catalog product id>`: the link opens that product's normal page, or the shop when it is not sold.
+ */
+export default async function ErpProductPage({ params }: ErpProductPageProps): Promise<never> {
+  const productId = decodeURIComponent((await params).productId).trim();
+  const page =
+    productId === ""
+      ? undefined
+      : await readProducts(
+          { productIds: [`symmy-${productId}`], page: 1, pageSize: 1 },
+          "card",
+        ).catch(() => undefined);
+  const slug = page?.products[0]?.slug;
+  redirect(await marketHref(slug === undefined ? "/" : `/produkt/${encodeURIComponent(slug)}`));
 }

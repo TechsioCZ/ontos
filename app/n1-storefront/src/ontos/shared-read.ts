@@ -1,61 +1,110 @@
 import "server-only";
-import { Effect } from "effect";
-import { createOperation } from "@ontos/storefront-runtime";
+import { Option, Schema } from "effect";
+import { createOperation, OperationError } from "@ontos/storefront-runtime";
 import type { Operation, OperationOptions } from "@ontos/storefront-runtime";
+import { storefrontRuntime } from "./runtime";
 
 // Process-wide public owner reads (the same for every shopper of a market) shared across requests for a short time.
 // Each load runs under its own operation, so one shopper's aborted request never rejects the read for other waiters.
 // A rejected read, or a settled value `keep` refuses (an unavailable answer), is evicted at once and never served again.
-interface Entry {
+interface Entry<A> {
   at: number;
-  generation: number | undefined;
-  value: Promise<unknown>;
   done: boolean;
+  generation: number | undefined;
   refreshing: boolean;
-  /** The settled answer of the generation this entry's first read replaces, for readers with `waitMs`. */
-  replaced: { at: number; value: Promise<unknown> } | undefined;
+  replaced: { at: number; value: Promise<A> } | null;
+  value: Promise<A>;
 }
-const entries = new Map<string, Entry>();
-// Full product records are large: keep the newest entries only, least recently used first out.
+// One process-wide LRU budget across typed read families.
+const retained = new Map<object, () => void>();
 const MAX_ENTRIES = 200;
-/** Older stale values are not served; they reload with a blocking read. */
 export const MAX_STALE_MS = 10 * 60_000;
-const put = (key: string, entry: Entry) => {
-  entries.delete(key);
-  entries.set(key, entry);
-  if (entries.size > MAX_ENTRIES) entries.delete(entries.keys().next().value!);
-};
 
-const detached = <A>(load: (operation: Operation) => Promise<A>): Promise<A> => {
-  const operation = Effect.runSync(createOperation());
-  return load(operation).finally(() => {
+const detached = async <A>(load: (operation: Operation) => Promise<A>): Promise<A> => {
+  const operation = storefrontRuntime.runSync(createOperation());
+  try {
+    return await load(operation);
+  } finally {
     operation.dispose();
-  });
+  }
 };
 
-/** The caller stops waiting when its own request ends; the shared read itself goes on for other waiters. */
-export const joined = <A>(
+/** Cancel this caller's wait; the owner operation remains alive for other readers. */
+export const joined = async <A>(
   value: Promise<A>,
   { operation, signal }: OperationOptions,
 ): Promise<A> => {
   const signals = [...(signal ? [signal] : []), ...(operation ? [operation.signal] : [])];
-  if (signals.length === 0) return value;
+  if (signals.length === 0) {
+    return await value;
+  }
   const stop = AbortSignal.any(signals);
-  return new Promise<A>((resolve, reject) => {
-    const abort = () => reject(stop.reason);
-    if (stop.aborted) return abort();
-    stop.addEventListener("abort", abort, { once: true });
-    value.then(
-      (result) => {
-        stop.removeEventListener("abort", abort);
-        resolve(result);
-      },
-      (error: unknown) => {
-        stop.removeEventListener("abort", abort);
-        reject(error);
-      },
+  const cancelled = Promise.withResolvers<never>();
+  const abort = () => {
+    const reason = Schema.decodeUnknownOption(Schema.instanceOf(Error))(stop.reason).pipe(
+      Option.getOrElse(() => new OperationError("cancelled")),
     );
-  });
+    cancelled.reject(reason);
+  };
+  stop.addEventListener("abort", abort, { once: true });
+  if (stop.aborted) {
+    abort();
+  }
+  try {
+    const result = await Promise.race([value, cancelled.promise]);
+    // A fulfilled cached value can win race's microtask ordering even when abort already fired.
+    if (stop.aborted) {
+      return await cancelled.promise;
+    }
+    return result;
+  } finally {
+    stop.removeEventListener("abort", abort);
+  }
+};
+
+const replacedAnswer = <A>(found: Entry<A> | undefined, held: Entry<A> | undefined) => {
+  if (found === undefined || found === held) {
+    return null;
+  }
+  return found.done ? { at: found.at, value: found.value } : found.replaced;
+};
+
+/** The current answer, or the settled previous generation after the caller's wait budget. */
+const within = async <A>(
+  entry: Entry<A>,
+  waitMs: number | undefined,
+  keep: (value: A) => boolean,
+): Promise<A> => {
+  const { replaced } = entry;
+  if (
+    entry.done ||
+    waitMs === undefined ||
+    replaced === null ||
+    Date.now() - replaced.at >= MAX_STALE_MS
+  ) {
+    return await entry.value;
+  }
+  const current = async () => {
+    try {
+      const value = await entry.value;
+      return keep(value) ? value : await replaced.value;
+    } catch {
+      return await replaced.value;
+    }
+  };
+  const elapsed = Promise.withResolvers<null>();
+  const timer = setTimeout(() => {
+    elapsed.resolve(null);
+  }, waitMs);
+  const fallback = async () => {
+    await elapsed.promise;
+    return await replaced.value;
+  };
+  try {
+    return await Promise.race([current(), fallback()]);
+  } finally {
+    clearTimeout(timer);
+  }
 };
 
 /**
@@ -64,107 +113,105 @@ export const joined = <A>(
  * new generation's read has not answered within `waitMs` (as an owner outage would still serve it); otherwise the read
  * waits for its own load.
  */
-export function sharedRead<A>(
-  key: string,
-  ttlMs: number,
-  load: (operation: Operation) => Promise<A>,
-  {
-    caller = {},
-    generation,
-    keep = () => true,
-    stale = false,
-    waitMs,
-  }: {
-    caller?: OperationOptions;
-    generation?: number;
-    keep?: (value: A) => boolean;
-    stale?: boolean;
-    waitMs?: number;
-  } = {},
-): Promise<A> {
-  const found = entries.get(key);
-  const held = found?.generation === generation ? found : undefined;
-  if (held !== undefined) put(key, held);
-  if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done))
-    return joined(within(held, waitMs, keep), caller);
-  if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {
-    if (!held.refreshing) {
-      held.refreshing = true;
-      detached(load).then(
-        (value) => {
-          // Replaced by another generation's read (or evicted) meanwhile: this refresh no longer belongs here.
-          if (entries.get(key) !== held) return;
-          if (!keep(value)) {
-            held.refreshing = false;
-            return;
-          }
-          put(key, {
-            at: Date.now(),
-            done: true,
-            generation,
-            refreshing: false,
-            replaced: undefined,
-            value: Promise.resolve(value),
-          });
-        },
-        () => {
-          held.refreshing = false;
-        },
-      );
+export const createSharedRead = <A>() => {
+  const entries = new Map<string, Entry<A>>();
+  const remove = (key: string, entry: Entry<A>) => {
+    if (entries.get(key) === entry) {
+      entries.delete(key);
     }
-    return joined(held.value as Promise<A>, caller);
-  }
-  const value = detached(load);
-  // A new generation's first read keeps the settled answer it replaces for readers that cannot wait.
-  const replaced =
-    found === undefined || found === held
-      ? undefined
-      : found.done
-        ? { at: found.at, value: found.value }
-        : found.replaced;
-  const entry: Entry = {
-    at: Date.now(),
-    done: false,
-    generation,
-    refreshing: false,
-    replaced,
-    value,
+    retained.delete(entry);
   };
-  put(key, entry);
-  value.then(
-    (result) => {
-      if (keep(result)) entry.done = true;
-      else if (entries.get(key) === entry) entries.delete(key);
-    },
-    () => {
-      if (entries.get(key) === entry) entries.delete(key);
-    },
-  );
-  return joined(within(entry, waitMs, keep), caller);
-}
-
-/** The entry's read, or after `waitMs` (or when it fails or `keep` refuses it) the answer of the generation it replaces. */
-function within<A>(
-  entry: Entry,
-  waitMs: number | undefined,
-  keep: (value: A) => boolean,
-): Promise<A> {
-  const { replaced } = entry;
-  if (
-    entry.done ||
-    waitMs === undefined ||
-    replaced === undefined ||
-    Date.now() - replaced.at >= MAX_STALE_MS
-  )
-    return entry.value as Promise<A>;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([
-    (entry.value as Promise<A>).then(
-      (value) => (keep(value) ? value : replaced.value),
-      () => replaced.value,
-    ),
-    new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, waitMs);
-    }).then(() => replaced.value),
-  ]).finally(() => clearTimeout(timer)) as Promise<A>;
-}
+  const put = (key: string, entry: Entry<A>) => {
+    const previous = entries.get(key);
+    if (previous !== undefined) {
+      retained.delete(previous);
+    }
+    entries.set(key, entry);
+    retained.set(entry, () => remove(key, entry));
+    if (retained.size > MAX_ENTRIES) {
+      retained.values().next().value?.();
+    }
+  };
+  const refresh = async (
+    key: string,
+    held: Entry<A>,
+    load: (operation: Operation) => Promise<A>,
+    keep: (value: A) => boolean,
+  ) => {
+    held.refreshing = true;
+    try {
+      const value = await detached(load);
+      if (entries.get(key) !== held || !keep(value)) {
+        return;
+      }
+      put(key, {
+        at: Date.now(),
+        done: true,
+        generation: held.generation,
+        refreshing: false,
+        replaced: null,
+        value: Promise.resolve(value),
+      });
+    } catch {
+      // Retain the last kept answer during a temporary owner outage.
+    } finally {
+      held.refreshing = false;
+    }
+  };
+  const observe = async (key: string, entry: Entry<A>, keep: (value: A) => boolean) => {
+    try {
+      const result = await entry.value;
+      if (keep(result)) {
+        entry.done = true;
+      } else {
+        remove(key, entry);
+      }
+    } catch {
+      remove(key, entry);
+    }
+  };
+  return async (
+    key: string,
+    ttlMs: number,
+    load: (operation: Operation) => Promise<A>,
+    {
+      caller = {},
+      generation,
+      keep = () => true,
+      stale = false,
+      waitMs,
+    }: {
+      caller?: OperationOptions;
+      generation?: number;
+      keep?: (value: A) => boolean;
+      stale?: boolean;
+      waitMs?: number;
+    } = {},
+  ): Promise<A> => {
+    const found = entries.get(key);
+    const held = found?.generation === generation ? found : undefined;
+    if (held !== undefined) {
+      put(key, held);
+    }
+    if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done)) {
+      return await joined(within(held, waitMs, keep), caller);
+    }
+    if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {
+      if (!held.refreshing) {
+        void refresh(key, held, load, keep);
+      }
+      return await joined(held.value, caller);
+    }
+    const entry: Entry<A> = {
+      at: Date.now(),
+      done: false,
+      generation,
+      refreshing: false,
+      replaced: replacedAnswer(found, held),
+      value: detached(load),
+    };
+    put(key, entry);
+    void observe(key, entry, keep);
+    return await joined(within(entry, waitMs, keep), caller);
+  };
+};

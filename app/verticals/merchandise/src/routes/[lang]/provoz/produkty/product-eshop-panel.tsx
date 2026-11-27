@@ -17,6 +17,7 @@ import { ProductImageGallery } from './product-image-gallery.tsx';
 import type { StageImage } from './product-image-gallery.tsx';
 import type { GalleryDraftOptions } from './product-image-gallery-draft.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { SymmyLinkSection } from './symmy-link-section.tsx';
 import { productVersionOf } from './products-api.ts';
 
 export interface EshopPanelProps extends PanelProps {
@@ -113,6 +114,9 @@ export const EshopPanel = (props: EshopPanelProps) => {
           )}
         </div>
       </SectionCard>
+      {canWrite && (
+        <SymmyLinkSection onCommitted={onCommitted} onReload={onReload} product={product} revision={revision} />
+      )}
       {canWrite && product.demoArchive === undefined && (
         <ArchiveSection
           onArchived={onArchived}

@@ -62,8 +62,8 @@ just to retry an unfinished request.
 
 1. \`POST /products/batch\` with one product. The answer is \`202\` with a \`jobId\`.
 2. \`GET /jobs/{id}\` until \`status\` starts with \`completed\`. A job can read \`indeterminate\` for a few seconds first.
-3. Look at the result: \`GET /admin/products\`, or the shop page
-   [ontos-stage-akros.web-revolution.cz/cs/novinky-z-erp](https://ontos-stage-akros.web-revolution.cz/cs/novinky-z-erp).
+3. Look at the result: \`GET /admin/products\`, or search the product's name or code in the shop
+   [ontos-stage-akros.web-revolution.cz](https://ontos-stage-akros.web-revolution.cz/cs/vyhledavani).
 4. Send stock with \`POST /inventory/stock/batch\` and a new price by sending the product again.
 
 ## 3. Reading a result
@@ -103,7 +103,8 @@ Every refusal is \`application/problem+json\` with \`title\`, \`status\` and \`d
 
 New ERP SKUs do not need a manual per-SKU price or stock grant. The enrolled source policy still controls the
 company, warehouse, unit and commercial dimensions, without a preseeded SKU allowlist.
-The two product models are separate; sending an engineered Catalog product does not create its native Merchandise copy.
+Products, prices and stock you send through Symmy appear as ordinary products in OntOS "Produkty" and on the shop,
+marked as imported through Symmy. You do not need to send them a second time.
 
 For native storefront writes, read the current catalog revision with \`GET /catalog/revision\` first.
 Copy its \`revision\` into the write's \`expectedRevision\`, then use the returned \`revision\` for your next write.
@@ -116,6 +117,8 @@ Create categories before products that name their \`categoryCode\`. Use the prod
 \`POST /customers/batch\` imports people or organizations through Party Registry and Commerce Customer Context.
 \`POST /customer-groups/{code}/customers/batch\` assigns previously imported ERP \`customerId\` values to one group.
 Read customer results with \`GET /admin/customers\`. Personal data still requires the source's real Privacy authority.
+A customer whose Party is archived or is no longer a current customer of the company is left out of its page, so a
+page can hold fewer than \`limit\` customers; \`count\` still counts it. Page with \`offset += limit\` until \`offset >= count\`.
 
 \`GET /orders\` and \`GET /orders/{id}\` export existing orders of the credential's selected company.
 They do not create an invoice, push an order into ABRA, or confirm an ERP import.
@@ -469,7 +472,7 @@ After the job completes, read the list's \`priceGroupRef\` from \`GET /price-lis
     tag: priceListsTag,
   },
   productsBatch: {
-    description: `One ERP item is one product with one variant. Prices, stock and the item number belong to the variant.
+    description: `One ERP item is one product with one or more variants. Prices, stock and the item number belong to the variant.
 
 - \`identifier\`: your ERP id of the product (\`erpId\`) and of the variant (\`variantId\`). They never change.
 - \`name\`: required. It is written when the product is created; send the same name on every later request.
@@ -479,6 +482,32 @@ After the job completes, read the list's \`priceGroupRef\` from \`GET /price-lis
 
 **To change** texts, the item number or the price, send the product again with the same identifiers and a new
 \`idempotency-key\`.
+
+**\`lifecycle\`** (optional) says whether the product is sold. You may send it on every sync: a value the product
+already has changes nothing.
+
+- Left out, or \`DRAFT\`: a new product is created as a hidden draft. It is not listed or sold in the shops. An
+  existing product keeps its current state: \`DRAFT\` never turns an active product back into a draft and never takes
+  it off sale. Use \`RETIRED\` for that.
+- \`ACTIVE\`: a new product is prepared for sale and activated, and the shops sell it once it has a price. The job shows
+  the preparation as the \`readiness-*\` parts. For a product that is already active nothing changes: those parts read
+  \`accepted_no_change\`, and the price, texts and stock are written as usual.
+- \`RETIRED\`: the product is retired. A shop product OntOS created from your import is archived and leaves the
+  shops. A shop product that only shares the item number (SKU) with it stays on sale but no longer follows your price
+  and stock. Sending \`RETIRED\` again changes nothing (\`accepted_no_change\`).
+- \`ACTIVE\` does not bring back a retired product. Its \`readiness-activate\` part reads \`conflict\`, and the parts
+  that wait for it, the price among them, read \`unsupported\` (\`missing_context\`). Staff restore a retired product
+  in OntOS. After that, send it again.
+
+A product with several variants (each with its own \`variantId\`, item number, prices and Czech \`localized[].name\`,
+which the shops show as the variant's name beside its item number) and \`ACTIVE\` goes on sale in the shops with every
+priced variant by itself, exactly like a product with one variant. Catalog keeps one active variant per parameter
+combination, so \`GET /admin/products\` shows the product and its first variant \`ACTIVE\` and the other variants
+\`WORK_IN_PROGRESS\` until OntOS staff give the product a type with a variant parameter.
+
+A variant's \`lifecycle\`: leave it out or send \`WORK_IN_PROGRESS\`. A product's first variant is activated and retired
+together with the product. \`ACTIVE\` or \`RETIRED\` on a variant is not written: the item reports it as an
+unsupported part and ends \`partial\`.
 
 **Limit:** 16 items per request. A product counts as one, its variant as one more when it carries texts or an item
 number, and each price as one more. Five products with texts and a price fit in one request.

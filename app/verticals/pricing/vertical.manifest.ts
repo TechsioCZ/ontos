@@ -7,6 +7,7 @@ import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { CatalogPagePricesApi } from '@app/pricing-contracts/catalog-page-prices';
 import { catalogPagePricesRead } from './src/api/catalog-page-prices.read.ts';
+import { externalPriceSourceScopesRead } from './src/api/external-price-source-scopes.read.ts';
 import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
 import { commercialFeeDefinitionRead } from './src/api/commercial-fee-definition.read.ts';
 import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
@@ -249,6 +250,11 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
         apiKey: 'price-source-result-lookup',
         operationKey: 'priceSourceResultLookup.execute',
         registration: priceSourceResultLookupRead,
+      },
+      {
+        apiKey: 'external-price-source-scopes',
+        operationKey: 'externalPriceSourceScopes.execute',
+        registration: externalPriceSourceScopesRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],

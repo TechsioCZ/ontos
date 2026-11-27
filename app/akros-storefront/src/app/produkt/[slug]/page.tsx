@@ -128,6 +128,13 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     purchasePriceTiers.find((tier) => tier.minimumQuantity === purchaseItem.minimumQuantity) ??
     purchasePriceTiers[0];
   const packageQuantity = purchaseItem.packageQuantity;
+  const customerPrice = purchaseItem.customerPrice;
+  // The base is struck through only when the customer's own price is below it: a group price above it is no discount.
+  const BaseCustomerPrice =
+    customerPrice?.basePriceExcludingVatMinor !== undefined &&
+    customerPrice.basePriceExcludingVatMinor > customerPrice.netMinor
+      ? "s"
+      : "span";
   // A single-variant product shows the variant's struck price, else the product's own (Historie cen › Původní cena).
   const originalPriceMinor = purchaseItem.originalPriceMinor ?? product.originalPriceMinor;
   const variantStock = detail.variants.map(getProductStockStatus);
@@ -432,15 +439,37 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                       </div>
                     ) : (
                       <>
-                        {basePriceTier && (
-                          <p className="sf-product-detail__price-row">
-                            <span>{cs.product.priceExcludingVat}</span>
-                            <strong>
-                              {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
-                            </strong>
-                          </p>
+                        {customerPrice ? (
+                          <>
+                            {/* The signed-in customer's own Price Group price, next to the price everyone else pays. */}
+                            <p className="sf-product-detail__price-row" data-sf-your-price="">
+                              <span>{cs.product.yourPrice}</span>
+                              <strong>
+                                {formatPrice(customerPrice.netMinor, money)} {cs.product.excludingVat}
+                              </strong>
+                            </p>
+                            {customerPrice.basePriceExcludingVatMinor !== undefined && (
+                              <p className="sf-product-detail__price-row" data-sf-base-price="">
+                                <span>{cs.product.basePrice}</span>
+                                <BaseCustomerPrice>
+                                  {formatPrice(customerPrice.basePriceExcludingVatMinor, money)}{" "}
+                                  {cs.product.excludingVat}
+                                </BaseCustomerPrice>
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          basePriceTier && (
+                            <p className="sf-product-detail__price-row">
+                              <span>{cs.product.priceExcludingVat}</span>
+                              <strong>
+                                {formatPrice(basePriceTier.priceExcludingVatMinor, money)}
+                              </strong>
+                            </p>
+                          )
                         )}
-                        {originalPriceMinor !== undefined &&
+                        {!customerPrice &&
+                          originalPriceMinor !== undefined &&
                           originalPriceMinor > purchaseItem.priceMinor && (
                             <p className="sf-product-detail__price-row">
                               <span>{cs.product.originalPrice}</span>

@@ -120,6 +120,15 @@ export const products = merchandiseSchema.table.withRLS(
     index('demo_merchandise_products_category').on(table.tenantId, table.legalEntityId, table.categoryId),
     index('demo_merchandise_products_category_path').using('gin', table.categoryPathIds),
     index('demo_merchandise_products_price').on(table.tenantId, table.legalEntityId, table.grossPriceMinor),
+    // Every staff read probes for prices stored without their gross (missingGrossPricesExist); there are almost never
+    // any, so the probe reads this partial index instead of every product of the company.
+    index('demo_merchandise_products_gross_missing')
+      .on(table.tenantId, table.legalEntityId, table.id)
+      .where(sql`${table.grossPriceMinor} is null`),
+    // The staff list's Symmy filter reads the products the Symmy import marked (importedVia lives in the document).
+    index('demo_merchandise_products_symmy_ordinal')
+      .on(table.tenantId, table.legalEntityId, table.ordinal)
+      .where(sql`${table.document}->>'importedVia' = 'symmy'`),
     check('demo_merchandise_product_document_object', sql`jsonb_typeof(${table.document}) = 'object'`),
     ...tenantLegalEntityRlsPolicies('demo_merchandise_product_scope', table.tenantId, table.legalEntityId),
   ],
@@ -147,6 +156,10 @@ export const productVariants = merchandiseSchema.table.withRLS(
   (table) => [
     primaryKey({ columns: [table.tenantId, table.legalEntityId, table.productId, table.position] }),
     index('demo_merchandise_variants_id').on(table.tenantId, table.legalEntityId, table.productId, table.variantId),
+    // The staff read's missing-gross probe reads this partial index instead of every variant of the company.
+    index('demo_merchandise_variants_gross_missing')
+      .on(table.tenantId, table.legalEntityId, table.productId, table.position)
+      .where(sql`${table.grossPriceMinor} is null and ${table.priceMinor} is not null`),
     check('demo_merchandise_variant_document_object', sql`jsonb_typeof(${table.document}) = 'object'`),
     ...tenantLegalEntityRlsPolicies('demo_merchandise_variant_scope', table.tenantId, table.legalEntityId),
   ],

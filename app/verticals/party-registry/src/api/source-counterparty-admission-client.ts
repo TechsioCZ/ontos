@@ -2,7 +2,10 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { SourceCounterpartyAdmissionApi } from '../../shared/apis/source-counterparty-admission.ts';
-import type { SourceCounterpartyAdmissionRequest } from '../../shared/apis/source-counterparty-admission.ts';
+import type {
+  SourceAdmissionSetRequest,
+  SourceCounterpartyAdmissionRequest,
+} from '../../shared/apis/source-counterparty-admission.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface SourceCounterpartyAdmissionClientOptions {
@@ -42,6 +45,15 @@ export const executeSourceCounterpartyAdmissionWithAuthorization = (
 ) =>
   sourceCounterpartyAdmissionClient(Redacted.make(credential), requestCorrelation, options).pipe(
     Effect.flatMap((client) => client.sourceCounterpartyAdmission.execute({ payload })),
+  );
+
+/** One governed call for the current admission of every customer of a source page, in the request order. */
+export const executeSourceAdmissionSetWithAuthorization = (
+  payload: SourceAdmissionSetRequest,
+  ...[credential, requestCorrelation, options = {}]: SourceCounterpartyAdmissionAuthorizedInvocation
+) =>
+  sourceCounterpartyAdmissionClient(Redacted.make(credential), requestCorrelation, options).pipe(
+    Effect.flatMap((client) => client.sourceCounterpartyAdmission.executeSet({ payload })),
   );
 
 export const executeSourceCounterpartyAdmission = (

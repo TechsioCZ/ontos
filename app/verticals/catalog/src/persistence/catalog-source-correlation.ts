@@ -1,7 +1,7 @@
 import type { OperationalScope, ReadServiceFactory, ScopedTransactionExecutor } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { and, asc, count, eq, getTableColumns, gt, ilike, or } from 'drizzle-orm';
+import { and, asc, count, eq, getTableColumns, gt, ilike, inArray, or } from 'drizzle-orm';
 import { Effect, Schema, Struct } from 'effect';
 import { encode as encodeHex } from 'effect/encoding/Hex';
 
@@ -14,7 +14,7 @@ import type { BindInitialVariantSourcePayload } from '../../shared/actions/bind-
 import { BindInitialVariantSourceResultSchema } from '../../shared/actions/bind-initial-variant-source.ts';
 import { recoverCatalogActionResult } from '../api/catalog-action-result-recovery.ts';
 import { ProductPersistenceConflict } from '../../shared/domain/product-errors.ts';
-import { catalogResultSnapshots, catalogSourceCorrelations, products } from '../database/schema.ts';
+import { catalogResultSnapshots, catalogSourceCorrelations, products, variantLocalizedFacts } from '../database/schema.ts';
 import { CatalogPersistenceUnavailable } from './errors.ts';
 import type { CatalogSourceProductPageRequest } from '../../shared/apis/catalog-source-product-page.ts';
 import type { CatalogSourceProductsRequest } from '../../shared/apis/catalog-source-products.ts';
@@ -376,6 +376,25 @@ export const catalogSourceProductPageForScope = (
           .where(sourceProductsMatching(scope.tenantId, input))
           .pipe(Effect.mapError(unavailable), Effect.flatMap(onlyTotal)),
       getCurrent,
+      // The current names of every Variant of the page's products in one read (the primary key leads with them).
+      variantNames: (productIds: readonly string[]) =>
+        productIds.length === 0
+          ? Effect.succeed([])
+          : transaction
+              .select({
+                locale: variantLocalizedFacts.locale,
+                name: variantLocalizedFacts.name,
+                variantId: variantLocalizedFacts.variantId,
+              })
+              .from(variantLocalizedFacts)
+              .where(
+                and(
+                  eq(variantLocalizedFacts.tenantId, scope.tenantId),
+                  inArray(variantLocalizedFacts.productId, [...productIds]),
+                  eq(variantLocalizedFacts.state, 'SET'),
+                ),
+              )
+              .pipe(Effect.mapError(unavailable)),
       rows: (input: CatalogSourceProductPageRequest) =>
         transaction
           .select(getTableColumns(catalogSourceCorrelations))

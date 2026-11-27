@@ -19,6 +19,7 @@
     "commerce.pricing.source-read",
     "commerce.pricing.source-write",
     "commerce.storefront-client",
+    "commerce.symmy-demo-catalog-copy",
     "commerce.tax.symmy-seller-vat-fixture-import",
     "communications.core.messaging-adapter",
     "communications.core.request-source",
@@ -23090,6 +23091,41 @@
         },
         {
           "accessDeclaration": {
+            "key": "party.registry.source-admission-set.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "source-admission-set",
+              "level": "basic"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "party.registry.api.source-admission-set",
+            "moduleKey": "party.registry",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context"
+            ],
+            "subject": "rights",
+            "subjectWorkloads": [
+              "party.registry.source-read"
+            ]
+          }
+        },
+        {
+          "accessDeclaration": {
             "key": "party.registry.source-counterparty-admission.read",
             "kind": "read",
             "modes": [
@@ -26006,6 +26042,42 @@
             "moduleKey": "privacy.core",
             "role": "action",
             "scope": "tenant"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "privacy.core.source-processing-eligibility-set.read",
+            "kind": "read",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "processing-governance",
+              "level": "extended"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "read",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "privacy.core.api.source-processing-eligibility-set",
+            "moduleKey": "privacy.core",
+            "role": "api",
+            "scope": "tenant"
+          },
+          "actor": {
+            "callers": [
+              "commerce-customer-context",
+              "party-registry"
+            ],
+            "subject": "identity",
+            "subjectWorkloads": [
+              "privacy.core.source-processing-check"
+            ]
           }
         },
         {

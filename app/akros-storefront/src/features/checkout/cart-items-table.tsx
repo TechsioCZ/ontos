@@ -267,6 +267,16 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
                         {line.variantLabel}
                       </span>
                     )}
+                    {line.yourPrice && line.priceExcludingVatMinor !== undefined && (
+                      <span
+                        className="basis-full text-(length:--sf-cart-secondary-size) text-(--color-fg-secondary)"
+                        data-sf-your-price=""
+                      >
+                        {cs.product.yourPrice}{" "}
+                        {formatCheckoutPrice(line.priceExcludingVatMinor, money)}{" "}
+                        {cs.product.excludingVat}
+                      </span>
+                    )}
                     {quote?.status === "ready" &&
                       quote.lineIssues(line.productId, line.variantId).map((issue) => (
                         <span

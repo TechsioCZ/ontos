@@ -6,10 +6,23 @@ import {
 } from '@app/party-registry/apis/source-person-admission';
 import { executeSourcePersonAdmissionWithAuthorization } from '@app/party-registry/apis/source-person-admission/client';
 import {
+  SourceAdmissionSetRequestSchema,
+  SourceAdmissionSetResponseSchema,
   SourceCounterpartyAdmissionResponseSchema,
   SourceCounterpartyAdmissionRequestSchema,
 } from '@app/party-registry/apis/source-counterparty-admission';
-import { executeSourceCounterpartyAdmissionWithAuthorization } from '@app/party-registry/apis/source-counterparty-admission/client';
+import type {
+  SourceCounterpartyAdmissionRequest,
+  SourceCounterpartyAdmissionResponse,
+} from '@app/party-registry/apis/source-counterparty-admission';
+import type {
+  SourcePersonAdmissionRequest,
+  SourcePersonAdmissionResponse,
+} from '@app/party-registry/apis/source-person-admission';
+import {
+  executeSourceAdmissionSetWithAuthorization,
+  executeSourceCounterpartyAdmissionWithAuthorization,
+} from '@app/party-registry/apis/source-counterparty-admission/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Context, Crypto, Effect, Layer, Schema } from 'effect';
 import type {
@@ -23,7 +36,10 @@ import { ProfilePersistenceDependencyFailure } from '../persistence/profile-pers
 import type { CounterpartyRoleEligibility } from '../persistence/profile-persistence.ts';
 import { commerceCustomerContextEvidenceCall } from '../declared-evidence-calls.ts';
 
-const ownerProofFailure = (cause: unknown) =>
+const partyAudience = 'party-registry';
+const callerApplication = 'commerce-customer-context';
+
+const ownerProofFailure = (cause?: unknown) =>
   Object.defineProperty(
     new ProfilePersistenceDependencyFailure({ reason: 'Current source-qualified Party owner proof is unavailable' }),
     'cause',
@@ -43,7 +59,69 @@ type CounterpartyProof =
       readonly currentAdmission: CustomerProfileCurrentCounterpartyAdmission;
     })
   | Exclude<CounterpartyRoleEligibility, { readonly outcome: 'ELIGIBLE' }>;
+/** One customer of a source page whose current admission the Party owner proves. */
+export type SourceProfileAdmissionItem =
+  | Readonly<{
+      counterpartyResourceId: string;
+      kind: 'COUNTERPARTY';
+      partySourceReference: CustomerProfilePartySourceReference;
+    }>
+  | Readonly<{ kind: 'RETAIL'; partyRef: PartyRef; partySourceReference: CustomerProfilePartySourceReference }>;
+export type SourceProfileAdmission =
+  | Readonly<{ kind: 'COUNTERPARTY'; proof: CounterpartyProof }>
+  | Readonly<{ kind: 'RETAIL'; proof: RetailProof }>;
+
+const counterpartyProofOf = (
+  scope: OperationalScope,
+  counterpartyResourceId: string,
+  request: SourceCounterpartyAdmissionRequest,
+  result: SourceCounterpartyAdmissionResponse,
+): CounterpartyProof =>
+  result.outcome === 'CUSTOMER_CURRENT' &&
+  result.counterpartyRef.resourceId === counterpartyResourceId &&
+  result.counterpartyRef.tenantId === scope.tenantId &&
+  result.partyRef.tenantId === scope.tenantId &&
+  result.legalEntityRef.tenantId === scope.tenantId &&
+  result.legalEntityRef.resourceId === scope.legalEntityId &&
+  result.currentCustomerRoleRef.tenantId === scope.tenantId
+    ? {
+        counterpartyResourceRevision: result.counterpartyRevision,
+        currentAdmission: { ...result, sourceReference: request.sourceReference },
+        managedLegalEntityId: result.legalEntityRef.resourceId,
+        outcome: 'ELIGIBLE' as const,
+        partyResourceId: result.partyRef.resourceId,
+        partyResourceRevision: String(result.partyRevision),
+        roleResourceId: result.currentCustomerRoleRef.resourceId,
+        roleResourceRevision: result.currentCustomerRoleRevision,
+      }
+    : { outcome: 'INELIGIBLE' as const };
+const retailProofOf = (
+  scope: OperationalScope,
+  partyRef: PartyRef,
+  request: SourcePersonAdmissionRequest,
+  result: SourcePersonAdmissionResponse,
+): RetailProof =>
+  result.outcome === 'SOURCE_PERSON_CURRENT' &&
+  result.partyRef.tenantId === scope.tenantId &&
+  result.partyRef.resourceId === partyRef.resourceId
+    ? {
+        currentAdmission: { ...result, sourceReference: request.sourceReference },
+        outcome: 'CURRENT_PARTY_RESOLVED' as const,
+        partyResourceId: result.partyRef.resourceId,
+        partyResourceRevision: String(result.partyRevision),
+      }
+    : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const };
+
 export interface CommerceSourceProfileOwnerProofService {
+  /**
+   * The current admission of every customer of a source page in one Party owner call, in their order, each judged as
+   * `counterparty` or `retail` judges its own.
+   */
+  readonly admissionSet: (
+    scope: OperationalScope,
+    items: readonly SourceProfileAdmissionItem[],
+    operationRequirementKey: string,
+  ) => Effect.Effect<readonly SourceProfileAdmission[], ProfilePersistenceDependencyFailure>;
   readonly counterparty: (
     scope: OperationalScope,
     counterpartyResourceId: string,
@@ -68,6 +146,77 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
   Effect.gen(function* sourceProfileOwnerProof() {
     const crypto = yield* Crypto.Crypto;
     return {
+      admissionSet: Effect.fn('CommerceSourceProfileOwnerProof.admissionSet')(
+        function* admissionSet(scope, items, operationRequirementKey) {
+          if (items.length === 0) {
+            return [];
+          }
+          const request = yield* Schema.decodeUnknownEffect(SourceAdmissionSetRequestSchema)({
+            items: items.map((item) =>
+              item.kind === 'COUNTERPARTY'
+                ? {
+                    counterpartyRef: {
+                      moduleId: 'party.registry',
+                      resourceId: item.counterpartyResourceId,
+                      resourceType: 'party.registry.counterparty',
+                      tenantId: scope.tenantId,
+                    },
+                    kind: 'COUNTERPARTY',
+                    sourceReference: item.partySourceReference,
+                  }
+                : { kind: 'PERSON', partyRef: item.partyRef, sourceReference: item.partySourceReference },
+            ),
+          }).pipe(Effect.mapError(ownerProofFailure));
+          // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
+          const issued = yield* acquireDelegatedGatewayContext(
+            {
+              audience: partyAudience,
+              callingAppId: callerApplication,
+              legalEntityScope: 'subject',
+              requestCorrelation: scope.correlationId,
+              subject: commerceSourceDelegationSubject(
+                scope,
+                'party.registry.source-admission-set.read',
+                request,
+                operationRequirementKey,
+              ),
+            },
+            crypto,
+          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
+          const response = yield* executeSourceAdmissionSetWithAuthorization(
+            request,
+            issued.authorization,
+            scope.correlationId,
+            { baseUrl: new URL(issued.apiBaseUrl), compositionRevision: issued.compositionRevision },
+          ).pipe(commerceCustomerContextEvidenceCall.sourceCounterpartyAdmission, Effect.mapError(ownerProofFailure));
+          const result = yield* Schema.decodeUnknownEffect(SourceAdmissionSetResponseSchema)(response).pipe(
+            Effect.mapError(ownerProofFailure),
+          );
+          if (result.items.length !== request.items.length) {
+            return yield* ownerProofFailure();
+          }
+          return yield* Effect.forEach(
+            request.items,
+            (asked, index): Effect.Effect<SourceProfileAdmission, ProfilePersistenceDependencyFailure> => {
+              const answer = result.items[index];
+              if (asked.kind === 'COUNTERPARTY' && answer?.kind === 'COUNTERPARTY') {
+                return Effect.succeed({
+                  kind: 'COUNTERPARTY',
+                  proof: counterpartyProofOf(scope, asked.counterpartyRef.resourceId, asked, answer.result),
+                });
+              }
+              if (asked.kind === 'PERSON' && answer?.kind === 'PERSON') {
+                return Effect.succeed({
+                  kind: 'RETAIL',
+                  proof: retailProofOf(scope, asked.partyRef, asked, answer.result),
+                });
+              }
+              return Effect.fail(ownerProofFailure());
+            },
+            { concurrency: 1 },
+          );
+        },
+      ),
       counterparty: Effect.fn('CommerceSourceProfileOwnerProof.counterparty')(
         function* counterparty(scope, counterpartyResourceId, _source, partySourceReference, operationRequirementKey) {
           const request = yield* Schema.decodeUnknownEffect(SourceCounterpartyAdmissionRequestSchema)({
@@ -82,8 +231,8 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           // Declared in-transaction evidence call (demo divergence, DEPLOYMENT.md); see ../declared-evidence-calls.ts.
           const issued = yield* acquireDelegatedGatewayContext(
             {
-              audience: 'party-registry',
-              callingAppId: 'commerce-customer-context',
+              audience: partyAudience,
+              callingAppId: callerApplication,
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -104,24 +253,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           const result = yield* Schema.decodeUnknownEffect(SourceCounterpartyAdmissionResponseSchema)(response).pipe(
             Effect.mapError(ownerProofFailure),
           );
-          return result.outcome === 'CUSTOMER_CURRENT' &&
-            result.counterpartyRef.resourceId === counterpartyResourceId &&
-            result.counterpartyRef.tenantId === scope.tenantId &&
-            result.partyRef.tenantId === scope.tenantId &&
-            result.legalEntityRef.tenantId === scope.tenantId &&
-            result.legalEntityRef.resourceId === scope.legalEntityId &&
-            result.currentCustomerRoleRef.tenantId === scope.tenantId
-            ? {
-                counterpartyResourceRevision: result.counterpartyRevision,
-                currentAdmission: { ...result, sourceReference: request.sourceReference },
-                managedLegalEntityId: result.legalEntityRef.resourceId,
-                outcome: 'ELIGIBLE' as const,
-                partyResourceId: result.partyRef.resourceId,
-                partyResourceRevision: String(result.partyRevision),
-                roleResourceId: result.currentCustomerRoleRef.resourceId,
-                roleResourceRevision: result.currentCustomerRoleRevision,
-              }
-            : { outcome: 'INELIGIBLE' as const };
+          return counterpartyProofOf(scope, counterpartyResourceId, request, result);
         },
       ),
       retail: Effect.fn('CommerceSourceProfileOwnerProof.retail')(
@@ -132,8 +264,8 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           }).pipe(Effect.mapError(ownerProofFailure));
           const issued = yield* acquireDelegatedGatewayContext(
             {
-              audience: 'party-registry',
-              callingAppId: 'commerce-customer-context',
+              audience: partyAudience,
+              callingAppId: callerApplication,
               legalEntityScope: 'subject',
               requestCorrelation: scope.correlationId,
               subject: commerceSourceDelegationSubject(
@@ -154,16 +286,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
           const result = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionResponseSchema)(response).pipe(
             Effect.mapError(ownerProofFailure),
           );
-          return result.outcome === 'SOURCE_PERSON_CURRENT' &&
-            result.partyRef.tenantId === scope.tenantId &&
-            result.partyRef.resourceId === partyRef.resourceId
-            ? {
-                currentAdmission: { ...result, sourceReference: request.sourceReference },
-                outcome: 'CURRENT_PARTY_RESOLVED' as const,
-                partyResourceId: result.partyRef.resourceId,
-                partyResourceRevision: String(result.partyRevision),
-              }
-            : { outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const };
+          return retailProofOf(scope, partyRef, request, result);
         },
       ),
     };
