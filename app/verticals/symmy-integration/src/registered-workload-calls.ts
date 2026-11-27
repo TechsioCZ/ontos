@@ -767,7 +767,8 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     declarationKey: 'pricing.price-group-catalog.price-group-source-associations.read',
     entrypointKey: 'pricing.price-group-catalog.api.price-group-source-associations',
     jobKey: integrationSymmyExecuteSymmyJob,
-    legalEntityScope: 'forbidden',
+    // The Read takes an optional company (staff list the groups with theirs selected); Symmy calls it with none.
+    legalEntityScope: 'optional',
     schemaVersion: '1',
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: pricingPriceGroupCatalogSourceRead,
