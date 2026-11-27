@@ -132,7 +132,8 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     enableSorting: false,
     header: label('columns.tags'),
     id: 'tags',
-    meta: { width: 150 },
+    // „Symmy“ (51 px), one short tag chip such as „Výprodej“ (70 px with its dot) and „+N“ (25 px) on one line.
+    meta: { width: 170 },
   },
   {
     accessorFn: (product) =>

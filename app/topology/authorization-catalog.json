@@ -16793,6 +16793,63 @@
       "descriptors": [
         {
           "accessDeclaration": {
+            "key": "core.themes.tenant-theme.attach",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "themes",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.themes.attach-tenant-theme",
+            "moduleKey": "core.themes",
+            "role": "action",
+            "scope": "system"
+          }
+        },
+        {
+          "accessDeclaration": {
+            "key": "core.themes.tenant-theme.save",
+            "kind": "admin",
+            "modes": [
+              "run"
+            ],
+            "placement": {
+              "group": "themes",
+              "level": "manage"
+            },
+            "risk": "sensitive",
+            "selectors": []
+          },
+          "accessFieldGroups": [],
+          "entrypoint": {
+            "access": "write",
+            "authorization": {
+              "kind": "protected"
+            },
+            "entrypointKey": "core.themes.save-tenant-theme",
+            "moduleKey": "core.themes",
+            "role": "action",
+            "scope": "system"
+          }
+        }
+      ],
+      "moduleId": "core.themes"
+    },
+    {
+      "descriptors": [
+        {
+          "accessDeclaration": {
             "key": "crm.activities.api-records.read",
             "kind": "read",
             "modes": [
