@@ -22,7 +22,7 @@ const switchFormOf = (initial: boolean) => {
 
 const switchForms = {
   incidentsOpenOnly: switchFormOf(true),
-  ordersOpenOnly: switchFormOf(true),
+  ordersOpenOnly: switchFormOf(false),
   stockAlertsOnly: switchFormOf(false),
 };
 

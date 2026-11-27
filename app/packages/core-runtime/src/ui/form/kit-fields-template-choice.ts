@@ -23,13 +23,17 @@ interface TemplateChoice {
 type TemplateChoiceProps = Omit<
   SelectTemplateProps,
   'defaultValue' | 'items' | 'multiple' | 'name' | 'onValueChange' | 'validateStatus' | 'value'
-> & { readonly items: readonly TemplateChoice[] };
+> & {
+  /** The module's verdict on this choice, for a rule the field schema does not check. */
+  readonly invalid?: boolean;
+  readonly items: readonly TemplateChoice[];
+};
 
 /** One value chosen from a list; `""` is no choice. */
 export const TemplateChoiceField: FormReact.FieldComponent<string, TemplateChoiceProps> = ({ field, props }) => {
   const { pending, translate } = useFormContext();
-  const { disabled, helpText, items, ...rest } = props;
-  const failed = Option.isSome(field.error);
+  const { disabled, helpText, invalid = false, items, ...rest } = props;
+  const failed = Option.isSome(field.error) || invalid;
   return createElement(SelectTemplate, {
     ...rest,
     disabled: pending || (disabled ?? false),
