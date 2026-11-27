@@ -201,11 +201,12 @@ const marketNativeDescription = Effect.scoped(
     );
     const errorClasses = stderr.match(/\b(?:SyntaxError|ReferenceError|TypeError|Error \[ERR_[A-Z_]+\])/gu) ?? [];
     const missingExport =
-      /does not provide an export named '(?<exportName>[A-Za-z_$][\w$]*)'/u.exec(stderr)?.groups?.exportName ?? null;
+      /does not provide an export named '(?<exportName>[A-Za-z_$][\w$]*)'/u.exec(stderr)?.groups?.['exportName'] ??
+      null;
     const missingModule =
       /Cannot find (?:package|module) '(?<moduleName>[@A-Za-z0-9/._-]+)'/u
         .exec(stderr)
-        ?.groups?.moduleName?.split('/')
+        ?.groups?.['moduleName']?.split('/')
         .slice(-4)
         .join('/') ?? null;
     return { code, errorClasses, missingExport, missingModule, stdout };

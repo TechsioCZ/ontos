@@ -6,7 +6,8 @@ import {
 import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { commerceSourceDelegationSubject } from './source-delegation-subject.ts';
 import { CommerceSourceProcessingRejected } from './source-processing-rejected.ts';
 
@@ -31,7 +32,7 @@ export class CommerceSourceProcessingEligibility extends Context.Service<
 export const commerceSourceProcessingEligibilityLive = Layer.effect(
   CommerceSourceProcessingEligibility,
   Effect.gen(function* commerceSourceProcessingEligibility() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       check: Effect.fn('CommerceSourceProcessingEligibility.check')(
         function* check(scope, input, operationRequirementKey) {

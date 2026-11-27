@@ -39,7 +39,7 @@ export const OntosIntrinsicModuleRequirementSchema = Schema.Struct({
 
 export const OntosCoreCapabilityRequirementSchema = Schema.Struct({
   id: Schema.NonEmptyString,
-  version: Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u)),
+  version: Schema.String.check(Schema.isPattern(/^\d+(?:\.\d+){0,2}$/u)),
 });
 
 /**

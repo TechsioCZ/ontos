@@ -5,7 +5,7 @@ const PURCHASE_LIMIT_DECIMAL_PRECISION = 38;
 const PURCHASE_LIMIT_DECIMAL_SCALE = 9;
 const PURCHASE_LIMIT_DECIMAL_INTEGER_DIGITS = PURCHASE_LIMIT_DECIMAL_PRECISION - PURCHASE_LIMIT_DECIMAL_SCALE;
 
-const canonicalDecimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/u;
+const canonicalDecimalPattern = /^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u;
 
 export const ExactNonNegativeDecimalSchema = Schema.String.check(
   Schema.makeFilter((value) => {

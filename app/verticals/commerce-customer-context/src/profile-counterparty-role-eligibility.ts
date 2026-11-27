@@ -10,7 +10,8 @@ import {
 } from '@app/party-registry/api/client';
 import type { executeCounterpartyRead } from '@app/party-registry/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ProfilePersistenceDependencyFailure } from './persistence/profile-persistence.ts';
 import type { CounterpartyRoleEligibility, ProfilePersistenceDependencies } from './persistence/profile-persistence.ts';
@@ -21,7 +22,7 @@ type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
 /** Seams for the Shell-issued admission and the Party read; production omits `execute`. */
 export interface ProfileCounterpartyRoleEligibilitySeams {
   readonly acquire: DelegatedGatewayAcquisition;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly execute?: CounterpartyReadExecutor | undefined;
 }
 
@@ -224,7 +225,7 @@ export class ProfileCounterpartyRoleEligibilityResolverFactory extends Context.S
 export const profileCounterpartyRoleEligibilityResolverFactoryLive = Layer.effect(
   ProfileCounterpartyRoleEligibilityResolverFactory,
   Effect.gen(function* makeProfileCounterpartyRoleEligibilityResolverFactory() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return Object.freeze({
       make: (scope: ProfileCounterpartyRoleEligibilityScope, execute?: CounterpartyReadExecutor) =>
         makeProfileCounterpartyRoleEligibilityResolver(scope, {

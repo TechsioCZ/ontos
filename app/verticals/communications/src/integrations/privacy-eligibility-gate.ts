@@ -6,7 +6,8 @@ import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/
 import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Effect, Layer, Option, Schema } from 'effect';
-import type { Crypto, Duration } from 'effect';
+import type { Duration } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { ProcessingEligibilityUnavailable } from '../domain/privacy/eligibility-errors.ts';
 import { ProcessingEligibilityGate } from '../domain/privacy/eligibility-gate.ts';
@@ -184,7 +185,7 @@ export const privacyProcessingEligibilityGateOver = (
  * check under the authority of the operation in progress (`CurrentOwnerCall`), naming the exact declaration of the Read it asks.
  */
 export const privacyOwnerTransportLive =
-  (crypto: Crypto.Crypto): PrivacyOwnerTransport =>
+  (crypto: SecureRandom.SecureRandom['Service']): PrivacyOwnerTransport =>
   (question, call) =>
     acquireDelegatedGatewayContext(
       {

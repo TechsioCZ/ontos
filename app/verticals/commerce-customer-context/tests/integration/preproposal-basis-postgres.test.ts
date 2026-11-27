@@ -1,4 +1,4 @@
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { Config, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { executeReviseCartDraftWithAuthorization } from '@app/commerce-cart/api/client';
 import { executePurchaseProposalBasisWithAuthorization } from '../../src/api/purchase-proposal-basis-client.ts';
@@ -90,7 +90,7 @@ it.live(
         expect(stored.canonicalHash).toBe(proof.created.proposal.canonicalHash);
         yield* fixture.recordProof(proof);
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, FetchHttpClient.layer))),
   { timeout: 600_000 },
 );
 
@@ -225,6 +225,6 @@ it.live(
           }
         }
       }),
-    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer))),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer, FetchHttpClient.layer))),
   { timeout: 600_000 },
 );

@@ -4,7 +4,7 @@ import {
   GatewayDelegationSourceError,
 } from '@app/shared-contracts/gateway-context-server';
 import { Effect, Redacted, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 /**
@@ -19,7 +19,7 @@ export interface RetailEnrollmentOriginator {
 
 export interface RetailOwnerCredentialRequest {
   readonly audience: 'commerce-customer-context' | 'party-registry';
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly legalEntityId: string;
   readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;

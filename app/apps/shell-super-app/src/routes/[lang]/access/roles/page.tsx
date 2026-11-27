@@ -159,15 +159,16 @@ const RolePage = () => {
   const model = useLoaderData({ from: '/$lang/access/roles' });
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state !== 'authenticated' || model.state === 'reload_required' || controls.reloadRequired) {
+    const commonStateKey = model.state === 'unauthenticated' ? 'unauthenticated' : 'unavailable';
+    const statusMessageKey =
+      model.state === 'reload_required' || controls.reloadRequired
+        ? 'shell.moduleTarget.reload_required'
+        : `shell.accessAdmin.common.${commonStateKey}`;
     return (
       <main className="mx-auto grid max-w-5xl gap-300 px-200 py-400">
         <h1 className="text-2xl">{t('shell.accessAdmin.role.title')}</h1>
         <StatusText aria-live="polite" status="error">
-          {t(
-            model.state === 'reload_required' || controls.reloadRequired
-              ? 'shell.moduleTarget.reload_required'
-              : `shell.accessAdmin.common.${model.state === 'unauthenticated' ? 'unauthenticated' : 'unavailable'}`,
-          )}
+          {t(statusMessageKey)}
         </StatusText>
       </main>
     );

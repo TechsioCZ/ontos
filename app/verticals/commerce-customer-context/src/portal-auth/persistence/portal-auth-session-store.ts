@@ -1,6 +1,7 @@
 import { and, eq, gt, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 import {
@@ -129,13 +130,10 @@ const isLiveForCount = (
 };
 
 const newOpaqueId = (
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   bytes: number,
 ): Effect.Effect<string, CommercePortalAuthSessionUnavailable> =>
-  crypto.randomBytes(bytes).pipe(
-    Effect.map(Base64Url.encode),
-    Effect.mapError((cause) => unavailable('session-identifier', cause)),
-  );
+  crypto.randomBytes(bytes).pipe(Effect.map(Base64Url.encode));
 
 interface TouchInput {
   readonly expectedUpdatedAt: Date;
@@ -169,7 +167,7 @@ interface RotateInput {
  */
 export const makeCommercePortalAuthSessionStore = (
   database: CommercePortalAuthDatabaseExecutor,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): CommercePortalAuthSessionStore => {
   const findById = Effect.fn('CommercePortalAuthSessionStore.findById')(function* findById(
     sessionId: string,
@@ -510,7 +508,7 @@ export const CommercePortalAuthSessionStoreLive = Layer.effect(
   CommercePortalAuthSessionStoreService,
   Effect.gen(function* makeStoreLive() {
     const database = yield* CommercePortalAuthDatabase;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return makeCommercePortalAuthSessionStore(database.executor, crypto);
   }),
 );

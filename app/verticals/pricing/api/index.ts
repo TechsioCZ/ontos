@@ -28,7 +28,7 @@ import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { pricingApi, pricingOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
@@ -239,7 +239,7 @@ type PricingHandlerRequirements =
       typeof governedReadApiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
         ? Requirements
         : never,
-      Crypto.Crypto
+      SecureRandom.SecureRandom
     >
   | HttpRouter.HttpRouter;
 const resolvedApiHandlersLive: EffectBffRuntimeAssembly<

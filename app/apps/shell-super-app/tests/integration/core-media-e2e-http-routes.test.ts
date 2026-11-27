@@ -163,7 +163,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const download = yield* downloadOf(edge, reader, id);
               expect(download.status).toBe(200);
               expect(download.bytes).toEqual(bytes);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
             }),
           ),
         ),
@@ -184,7 +184,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
 
               // No Idempotency-Key header is a 428 and creates nothing.
               expect((yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: null })).status).toBe(428);
-              expect((yield* rowsOf(world)).length).toBe(0);
+              expect(yield* rowsOf(world)).toHaveLength(0);
 
               const first = yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'once' });
               expect(first.status).toBe(200);
@@ -194,27 +194,27 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(replay.status).toBe(200);
               expect(replay.json).toEqual(first.json);
               expect(assetIdOf(replay)).toBe(id);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               // The same key for another request is a conflict, never a silent swap of the payload.
               const other = yield* reserveOverHttp(edge, uploader, bytesOf('another file'), { idempotencyKey: 'once' });
               expect(other.status).toBe(409);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               // A new key is an independent upload: a second asset.
               const second = yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'twice' });
               expect(second.status).toBe(200);
               expect(assetIdOf(second)).not.toBe(id);
-              expect((yield* rowsOf(world)).length).toBe(2);
+              expect(yield* rowsOf(world)).toHaveLength(2);
 
               // Without the capability the engine refuses, and nothing is created.
               expect((yield* reserveOverHttp(edge, nobody, bytes, { idempotencyKey: 'denied' })).status).toBe(403);
-              expect((yield* rowsOf(world)).length).toBe(2);
+              expect(yield* rowsOf(world)).toHaveLength(2);
               // One byte more than 10,000 parts of 5 GiB: the store can never write it, so nothing is reserved.
               const tooLarge = yield* reserveOverHttp(edge, uploader, bytes, {
                 declaredByteSize: 10_000 * 5 * 1024 ** 3 + 1,
                 idempotencyKey: 'too-large',
               });
               expect(tooLarge.status).toBe(422);
-              expect((yield* rowsOf(world)).length).toBe(2);
+              expect(yield* rowsOf(world)).toHaveLength(2);
               // A rename needs its own key and its own capability, which the uploader does not hold.
               expect((yield* renameOverHttp(edge, owner, id, 'Named.pdf', null)).status).toBe(428);
               expect((yield* renameOverHttp(edge, uploader, id, 'Named.pdf', 'rename-denied')).status).toBe(403);
@@ -273,7 +273,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect((yield* confirmOverHttp(edge, uploader, id, 'confirm-settle')).json).toEqual(settled.json);
               expect((yield* confirmOverHttp(edge, uploader, id, 'confirm-again')).json).toEqual(settled.json);
               expect((yield* confirmOverHttp(edge, uploader, id, null)).status).toBe(428);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
             }),
           ),
         ),

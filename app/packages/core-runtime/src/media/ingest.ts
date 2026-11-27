@@ -77,7 +77,7 @@ export const confirmAssetRequest = (mediaAssetRef: MediaAssetRef, attempt: strin
   payload: { mediaAssetRef },
 });
 
-const CONTENT_LENGTH = /^[0-9]{1,16}$/u;
+const CONTENT_LENGTH = /^\d{1,16}$/u;
 
 /** The exact length a request states, or undefined when it states none or something that is not a length. */
 export const parseContentLength = (header: string | undefined): number | undefined =>

@@ -24,7 +24,7 @@ const readRelative = Effect.fn('CoreMediaCurrentGuards.read')(function* readRela
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const fieldNamesOf = (ast: SchemaAST.AST): readonly string[] => {

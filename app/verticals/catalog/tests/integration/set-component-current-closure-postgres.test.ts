@@ -1,4 +1,5 @@
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { executeSelectionEvidenceWithAuthorization } from '../../src/api/selection-evidence-client.ts';
@@ -61,14 +62,14 @@ it.live(
       expect(actualComponentIds).toHaveLength(componentIds.length);
       expect(actualComponentIds).toEqual(expect.arrayContaining(componentIds));
       expect(
-        initial.evidence.basis
-          .filter(({ subject }) => subject !== undefined)
-          .every(({ subject }) =>
+        initial.evidence.basis.every(
+          ({ subject }) =>
+            subject === undefined ||
             Schema.toEquivalence(CatalogSelectionSchema)(
-              { ...owner.selected, setComposition: subject?.composition },
+              { ...owner.selected, setComposition: subject.composition },
               owner.selected,
             ),
-          ),
+        ),
       ).toBe(true);
       for (const component of [owner.componentA, owner.componentB]) {
         expect(
@@ -82,7 +83,7 @@ it.live(
         ).toBe(true);
       }
       const request = (credential: string) =>
-        Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
+        SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()).pipe(
           Effect.flatMap((correlation) =>
             executeSelectionEvidenceWithAuthorization(
               { purpose: 'PRICING', selection: owner.selected },
@@ -103,7 +104,7 @@ it.live(
       expect(
         Schema.is(SelectionEvidenceAuthenticationProblemSchema)(yield* request(consumedAssertion).pipe(Effect.flip)),
       ).toBe(true);
-      const key = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const key = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
       const restricted = yield* owner.restrict([], 1, 1, key);
       expect(restricted).toMatchObject({ allowanceRevision: 2, changed: true });
       expect(yield* owner.restrict([], 1, 1, key)).toEqual(restricted);
@@ -123,7 +124,7 @@ it.live(
           yield* owner.read(owner.selected, owner.fixture.denied).pipe(Effect.flip),
         ),
       ).toBe(true);
-      const foreignTenant = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const foreignTenant = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
       const foreign = yield* Schema.decodeUnknownEffect(CatalogSelectionSchema)({
         productRef: { ...owner.selected.productRef, tenantId: foreignTenant },
         variantRef: { ...owner.selected.variantRef, tenantId: foreignTenant },

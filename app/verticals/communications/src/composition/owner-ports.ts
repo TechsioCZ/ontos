@@ -1,4 +1,5 @@
-import { Crypto, Effect, Layer } from 'effect';
+import { Effect, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { unavailableDocumentLinkOwnerLayer } from '../domain/documents/document-owner.ts';
 import { unavailableMessageHandoffLayer } from '../domain/handoff/message-handoff.ts';
@@ -55,7 +56,7 @@ export const communicationsOwnerPortsOver = (transports: CommunicationsOwnerTran
 /** The production composition: both owners are reached through their published Reads with a fresh delegated assertion per ask. */
 export const communicationsProductionOwnerPortsLive = Layer.unwrap(
   Effect.gen(function* productionOwnerPorts() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return communicationsOwnerPortsOver({
       portalAuth: portalAuthOwnerTransportLive(crypto),
       privacy: privacyOwnerTransportLive(crypto),

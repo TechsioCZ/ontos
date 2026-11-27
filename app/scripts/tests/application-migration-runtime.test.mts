@@ -348,7 +348,7 @@ it.effect(
       expect(revoke).toBeGreaterThan(addColumn);
       expect(grant).toBe(revoke + 1);
       const granted = [...(statements[grant] ?? '').matchAll(/"(?<column>[a-z_]+)"/gu)]
-        .map((match) => match.groups?.column)
+        .map((match) => match.groups?.['column'])
         .filter((column) => !['core', 'action_invocations', 'party_registry_worker'].includes(column ?? ''));
       const manifest = PARTY_REGISTRY_WORKER_DATABASE_GRANTS.tables.find(
         ({ table }) => table === 'core.action_invocations',

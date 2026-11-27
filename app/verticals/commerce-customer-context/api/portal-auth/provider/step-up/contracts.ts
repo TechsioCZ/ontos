@@ -13,7 +13,7 @@ export const CommercePortalAuthStepUpChallengeIdSchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z0-9_-]{1,200}$/u),
 ).pipe(Schema.brand('CommercePortalAuthStepUpChallengeId'));
 
-const StepUpCodeSchema = Schema.String.check(Schema.isPattern(/^[0-9]{6}$/u));
+const StepUpCodeSchema = Schema.String.check(Schema.isPattern(/^\d{6}$/u));
 const AttemptsRemainingSchema = Schema.Finite.check(
   Schema.isInt(),
   Schema.isGreaterThanOrEqualTo(0),

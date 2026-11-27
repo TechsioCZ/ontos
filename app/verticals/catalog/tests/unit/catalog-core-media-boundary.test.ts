@@ -18,7 +18,7 @@ const readApp = Effect.fn('CatalogCoreMediaBoundary.read')(function* readApp(rel
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const BOUNDARY_SOURCES = [

@@ -25,19 +25,15 @@ const InventoryRouteContent = () => {
   );
 };
 
-const InventoryRoute = (props: Record<string, never>): JSX.Element => {
-  void props;
-
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="inventory"
-      fallbackLanguage="en"
-      resources={federatedI18nResources}
-      supportedLanguages={federatedI18nLanguages}
-    >
-      <InventoryRouteContent />
-    </FederatedI18nBoundary>
-  );
-};
+const InventoryRoute = (_props: Record<string, never>): JSX.Element => (
+  <FederatedI18nBoundary
+    defaultNamespace="inventory"
+    fallbackLanguage="en"
+    resources={federatedI18nResources}
+    supportedLanguages={federatedI18nLanguages}
+  >
+    <InventoryRouteContent />
+  </FederatedI18nBoundary>
+);
 
 export default InventoryRoute;

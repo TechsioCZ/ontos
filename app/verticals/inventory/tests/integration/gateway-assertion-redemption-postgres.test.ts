@@ -4,7 +4,8 @@ import { PgClient } from '@effect/sql-pg';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { defineRelations, eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Clock, Context, Crypto, Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import {
@@ -39,13 +40,13 @@ it.live('atomically redeems real native Inventory ingress assertions and preserv
       );
       const services = yield* Layer.build(GatewayAssertionRedemptionLive.pipe(Layer.provide(databaseLive)));
       const redeem = services.pipe(Context.get(GatewayAssertionRedemptionService));
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
       const input = {
         audience: 'inventory',
         expiresAtEpochSeconds: now + 120,
         issuer: 'https://internal-inventory-native.test',
-        jti: yield* crypto.randomUUIDv4(),
+        jti: yield* crypto.uuidV4(),
       };
       const attempts = yield* Effect.all(
         [redeem.consume(input).pipe(Effect.result), redeem.consume(input).pipe(Effect.result)],

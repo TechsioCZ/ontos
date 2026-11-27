@@ -104,11 +104,17 @@ const placeholders = (text: string): readonly string[] =>
  * Czech words that are only correct with diacritics. Every entry is a form that never exists in
  * correct Czech, so the detector cannot flag legitimate copy such as "schvaluje" or "platnost".
  */
-const CZECH_WITHOUT_DIACRITICS =
-  /(?<!\p{L})(?:pristup\p{L}*|opravnen\p{L}*|uzivatel\p{L}*|schvaleni\p{L}*|schvaleny|schvalena|schvalene|zmena|zmeny|zmenou|zmenit|zmenil|zmenila|zmeneny|zmenena|zmenene|sprava|spravy|spravou|spravce|spravcu|pozadav\p{L}*|zamit\p{L}*|prohlednout|prohlednuti|vyprsel\p{L}*|castk\p{L}*|lhut\p{L}*|posledni|vlastnik\p{L}*|clenstv\p{L}*|prirazen\p{L}*|odebrani|odebranim|vraceni|vracenim|zadny|zadna|zadne|zadnou|zadnych|vsechn\p{L}*|muzet\p{L}*|nemuzet\p{L}*|jeste|dalsi|zrusit|ulozit|ulozen\p{L}*|zavazn\p{L}*|zadost|zadosti|nacten\p{L}*)(?!\p{L})/giu;
+const CZECH_WITHOUT_DIACRITICS = [
+  /^(?:pristup|opravnen|uzivatel|schvaleni|pozadav|zamit|vyprsel|castk|lhut|vlastnik|clenstv|prirazen|vsechn|muzet|nemuzet|ulozen|zavazn|nacten)/iu,
+  /^(?:schvalen[yae]|zmen(?:a|y|ou|it|il|ila|en[yae])|sprav(?:a|y|ou|ce|cu))$/iu,
+  /^(?:odebranim?|vracenim?|zadn(?:y|a|e|ou|ych)|zadosti?)$/iu,
+  /^(?:prohlednout|prohlednuti|posledni|jeste|dalsi|zrusit|ulozit)$/iu,
+];
 
 const diacriticsMissing = (text: string): readonly string[] =>
-  [...text.matchAll(CZECH_WITHOUT_DIACRITICS)].map((match) => match[0]);
+  [...text.matchAll(/\p{L}+/giu)]
+    .map((match) => match[0])
+    .filter((word) => CZECH_WITHOUT_DIACRITICS.some((pattern) => pattern.test(word)));
 
 test('locates the locale namespaces on disk', () => {
   // Negative control for the loader: a wrong working directory would make every namespace

@@ -1,5 +1,6 @@
 import { Context } from 'effect';
-import type { Crypto, Effect, Option } from 'effect';
+import type { Effect, Option } from 'effect';
+import type { Digest } from 'effect/crypto';
 
 import type { CommunicationDecisionUnavailable as CommunicationDecisionUnavailableClass } from '../../shared/communication-intake-errors.ts';
 import type {
@@ -45,7 +46,7 @@ export interface CommunicationIntakePortContract {
     readonly actionInvocationId: string;
     readonly fingerprint: string;
     readonly requestId: typeof CommunicationRequestIdSchema.Type;
-  }) => Effect.Effect<void, CommunicationDecisionUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<void, CommunicationDecisionUnavailable, Digest.Digest>;
 }
 
 /** The Context tag of the port, for a later lane that composes its own Layer over a scoped transaction. */

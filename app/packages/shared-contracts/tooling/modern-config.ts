@@ -1,8 +1,10 @@
-import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { NodeFileSystem } from '@effect/platform-node';
 import type { AppUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
+import { Cause, Effect, Exit, FileSystem, Predicate } from 'effect';
+import type { Context } from 'effect';
 import {
   getOrElse as getOptionOrElse,
   getOrUndefined as getOptionOrUndefined,
@@ -13,7 +15,6 @@ import type { Option } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Array as ArraySchema,
-  Literal,
   Literals,
   OptionFromNullOr,
   OptionFromUndefinedOr,
@@ -22,7 +23,6 @@ import {
   Trim,
   check,
   decodeUnknownResult,
-  is,
   isMinLength,
   makeFilter,
 } from 'effect/Schema';
@@ -55,56 +55,80 @@ const readBuildEnvironmentValue: BuildEnvironmentReader = (name) => {
   return isResultSuccess(decoded) ? getOptionOrUndefined(decoded.success) : undefined;
 };
 
-interface DevelopmentMiddlewareSetup {
-  unshift: (
-    middleware: (
-      request: { url?: string | undefined },
-      // `end` always takes a body: the HTTP/2 response has no single `end` overload for an absent body and a Buffer.
-      response: { end: (body: Buffer) => void; setHeader: (name: string, value: string) => void; statusCode: number },
-      next: () => void,
-    ) => void,
-  ) => void;
-}
+type DevelopmentMiddlewareSetup = Parameters<
+  NonNullable<NonNullable<AppUserConfig['dev']>['setupMiddlewares']>[number]
+>[0];
 
 const DEVELOPMENT_MCP_TOOL_CATALOG = '/.well-known/ontos-module-mcp-tools.json';
-
-const isMissingFileError = is(Struct({ code: Literal('ENOENT') }));
 
 const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
   '/.well-known/ontos-module-manifest.json',
   DEVELOPMENT_MCP_TOOL_CATALOG,
 ]);
 
-/** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
-export const createDevelopmentContractMiddleware =
-  (moduleUrl: string) =>
-  ({ unshift }: DevelopmentMiddlewareSetup) => {
+type DevelopmentMiddlewareInstaller = (setup: DevelopmentMiddlewareSetup) => void;
+
+const installDevelopmentContractMiddleware =
+  (moduleUrl: string, context: Context.Context<FileSystem.FileSystem>): DevelopmentMiddlewareInstaller =>
+  ({ unshift }) => {
     unshift((request, response, next) => {
       const requestPath = request.url?.split('?', 1)[0];
       if (requestPath === undefined || !DEVELOPMENT_CONTRACT_ARTIFACTS.has(requestPath)) {
         next();
         return;
       }
-      let contract: Buffer;
-      try {
-        contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
-      } catch (error) {
-        // Preparation removes the catalog of a module without an MCP contribution; the manifest is always prepared.
-        if (requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && isMissingFileError(error)) {
-          response.statusCode = 404;
-          // A catalog prepared later at the same URL must not be shadowed by a cached absence.
-          response.setHeader('Cache-Control', 'no-cache');
-          response.end(Buffer.alloc(0));
-          return;
-        }
-        throw error;
-      }
-      response.setHeader('Cache-Control', 'no-cache');
-      response.setHeader('Content-Type', 'application/json');
-      response.setHeader('Content-Length', String(contract.byteLength));
-      response.end(contract);
+      const controller = new AbortController();
+      const onClose = () => controller.abort();
+      response.once('close', onClose);
+      Effect.runCallbackWith(context)(
+        Effect.gen(function* readDevelopmentContract() {
+          const fileSystem = yield* FileSystem.FileSystem;
+          return yield* fileSystem.readFile(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
+        }).pipe(
+          // Preparation removes a module's catalog without an MCP contribution, never its manifest.
+          Effect.catchIf(
+            (error) => requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && Predicate.isTagged(error.reason, 'NotFound'),
+            () => Effect.succeed(undefined),
+          ),
+        ),
+        {
+          onExit: (exit) => {
+            response.removeListener('close', onClose);
+            if (controller.signal.aborted) {
+              return;
+            }
+            if (Exit.isFailure(exit)) {
+              next(Cause.squash(exit.cause));
+              return;
+            }
+            const contract = exit.value;
+            response.setHeader('Cache-Control', 'no-cache');
+            if (contract === undefined) {
+              response.statusCode = 404;
+              response.end(Buffer.alloc(0));
+              return;
+            }
+            response.setHeader('Content-Type', 'application/json');
+            response.setHeader('Content-Length', String(contract.byteLength));
+            response.end(Buffer.from(contract));
+          },
+          signal: controller.signal,
+        },
+      );
     });
   };
+
+/** Captures the filesystem at the native development-server composition boundary. */
+export const makeDevelopmentContractMiddleware = (
+  moduleUrl: string,
+): Effect.Effect<DevelopmentMiddlewareInstaller, never, FileSystem.FileSystem> =>
+  Effect.map(Effect.context<FileSystem.FileSystem>(), (context) =>
+    installDevelopmentContractMiddleware(moduleUrl, context),
+  );
+
+/** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
+export const createDevelopmentContractMiddleware = (moduleUrl: string): DevelopmentMiddlewareInstaller =>
+  Effect.runSync(makeDevelopmentContractMiddleware(moduleUrl).pipe(Effect.provide(NodeFileSystem.layer)));
 
 const requiredCloudflareBuildValue = (envValue: BuildEnvironmentReader, name: string): string =>
   getResultOrThrow(
@@ -113,9 +137,9 @@ const requiredCloudflareBuildValue = (envValue: BuildEnvironmentReader, name: st
     )(envValue(name) ?? ''),
   );
 
-const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
-  OptionFromNullOr(Struct({ binding: StringSchema, idVariable: StringSchema })),
-).pipe(
+const DeclaredCloudflareHyperdrivesSchema = Struct({ binding: StringSchema, idVariable: StringSchema }).pipe(
+  OptionFromNullOr,
+  ArraySchema,
   check(
     isMinLength(1, { message: 'A Cloudflare Worker build needs at least one Hyperdrive binding' }),
     makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) =>
@@ -124,7 +148,7 @@ const DeclaredCloudflareHyperdrivesSchema = ArraySchema(
         : undefined,
     ),
     makeFilter((hyperdrives: readonly Option<CloudflareHyperdriveBinding>[]) => {
-      const bindings = hyperdrives.flatMap(optionToArray).map(({ binding }) => binding);
+      const bindings = hyperdrives.flatMap((hyperdrive) => optionToArray(hyperdrive).map(({ binding }) => binding));
       const duplicate = bindings.find((binding, index) => bindings.indexOf(binding) !== index);
       return duplicate === undefined ? undefined : `Hyperdrive binding ${duplicate} is declared more than once`;
     }),
@@ -249,6 +273,17 @@ export const createCloudflareWorkerConfig = (
   };
 };
 
+type WorkspaceModernConfig = Pick<AppUserConfig, 'deploy'> & {
+  dev: Required<Pick<NonNullable<AppUserConfig['dev']>, 'setupMiddlewares'>>;
+  output: Required<Pick<NonNullable<AppUserConfig['output']>, 'disableTsChecker' | 'overrideBrowserslist'>> &
+    Pick<NonNullable<AppUserConfig['output']>, 'sourceMap'>;
+  server: Required<Pick<NonNullable<AppUserConfig['server']>, 'publicDir'>>;
+  source: Pick<NonNullable<AppUserConfig['source']>, 'entriesDir'> & {
+    globalVars: { ULTRAMODERN_SHELL_ORIGIN: string };
+  };
+  tools: NonNullable<AppUserConfig['tools']>;
+};
+
 /** OntOS data-plane policy and module discovery, composed with the published workspace preset. */
 export const createWorkspaceModernConfig = ({
   appId,
@@ -267,7 +302,7 @@ export const createWorkspaceModernConfig = ({
    */
   headless?: boolean;
   moduleUrl: string;
-}) => ({
+}): WorkspaceModernConfig => ({
   ...(resolveDeployTarget().target === 'cloudflare'
     ? {
         deploy: {
@@ -287,13 +322,12 @@ export const createWorkspaceModernConfig = ({
     // The native TS-Go checker blocks every first compile on a check of the whole reference graph, which
     // holds a cold dev server past readiness budgets. The required workspace CI job owns type
     // diagnostics once; deployment and local builds still check unless explicitly separated.
+    // Native output policy skips diagnostics, not declaration emission, in both browser and server builds.
     disableTsChecker:
       readBuildEnvironmentValue('NODE_ENV') === 'development' ||
       readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1',
-    ...(readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1'
-      ? { sourceMap: { js: false as const } }
-      : undefined),
-  },
+    ...(readBuildEnvironmentValue('ONTOS_CI_TYPECHECK_SEPARATE') === '1' ? { sourceMap: { js: false } } : undefined),
+  } satisfies AppUserConfig['output'],
   server: {
     publicDir: ['./.dev-public'],
   },

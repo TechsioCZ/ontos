@@ -32,10 +32,10 @@ export const LegacyIcoInventoryAssertionSchema = Schema.Struct({
   assertionRef: PartyOfficialIdentifierRefSchema,
   partyRef: PartyRefSchema,
   revision: LegacyIcoSnapshotVersionSchema,
-  normalizedValue: Schema.String.check(Schema.isPattern(/^[0-9]{8}$/u)),
+  normalizedValue: Schema.String.check(Schema.isPattern(/^\d{8}$/u)),
   originalInput: Schema.Union([
     Schema.Struct({ kind: Schema.Literal('UNKNOWN') }),
-    Schema.Struct({ kind: Schema.Literal('KNOWN'), digits: Schema.String.check(Schema.isPattern(/^[0-9]{1,8}$/u)) }),
+    Schema.Struct({ kind: Schema.Literal('KNOWN'), digits: Schema.String.check(Schema.isPattern(/^\d{1,8}$/u)) }),
   ]),
   state: Schema.Literals(['ACTIVE', 'ENDED', 'SUPERSEDED', 'RETRACTED', 'DISPUTED']),
   isCurrent: Schema.Boolean,

@@ -1,5 +1,5 @@
 import { PrincipalEligibilityLive } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Layer } from 'effect';
 
 import {
@@ -30,7 +30,7 @@ type CommerceCustomerContextOwnerRuntimeServices =
   | Layer.Success<typeof pricingPurchaseContextVerificationLive>;
 
 type CommerceCustomerContextOwnerRuntimeDependencies =
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | Layer.Services<typeof PrincipalEligibilityLive>
   | Layer.Services<typeof profileReactivationEligibilityEvaluatorFactoryLive>
   | Layer.Services<typeof pricingPurchaseContextVerificationLive>;

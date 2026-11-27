@@ -1,6 +1,7 @@
 import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
-import { Crypto, Effect, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { CounterpartyPurchasingProfileRefSchema } from '../../shared/resources/counterparty-purchasing-profile.ts';
 import { counterpartyPurchasingProfiles, customerProfiles } from '../../src/database/schema.ts';
 import { withVerifiedCustomerContextFixture } from './customer-context-owned-fixture.ts';
@@ -24,8 +25,8 @@ export const seedOrganizationProfileIcoNativeFixture = Effect.fn('OrganizationPr
     const counterparty = yield* Schema.decodeUnknownEffect(CounterpartyRefSchema, { onExcessProperty: 'error' })(
       input.counterpartyRef,
     );
-    const crypto = yield* Crypto.Crypto;
-    const profileId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const profileId = yield* crypto.uuidV4();
     return yield* withVerifiedCustomerContextFixture({ ...input, tenantId: counterparty.tenantId }, (transaction) =>
       Effect.gen(function* seedProfile() {
         yield* transaction.insert(customerProfiles).values({

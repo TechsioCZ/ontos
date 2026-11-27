@@ -16,14 +16,15 @@ export const CustomerProfileTradingGateRequestSchema = Schema.Struct({
   authorizationSubject: CommerceCustomerProfileSubjectSchema,
   profileRef: CommerceCustomerProfileRefSchema,
 }).check(
-  Schema.makeFilter(({ authorizationSubject, profileRef }) =>
-    authorizationSubject.kind === profileRef.kind &&
-    (authorizationSubject.kind === 'RETAIL'
-      ? authorizationSubject.partyRef.tenantId === profileRef.tenantId
-      : authorizationSubject.counterpartyRef.tenantId === profileRef.tenantId)
+  Schema.makeFilter(({ authorizationSubject, profileRef }) => {
+    const subjectTenantId =
+      authorizationSubject.kind === 'RETAIL'
+        ? authorizationSubject.partyRef.tenantId
+        : authorizationSubject.counterpartyRef.tenantId;
+    return authorizationSubject.kind === profileRef.kind && subjectTenantId === profileRef.tenantId
       ? undefined
-      : 'The authorization subject must match the requested profile kind and Tenant',
-  ),
+      : 'The authorization subject must match the requested profile kind and Tenant';
+  }),
 );
 export type CustomerProfileTradingGateRequest = typeof CustomerProfileTradingGateRequestSchema.Type;
 export const CustomerProfileTradingGateResponseSchema = Schema.Struct({

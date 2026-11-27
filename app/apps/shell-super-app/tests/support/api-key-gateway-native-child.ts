@@ -32,7 +32,6 @@ import {
   Config,
   ConfigProvider,
   Context,
-  Crypto,
   FileSystem,
   Path,
   Duration,
@@ -45,6 +44,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
@@ -197,10 +197,10 @@ const serve = Effect.scoped(
       Effect.provideService(AuthDatabase, database),
       Effect.provideContext(resolver),
     );
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const suffix = yield* crypto.uuidV4();
     const email = `native-${suffix}@fixture.invalid`;
-    const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+    const password = Redacted.make(`${yield* crypto.uuidV4()}${yield* crypto.uuidV4()}`);
     yield* startupStage('creating_provider_users');
     const providerUserId = yield* authentication.createFixtureUser(email, 'Owned native gateway fixture', password);
     const relaySource = yield* Config.schema(
@@ -229,7 +229,7 @@ const serve = Effect.scoped(
       (source) =>
         Effect.gen(function* createAdditionalModuleUser() {
           const sourceEmail = `native-${source.sourceAppId}-${suffix}@fixture.invalid`;
-          const sourcePassword = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+          const sourcePassword = Redacted.make(`${yield* crypto.uuidV4()}${yield* crypto.uuidV4()}`);
           return {
             email: sourceEmail,
             password: sourcePassword,
@@ -256,7 +256,7 @@ const serve = Effect.scoped(
         return Option.none();
       }
       const sourceEmail = `native-source-${suffix}@fixture.invalid`;
-      const sourcePassword = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+      const sourcePassword = Redacted.make(`${yield* crypto.uuidV4()}${yield* crypto.uuidV4()}`);
       return Option.some({
         email: sourceEmail,
         password: sourcePassword,
@@ -522,7 +522,7 @@ const serve = Effect.scoped(
       authenticatedIssuers.add(session.identity.principalId);
       const issued = yield* keys.issue(new Headers({ cookie, origin: configuration.baseUrl }), {
         issuerPrincipalId: session.identity.principalId,
-        lifecycleOperationId: yield* crypto.randomUUIDv4(),
+        lifecycleOperationId: yield* crypto.uuidV4(),
         name: 'Owned module relay source proof',
         tenantId: command.tenantId,
       });
@@ -587,7 +587,7 @@ const serve = Effect.scoped(
       authenticatedIssuers.add(session.identity.principalId);
       const issued = yield* keys.issue(new Headers({ cookie, origin: configuration.baseUrl }), {
         issuerPrincipalId: session.identity.principalId,
-        lifecycleOperationId: yield* crypto.randomUUIDv4(),
+        lifecycleOperationId: yield* crypto.uuidV4(),
         name: 'Owned Market relay source proof',
         tenantId: command.tenantId,
       });
@@ -742,7 +742,7 @@ const serve = Effect.scoped(
       yield* Ref.set(sessionCookie, Option.some(currentCookie));
       const issued = yield* keys.issue(new Headers({ cookie: currentCookie, origin: configuration.baseUrl }), {
         issuerPrincipalId: actor.value.principalId,
-        lifecycleOperationId: yield* crypto.randomUUIDv4(),
+        lifecycleOperationId: yield* crypto.uuidV4(),
         name: 'Native human setup proof',
         tenantId: actor.value.tenantId,
       });

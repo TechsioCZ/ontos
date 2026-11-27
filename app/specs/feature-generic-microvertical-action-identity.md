@@ -199,7 +199,7 @@ Do not add or retain a demonstration business MicroVertical. The generator/runti
 Execute every command to validate the feature with zero regressions.
 
 - `mise exec -- pnpm install --frozen-lockfile` — prove exact direct dependencies and lockfile integrity.
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — strictly typecheck the new generator, templates, and fixture tests.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — strictly typecheck the new generator, templates, and fixture tests.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — lint generator infrastructure outside the normal application-only lint roots.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — run generator and disposable generated-boundary tests.
 - `mise exec -- pnpm scaffold:microvertical-action-boundary -- --help` — verify command discovery and write-free documented flags.
@@ -215,7 +215,7 @@ Execute every command to validate the feature with zero regressions.
 ## Implementation Evidence
 
 - `mise exec -- pnpm install --frozen-lockfile` — passed; lockfile was already current.
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — passed, 19/19 tests.
 - `mise exec -- pnpm scaffold:microvertical-action-boundary -- --help` — passed and performed no writes.

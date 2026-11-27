@@ -71,9 +71,8 @@ const portalAuthCommunicationRelayLive = Layer.unwrap(
   Layer.catchTag('PortalAuthCommunicationRelayConfigurationError', (failure) =>
     relayNotStarted({ keys: failure.keys.join(','), reason: failure._tag }),
   ),
-  Layer.catchTag(
-    ['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError', 'PlatformError'],
-    (failure) => relayNotStarted({ reason: failure._tag }),
+  Layer.catchTag(['CommercePortalAuthConfigError', 'CommercePortalAuthDatabaseConnectionError'], (failure) =>
+    relayNotStarted({ reason: failure._tag }),
   ),
 );
 /**

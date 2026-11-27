@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Exit, FileSystem, Option } from 'effect';
+import { Effect, Exit, FileSystem, Option, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { SqlError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
@@ -54,9 +55,9 @@ const failedConstraint = (failure: SqlError) => Option.getOrUndefined(findPostgr
 const dropSchema = (pool: PgClient.PgClient, schema: MigrationSchema) =>
   query(pool, `drop schema if exists ${schema.quotedName} cascade`).pipe(Effect.orDie);
 
-const makeMigrationSchema = (pool: PgClient.PgClient, crypto: Crypto.Crypto) =>
+const makeMigrationSchema = (pool: PgClient.PgClient, crypto: SecureRandom.SecureRandom['Service']) =>
   Effect.gen(function* makeMigrationSchemaEffect() {
-    const name = `core_auth_namespace_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const name = `core_auth_namespace_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     const quotedName = `"${name}"`;
     yield* query(pool, `create schema ${quotedName}`);
     yield* query(
@@ -203,7 +204,7 @@ const runMigration = (pool: PgClient.PgClient, statements: readonly string[]) =>
 
 const migrationProgram = Effect.gen(function* migrationProgramEffect() {
   const configuration = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const pool = yield* makeTestPgClient(configuration.admin.connectionString, { maxConnections: 4 });
 
@@ -400,6 +401,8 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
   }).pipe(Effect.ensuring(dropSchema(pool, lateFailure)));
 }).pipe(Effect.scoped);
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('auth-namespace-migration', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('auth-namespace-migration', (suite) => {
   suite.effect('initializes the empty schema and preserves binding constraints', () => migrationProgram);
 });

@@ -280,7 +280,7 @@ Use the existing PostgreSQL-backed Core fixtures to prove tenant-isolated gate r
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — typecheck updated Codesmith implementations and disposable generator fixtures.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — typecheck updated Codesmith implementations and disposable generator fixtures.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding scripts/check-module-entrypoint-boundaries.mts scripts/tests` — lint generator and boundary infrastructure outside the normal application lint roots.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts scripts/tests/module-entrypoint-boundaries.test.mts` — run generator and fail-closed boundary fixtures.
 - `mise exec -- pnpm scaffold:action -- --help` — verify Action help describes governed tenant and explicit Core output.
@@ -324,7 +324,7 @@ Execute every command to validate the feature with zero regressions.
 
 ### Validation
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding scripts/check-module-entrypoint-boundaries.mts scripts/tests` — passed.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts scripts/tests/module-entrypoint-boundaries.test.mts` — passed, 36 tests.
 - `mise exec -- pnpm scaffold:action -- --help` — passed.

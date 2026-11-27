@@ -1,15 +1,16 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 const principalSchema = Schema.Struct({
   principalId: TrustedPrincipalContextSchema.fields.principalId,
   tenantId: TrustedPrincipalContextSchema.fields.tenantId,
 });
 export const customerFixtureUuid = Effect.gen(function* customerFixtureUuid() {
-  const crypto = yield* Crypto.Crypto;
-  return yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  return yield* crypto.uuidV4();
 });
 
 /** Explicit native fixture authority only. Business owner records are never created here. */

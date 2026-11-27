@@ -1,6 +1,7 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 import type { CommunicationRequest } from '@app/communications-contracts/communication-request';
-import { Array as EffectArray, Crypto, Effect, Order, Predicate, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Predicate, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -104,7 +105,7 @@ export const materialMeaningOf = Effect.fn('Communications.materialMeaning')(fun
 });
 
 const sha256Hex = (text: string) =>
-  Crypto.Crypto.use((crypto) => crypto.digest('SHA-256', new TextEncoder().encode(text))).pipe(
+  Digest.Digest.use((crypto) => crypto.digest(Digest.sha256, new TextEncoder().encode(text))).pipe(
     Effect.map((digest) => Hex.encode(digest)),
     Effect.orDie,
   );

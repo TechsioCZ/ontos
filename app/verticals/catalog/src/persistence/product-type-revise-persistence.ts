@@ -1,6 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { ReviseProductTypeResultSchema } from '../../shared/actions/revise-product-type.ts';
@@ -57,7 +57,7 @@ export interface ProductTypeRevisePersistence {
   ) => Effect.Effect<
     ReviseProductTypePersistenceOutcome,
     ProductTypeImpactBasisUnavailable | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
 }
 

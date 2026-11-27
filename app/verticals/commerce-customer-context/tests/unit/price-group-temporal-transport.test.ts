@@ -1,5 +1,6 @@
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeSocket } from '@effect/platform-node';
-import { Crypto, Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from 'effect';
+import { Effect, Fiber, FileSystem, Layer, Option, Schema, Stream } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Socket } from 'effect/socket';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
@@ -137,7 +138,7 @@ it.layer(
           for (const required of module?.requiredCoreCapabilities ?? []) {
             expect(snapshot.composition.shell.coreCapabilities).toContainEqual(required);
           }
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* Digest.Digest;
           for (const artifact of [
             snapshot.composition.shell.runtimeContract,
             snapshot.composition.shell.federationManifest,
@@ -145,7 +146,7 @@ it.layer(
             const response = yield* HttpClient.get(artifact.url).pipe(Effect.provide(FetchHttpClient.layer));
             expect(response.status).toBe(200);
             const bytes = new Uint8Array(yield* response.arrayBuffer);
-            expect(Buffer.from(yield* crypto.digest('SHA-256', bytes)).toString('hex')).toBe(artifact.sha256);
+            expect(Buffer.from(yield* crypto.digest(Digest.sha256, bytes)).toString('hex')).toBe(artifact.sha256);
           }
           if (module?.federation.execution === 'browser') {
             const response = yield* HttpClient.get(module.federation.manifest.url).pipe(
@@ -153,9 +154,9 @@ it.layer(
             );
             const body = yield* response.text;
             expect(response.status).toBe(200);
-            const actualDigest = Buffer.from(yield* crypto.digest('SHA-256', new TextEncoder().encode(body))).toString(
-              'hex',
-            );
+            const actualDigest = Buffer.from(
+              yield* crypto.digest(Digest.sha256, new TextEncoder().encode(body)),
+            ).toString('hex');
             expect(actualDigest).toBe(module.federation.manifest.sha256);
             const metadata = yield* Schema.decodeUnknownEffect(
               Schema.fromJsonString(

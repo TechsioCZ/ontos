@@ -1,13 +1,14 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { CartVoucherMeaningSchema } from '../../shared/resources/promotion.ts';
 import { createPromotionDraft, publishPromotion } from '../../src/services/lifecycle.service.ts';
 import { promotionPersistenceFactory } from '../../src/services/persistence.service.ts';
 
 export const nativeServices = Layer.mergeAll(NodeCrypto.layer, NodeServices.layer);
-export const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+export const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 export const makePersistenceFixture = Effect.fn('PromotionTest.persistenceFixture')(function* persistenceFixture() {
   const fixture = yield* makeNativeReadTestContext({
     contextPermissions: [],

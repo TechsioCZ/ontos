@@ -1,18 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import {
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { AuthenticationNamespaceRegistry } from '../../src/auth/external-identity/verifier.ts';
@@ -32,7 +21,9 @@ import { coreRelations, tenants } from '../../src/db/schema.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 
 interface MutableOwnershipPurposeInput {
   mode: 'empty';
@@ -1018,8 +1009,8 @@ it.layer(nativeServices, { excludeTestServices: true })('isolated native databas
       }>`select c.relname as table,c.relrowsecurity as enabled,c.relforcerowsecurity as forced from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='core' and c.relkind in ('r','p') order by c.relname`;
       expect(actualRls).toEqual(expectedRls);
       const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = yield* crypto.uuidV4();
       yield* database.insert(tenants).values({
         defaultLocale: 'en',
         name: 'Core grant control',

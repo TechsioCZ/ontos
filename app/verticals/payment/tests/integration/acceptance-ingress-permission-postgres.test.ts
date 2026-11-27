@@ -9,7 +9,8 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, count, eq } from 'drizzle-orm';
-import { DateTime, ConfigProvider, Crypto, Effect, Layer, Schema } from 'effect';
+import { DateTime, ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -68,7 +69,7 @@ type IngressBody =
   | typeof StartPaymentCollectionPayloadSchema.Encoded;
 const ISSUER = 'https://shell.payment-acceptance.test';
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 /** The real Core Action and Read runtimes; only the Payment permission decision varies. */
@@ -76,7 +77,7 @@ const makeRuntimes = Effect.fn('AcceptanceIngress.makeRuntimes')(function* makeR
   database: EvidenceNativeDatabase,
   permission: 'allowed' | 'denied',
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate(permission).bound;
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService({ executor: database.coreAdmin }));
   const gateway = makeModuleEntrypointGateway(moduleStateGate);

@@ -13,7 +13,7 @@ import {
 import type { executeSelectionEvidenceWithAuthorization } from '@app/catalog/api/client';
 import type { CurrentMarketCatalogRequest } from '@app/commerce-market-catalog/api/client';
 import { DateTime, Effect, Redacted, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 /**
  * Pricing's one outgoing owner call shape (DESIGN D2). Pricing acts for the verified subject of the
@@ -146,7 +146,7 @@ export const pricingOwnerDelegationSubject = (
 /** Requests a context for the owner module, acting for the subject of `input.scope` through the module credential. */
 export const acquireOwnerGatewayConnection = (
   input: OwnerGatewayConnectionInput,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): Effect.Effect<OwnerGatewayConnection, OwnerGatewayConnectionError> =>
   pricingOwnerDelegationSubject(input).pipe(
     Effect.flatMap((subject) =>

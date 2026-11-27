@@ -1,5 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, FileSystem, Option } from 'effect';
+import { Effect, FileSystem, Option, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
@@ -13,8 +14,8 @@ const migrationPath = new URL(
 const authorityMigrationProgram = Effect.gen(function* authorityMigrationEffect() {
   const { admin, runtime } = yield* testDatabaseClients;
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  const schemaName = `composition_authority_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const schemaName = `composition_authority_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const quotedSchema = `"${schemaName}"`;
   const table = `${quotedSchema}."application_composition_authority"`;
   yield* admin.unsafe(`create schema ${quotedSchema}`);
@@ -88,7 +89,9 @@ const authorityMigrationProgram = Effect.gen(function* authorityMigrationEffect(
   expect(yield* runtime.unsafe<{ phase: string }>(`select phase from ${table}`)).toEqual([{ phase: 'draining' }]);
 }).pipe(Effect.scoped);
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('Application Composition authority migration', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('Application Composition authority migration', (suite) => {
   suite.effect(
     'allows administrator promotion while preventing runtime forgery and truncation',
     () => authorityMigrationProgram,

@@ -5,7 +5,7 @@ import {
   GatewayDelegationSourceError,
 } from '@app/shared-contracts/gateway-context-server';
 import { Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 /**
  * Acts for the requester whose Market admission this scope carries, toward another module. The
@@ -14,7 +14,7 @@ import type { Crypto } from 'effect';
  */
 export const acquireMarketOwnerDelegation = (
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   audience: string,
   admittedRevision: string,
 ) => {

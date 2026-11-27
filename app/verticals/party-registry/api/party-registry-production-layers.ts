@@ -29,7 +29,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import { Layer } from '@modern-js/bff-effect/effect-edge';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 
 import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';
@@ -49,7 +49,7 @@ type PartyRegistryAccessRequirements =
   | AccessDecisionLog
   | AccessIntent
   | AccessPrincipalKindSource
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | DatabaseConfig
   | DecisionCheck
   | LegalEntityCandidates;

@@ -112,7 +112,7 @@ export type OntosMcpRecordLink = typeof OntosMcpRecordLinkSchema.Type;
  * The approval queue labels the lines of a stored command with them when the module gives no lines of its own.
  */
 export const OntosMcpCommandFieldLabelsSchema = Schema.Record(
-  Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,99}$/u)),
+  Schema.String.check(Schema.isPattern(/^[A-Za-z]\w{0,99}$/u)),
   nonEmpty.check(Schema.isMaxLength(300)),
 );
 export type OntosMcpCommandFieldLabels = typeof OntosMcpCommandFieldLabelsSchema.Type;

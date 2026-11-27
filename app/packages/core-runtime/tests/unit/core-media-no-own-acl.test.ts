@@ -28,7 +28,7 @@ const listFiles = Effect.fn('CoreMediaNoAclTest.list')(function* listFiles(relat
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const REGISTRATIONS = [
@@ -138,7 +138,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media owns no 
         const end = schema.indexOf('export const', start);
         const definition = schema.slice(start, end === -1 ? undefined : end);
         expect(definition, `${table} must carry no permission column`).not.toMatch(
-          /(?:^|[^a-zA-Z])(?:acl|grants?|permissions?|roles?|owner_principal)|[a-z](?:Acl|Grants?|Permissions?|Roles?)/u,
+          /(?:^|[^a-zA-Z])(?:acl|grants?|permissions?|roles?|owner_principal)/u,
+        );
+        expect(definition, `${table} must carry no permission column`).not.toMatch(
+          /[a-z](?:Acl|Grants?|Permissions?|Roles?)/u,
         );
       }
       // Only these tables key on a Media Asset: a new side table (shares, visibility, per-file rules) would fail here.

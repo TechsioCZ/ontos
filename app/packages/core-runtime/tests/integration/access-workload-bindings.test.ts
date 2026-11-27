@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Cause, Crypto, DateTime, Effect, Exit, FileSystem, Option, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, FileSystem, Option, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -107,9 +108,9 @@ interface AccessWorkloadSchema {
 /** A database of this run's own, with the access migration applied and the runtime role granted. */
 const makeAccessWorkloadSchema = Effect.gen(function* accessWorkloadSchema() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
-  const database = `${databasePrefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const database = `${databasePrefix}${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const sourceAdmin = yield* makeTestPgClient(connections.admin.connectionString);
   yield* sourceAdmin.unsafe(`create database "${database}"`);
   yield* Effect.addFinalizer(() =>
@@ -173,7 +174,9 @@ const bindingOf = (input: {
   workloadKey: input.key,
 });
 
-it.layer(NodeServices.layer)('the Access workload binding store', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('the Access workload binding store', (suite) => {
   suite.effect(
     'registers a workload and answers only its active keys to the actor that holds them',
     Effect.fnUntraced(function* registersAndReads() {

@@ -95,7 +95,7 @@ Use Core schema unit tests for the serialized template grammar, disposable gener
 
 Execute every command to validate the chore with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — typecheck the CLI, generator, helpers, and disposable-workspace tests.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — typecheck the CLI, generator, helpers, and disposable-workspace tests.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — lint generator infrastructure not covered by root application lint paths.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — run all Codesmith unit and disposable-workspace integration tests.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` — verify the documented dynamic URL grammar without writing.
@@ -140,7 +140,7 @@ Execute every command to validate the chore with zero regressions.
 
 ### Validation
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- Historical receipt: the scaffolding project passed its then-current compiler check.
 - `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed after resolving all reported scaffolding findings.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — 42/42 passed, including formatter stability and generated-file typechecking.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` — passed.

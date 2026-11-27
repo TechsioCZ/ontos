@@ -1,7 +1,7 @@
 import { CommunicationRequestSchema } from '@app/communications-contracts/communication-request';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { Digest } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SubmitCommunicationRequestPayloadSchema } from '../../shared/communication-intake.ts';
@@ -26,7 +26,7 @@ import {
 import { binding } from './support/recipient-fixtures.ts';
 
 const decodeFixture = Schema.decodeUnknownSync(CommunicationRequestSchema, { onExcessProperty: 'error' });
-const withCrypto = <Value>(effect: Effect.Effect<Value, never, Crypto.Crypto>) =>
+const withCrypto = <Value>(effect: Effect.Effect<Value, never, Digest.Digest>) =>
   effect.pipe(Effect.provide(NodeCrypto.layer));
 
 describe('The published Communication Request maps onto the domain decision without a second copy (#1401)', () => {

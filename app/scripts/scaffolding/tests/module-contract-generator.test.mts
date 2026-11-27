@@ -738,7 +738,7 @@ it.live(
           writeFile(
             manifestPath,
             manifest.replace(
-              /\s*operationContracts: \[\s*\/\/ <generated-module-manifest-operation-contracts>\s*\/\/ <\/generated-module-manifest-operation-contracts>\s*\],/u,
+              /(?<!\s)\s*operationContracts: \[\s*\/\/ <generated-module-manifest-operation-contracts>\s*\/\/ <\/generated-module-manifest-operation-contracts>\s*\],/u,
               '',
             ),
           ),
@@ -747,7 +747,7 @@ it.live(
           writeFile(
             registrationPath,
             registration.replace(
-              /\s*reads: \[\s*\/\/ <generated-module-registration-reads>\s*\/\/ <\/generated-module-registration-reads>\s*\],/u,
+              /(?<!\s)\s*reads: \[\s*\/\/ <generated-module-registration-reads>\s*\/\/ <\/generated-module-registration-reads>\s*\],/u,
               '',
             ),
           ),
@@ -981,7 +981,7 @@ it.live(
         );
         expect(packageJson.dependencies).toEqual({
           '@app/core-runtime': 'workspace:*',
-          '@effect/platform-node': '4.0.7',
+          '@effect/platform-node': '4.1.4',
           zeta: '1.0.0',
         });
         expect(packageJson.exports).toEqual({ '.': './src/index.ts' });

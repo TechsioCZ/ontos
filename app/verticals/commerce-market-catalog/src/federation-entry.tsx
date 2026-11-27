@@ -25,19 +25,15 @@ const CommerceMarketCatalogRouteContent = () => {
   );
 };
 
-const CommerceMarketCatalogRoute = (props: Record<string, never>): JSX.Element => {
-  void props;
-
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="commerce-market-catalog"
-      fallbackLanguage="en"
-      resources={federatedI18nResources}
-      supportedLanguages={federatedI18nLanguages}
-    >
-      <CommerceMarketCatalogRouteContent />
-    </FederatedI18nBoundary>
-  );
-};
+const CommerceMarketCatalogRoute = (_props: Record<string, never>): JSX.Element => (
+  <FederatedI18nBoundary
+    defaultNamespace="commerce-market-catalog"
+    fallbackLanguage="en"
+    resources={federatedI18nResources}
+    supportedLanguages={federatedI18nLanguages}
+  >
+    <CommerceMarketCatalogRouteContent />
+  </FederatedI18nBoundary>
+);
 
 export default CommerceMarketCatalogRoute;

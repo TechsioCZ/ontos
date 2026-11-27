@@ -4,7 +4,8 @@ import type { OperationalScope } from '@app/core-runtime';
 import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/quantity-preparation-client';
 import { executeOrderServiceApprovalEvidenceWithAuthorization } from '@app/commerce-customer-context/api/order-service-approval-evidence/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Config, Crypto, DateTime, Effect, Schema } from 'effect';
+import { Config, DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { CartHeldSelection } from '@app/commerce-cart-contracts/domain/cart-draft';
 import { CartDraftRejected } from '@app/commerce-cart-contracts/domain/cart-draft';
 
@@ -40,7 +41,7 @@ const configuration = Config.all({
 export const finalCartCandidateOwnersService = Effect.fn('FinalCartCandidateOwners.make')(
   function* makeFinalCartCandidateOwners(scope: OperationalScope) {
     const configured = yield* configuration.pipe(Effect.mapError(unavailable));
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const credential = (
       audience: 'catalog' | 'commerce-customer-context',
       correlation: string,

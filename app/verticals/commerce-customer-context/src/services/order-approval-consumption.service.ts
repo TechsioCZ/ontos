@@ -11,7 +11,8 @@ import {
   CommittedOrderApprovalEvidenceResponseSchema,
 } from '@app/commerce-order-contracts/committed-order-approval-evidence';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Clock, Config, Crypto, DateTime, Effect, Schema } from 'effect';
+import { Clock, Config, DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { ConsumeOrderPurchaseApprovalPayload } from '../../shared/actions/consume-order-purchase-approval.ts';
 import {
   ConsumePurchaseApprovalInputSchema,
@@ -153,7 +154,7 @@ const retainedRequestMatches = ({
 export const orderApprovalConsumptionService = Effect.fn('OrderApprovalConsumption.services')(
   function* orderApprovalConsumptionServices(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const composition = yield* ActiveApplicationCompositionService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       consume: Effect.fn('OrderApprovalConsumption.consume')(function* consumeOrderApproval(
         payload: ConsumeOrderPurchaseApprovalPayload,

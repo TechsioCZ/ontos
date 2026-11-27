@@ -10,7 +10,8 @@ import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-co
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { callAnswer } from '@app/core-runtime/sdk';
 import type { CallOutcome } from '@app/core-runtime/sdk';
-import { Crypto, Effect, Redacted } from 'effect';
+import { Effect, Redacted } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { isPaymentTermDefinitionSupported } from '../../shared/domain/payment-term-contracts.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
@@ -169,7 +170,7 @@ export const paymentTermCatalogPortFromEnvironment = Effect.fn('PaymentTermCatal
     execute: AuthorizedCurrentPaymentTermsExecutor = executeAuthorizedCurrentPaymentTerms,
     acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
   ) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return paymentTermCatalogPort(context.requestCorrelation, (payload, correlation) =>
       acquire(
         {

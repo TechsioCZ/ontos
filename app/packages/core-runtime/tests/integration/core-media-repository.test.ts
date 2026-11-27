@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Exit, Option, Schema } from 'effect';
+import { Effect, Exit, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -21,7 +22,7 @@ import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/databas
  * repository itself runs through the runtime login inside a Core scoped transaction.
  */
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const bytes = (count: number) => Schema.decodeUnknownSync(MediaByteSizeSchema)(count);
 const sha = (value: string) => Schema.decodeUnknownSync(MediaContentSha256Schema)(value);
 const digest = sha('c'.repeat(64));
@@ -148,14 +149,18 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media repository
       );
       expect(sealed.kind).toBe('applied');
       for (const to of ['uploaded', 'scanning', 'failed', 'ready'] as const) {
-        const outcome = yield* inScope(tenant, undefined, (repository) =>
-          to === 'uploaded'
-            ? repository.transition(mediaAssetId, { to: 'scanning' })
-            : repository.transition(
-                mediaAssetId,
-                to === 'ready' ? { confirmed: { byteSize: bytes(1), contentSha256: sha('d'.repeat(64)) }, to } : { to },
-              ),
-        );
+        const outcome = yield* inScope(tenant, undefined, (repository) => {
+          if (to === 'uploaded') {
+            return repository.transition(mediaAssetId, { to: 'scanning' });
+          }
+          if (to === 'ready') {
+            return repository.transition(mediaAssetId, {
+              confirmed: { byteSize: bytes(1), contentSha256: sha('d'.repeat(64)) },
+              to,
+            });
+          }
+          return repository.transition(mediaAssetId, { to });
+        });
         expect(outcome.kind).toBe('rejected');
       }
       const [row] = yield* admin.unsafe<{

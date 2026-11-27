@@ -35,8 +35,8 @@ type RenovateManager = RenovateConfiguration['customManagers'][number];
 const extractVersions = (source: string, manager: RenovateManager, dependency: string) =>
   manager.matchStrings.flatMap((pattern) =>
     [...source.matchAll(new RegExp(pattern, 'gu'))]
-      .filter((match) => (match.groups?.depName ?? manager.depNameTemplate) === dependency)
-      .map((match) => match.groups?.currentValue),
+      .filter((match) => (match.groups?.['depName'] ?? manager.depNameTemplate) === dependency)
+      .map((match) => match.groups?.['currentValue']),
   );
 
 const extractExternalPin = Effect.fn('extractExternalPin')(function* extractPin(
@@ -75,13 +75,18 @@ it.effect('uses the same immutable PostgreSQL image for development, CI and data
     // own any more, every job that needs a cluster starts this same Compose file, so pinning the image
     // here and asserting the workflow cannot name any PostgreSQL image, under any tag or digest, is the
     // same guarantee.
-    const workflowImage = /\bpostgres(?:@sha256:|:[a-z0-9])|^\s*image:\s*['"]?(?:[\w.-]+\/)*postgres['"]?\s*$/mu;
+    const workflowImages = [
+      /\bpostgres(?:@sha256:|:[a-z0-9])/u,
+      /^ *image:[ \t]*['"]?(?:[\w.-]+\/)*postgres['"]?[ \t]*$/mu,
+    ];
     for (const declared of ['image: postgres:18.5-alpine', 'image: postgres', "image: 'docker.io/library/postgres'"]) {
-      expect(declared).toMatch(workflowImage);
+      expect(workflowImages.some((pattern) => pattern.test(declared))).toBe(true);
     }
-    expect('postgresql://ontos_runtime@localhost:5433/ontos_ci').not.toMatch(workflowImage);
+    expect(workflowImages.some((pattern) => pattern.test('postgresql://ontos_runtime@localhost:5433/ontos_ci'))).toBe(
+      false,
+    );
     const workflow = yield* fs.readFileString(path.join(root, '../.github/workflows/ultramodern-workspace-gates.yml'));
-    expect(workflow).not.toMatch(workflowImage);
+    expect(workflowImages.some((pattern) => pattern.test(workflow))).toBe(false);
     const images = yield* Effect.all(
       ['docker-compose.yml', 'zerops.yaml', 'scripts/run-zerops-spicedb.sh'].map((file) =>
         fs
@@ -152,7 +157,7 @@ it.effect('rejects a corrupt official Node archive and removes its temporary dir
     );
     yield* fs.chmod(path.join(bin, 'curl'), 0o700);
     const mise = yield* fs.readFileString(path.join(root, '.mise.toml'));
-    const node = /^node = "(?<version>\d+\.\d+\.\d+)"$/mu.exec(mise)?.groups?.version ?? '';
+    const node = /^node = "(?<version>\d+\.\d+\.\d+)"$/mu.exec(mise)?.groups?.['version'] ?? '';
     const installer = yield* fs.readFileString(installerPath);
     expect(installer).toContain(`${node}) node_checksum=`);
     const child = yield* spawner.spawn(

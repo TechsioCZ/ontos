@@ -31,7 +31,7 @@ const readApp = Effect.fn('CoreHostedOperationsContract.read')(function* readApp
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const statusOf = (schema: Schema.Top): number => Number(Schema.resolveAnnotationsKey(schema)?.httpApiStatus);

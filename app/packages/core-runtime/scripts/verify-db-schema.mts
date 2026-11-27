@@ -554,8 +554,11 @@ const verifyDedicatedIdentityPolicies = Effect.gen(function* verifyDedicatedIden
   for (const table of tables) {
     const expected = (EXPECTED_CORE_POLICIES.get(table) ?? []).map(policyIdentity).toSorted();
     const actual = policies
-      .filter(({ tablename }) => tablename === table)
-      .map(({ cmd, policyname, roles }) => policyIdentity({ command: cmd, name: policyname, roles }))
+      .flatMap((policy) =>
+        policy.tablename === table
+          ? [policyIdentity({ command: policy.cmd, name: policy.policyname, roles: policy.roles })]
+          : [],
+      )
       .toSorted();
     if (actual.length !== expected.length || actual.some((policy, index) => policy !== expected[index])) {
       return yield* new DatabaseVerificationError({
@@ -879,8 +882,7 @@ const verifyCoreConstraints = Effect.gen(function* verifyCoreConstraintsEffect()
       ),
     );
   const presentCompositeConstraints = constraintRows
-    .map((row) => row.conname)
-    .filter((name) => EXPECTED_COMPOSITE_CONSTRAINTS.includes(name))
+    .flatMap(({ conname }) => (EXPECTED_COMPOSITE_CONSTRAINTS.includes(conname) ? [conname] : []))
     .toSorted();
   if (
     presentCompositeConstraints.length !== EXPECTED_COMPOSITE_CONSTRAINTS.length ||
@@ -892,8 +894,7 @@ const verifyCoreConstraints = Effect.gen(function* verifyCoreConstraintsEffect()
   }
 
   const actualAuthConstraints = constraintRows
-    .map((row) => row.conname)
-    .filter((name) => name.startsWith('core_auth_bindings_'))
+    .flatMap(({ conname }) => (conname.startsWith('core_auth_bindings_') ? [conname] : []))
     .toSorted();
   if (
     actualAuthConstraints.length !== EXPECTED_AUTH_CONSTRAINTS.length ||

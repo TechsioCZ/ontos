@@ -9,7 +9,8 @@ import type {
 } from '@app/portal-auth-contracts/portal-auth-issuance-source';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Data, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import type { Crypto, Duration } from 'effect';
+import type { Duration } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { SourceStateKeySchema } from '../domain/catalog/vocabulary.ts';
 import { safeCauseOf } from '../domain/intake/safe-cause.ts';
@@ -234,7 +235,7 @@ export const portalAuthOwnerPortsOver = (settings: PortalAuthOwnerSettings, tran
  * operation in progress (`CurrentOwnerCall`), naming the exact declaration of the Read it asks.
  */
 export const portalAuthOwnerTransportLive =
-  (crypto: Crypto.Crypto): PortalAuthOwnerTransport =>
+  (crypto: SecureRandom.SecureRandom['Service']): PortalAuthOwnerTransport =>
   (request, call) =>
     acquireDelegatedGatewayContext(
       {

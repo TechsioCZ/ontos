@@ -2,7 +2,8 @@ import { fileURLToPath } from 'node:url';
 
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { parse as parseYaml } from 'yaml';
 
@@ -78,7 +79,7 @@ const toSpiceDbCheckRequest = (assertion: FixtureAssertion) =>
 
 const externalIdentityPermissionIntegration = Effect.gen(function* externalIdentityPermissionIntegration() {
   const configuration = yield* loadSpiceDbConfig();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const fixtureSource = yield* fileSystem.readFileString(
     fileURLToPath(new URL('../../spicedb/external-identity-permissions.test.yaml', import.meta.url)),
@@ -88,20 +89,20 @@ const externalIdentityPermissionIntegration = Effect.gen(function* externalIdent
   );
   const ids = yield* Effect.all(
     [
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
     ],
     { concurrency: 'unbounded' },
   );
@@ -281,7 +282,9 @@ const externalIdentityPermissionIntegration = Effect.gen(function* externalIdent
   );
 });
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('external identity permissions', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('external identity permissions', (suite) => {
   suite.effect(
     'enforces namespace provisioning and separate administrative authority',
     () => externalIdentityPermissionIntegration,

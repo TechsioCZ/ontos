@@ -1,4 +1,5 @@
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import { GovernVariantAllowedValuesActionConflictProblemSchema } from '../../shared/apis/govern-variant-allowed-values-action.ts';
 import {
@@ -11,7 +12,7 @@ import {
   productAxisAllowanceTestServices,
 } from '../support/product-axis-allowance-receiver.fixture.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 it.live('reassesses Product-specific axis allowance restrictions through native Current and public PRICING', () =>
   Effect.gen(function* productAxisAllowanceNative() {
     const {

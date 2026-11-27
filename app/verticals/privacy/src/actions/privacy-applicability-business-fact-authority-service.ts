@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import { resolveOrganizationIcoBusinessFacts } from '../services/organization-ico-applicability.service.ts';
@@ -23,7 +23,7 @@ export interface PrivacyApplicabilityBusinessFactAuthorityService {
   ) => Effect.Effect<
     TrustedPrivacyApplicabilityBusinessFactAuthorityResult,
     PrivacyApplicabilityBusinessFactAuthorityError,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
   readonly resolveEligibility: (
     request: PrivacyApplicabilityEligibilityAuthorityRequest,

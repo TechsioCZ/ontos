@@ -2,7 +2,8 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { ActionHandlerContext, ScopedTransactionExecutor } from '@app/core-runtime';
 import { createActionCollector } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
-import type { Crypto, Layer } from 'effect';
+import type { Layer } from 'effect';
+import type { Digest, SecureRandom } from 'effect/crypto';
 
 import type {
   SubmitCommunicationRequestPayload,
@@ -28,7 +29,8 @@ export type RuntimeDatabase = Effect.Success<ReturnType<typeof makeRuntimeDataba
 /** Every service the intake handler composes: the catalog and decision evaluator, the owner ports and Crypto. */
 export type IntakeOwnerPorts = Layer.Layer<
   | CommunicationDecisionService
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
   | MessageTypeCatalog
   | ProcessingEligibilityGate
   | ProcessingScopeDeclaration

@@ -53,10 +53,13 @@ const decimalParts = (value: MonetaryAmount['amount']) => {
 /** Exact minor units when representable; rounded up (never down) when the decimal carries more digits. */
 const toMinorUnits = (value: MonetaryAmount['amount'], digits: bigint, currency: string): number => {
   const { coefficient, scale } = decimalParts(value);
-  const minor =
-    scale >= digits
-      ? coefficient / 10n ** (scale - digits) + (coefficient % 10n ** (scale - digits) === 0n ? 0n : 1n)
-      : coefficient * 10n ** (digits - scale);
+  let minor: bigint;
+  if (scale >= digits) {
+    const divisor = 10n ** (scale - digits);
+    minor = coefficient / divisor + (coefficient % divisor === 0n ? 0n : 1n);
+  } else {
+    minor = coefficient * 10n ** (digits - scale);
+  }
   if (minor > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new PurchaseValueAmountUnresolvable({
       reason: `The purchase value is outside the ${currency} range`,

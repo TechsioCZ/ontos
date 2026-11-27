@@ -1,6 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Option } from 'effect';
-import type { Crypto } from 'effect';
+import type { Digest, SecureRandom } from 'effect/crypto';
 import { TemplateLegalEntityIdSchema, TemplateRevisionIdSchema } from '../../shared/template-revision.ts';
 import type { TemplateIdentity, TemplatePin } from '../../shared/template-revision.ts';
 import {
@@ -74,8 +74,9 @@ export const approvedDraft = (overrides: Partial<PrepareRevisionInput> = {}): Pr
 });
 
 /** The store generates revision ids with the platform crypto service, as the governed Action runtime provides. */
-export const withCrypto = <Value, Failure>(effect: Effect.Effect<Value, Failure, Crypto.Crypto>) =>
-  effect.pipe(Effect.provide(NodeCrypto.layer));
+export const withCrypto = <Value, Failure>(
+  effect: Effect.Effect<Value, Failure, Digest.Digest | SecureRandom.SecureRandom>,
+) => effect.pipe(Effect.provide(NodeCrypto.layer));
 
 /**
  * The FICTIONAL template contract of every `fixture.*` message type: two generic text placeholders and one secret slot, none required. The
@@ -111,5 +112,6 @@ export const domainFor = (port: TemplateRevisionPortContract) => ({
 });
 
 /** The failure of an Effect expected to fail; a success is a test defect. */
-export const failureOf = <Value, Failure>(effect: Effect.Effect<Value, Failure, Crypto.Crypto>) =>
-  withCrypto(Effect.flip(effect));
+export const failureOf = <Value, Failure>(
+  effect: Effect.Effect<Value, Failure, Digest.Digest | SecureRandom.SecureRandom>,
+) => withCrypto(Effect.flip(effect));

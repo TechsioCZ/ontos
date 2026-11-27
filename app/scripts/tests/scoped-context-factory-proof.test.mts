@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import nodePath from 'node:path';
-import { Crypto, Effect, Logger, Path, References, Tracer } from 'effect';
+import { Effect, Logger, Path, References, Tracer } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { PgClient } from '@effect/sql-pg';
 import { SqlClient } from 'effect/sql';
 import { Reactivity } from 'effect/reactivity';
@@ -156,23 +157,26 @@ it.effect.each([
     conditionalSourceBody,
     'input=>input.pipe(Effect.provideContext(unknownContext))',
   ],
-])('rejects an unproved conditional consumer source: %s', ([name, file, before, after]) => {
-  const snapshot = conditionalConsumerSources();
-  snapshot.set(file, (snapshot.get(file) ?? '').replace(before, after));
-  if (name === 'protected direct input' || name === 'body Context replacement') {
-    snapshot.set(
-      consumerFile,
-      (snapshot.get(consumerFile) ?? '').replace(conditionalSourceCall, conditionalProtectedCall),
-    );
-  }
-  if (name === 'protected destructured input' || name === 'protected opaque input') {
-    snapshot.set(
-      consumerFile,
-      (snapshot.get(consumerFile) ?? '').replace(conditionalSourceCall, 'conditional.authorize({request:use({})})'),
-    );
-  }
-  return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
-});
+] satisfies [string, string, string, string][])(
+  'rejects an unproved conditional consumer source: %s',
+  ([name, file, before, after]) => {
+    const snapshot = conditionalConsumerSources();
+    snapshot.set(file, (snapshot.get(file) ?? '').replace(before, after));
+    if (name === 'protected direct input' || name === 'body Context replacement') {
+      snapshot.set(
+        consumerFile,
+        (snapshot.get(consumerFile) ?? '').replace(conditionalSourceCall, conditionalProtectedCall),
+      );
+    }
+    if (name === 'protected destructured input' || name === 'protected opaque input') {
+      snapshot.set(
+        consumerFile,
+        (snapshot.get(consumerFile) ?? '').replace(conditionalSourceCall, 'conditional.authorize({request:use({})})'),
+      );
+    }
+    return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
+  },
+);
 it.effect.each([
   ['native body', 'return Effect.succeed(input);', true],
   ['synchronous runner', 'return Effect.runSync(input);', false],
@@ -279,7 +283,7 @@ it.effect.each([
 it.effect.each([
   ['omitted', 'input'],
   ['explicit undefined', defaultUndefinedArgs],
-])('preserves a default-returned protected Effect carrier: %s', ([_name, args]) => {
+] satisfies [string, string][])('preserves a default-returned protected Effect carrier: %s', ([_name, args]) => {
   const snapshot = defaultDataSources(defaultAliasParameters, 'return options;', args);
   snapshot.set(
     rootFile,
@@ -429,10 +433,14 @@ it.effect.each([
     `(${configConstructor}).load(["entry"]).pipe(Effect.provideContext(unknownContext))`,
     defaultUnknownArgs,
   ],
-])('checks ConfigProvider retained-input behavior: %s', ([name, expression, args]) =>
-  resolve(configProviderSources(expression, defaultDataParameters, args)).pipe(
-    Effect.map((result) => (name === 'opaque root' ? expect(result).toHaveLength(1) : expect(result).toBeUndefined())),
-  ),
+] satisfies [string, string, string][])(
+  'checks ConfigProvider retained-input behavior: %s',
+  ([name, expression, args]) =>
+    resolve(configProviderSources(expression, defaultDataParameters, args)).pipe(
+      Effect.map((result) =>
+        name === 'opaque root' ? expect(result).toHaveLength(1) : expect(result).toBeUndefined(),
+      ),
+    ),
 );
 it.effect.each([
   ['foreign namespace', 'ForeignConfig.fromUnknown(options.environment)', ''],
@@ -450,10 +458,12 @@ it.effect.each([
   ['eager getter input', 'ConfigProvider.fromUnknown(({get value(){return Effect.runSync(input);}}).value)', ''],
   ['retained protected getter', 'ConfigProvider.fromUnknown({get entry(){return Effect.runSync(input);}})', ''],
   ['retained proxy', 'ConfigProvider.fromUnknown(new Proxy({}, {get(){return Effect.runSync(input);}}))', ''],
-])('rejects an unproved ConfigProvider constructor use: %s', ([_name, expression, setup]) =>
-  resolve(configProviderSources(expression, defaultDataParameters, defaultExplicitArgs, setup)).pipe(
-    Effect.map((result) => expect(result).toBeUndefined()),
-  ),
+] satisfies [string, string, string][])(
+  'rejects an unproved ConfigProvider constructor use: %s',
+  ([_name, expression, setup]) =>
+    resolve(configProviderSources(expression, defaultDataParameters, defaultExplicitArgs, setup)).pipe(
+      Effect.map((result) => expect(result).toBeUndefined()),
+    ),
 );
 it.effect('preserves the existing treatment of an unrelated conditional receiver', () => {
   const snapshot = configProviderSources(
@@ -530,7 +540,7 @@ it.effect.each([
     'spread load',
     'const provider=ConfigProvider.fromUnknown(options.environment);return provider.load(...paths).pipe(Effect.provideContext(unknownContext));',
   ],
-])('preserves ConfigProvider retained-root provenance: %s', ([_name, body]) => {
+] satisfies [string, string][])('preserves ConfigProvider retained-root provenance: %s', ([_name, body]) => {
   const snapshot = defaultDataSources(defaultDataParameters, body, defaultUnknownArgs);
   snapshot.set(rootFile, `import {ConfigProvider} from 'effect';${snapshot.get(rootFile) ?? ''}`);
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
@@ -906,7 +916,7 @@ it.effect('resolves the real returned method body from the unique mounted native
 it.effect.each([
   ['self receiver', 'return factory.make(factory);'],
   ['mutual receivers', 'const peer=yield*Factory;factory.make(peer);return peer.make(factory);'],
-])('rejects recursive service custody without overflowing: %s', ([_name, invocation]) => {
+] satisfies [string, string][])('rejects recursive service custody without overflowing: %s', ([_name, invocation]) => {
   const snapshot = sources();
   snapshot.set(consumerFile, consumerSource.replace('return factory.make({transaction});', invocation));
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
@@ -927,7 +937,7 @@ it.effect.each([
   ['foreign assembler', rootSource.replace('@modern-js/bff-effect/assembly', 'foreign')],
   ['aliased mutable namespace', `${rootSource}\nconst alias=Layer;alias.provide=replacement;`],
   ['mutated native namespace', `${rootSource}\nLayer.provide=replacement;`],
-])('refuses runtime %s', ([_name, source]) => {
+] satisfies [string, string][])('refuses runtime %s', ([_name, source]) => {
   const snapshot = sources();
   snapshot.set(rootFile, source);
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
@@ -941,7 +951,7 @@ it.effect.each([
       '',
     ),
   ],
-])('refuses tag %s', ([_name, source]) => {
+] satisfies [string, string][])('refuses tag %s', ([_name, source]) => {
   const snapshot = sources();
   snapshot.set(tagFile, source);
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
@@ -954,7 +964,7 @@ it.effect.each([
     'duplicate mounted providers',
     `${producerSource}\nexport const second=Layer.effect(Factory,Effect.gen(function*(){return {make:(input)=>input};}));`,
   ],
-])('refuses provider %s', ([name, source]) => {
+] satisfies [string, string][])('refuses provider %s', ([name, source]) => {
   const snapshot = sources();
   snapshot.set(producerFile, source);
   if (name === 'duplicate mounted providers') {
@@ -1279,7 +1289,7 @@ it.effect.each([
     'unknown tag provider',
     rootSource.replace(provideProvider, 'Layer.provide(Layer.mergeAll(provider,Layer.succeed(unknownTag,rawService)))'),
   ],
-])('rejects a competing unproved Layer through %s', ([_name, source]) => {
+] satisfies [string, string][])('rejects a competing unproved Layer through %s', ([_name, source]) => {
   const snapshot = sources();
   snapshot.set(rootFile, source);
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
@@ -1399,11 +1409,14 @@ it.effect('does not overwrite a nested captured layer invocation with a differen
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
 });
 
-const nativeImports = `import {Crypto,Logger,Tracer,References,Layer} from 'effect';import {PgClient} from '@effect/sql-pg';import {Reactivity} from 'effect/reactivity';import {FetchHttpClient,HttpClient} from 'effect/http';`;
+const nativeImports = `import {Logger,Tracer,References,Layer} from 'effect';import {SecureRandom,Digest} from 'effect/crypto';import {PgClient} from '@effect/sql-pg';import {Reactivity} from 'effect/reactivity';import {FetchHttpClient,HttpClient} from 'effect/http';`;
 const nativeFetchLayer = 'FetchHttpClient.layer';
 const nativePgLayer = 'PgClient.layerFrom(acquire)';
 const nativeDependencies = [
-  ['Crypto tag', 'Layer.succeed(Crypto.Crypto,crypto)', Crypto.Crypto.key],
+  ['SecureRandom tag', 'Layer.succeed(SecureRandom.SecureRandom,random)', SecureRandom.SecureRandom.key],
+  ['SecureRandom layer', 'SecureRandom.layerWebCrypto', SecureRandom.SecureRandom.key],
+  ['Digest tag', 'Layer.succeed(Digest.Digest,digest)', Digest.Digest.key],
+  ['Digest layer', 'Digest.layerWebCrypto', Digest.Digest.key],
   ['PgClient tag', 'Layer.succeed(PgClient.PgClient,pg)', PgClient.PgClient.key],
   ['Reactivity layer', 'Reactivity.layer', Reactivity.Reactivity.key],
   ['FetchHttpClient layer', nativeFetchLayer, HttpClient.HttpClient.key],
@@ -1434,6 +1447,9 @@ it.effect.each(nativeDependencies)('rejects a target key collision with %s', ([_
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
 });
 it.effect.each([
+  ['foreign SecureRandom', `import {SecureRandom as Other} from 'foreign';`, 'Other.layerWebCrypto'],
+  ['mutated SecureRandom cohort', `SecureRandom.layerWebCrypto=foreign;`, 'SecureRandom.layerWebCrypto'],
+  ['mutated Digest cohort', `Digest.layerWebCrypto=foreign;`, 'Digest.layerWebCrypto'],
   ['wrong namespace', `import {PgClient as Other} from 'foreign';`, 'Other.layerFrom(acquire)'],
   ['wrong member', '', 'PgClient.unknownLayer(acquire)'],
   ['extra argument', '', 'PgClient.layerFrom(acquire,other)'],
@@ -1455,11 +1471,14 @@ it.effect.each([
     `import {Reactivity as Other} from 'effect/reactivity';Other.layer=foreign;`,
     'Reactivity.layer',
   ],
-])('refuses native dependency output proof after %s', ([_name, extra, dependency]) => {
-  const snapshot = withNativeDependency(dependency);
-  snapshot.set(rootFile, `${snapshot.get(rootFile) ?? ''}${extra}`);
-  return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
-});
+] satisfies [string, string, string][])(
+  'refuses native dependency output proof after %s',
+  ([_name, extra, dependency]) => {
+    const snapshot = withNativeDependency(dependency);
+    snapshot.set(rootFile, `${snapshot.get(rootFile) ?? ''}${extra}`);
+    return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
+  },
+);
 const conditionalOwner = `${root}/packages/dependency`;
 const conditionalTag = `${conditionalOwner}/src/tag.ts`;
 const variantNode = `${conditionalOwner}/src/node.ts`;
@@ -1520,7 +1539,7 @@ it.effect.each([
     'target key collision',
     `import {Layer} from 'effect';import {Factory} from '../../../verticals/owner/shared/port.ts';export const dependency=Layer.succeed(Factory,{});`,
   ],
-])('rejects a conditional variant with %s', ([_name, source]) => {
+] satisfies [string, string][])('rejects a conditional variant with %s', ([_name, source]) => {
   const snapshot = conditionalSnapshot();
   snapshot.set(variantWorker, source);
   return resolveConditional(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
@@ -1695,7 +1714,7 @@ it.effect.each([
   ['aliased receiver mutator', 'group', 'const alias=group;mutate(alias);'],
   ['container receiver escape', 'group', 'const holder={group};mutate(holder);'],
   ['mutated native constructor', 'group', 'HttpApiGroup.make=foreign;'],
-])('rejects a readonly tag consumer with %s', ([_name, definition, mutation]) =>
+] satisfies [string, string, string][])('rejects a readonly tag consumer with %s', ([_name, definition, mutation]) =>
   resolve(taggedBuilder(definition, mutation)).pipe(Effect.map((result) => expect(result).toBeUndefined())),
 );
 it.effect('rejects a counterfeit native HTTP builder import', () => {
@@ -1845,7 +1864,7 @@ it.effect.each([
   ['native snapshot', 'original'],
   ['immutable alias', 'alias'],
   ['exact unrelated add', 'Context.add(alias,Other,{})'],
-])('preserves actual current Context from %s', ([_name, context]) => {
+] satisfies [string, string][])('preserves actual current Context from %s', ([_name, context]) => {
   const snapshot = sources();
   snapshot.set(consumerFile, snapshotConsumer(context));
   return resolve(snapshot).pipe(Effect.map((result) => expect(result).toHaveLength(1)));
@@ -1908,7 +1927,7 @@ it.effect.each([
   ['foreign method', mountedRoleMethod, 'make:foreign'],
   ['counterfeit provider', 'Layer.effect(RoleFactory', 'foreign.effect(RoleFactory'],
   ['counterfeit tag', `from 'effect';`, `from 'foreign';`],
-])('rejects mounted role factory %s', ([name, before, after]) => {
+] satisfies [string, string, string][])('rejects mounted role factory %s', ([name, before, after]) => {
   const snapshot = mountedRoleFactorySources();
   const file = name === 'counterfeit tag' ? `${owner}/shared/role.ts` : `${owner}/src/role.ts`;
   snapshot.set(file, (snapshot.get(file) ?? '').replace(before, after));
@@ -2058,7 +2077,7 @@ it.effect.each([
   ],
   ['named function span', consumerSource, Tracer.ParentSpan.key],
   ['function stack frame', consumerSource, References.CurrentStackFrame.key],
-])('rejects a colliding native %s', ([_name, source, key]) => {
+] satisfies [string, string, string][])('rejects a colliding native %s', ([_name, source, key]) => {
   const snapshot = sources();
   snapshot.set(tagFile, tagSource.replace('@app/owner/Factory', key));
   snapshot.set(consumerFile, source);
@@ -3112,15 +3131,18 @@ it.effect.each(['Effect.sync(()=>protectedEffect)', 'Effect.flatMap(Effect.void,
 it.effect.each([
   ['same module', tagFile],
   ['executed dependency', `${owner}/shared/mutate.ts`],
-])('checks Object intrinsic identity before native Context constructors in %s', ([_name, file]) => {
-  const snapshot = sources();
-  const mutation = `Object.setPrototypeOf=counterfeit;`;
-  snapshot.set(file, file === tagFile ? `${tagSource}${mutation}` : mutation);
-  if (file !== tagFile) {
-    snapshot.set(tagFile, `${tagSource}import './mutate.ts';`);
-  }
-  return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
-});
+] satisfies [string, string][])(
+  'checks Object intrinsic identity before native Context constructors in %s',
+  ([_name, file]) => {
+    const snapshot = sources();
+    const mutation = `Object.setPrototypeOf=counterfeit;`;
+    snapshot.set(file, file === tagFile ? `${tagSource}${mutation}` : mutation);
+    if (file !== tagFile) {
+      snapshot.set(tagFile, `${tagSource}import './mutate.ts';`);
+    }
+    return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
+  },
+);
 
 const nativeSyncCallbackExpression = 'Effect.sync(get)';
 it.effect.each([
@@ -3312,11 +3334,14 @@ it.effect.each([
   ['later unknown context', 'base', unsafeFactoryContext, ''],
   ['mutated returned context', 'base', 'base', `bound.context.mapUnsafe.set('@app/owner/Factory',fake);`],
   ['getter returned context', 'base', 'base', `Object.defineProperty(bound,'context',{get:()=>fake});`],
-])('rejects context field proof with %s', ([_name, earlier, last, mutation]) => {
-  const snapshot = sources();
-  snapshot.set(consumerFile, closedContextBranches(earlier, last, mutation));
-  return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
-});
+] satisfies [string, string, string, string][])(
+  'rejects context field proof with %s',
+  ([_name, earlier, last, mutation]) => {
+    const snapshot = sources();
+    snapshot.set(consumerFile, closedContextBranches(earlier, last, mutation));
+    return resolve(snapshot).pipe(Effect.map((result) => expect(result).toBeUndefined()));
+  },
+);
 
 it.effect('rejects a context cycle without a genuine native snapshot seed', () => {
   const snapshot = sources();
@@ -4347,14 +4372,17 @@ it.effect.each([
     `Schema.decodeEffect(${equivalenceSchemaExport},{onExcessProperty:'error'},extra)`,
   ],
   ['wrong schema slot', nativeDecodeEffect, `Schema.decodeEffect(undefined,${equivalenceSchemaExport})`],
-])('rejects the native decodeEffect schema borrower with %s', ([_name, before, after]) => {
-  const snapshot = decodeEffectSources();
-  snapshot.set(
-    verificationFile,
-    `import {Schema as ForeignSchema} from 'foreign';${snapshot.get(verificationFile) ?? ''}`.replace(before, after),
-  );
-  return decodeEffectSchemaWitness(snapshot).pipe(Effect.map((result) => expect(result).toBe(false)));
-});
+] satisfies [string, string, string][])(
+  'rejects the native decodeEffect schema borrower with %s',
+  ([_name, before, after]) => {
+    const snapshot = decodeEffectSources();
+    snapshot.set(
+      verificationFile,
+      `import {Schema as ForeignSchema} from 'foreign';${snapshot.get(verificationFile) ?? ''}`.replace(before, after),
+    );
+    return decodeEffectSchemaWitness(snapshot).pipe(Effect.map((result) => expect(result).toBe(false)));
+  },
+);
 it.effect('rejects a mutated native decodeEffect schema borrower', () => {
   const snapshot = decodeEffectSources();
   snapshot.set(verificationFile, `${snapshot.get(verificationFile) ?? ''}Schema.decodeEffect=foreignTransform;`);

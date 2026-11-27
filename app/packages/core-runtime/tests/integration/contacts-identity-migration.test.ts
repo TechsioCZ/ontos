@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
@@ -67,10 +68,10 @@ const runSequentially = <Value, Result, Failure, Requirements>(
 
 const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMigration() {
   const configuration = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const session = yield* makeTestPgSession(configuration.admin.connectionString);
-  const schema = `core_contacts_identity_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const schema = `core_contacts_identity_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
   yield* Effect.gen(function* exerciseContactsIdentityMigration() {
     yield* session.unsafe(`create schema ${quotedSchema}`);
@@ -196,7 +197,9 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
   }).pipe(Effect.ensuring(session.unsafe(`drop schema if exists ${quotedSchema} cascade`).pipe(Effect.orDie)));
 }).pipe(Effect.scoped);
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('contacts-identity-migration', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('contacts-identity-migration', (suite) => {
   suite.effect(
     'Contacts Core identity migration is preserving, scoped, rerunnable, and collision-safe',
     () => contactsIdentityMigrationProgram,

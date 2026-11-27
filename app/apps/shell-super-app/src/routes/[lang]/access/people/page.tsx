@@ -80,7 +80,6 @@ const PeoplePage = () => {
             snapshot: model.snapshot,
           }),
         ),
-        Effect.catchTag('PlatformError', () => Effect.succeed<PeopleFeedback>('unavailable')),
         Effect.flatMap((result) => {
           setFeedback(result);
           if (result !== 'saved') {

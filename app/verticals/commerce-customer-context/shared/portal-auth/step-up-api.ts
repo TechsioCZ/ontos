@@ -46,7 +46,7 @@ const CommercePortalAuthStepUpHttpIssueBodySchema = Schema.Record(Schema.String,
 /** Verification accepts only the opaque challenge and the six-digit proof. */
 const CommercePortalAuthStepUpHttpVerifyBodySchema = Schema.Struct({
   challengeId: CommercePortalAuthStepUpWireChallengeIdSchema,
-  code: Schema.String.check(Schema.isPattern(/^[0-9]{6}$/u)),
+  code: Schema.String.check(Schema.isPattern(/^\d{6}$/u)),
 });
 
 export type CommercePortalAuthStepUpHttpIssueBody = typeof CommercePortalAuthStepUpHttpIssueBodySchema.Type;

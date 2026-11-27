@@ -7,7 +7,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { withVerifiedNativeReadScope } from '@app/core-runtime/testing/native-reads';
 import { getReadServiceFactory } from '@app/core-runtime/testing/reads';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import { NodeHttpClient, NodeRuntime, NodeServices, NodeSink, NodeStream } from '@effect/platform-node';
+import { NodeCrypto, NodeHttpClient, NodeRuntime, NodeServices, NodeSink, NodeStream } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { Config, Context, Effect, Layer, Logger, Result, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/reactivity';
@@ -199,6 +199,7 @@ NodeRuntime.runMain(
         Effect.provide(Reactivity.layer),
         Effect.provide(NodeHttpClient.layerUndici),
         Effect.provide(NodeServices.layer),
+        Effect.provide(NodeCrypto.layer),
       ),
     ),
     Effect.catchTag('PostalFactoryProbeFailure', (failure) => failProtocol(failure.stage)),

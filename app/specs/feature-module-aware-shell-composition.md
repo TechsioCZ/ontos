@@ -258,7 +258,7 @@ Use the local SpiceDB bootstrap to prove tenant/module permission isolation and 
 
 Execute every command to validate the feature with zero regressions.
 
-- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — Type-check Codesmith generator and validation scripts.
+- `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — Type-check Codesmith generator and validation scripts.
 - `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — Run generator contract and fixture tests.
 - `mise exec -- node --test scripts/tests/*.test.mts` — Run repository boundary and generated-artifact tests.
 - `mise exec -- pnpm --filter @app/core-runtime action:test:unit` — Protect existing Action permission and gateway behavior after sharing the SpiceDB client seam.

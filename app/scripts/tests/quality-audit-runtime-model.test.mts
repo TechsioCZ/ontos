@@ -8,6 +8,7 @@ import { expect, it } from 'effect-rstest';
 
 import { buildKnipModel } from '../../quality-audit/knip-model.mts';
 import { buildKnipRuntimeEvidence } from '../../quality-audit/knip-runtime-model.mts';
+import { runQualityAudit } from '../quality-audit.mts';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
 const shellPackage = '@fixture/shell';
@@ -101,6 +102,363 @@ const fixture = () =>
     write(root, readinessConfig, 'export default {}; export const unusedConfigExport = 1;');
     return root;
   });
+
+const hostProducer = '@modern-js/app-tools-extensions';
+const nativeHostProducer = '@modern-js/plugin-tanstack';
+const generatorPackage = '@modern-js/ultramodern-create';
+const supportHost = 'rsbuild-plugin-dts';
+const nativeHost = '@tanstack/router-core';
+const unusedHost = 'ioredis-mock';
+const compareBindings = (left: readonly string[], right: readonly string[]): number =>
+  left.join('\0').localeCompare(right.join('\0'));
+const producerFixture = Effect.fn(function* pinnedHostFixture() {
+  const root = yield* fixture();
+  write(root, layoutFile, emptyLayout);
+  const appRoot = path.resolve(import.meta.dirname, '../..');
+  const producer = Schema.decodeUnknownSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        name: Schema.String,
+        ultramodern: Schema.Struct({
+          nativeArtifacts: Schema.Json,
+          sourceName: Schema.String,
+          supportArtifacts: Schema.Json,
+        }),
+        version: Schema.String,
+      }),
+    ),
+  )(readFileSync(path.join(appRoot, 'node_modules', generatorPackage, 'package.json'), 'utf-8'));
+  const entries = Schema.decodeUnknownSync(
+    Schema.fromJsonString(
+      Schema.Struct({
+        packages: Schema.Array(
+          Schema.Struct({ sourceName: Schema.String, targetName: Schema.String, version: Schema.String }),
+        ),
+      }),
+    ),
+  )(readFileSync(path.join(appRoot, 'node_modules', generatorPackage, 'release-cohort.json'), 'utf-8')).packages.filter(
+    ({ sourceName }) => [generatorPackage, hostProducer, nativeHostProducer].includes(sourceName),
+  );
+  const pins = Schema.Struct({
+    packages: Schema.Record(Schema.String, Schema.Struct({ request: Schema.String, version: Schema.String })),
+  });
+  const support = Schema.decodeUnknownSync(pins)(producer.ultramodern.supportArtifacts).packages;
+  const native = Schema.decodeUnknownSync(pins)(producer.ultramodern.nativeArtifacts).packages;
+  const requiredSupport = support[supportHost];
+  const requiredNative = native[nativeHost];
+  const unusedSupport = support[unusedHost];
+  expect(requiredSupport).toBeDefined();
+  expect(requiredNative).toBeDefined();
+  expect(unusedSupport).toBeDefined();
+  if (requiredSupport === undefined || requiredNative === undefined || unusedSupport === undefined) {
+    throw new Error('The pinned producer fixture must contain its real host authorities');
+  }
+  const aliases = Object.fromEntries(
+    entries.map(({ sourceName, targetName, version }) => [sourceName, `npm:${targetName}@${version}`]),
+  );
+  const metadata = {
+    nativeArtifacts: producer.ultramodern.nativeArtifacts,
+    supportArtifacts: producer.ultramodern.supportArtifacts,
+  };
+  for (const directory of ['', shellRoot]) {
+    write(
+      root,
+      path.join(directory, 'package.json'),
+      JSON.stringify(
+        {
+          devDependencies: {
+            [generatorPackage]: aliases[generatorPackage],
+            [nativeHost]: requiredNative.request,
+            [supportHost]: requiredSupport.request,
+            [unusedHost]: unusedSupport.request,
+          },
+          name: directory === '' ? 'host-controls' : shellPackage,
+          private: true,
+          type: 'module',
+          ultramodern: metadata,
+          workspaces: directory === '' ? ['apps/*'] : undefined,
+        },
+        null,
+        2,
+      ),
+    );
+    write(root, path.join(directory, 'src/index.ts'), 'export {};');
+  }
+  for (const entry of entries) {
+    const supportPeers = entry.sourceName === hostProducer ? { [supportHost]: requiredSupport.version } : {};
+    const nativePeers = entry.sourceName === nativeHostProducer ? { [nativeHost]: requiredNative.version } : {};
+    write(
+      root,
+      `node_modules/${entry.sourceName}/package.json`,
+      JSON.stringify(
+        {
+          dependencies:
+            entry.sourceName === generatorPackage
+              ? {
+                  [hostProducer]: aliases[hostProducer],
+                  [nativeHostProducer]: aliases[nativeHostProducer],
+                }
+              : {},
+          name: entry.targetName,
+          peerDependencies: { ...nativePeers, ...supportPeers },
+          ultramodern: { ...metadata, sourceName: entry.sourceName },
+          version: entry.version,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+  write(
+    root,
+    `node_modules/${generatorPackage}/release-cohort.json`,
+    JSON.stringify({
+      packages: entries,
+      release: { version: producer.version },
+    }),
+  );
+  for (const [name, pin] of [
+    [supportHost, requiredSupport],
+    [nativeHost, requiredNative],
+    [unusedHost, unusedSupport],
+  ] as const) {
+    write(root, `node_modules/${name}/package.json`, JSON.stringify({ name, version: pin.version }, null, 2));
+  }
+  return { requiredNative, requiredSupport, root };
+});
+
+it.live(
+  'pinned producer peer edges prove only exact owner-local support and native hosts',
+  Effect.fn(function* exactProducerHosts() {
+    const { root } = yield* producerFixture();
+    const evidence = (yield* facts(root)).filter(({ kind }) => kind === 'native-resolver');
+    expect(evidence.map(({ target, workspace }) => [workspace, target]).toSorted(compareBindings)).toEqual(
+      [
+        ['.', nativeHost],
+        ['.', supportHost],
+        [shellRoot, nativeHost],
+        [shellRoot, supportHost],
+      ].toSorted(compareBindings),
+    );
+    for (const fact of evidence) {
+      expect(fact).toMatchObject({
+        anchor: path.join(root, fact.workspace, 'package.json'),
+        declarationSource: fact.workspace === '.' ? 'package.json' : `${shellRoot}/package.json`,
+        dependencyCategory: 'devDependencies',
+        owningManifest: path.join(root, fact.workspace, 'package.json'),
+        resolved: path.join(root, 'node_modules', fact.target, 'package.json'),
+        specifier: `${fact.target}/package.json`,
+      });
+      expect(fact.producerResolved).toBe(fact.resolved);
+      expect(fact.declarationLine).toBeGreaterThan(0);
+      expect(fact.declarationColumn).toBe(6);
+    }
+  }),
+);
+
+it.live(
+  'producer host proof resolves catalog aliases without accepting a neighboring release identity',
+  Effect.fn(function* exactHostCatalog() {
+    const { root } = yield* producerFixture();
+    const file = 'package.json';
+    const original = readFileSync(path.join(root, file), 'utf-8');
+    const alias = /npm:@bleedingdev\/[^"]+/u.exec(original)?.[0];
+    expect(alias).toBeDefined();
+    if (alias === undefined) {
+      throw new Error('The fixture generator must pin its authenticated release alias');
+    }
+    write(root, file, original.replace(alias, 'catalog:ultramodern'));
+    write(root, 'pnpm-workspace.yaml', `catalogs:\n  ultramodern:\n    '${generatorPackage}': '${alias}'\n`);
+    expect(
+      (yield* facts(root)).filter((fact) => fact.kind === 'native-resolver' && fact.workspace === '.'),
+    ).toHaveLength(2);
+    write(
+      root,
+      'pnpm-workspace.yaml',
+      `catalogs:\n  ultramodern:\n    '${generatorPackage}': '${alias}-wrong-release'\n`,
+    );
+    expect((yield* facts(root)).filter(({ kind }) => kind === 'native-resolver')).toEqual([]);
+  }),
+);
+
+it.live(
+  'producer hosts bind dependency categories independently when a package is declared in both groups',
+  Effect.fn(function* exactHostCategories() {
+    const { requiredSupport, root } = yield* producerFixture();
+    const file = 'package.json';
+    const original = readFileSync(path.join(root, file), 'utf-8');
+    write(
+      root,
+      file,
+      original.replace(
+        '"devDependencies": {',
+        `"dependencies": { "${supportHost}": "${requiredSupport.request}" }, "devDependencies": {`,
+      ),
+    );
+    const declared = (yield* facts(root)).filter(
+      (fact) => fact.kind === 'native-resolver' && fact.workspace === '.' && fact.target === supportHost,
+    );
+    expect(declared.map(({ dependencyCategory }) => dependencyCategory)).toEqual(['dependencies', 'devDependencies']);
+    expect(new Set(declared.map(({ declarationLine }) => declarationLine)).size).toBe(2);
+    write(
+      root,
+      file,
+      original.replace(
+        '"devDependencies": {',
+        `"dependencies": { "${supportHost}": "wrong-request" }, "devDependencies": {`,
+      ),
+    );
+    expect(
+      (yield* facts(root))
+        .filter((fact) => fact.kind === 'native-resolver' && fact.workspace === '.' && fact.target === supportHost)
+        .map(({ dependencyCategory }) => dependencyCategory),
+    ).toEqual(['devDependencies']);
+  }),
+);
+
+it.live(
+  'producer host proof rejects nearby pin, identity, descriptor, edge and installed-host mismatches',
+  Effect.fn(function* invalidProducerHosts() {
+    const { requiredSupport, root } = yield* producerFixture();
+    const rootFile = 'package.json';
+    const producerFile = `node_modules/${hostProducer}/package.json`;
+    const hostFile = `node_modules/${supportHost}/package.json`;
+    const generatorFile = `node_modules/${generatorPackage}/package.json`;
+    const controls = [
+      [rootFile, (text: string) => text.replace(requiredSupport.request, `${requiredSupport.request}?untrusted`)],
+      [rootFile, (text: string) => text.replace('"supportArtifacts":', '"unrelatedArtifacts":')],
+      [rootFile, (text: string) => text.replace('"supportArtifacts": {', '"supportArtifacts": {"unexpected": true,')],
+      [rootFile, (text: string) => text.replace(/npm:@bleedingdev\/[^"]+/u, 'npm:@bleedingdev/wrong@0.0.0')],
+      [generatorFile, (text: string) => text.replace(/^ {2}"version": "/mu, '  "version": "wrong-')],
+      [producerFile, (text: string) => text.replace(`"sourceName": "${hostProducer}"`, '"sourceName": "wrong"')],
+      [producerFile, (text: string) => text.replace('"name": "', '"name": "wrong-')],
+      [producerFile, (text: string) => text.replace(/^ {2}"version": "/mu, '  "version": "wrong-')],
+      [
+        producerFile,
+        (text: string) => text.replace(`"${supportHost}": "${requiredSupport.version}"`, `"${supportHost}": "0.0.0"`),
+      ],
+      [producerFile, (text: string) => text.replace('"peerDependencies":', '"unusedPeerDependencies":')],
+      [generatorFile, (text: string) => text.replace(`"${hostProducer}":`, '"@fixture/unrelated-owner":')],
+      [hostFile, (text: string) => text.replace(/^ {2}"version": "/mu, '  "version": "wrong-')],
+      [hostFile, (text: string) => text.replace(`"name": "${supportHost}"`, '"name": "wrong"')],
+    ] as const;
+    for (const [file, mutate] of controls) {
+      const original = readFileSync(path.join(root, file), 'utf-8');
+      const modified = mutate(original);
+      expect(modified, file).not.toBe(original);
+      write(root, file, modified);
+      const evidence = yield* facts(root);
+      expect(
+        evidence.filter(
+          (fact) => fact.kind === 'native-resolver' && fact.workspace === '.' && fact.target === supportHost,
+        ),
+        file,
+      ).toEqual([]);
+      write(root, file, original);
+    }
+    // A peer resolving a different installation cannot prove the declared owner's host.
+    write(
+      root,
+      `node_modules/${hostProducer}/node_modules/${supportHost}/package.json`,
+      readFileSync(path.join(root, hostFile), 'utf-8'),
+    );
+    expect(
+      (yield* facts(root)).filter((fact) => fact.kind === 'native-resolver' && fact.target === supportHost),
+    ).toEqual([]);
+  }),
+);
+
+it.live(
+  'tiny native Knip run calibrates exact producer hosts and retains unused neighboring declarations',
+  Effect.fn(function* producerHostCalibration() {
+    const { root } = yield* producerFixture();
+    const appRoot = path.resolve(import.meta.dirname, '../..');
+    for (const name of ['knip', 'effect']) {
+      symlinkSync(path.join(appRoot, 'node_modules', name), path.join(root, 'node_modules', name), 'dir');
+    }
+    const config = {
+      workspaces: Object.fromEntries(
+        ['.', 'apps/*'].map((owner) => [
+          owner,
+          {
+            entry: ['src/index.ts'],
+            lefthook: false,
+            node: false,
+            project: ['src/**/*.ts'],
+          },
+        ]),
+      ),
+    };
+    write(root, 'quality-audit/knip.json', JSON.stringify(config));
+    write(
+      root,
+      'quality-audit/scope.json',
+      JSON.stringify({
+        exclude: ['**/node_modules/**'],
+        patterns: ['src/**/*.ts', 'apps/**/*.ts'],
+      }),
+    );
+    write(
+      root,
+      'quality-audit/knip-reporter.mts',
+      readFileSync(path.join(appRoot, 'quality-audit/knip-reporter.mts'), 'utf-8'),
+    );
+    const output = path.join(root, '.reports');
+    yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
+    const summary = Schema.decodeUnknownSync(
+      Schema.fromJsonString(
+        Schema.Struct({
+          results: Schema.Array(
+            Schema.Struct({
+              coverage: Schema.Struct({
+                findingCounts: Schema.Record(Schema.String, Schema.Number),
+                modeledFindingCounts: Schema.Record(Schema.String, Schema.Number),
+                nativeFindingCounts: Schema.Record(Schema.String, Schema.Number),
+              }),
+              directory: Schema.String,
+              name: Schema.String,
+            }),
+          ),
+        }),
+      ),
+    )(readFileSync(path.join(output, 'summary.json'), 'utf-8'));
+    const knip = summary.results.find(({ name }) => name === 'knip');
+    expect(knip?.coverage.modeledFindingCounts).toEqual({ devDependencies: 4 });
+    expect(knip?.coverage.nativeFindingCounts['devDependencies']).toBe(8);
+    expect(knip?.coverage.findingCounts['devDependencies']).toBe(4);
+    expect(knip).toBeDefined();
+    if (knip === undefined) {
+      throw new Error('The native fixture audit must report Knip coverage');
+    }
+    const usages = Schema.decodeUnknownSync(
+      Schema.fromJsonString(
+        Schema.Array(
+          Schema.Struct({
+            file: Schema.String,
+            issue: Schema.Struct({ name: Schema.String }),
+          }),
+        ),
+      ),
+    )(readFileSync(path.join(knip.directory, 'modeled-usages.json'), 'utf-8'));
+    expect(usages.map(({ file, issue }) => [file, issue.name]).toSorted(compareBindings)).toEqual(
+      [
+        ['package.json', supportHost],
+        ['package.json', nativeHost],
+        [`${shellRoot}/package.json`, supportHost],
+        [`${shellRoot}/package.json`, nativeHost],
+      ].toSorted(compareBindings),
+    );
+    const model = yield* buildKnipModel(root, config).pipe(Effect.provide(NodeServices.layer));
+    for (const workspace of ['.', shellRoot]) {
+      expect(model.config.workspaces[workspace]?.ignoreDependencies ?? []).toEqual([]);
+      expect(
+        model.evidence.some(
+          (fact) => fact.kind === 'native-resolver' && fact.workspace === workspace && fact.target === unusedHost,
+        ),
+      ).toBe(false);
+    }
+  }),
+);
 
 it.live(
   'literal Rstest config commands consume only their contained file and default export',
@@ -284,16 +642,49 @@ it.live(
     const root = yield* fixture();
     const configFile = `${shellRoot}/module-federation.config.ts`;
     const source =
-      "import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/config';\nconst compiler = resolveEffectTsgoCompiler({\n from: import.meta.url,\n });\nvoid compiler;";
+      "import { resolveEffectTsrsCompiler } from '@modern-js/app-tools-extensions/config';\nconst compiler = resolveEffectTsrsCompiler({\n from: import.meta.url,\n });\nvoid compiler;";
     write(root, configFile, source);
     write(root, `${shellRoot}/${tsgoReadme}`, 'tries `typescript`, then `@typescript/native`');
     const initial = yield* facts(root);
-    for (const target of ['@effect/tsgo', '@typescript/native']) {
-      expect(initial.some((fact) => fact.target === target && fact.workspace === shellRoot)).toBe(true);
-    }
+    expect(initial.some((fact) => fact.target === tsgoName && fact.workspace === shellRoot)).toBe(true);
+    expect(initial.some((fact) => fact.target === '@typescript/native' && fact.workspace === shellRoot)).toBe(false);
+    write(root, configFile, source.replace('import.meta.url,', 'import.meta.url'));
+    expect((yield* facts(root)).some((fact) => fact.target === tsgoName && fact.source === configFile)).toBe(true);
     write(root, configFile, `/* ${source} */\nexport default {};`);
     const commented = yield* facts(root);
     expect(!commented.some((fact) => fact.source === configFile)).toBe(true);
+  }),
+);
+
+it.live(
+  'Zephyr host evidence requires a native preset call with real owner options, not textual lookalikes',
+  Effect.fn(function* workspacePresetOwnerControls() {
+    const root = yield* fixture();
+    const zephyr = 'zephyr-rspack-plugin';
+    const configFile = `${shellRoot}/modern.config.ts`;
+    const nativeImport = "import { presetUltramodernWorkspace } from '@modern-js/ultramodern-app-tools';";
+    const call = 'presetUltramodernWorkspace({}, { appId, from: import.meta.url })';
+    write(root, `${shellRoot}/package.json`, yield* stringify({ devDependencies: { [zephyr]: '1' } }));
+    write(
+      root,
+      `${shellRoot}/node_modules/@modern-js/ultramodern-app-tools/dist/esm-node/native-composition/workspace-preset.mjs`,
+      `const require = createRequire(from); require('${zephyr}');`,
+    );
+    write(root, configFile, `${nativeImport}\nconst appId = 'shell'; export default ${call};`);
+    expect((yield* facts(root)).some((fact) => fact.target === zephyr)).toBe(true);
+    for (const lookalike of [
+      `const dead = '${call}';`,
+      `/* ${call} */`,
+      'presetUltramodernWorkspace({}, { appId, from: other })',
+      'presetUltramodernWorkspace({}, { from: import.meta.url })',
+      'presetUltramodernWorkspace(configuration, { appId, from: import.meta.url })',
+    ]) {
+      write(root, configFile, `${nativeImport}\n${lookalike};`);
+      expect(
+        (yield* facts(root)).some((fact) => fact.target === zephyr),
+        lookalike,
+      ).toBe(false);
+    }
   }),
 );
 

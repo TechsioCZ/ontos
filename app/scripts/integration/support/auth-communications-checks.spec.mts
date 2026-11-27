@@ -1,5 +1,7 @@
 import { Effect, Option, Predicate, Redacted } from 'effect';
 
+import { assert } from 'effect-rstest';
+
 import type { AuthWorld } from './auth-communications-world.spec.mts';
 
 /**
@@ -83,9 +85,12 @@ export const expectNoSecretAnywhere = Effect.fn('AuthCommunicationsChecks.noSecr
 });
 
 /** The link or code the recipient sees in a delivered mail. Only the test, playing the inbox, reads it. */
-export const textOf = (mail: { readonly text: Redacted.Redacted }) => Redacted.value(mail.text);
+export const textOf = (mail: { readonly text: Redacted.Redacted } | undefined) => {
+  assert.isDefined(mail, 'Expected a delivered message');
+  return Redacted.value(mail.text);
+};
 export const tokenFromLink = (text: string) => {
   // a reset link carries its token as a path segment, a verification link as a query parameter
   const match = /(?:[?&]token=|\/reset-password\/)(?<token>[^&?\s/]+)/u.exec(text);
-  return Option.fromNullishOr(match?.groups?.token);
+  return Option.fromNullishOr(match?.groups?.['token']);
 };

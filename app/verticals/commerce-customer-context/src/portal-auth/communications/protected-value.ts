@@ -1,4 +1,5 @@
-import { Context, Crypto, Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 import { CommercePortalAuthConfig } from '../../../api/portal-auth/provider/config-service.ts';
@@ -106,7 +107,7 @@ const openedValueOf = (bytes: ArrayBuffer) => decodePlain(new TextDecoder().deco
 const makeProtectedValueSealer = Effect.fn('CommercePortalAuthProtectedValueSealer.make')(function* makeSealer(
   secret: Redacted.Redacted,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   // only a derived key is kept for the process: a failed derivation (a timeout, an unavailable WebCrypto) is retried by the
   // next seal or open instead of making every later one fail until the process restarts
   const derivedKey = yield* Ref.make(Option.none<CryptoKey>());

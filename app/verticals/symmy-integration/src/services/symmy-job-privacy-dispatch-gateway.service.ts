@@ -7,7 +7,8 @@ import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Match, Option, Schema } from 'effect';
+import { Context, Effect, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ExecuteSymmyRetentionResultSchema } from '../../shared/actions/execute-symmy-retention.ts';
 import type { SymmyJobPrivacyExecutionReceipt } from '../../shared/domain/symmy-job-privacy-execution.ts';
 import { executeExecuteSymmyRetentionWithAuthorization } from '../api/execute-symmy-retention-action-client.ts';
@@ -98,7 +99,7 @@ const credential = Effect.fn('SymmyJobPrivacyDispatchGateway.credential')(functi
     })),
     Match.exhaustive,
   );
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return yield* acquireDelegatedGatewayContext(
     {
       ...intent,

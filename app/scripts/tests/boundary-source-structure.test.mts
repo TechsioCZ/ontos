@@ -1,4 +1,4 @@
-import { SyntaxKind } from '@typescript/native/unstable/ast';
+import { SyntaxKind } from 'tsrs/ast';
 import { expect, it } from 'effect-rstest';
 
 import {

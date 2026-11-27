@@ -119,7 +119,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 .unsafe<{ readonly count: string }>('select count(*)::text as count from core.media_links')
                 .pipe(Effect.orDie);
               expect(links[0]?.count).toBe('0');
-              expect((yield* rowsOf(world)).length).toBe(3);
+              expect(yield* rowsOf(world)).toHaveLength(3);
             }),
           ),
         ),

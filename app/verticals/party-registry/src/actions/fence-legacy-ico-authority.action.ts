@@ -17,9 +17,11 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 
 type LegacyIcoAuthorityService = Effect.Success<ReturnType<typeof legacyIcoAuthorityService>>;
 
+const domainEvents = {} as const;
+
 const handleFenceLegacyIcoAuthority = Effect.fn('FenceLegacyIcoAuthority.handle')(function* fenceAuthority(
   payload: FenceLegacyIcoAuthorityPayload,
-  context: ActionHandlerContext<Record<never, never>, LegacyIcoAuthorityService>,
+  context: ActionHandlerContext<typeof domainEvents, LegacyIcoAuthorityService>,
 ) {
   const proof = yield* context.services
     .fence(payload, context.actionInvocationId)
@@ -35,6 +37,7 @@ const handleFenceLegacyIcoAuthority = Effect.fn('FenceLegacyIcoAuthority.handle'
 
 export const fenceLegacyIcoAuthorityAction = defineAction(
   {
+    domainEvents,
     accessDeclaration: {
       key: 'party.registry.legacy-ico-authority.fence',
       kind: 'action',
@@ -50,7 +53,6 @@ export const fenceLegacyIcoAuthorityAction = defineAction(
     actionKey: 'party.registry.fence-legacy-ico-authority',
     auditProfile: 'standard',
     domainErrorSchema: Schema.Union([LegacyIcoAuthorityConflict, PartyPersistenceUnavailable]),
-    domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

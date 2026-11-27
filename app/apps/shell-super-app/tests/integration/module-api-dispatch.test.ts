@@ -255,6 +255,6 @@ it.effect('uses stable bounded distinct provider names even for the longest rele
     expect(first).not.toBe(other);
     expect(first).toMatch(/^ontos-[a-f\d]{56}$/u);
     expect(assets).toBe(`assets-${first.slice('ontos-'.length)}`);
-    expect(assets.length).toBe(63);
+    expect(assets).toHaveLength(63);
   }),
 );

@@ -1,9 +1,10 @@
 import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import type { PriceSourceAuthority, PriceSourceMapping } from '@app/pricing-contracts/domain/price-source-provenance';
-import { Crypto, DateTime, Effect, FileSystem, Option } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -99,322 +100,332 @@ const databaseUrl = (connection: string, name: string) => {
   return url.href;
 };
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('Pricing grant storage upgrade', (suite) => {
-  suite.effect(
-    'upgrades immutable grants and legacy policy references without rewriting history or weakening new writes',
-    () =>
-      Effect.scoped(
-        Effect.gen(function* upgrade() {
-          const connections = yield* loadDatabaseConnectionPair({
-            envPath: `${import.meta.filename}.no-environment-file`,
-          });
-          const bootstrap = yield* makeTestPgClient(connections.admin.connectionString);
-          const name = `pricing_grant_${(yield* (yield* Crypto.Crypto).randomUUIDv4()).replaceAll('-', '')}`;
-          yield* bootstrap.unsafe(`create database "${name}"`);
-          yield* Effect.addFinalizer(() => bootstrap.unsafe(`drop database "${name}" with (force)`).pipe(Effect.orDie));
-          const admin = yield* makeTestPgClient(databaseUrl(connections.admin.connectionString, name));
-          const runtime = yield* makeTestPgClient(databaseUrl(connections.runtime.connectionString, name));
-          yield* admin`create schema pricing`;
-          yield* admin`grant usage on schema pricing to ontos_runtime`;
-          for (const step of history) {
-            yield* migrate(admin, step);
-          }
-          const scoped = <A, E>(effect: Effect.Effect<A, E>) =>
-            runtime.withTransaction(
-              Effect.andThen(
-                runtime`select set_config('ontos.tenant_id', ${world.tenantId}, true), set_config('ontos.legal_entity_id', ${world.legalEntityId}, true)`,
-                effect,
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServices: true })(
+  'Pricing grant storage upgrade',
+  (suite) => {
+    suite.effect(
+      'upgrades immutable grants and legacy policy references without rewriting history or weakening new writes',
+      () =>
+        Effect.scoped(
+          Effect.gen(function* upgrade() {
+            const connections = yield* loadDatabaseConnectionPair({
+              envPath: `${import.meta.filename}.no-environment-file`,
+            });
+            const bootstrap = yield* makeTestPgClient(connections.admin.connectionString);
+            const name = `pricing_grant_${(yield* (yield* SecureRandom.SecureRandom).uuidV4()).replaceAll('-', '')}`;
+            yield* bootstrap.unsafe(`create database "${name}"`);
+            yield* Effect.addFinalizer(() =>
+              bootstrap.unsafe(`drop database "${name}" with (force)`).pipe(Effect.orDie),
+            );
+            const admin = yield* makeTestPgClient(databaseUrl(connections.admin.connectionString, name));
+            const runtime = yield* makeTestPgClient(databaseUrl(connections.runtime.connectionString, name));
+            yield* admin`create schema pricing`;
+            yield* admin`grant usage on schema pricing to ontos_runtime`;
+            for (const step of history) {
+              yield* migrate(admin, step);
+            }
+            const scoped = <A, E>(effect: Effect.Effect<A, E>) =>
+              runtime.withTransaction(
+                Effect.andThen(
+                  runtime`select set_config('ontos.tenant_id', ${world.tenantId}, true), set_config('ontos.legal_entity_id', ${world.legalEntityId}, true)`,
+                  effect,
+                ),
+              );
+            const store = (input: ReturnType<typeof grant>) =>
+              scoped(
+                runtime<{
+                  readonly payload: { readonly outcome: 'STORED' | 'REUSED' | 'CONFLICT' };
+                }>`select payload from pricing.store_external_price_source_authority_grant_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
+              );
+            const historyRows = scoped(
+              runtime`select to_jsonb(g) as row from pricing.external_price_source_authority_grants g order by grant_id`,
+            );
+            const upper = grant(key(11, true, true));
+            const pairUpper = grant(key(12, true, true), 'first receipt');
+            const pairLower = grant(key(12), 'second receipt');
+            const historicQuantity = grant(quantityKey(41, '1.000000000'));
+            const quantityPair = [
+              grant(key(42), 'integer receipt'),
+              grant(quantityKey(42, '1.000000000'), 'decimal receipt'),
+            ];
+            const oneEligiblePairs = [
+              [grant(key(31, true, true)), { ...grant(key(31)), verifiedAt: '2026-11-10T00:00:00.001Z' }],
+              [
+                grant(key(32, true, true)),
+                {
+                  ...grant(key(32)),
+                  effectivePeriod: { ...evidence.effectivePeriod, effectiveFrom: '2026-11-10T00:00:00.001Z' },
+                },
+              ],
+              [
+                grant(key(33, true, true)),
+                {
+                  ...grant(key(33)),
+                  effectivePeriod: { effectiveFrom: '2026-11-01T00:00:00.000Z', effectiveTo: effectiveAt },
+                },
+              ],
+              [
+                grant(key(34, true, true)),
+                { ...grant(key(34)), mapping: { ...mapping, mappingContractVersion: 'other-version' } },
+              ],
+              [
+                grant(key(35, true, true)),
+                {
+                  ...grant({
+                    ...key(35),
+                    unitBasis: { ...key(35).unitBasis, quantity: '1.000000000' },
+                  }),
+                  verifiedAt: '2026-11-10T00:00:00.001Z',
+                },
+              ],
+              [
+                grant(key(36, true, true)),
+                { ...grant(key(36)), authority: { ...authority, sourceAuthorityVersion: 'other-version' } },
+              ],
+            ];
+            const historicWildcards = [
+              { ...grant(key(21)), authority: { ...erpAuthority, sourceAuthorityRef: '*' } },
+              { ...grant(key(22)), authority: { ...erpAuthority, sourceAuthorityVersion: '*' } },
+              { ...grant(key(23)), mapping: { ...productMapping, mappingContractRef: '*' } },
+              { ...grant(key(24)), mapping: { ...productMapping, mappingContractVersion: '*' } },
+            ];
+            for (const stored of [
+              upper,
+              pairUpper,
+              pairLower,
+              historicQuantity,
+              ...quantityPair,
+              ...oneEligiblePairs.flat(),
+              ...historicWildcards,
+            ]) {
+              expect(yield* store(stored)).toEqual([{ payload: { outcome: 'STORED' } }]);
+            }
+            const policy = { ...evidence, ...policyTerms(world, { priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }) };
+            expect(
+              yield* scoped(
+                runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(policy)})`,
               ),
-            );
-          const store = (input: ReturnType<typeof grant>) =>
-            scoped(
-              runtime<{
-                readonly payload: { readonly outcome: 'STORED' | 'REUSED' | 'CONFLICT' };
-              }>`select payload from pricing.store_external_price_source_authority_grant_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
-            );
-          const historyRows = scoped(
-            runtime`select to_jsonb(g) as row from pricing.external_price_source_authority_grants g order by grant_id`,
-          );
-          const upper = grant(key(11, true, true));
-          const pairUpper = grant(key(12, true, true), 'first receipt');
-          const pairLower = grant(key(12), 'second receipt');
-          const historicQuantity = grant(quantityKey(41, '1.000000000'));
-          const quantityPair = [
-            grant(key(42), 'integer receipt'),
-            grant(quantityKey(42, '1.000000000'), 'decimal receipt'),
-          ];
-          const oneEligiblePairs = [
-            [grant(key(31, true, true)), { ...grant(key(31)), verifiedAt: '2026-11-10T00:00:00.001Z' }],
-            [
-              grant(key(32, true, true)),
-              {
-                ...grant(key(32)),
-                effectivePeriod: { ...evidence.effectivePeriod, effectiveFrom: '2026-11-10T00:00:00.001Z' },
-              },
-            ],
-            [
-              grant(key(33, true, true)),
-              {
-                ...grant(key(33)),
-                effectivePeriod: { effectiveFrom: '2026-11-01T00:00:00.000Z', effectiveTo: effectiveAt },
-              },
-            ],
-            [
-              grant(key(34, true, true)),
-              { ...grant(key(34)), mapping: { ...mapping, mappingContractVersion: 'other-version' } },
-            ],
-            [
-              grant(key(35, true, true)),
-              {
-                ...grant({
-                  ...key(35),
-                  unitBasis: { ...key(35).unitBasis, quantity: '1.000000000' },
-                }),
-                verifiedAt: '2026-11-10T00:00:00.001Z',
-              },
-            ],
-            [
-              grant(key(36, true, true)),
-              { ...grant(key(36)), authority: { ...authority, sourceAuthorityVersion: 'other-version' } },
-            ],
-          ];
-          const historicWildcards = [
-            { ...grant(key(21)), authority: { ...erpAuthority, sourceAuthorityRef: '*' } },
-            { ...grant(key(22)), authority: { ...erpAuthority, sourceAuthorityVersion: '*' } },
-            { ...grant(key(23)), mapping: { ...productMapping, mappingContractRef: '*' } },
-            { ...grant(key(24)), mapping: { ...productMapping, mappingContractVersion: '*' } },
-          ];
-          for (const stored of [
-            upper,
-            pairUpper,
-            pairLower,
-            historicQuantity,
-            ...quantityPair,
-            ...oneEligiblePairs.flat(),
-            ...historicWildcards,
-          ]) {
-            expect(yield* store(stored)).toEqual([{ payload: { outcome: 'STORED' } }]);
-          }
-          const policy = { ...evidence, ...policyTerms(world, { priceGroupCoverage: { kind: 'ANY_PRICE_GROUP' } }) };
-          expect(
+            ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
+            // Direct storage historically allows sub-millisecond precision. Preserve that receipt,
+            // but admission must use the same millisecond, half-open period projected to TypeScript.
             yield* scoped(
-              runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(policy)})`,
-            ),
-          ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
-          // Direct storage historically allows sub-millisecond precision. Preserve that receipt,
-          // but admission must use the same millisecond, half-open period projected to TypeScript.
-          yield* scoped(
-            runtime`insert into pricing.external_price_source_policy_ends
+              runtime`insert into pricing.external_price_source_policy_ends
               (tenant_id, legal_entity_id, policy_id, effective_to, verification_ref, ended_at)
               select tenant_id, legal_entity_id, policy_id, '2099-11-25T00:00:00.000500Z'::timestamptz,
                 'fractional-cutoff', '2026-11-01T00:00:00.000Z'::timestamptz
               from pricing.external_price_source_policies where market_id = ${policy.commercialScope.marketId}`,
-          );
-          const endRows = scoped(
-            runtime`select to_jsonb(e) as row from pricing.external_price_source_policy_ends e order by policy_id`,
-          );
-          const endsBefore = yield* endRows;
-          expect(endsBefore).toHaveLength(1);
-          const historicPolicy = {
-            ...policy,
-            commercialScope: { ...policy.commercialScope, marketId: 'legacy-verification' },
-            verificationRef: 'historic-proof\t',
-          };
-          expect(
-            yield* scoped(
-              runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(historicPolicy)})`,
-            ),
-          ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
-          const policyRows = scoped(
-            runtime`select to_jsonb(p) as row from pricing.external_price_source_policies p order by policy_id`,
-          );
-          const policiesBefore = yield* policyRows;
-          expect(policiesBefore).toHaveLength(2);
-          const before = yield* historyRows;
-          expect(before).toHaveLength(22);
-          yield* migrate(admin, forward);
-          expect(yield* historyRows).toEqual(before);
-          expect(yield* policyRows).toEqual(policiesBefore);
-          expect(yield* endRows).toEqual(endsBefore);
-          expect(
-            yield* admin`select convalidated from pg_catalog.pg_constraint
-              where conrelid='pricing.external_price_source_authority_grants'::regclass
-                and conname='pricing_external_price_authority_exact_refs_ck'`,
-          ).toEqual([{ convalidated: false }]);
-          expect(
-            yield* admin`select convalidated from pg_catalog.pg_constraint
-              where conrelid='pricing.external_price_source_policies'::regclass
-                and conname='pricing_external_price_policies_verification_ref_ck'`,
-          ).toEqual([{ convalidated: false }]);
-          const invalidNewPolicy = {
-            ...historicPolicy,
-            commercialScope: { ...historicPolicy.commercialScope, marketId: 'new-verification' },
-          };
-          const rejectedPolicy = yield* Effect.flip(
-            scoped(
-              runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(invalidNewPolicy)})`,
-            ),
-          );
-          expect(Option.getOrThrow(findPostgresFailure(rejectedPolicy)).code).toBe('23514');
-          for (const historic of historicWildcards) {
-            const denied = yield* Effect.flip(store({ ...historic, exactIdentityKey: key(25) }));
-            expect(Option.getOrThrow(findPostgresFailure(denied)).code).toBe('23514');
-          }
-          const assess = (exactIdentityKey: PriceIdentityKey, at = effectiveAt) => {
-            const input = {
-              exactIdentityKey,
-              sourceAssertion: sourceAssertionFor(exactIdentityKey, {
-                effectiveAt: at,
-                sourceAssertionId: 'ab000000-0000-4000-8000-000000000006',
-              }),
-              tenantId: world.tenantId,
-              trustedOperationAt: at,
-            };
-            return scoped(
-              runtime<{
-                readonly payload: unknown;
-              }>`select payload from pricing.assess_external_price_source_authority_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
             );
-          };
-          expect(yield* assess(key(11))).toEqual([
-            { payload: { grant: grant(key(11)), outcome: 'AUTHORITY_GRANTED' } },
-          ]);
-          const held = [{ payload: { outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' } }];
-          expect(yield* assess(key(12))).toEqual(held);
-          expect(yield* assess(key(41))).toEqual([
-            { payload: { grant: historicQuantity, outcome: 'AUTHORITY_GRANTED' } },
-          ]);
-          for (const quantity of ['1', '1.0', '1.000000000']) {
-            expect(yield* assess(quantityKey(42, quantity))).toEqual(held);
-          }
-          for (const variant of [31, 32, 33, 34, 35, 36]) {
-            expect(yield* assess(key(variant))).toEqual(held);
-          }
-          for (const variant of [21, 22, 23, 24]) {
-            expect(yield* assess(key(variant))).toEqual(held);
-          }
-          expect(yield* assess(key(11), evidence.effectivePeriod.effectiveTo)).toEqual(held);
-          expect(yield* assess(key(13))).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
-          const beforeCutoff = '2099-11-24T23:59:59.999Z';
-          expect(yield* assess(key(13), beforeCutoff)).toMatchObject([
-            {
-              payload: {
-                outcome: 'AUTHORITY_COVERED_BY_POLICY',
-                policy: { effectivePeriod: { effectiveTo: '2099-11-25T00:00:00.000Z' } },
-              },
-            },
-          ]);
-          for (const at of [beforeCutoff, '2099-11-25T00:00:00.000Z', '2099-11-25T00:00:00.001Z']) {
-            const rows = yield* assess(key(13), at);
-            const assessment = yield* decodeExternalPriceSourceAuthorityAssessment(rows);
-            const admission = yield* makeExternalPriceInputBoundary({
-              assess: () => Effect.succeed(assessment),
-            }).assess({
-              actingPrincipalId: world.tenantId,
-              effectiveFrom: at,
-              identityKey: key(13),
-              monetaryAmount: { amount: '199.90', currencyCode: 'CZK' },
-              sourceAssertion: sourceAssertionFor(key(13), {
-                effectiveAt: at,
-                sourceAssertionId: 'ab000000-0000-4000-8000-000000000007',
-              }),
-              tenantId: world.tenantId,
-              trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(at)),
-            });
-            if (at === beforeCutoff) {
-              expect(admission.outcome).toBe('READY_FOR_CANONICAL_WRITE');
-            } else {
-              expect(rows).toEqual(held);
-              expect(admission).toMatchObject({
-                outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
-                reason: 'SOURCE_AUTHORITY_UNRESOLVED',
-              });
-            }
-          }
-          for (const retry of [
-            upper,
-            grant(key(11)),
-            pairUpper,
-            pairLower,
-            historicQuantity,
-            grant(key(41)),
-            ...quantityPair,
-            ...oneEligiblePairs.flat(),
-          ]) {
-            expect(yield* store(retry)).toEqual([{ payload: { outcome: 'REUSED' } }]);
-          }
-          const conflict = [{ payload: { outcome: 'CONFLICT', reason: 'GRANT_IDENTITY_ALREADY_BOUND' } }];
-          expect(yield* store(grant(key(11), 'changed verification'))).toEqual(conflict);
-          expect(yield* store(grant(key(12, true), 'first receipt'))).toEqual(conflict);
-          expect(yield* store(grant(key(41), 'changed verification'))).toEqual(conflict);
-          for (const retry of quantityPair) {
-            expect(yield* store({ ...retry, verificationRef: 'changed verification' })).toEqual(conflict);
-            expect(yield* store({ ...retry, exactIdentityKey: quantityKey(42, '1.0') })).toEqual(conflict);
-          }
-          expect(yield* historyRows).toEqual(before);
-          expect(yield* policyRows).toEqual(policiesBefore);
-          expect(yield* endRows).toEqual(endsBefore);
-          expect(yield* store(grant(key(14, true)))).toEqual([{ payload: { outcome: 'STORED' } }]);
-          expect(yield* store(grant(key(14)))).toEqual([{ payload: { outcome: 'REUSED' } }]);
-          expect(
-            yield* scoped(
-              runtime`select exact_identity_key as key from pricing.external_price_source_authority_grants where exact_identity_key #>> '{catalogSelection,variantRef,resourceId}' = ${key(14).catalogSelection.variantRef.resourceId}`,
-            ),
-          ).toEqual([{ key: key(14) }]);
-          expect(yield* assess(key(14))).toEqual([
-            { payload: { grant: grant(key(14)), outcome: 'AUTHORITY_GRANTED' } },
-          ]);
-          // Both arrival orders must converge before a second immutable receipt is created.
-          for (const [variant, firstQuantity, secondQuantity] of [
-            [15, '1', '1.000000000'],
-            [16, '1.000000000', '1'],
-          ] as const) {
-            expect(yield* store(grant(quantityKey(variant, firstQuantity)))).toEqual([
-              { payload: { outcome: 'STORED' } },
-            ]);
-            expect(yield* store(grant(quantityKey(variant, secondQuantity)))).toEqual([
-              { payload: { outcome: 'REUSED' } },
-            ]);
-            expect(yield* store(grant(quantityKey(variant, secondQuantity), 'changed verification'))).toEqual(conflict);
-          }
-          const concurrent = yield* Effect.all([store(grant(key(17))), store(grant(quantityKey(17, '1.000000000')))], {
-            concurrency: 2,
-          });
-          expect(
-            concurrent
-              .flat()
-              .map((row) => row.payload.outcome)
-              .toSorted(),
-          ).toEqual(['REUSED', 'STORED']);
-          for (const variant of [15, 16, 17]) {
+            const endRows = scoped(
+              runtime`select to_jsonb(e) as row from pricing.external_price_source_policy_ends e order by policy_id`,
+            );
+            const endsBefore = yield* endRows;
+            expect(endsBefore).toHaveLength(1);
+            const historicPolicy = {
+              ...policy,
+              commercialScope: { ...policy.commercialScope, marketId: 'legacy-verification' },
+              verificationRef: 'historic-proof\t',
+            };
             expect(
               yield* scoped(
-                runtime`select exact_identity_key as key from pricing.external_price_source_authority_grants where exact_identity_key #>> '{catalogSelection,variantRef,resourceId}' = ${key(variant).catalogSelection.variantRef.resourceId}`,
+                runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(historicPolicy)})`,
               ),
-            ).toEqual([{ key: key(variant) }]);
-            for (const quantity of ['1', '1.000000000']) {
-              const exactIdentityKey = quantityKey(variant, quantity);
-              const rows = yield* assess(exactIdentityKey);
-              expect(rows).toEqual([{ payload: { grant: grant(key(variant)), outcome: 'AUTHORITY_GRANTED' } }]);
+            ).toMatchObject([{ payload: { outcome: 'STORED' } }]);
+            const policyRows = scoped(
+              runtime`select to_jsonb(p) as row from pricing.external_price_source_policies p order by policy_id`,
+            );
+            const policiesBefore = yield* policyRows;
+            expect(policiesBefore).toHaveLength(2);
+            const before = yield* historyRows;
+            expect(before).toHaveLength(22);
+            yield* migrate(admin, forward);
+            expect(yield* historyRows).toEqual(before);
+            expect(yield* policyRows).toEqual(policiesBefore);
+            expect(yield* endRows).toEqual(endsBefore);
+            expect(
+              yield* admin`select convalidated from pg_catalog.pg_constraint
+              where conrelid='pricing.external_price_source_authority_grants'::regclass
+                and conname='pricing_external_price_authority_exact_refs_ck'`,
+            ).toEqual([{ convalidated: false }]);
+            expect(
+              yield* admin`select convalidated from pg_catalog.pg_constraint
+              where conrelid='pricing.external_price_source_policies'::regclass
+                and conname='pricing_external_price_policies_verification_ref_ck'`,
+            ).toEqual([{ convalidated: false }]);
+            const invalidNewPolicy = {
+              ...historicPolicy,
+              commercialScope: { ...historicPolicy.commercialScope, marketId: 'new-verification' },
+            };
+            const rejectedPolicy = yield* Effect.flip(
+              scoped(
+                runtime`select payload from pricing.store_external_price_source_policy_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(invalidNewPolicy)})`,
+              ),
+            );
+            expect(Option.getOrThrow(findPostgresFailure(rejectedPolicy)).code).toBe('23514');
+            for (const historic of historicWildcards) {
+              const denied = yield* Effect.flip(store({ ...historic, exactIdentityKey: key(25) }));
+              expect(Option.getOrThrow(findPostgresFailure(denied)).code).toBe('23514');
+            }
+            const assess = (exactIdentityKey: PriceIdentityKey, at = effectiveAt) => {
+              const input = {
+                exactIdentityKey,
+                sourceAssertion: sourceAssertionFor(exactIdentityKey, {
+                  effectiveAt: at,
+                  sourceAssertionId: 'ab000000-0000-4000-8000-000000000006',
+                }),
+                tenantId: world.tenantId,
+                trustedOperationAt: at,
+              };
+              return scoped(
+                runtime<{
+                  readonly payload: unknown;
+                }>`select payload from pricing.assess_external_price_source_authority_v1(${world.tenantId}::uuid, ${world.legalEntityId}::uuid, ${runtime.json(input)})`,
+              );
+            };
+            expect(yield* assess(key(11))).toEqual([
+              { payload: { grant: grant(key(11)), outcome: 'AUTHORITY_GRANTED' } },
+            ]);
+            const held = [{ payload: { outcome: 'AUTHORITY_UNRESOLVED', reason: 'AUTHORITY' } }];
+            expect(yield* assess(key(12))).toEqual(held);
+            expect(yield* assess(key(41))).toEqual([
+              { payload: { grant: historicQuantity, outcome: 'AUTHORITY_GRANTED' } },
+            ]);
+            for (const quantity of ['1', '1.0', '1.000000000']) {
+              expect(yield* assess(quantityKey(42, quantity))).toEqual(held);
+            }
+            for (const variant of [31, 32, 33, 34, 35, 36]) {
+              expect(yield* assess(key(variant))).toEqual(held);
+            }
+            for (const variant of [21, 22, 23, 24]) {
+              expect(yield* assess(key(variant))).toEqual(held);
+            }
+            expect(yield* assess(key(11), evidence.effectivePeriod.effectiveTo)).toEqual(held);
+            expect(yield* assess(key(13))).toMatchObject([{ payload: { outcome: 'AUTHORITY_COVERED_BY_POLICY' } }]);
+            const beforeCutoff = '2099-11-24T23:59:59.999Z';
+            expect(yield* assess(key(13), beforeCutoff)).toMatchObject([
+              {
+                payload: {
+                  outcome: 'AUTHORITY_COVERED_BY_POLICY',
+                  policy: { effectivePeriod: { effectiveTo: '2099-11-25T00:00:00.000Z' } },
+                },
+              },
+            ]);
+            for (const at of [beforeCutoff, '2099-11-25T00:00:00.000Z', '2099-11-25T00:00:00.001Z']) {
+              const rows = yield* assess(key(13), at);
               const assessment = yield* decodeExternalPriceSourceAuthorityAssessment(rows);
               const admission = yield* makeExternalPriceInputBoundary({
                 assess: () => Effect.succeed(assessment),
               }).assess({
                 actingPrincipalId: world.tenantId,
-                effectiveFrom: effectiveAt,
-                identityKey: exactIdentityKey,
+                effectiveFrom: at,
+                identityKey: key(13),
                 monetaryAmount: { amount: '199.90', currencyCode: 'CZK' },
-                sourceAssertion: sourceAssertionFor(exactIdentityKey, {
-                  effectiveAt,
-                  sourceAssertionId: 'ab000000-0000-4000-8000-000000000008',
+                sourceAssertion: sourceAssertionFor(key(13), {
+                  effectiveAt: at,
+                  sourceAssertionId: 'ab000000-0000-4000-8000-000000000007',
                 }),
                 tenantId: world.tenantId,
-                trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
+                trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(at)),
               });
-              expect(admission.outcome).toBe('READY_FOR_CANONICAL_WRITE');
+              if (at === beforeCutoff) {
+                expect(admission.outcome).toBe('READY_FOR_CANONICAL_WRITE');
+              } else {
+                expect(rows).toEqual(held);
+                expect(admission).toMatchObject({
+                  outcome: 'PRICE_SOURCE_ASSERTION_UNRESOLVED_HELD',
+                  reason: 'SOURCE_AUTHORITY_UNRESOLVED',
+                });
+              }
             }
-          }
-        }),
-      ),
-  );
-});
+            for (const retry of [
+              upper,
+              grant(key(11)),
+              pairUpper,
+              pairLower,
+              historicQuantity,
+              grant(key(41)),
+              ...quantityPair,
+              ...oneEligiblePairs.flat(),
+            ]) {
+              expect(yield* store(retry)).toEqual([{ payload: { outcome: 'REUSED' } }]);
+            }
+            const conflict = [{ payload: { outcome: 'CONFLICT', reason: 'GRANT_IDENTITY_ALREADY_BOUND' } }];
+            expect(yield* store(grant(key(11), 'changed verification'))).toEqual(conflict);
+            expect(yield* store(grant(key(12, true), 'first receipt'))).toEqual(conflict);
+            expect(yield* store(grant(key(41), 'changed verification'))).toEqual(conflict);
+            for (const retry of quantityPair) {
+              expect(yield* store({ ...retry, verificationRef: 'changed verification' })).toEqual(conflict);
+              expect(yield* store({ ...retry, exactIdentityKey: quantityKey(42, '1.0') })).toEqual(conflict);
+            }
+            expect(yield* historyRows).toEqual(before);
+            expect(yield* policyRows).toEqual(policiesBefore);
+            expect(yield* endRows).toEqual(endsBefore);
+            expect(yield* store(grant(key(14, true)))).toEqual([{ payload: { outcome: 'STORED' } }]);
+            expect(yield* store(grant(key(14)))).toEqual([{ payload: { outcome: 'REUSED' } }]);
+            expect(
+              yield* scoped(
+                runtime`select exact_identity_key as key from pricing.external_price_source_authority_grants where exact_identity_key #>> '{catalogSelection,variantRef,resourceId}' = ${key(14).catalogSelection.variantRef.resourceId}`,
+              ),
+            ).toEqual([{ key: key(14) }]);
+            expect(yield* assess(key(14))).toEqual([
+              { payload: { grant: grant(key(14)), outcome: 'AUTHORITY_GRANTED' } },
+            ]);
+            // Both arrival orders must converge before a second immutable receipt is created.
+            for (const [variant, firstQuantity, secondQuantity] of [
+              [15, '1', '1.000000000'],
+              [16, '1.000000000', '1'],
+            ] as const) {
+              expect(yield* store(grant(quantityKey(variant, firstQuantity)))).toEqual([
+                { payload: { outcome: 'STORED' } },
+              ]);
+              expect(yield* store(grant(quantityKey(variant, secondQuantity)))).toEqual([
+                { payload: { outcome: 'REUSED' } },
+              ]);
+              expect(yield* store(grant(quantityKey(variant, secondQuantity), 'changed verification'))).toEqual(
+                conflict,
+              );
+            }
+            const concurrent = yield* Effect.all(
+              [store(grant(key(17))), store(grant(quantityKey(17, '1.000000000')))],
+              {
+                concurrency: 2,
+              },
+            );
+            expect(
+              concurrent
+                .flat()
+                .map((row) => row.payload.outcome)
+                .toSorted(),
+            ).toEqual(['REUSED', 'STORED']);
+            for (const variant of [15, 16, 17]) {
+              expect(
+                yield* scoped(
+                  runtime`select exact_identity_key as key from pricing.external_price_source_authority_grants where exact_identity_key #>> '{catalogSelection,variantRef,resourceId}' = ${key(variant).catalogSelection.variantRef.resourceId}`,
+                ),
+              ).toEqual([{ key: key(variant) }]);
+              for (const quantity of ['1', '1.000000000']) {
+                const exactIdentityKey = quantityKey(variant, quantity);
+                const rows = yield* assess(exactIdentityKey);
+                expect(rows).toEqual([{ payload: { grant: grant(key(variant)), outcome: 'AUTHORITY_GRANTED' } }]);
+                const assessment = yield* decodeExternalPriceSourceAuthorityAssessment(rows);
+                const admission = yield* makeExternalPriceInputBoundary({
+                  assess: () => Effect.succeed(assessment),
+                }).assess({
+                  actingPrincipalId: world.tenantId,
+                  effectiveFrom: effectiveAt,
+                  identityKey: exactIdentityKey,
+                  monetaryAmount: { amount: '199.90', currencyCode: 'CZK' },
+                  sourceAssertion: sourceAssertionFor(exactIdentityKey, {
+                    effectiveAt,
+                    sourceAssertionId: 'ab000000-0000-4000-8000-000000000008',
+                  }),
+                  tenantId: world.tenantId,
+                  trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(effectiveAt)),
+                });
+                expect(admission.outcome).toBe('READY_FOR_CANONICAL_WRITE');
+              }
+            }
+          }),
+        ),
+    );
+  },
+);

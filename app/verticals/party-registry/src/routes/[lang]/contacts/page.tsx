@@ -1,4 +1,4 @@
-import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime/consumer';
 
 import { partyRegistryI18nResources } from '../../../i18n/resources.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';

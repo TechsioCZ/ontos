@@ -1,6 +1,6 @@
 import { requireModuleOperation } from '@app/core-runtime';
 import type { ModuleOperationRequirementError, OperationalScope } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import type { executePartyContactPointDetail } from '@app/party-registry/api/client';
 import type { GatewayContextClientError } from '@app/shared-contracts';
 import {
@@ -253,7 +253,6 @@ export const partyBackedPostalAddressResolver =
           : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
       ),
       Effect.map((contactPoint) => resolvePartyBackedPostalAddress(origin, contactPoint)),
-      // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
       Effect.catch(resolverFailure),
     );
   };
@@ -269,7 +268,7 @@ type PartyAddressRequirementKey = typeof PartyAddressRequirementKeySchema.Type;
 const partyContactPointExecutorForScope =
   (
     scope: OperationalScope,
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     requirementKey?: PartyAddressRequirementKey,
   ): PartyContactPointDetailExecutor =>
   (payload, correlation) =>
@@ -300,7 +299,7 @@ const partyContactPointExecutorForScope =
 
 export const partyBackedAddressSourceValidatorForScope = (
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   requirementKey?: PartyAddressRequirementKey,
 ) =>
   partyBackedAddressSourceValidator(
@@ -310,7 +309,7 @@ export const partyBackedAddressSourceValidatorForScope = (
 
 export const partyBackedPostalAddressResolverForScope = (
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   requirementKey?: PartyAddressRequirementKey,
 ) =>
   partyBackedPostalAddressResolver(

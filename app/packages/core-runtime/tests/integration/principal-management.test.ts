@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -21,9 +22,9 @@ const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('principal management', (suite) => {
   suite.effect('persists managed key lifecycle without credential material and enforces global key cardinality', () =>
     Effect.gen(function* principalManagement1() {
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4();
-      const providerKeyId = `better-auth-principal-management-${yield* crypto.randomUUIDv4()}`;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = yield* crypto.uuidV4();
+      const providerKeyId = `better-auth-principal-management-${yield* crypto.uuidV4()}`;
       const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
       const database = yield* makeTestDatabaseFromClient(
         yield* makeTestPgClient(configuration.connectionString),

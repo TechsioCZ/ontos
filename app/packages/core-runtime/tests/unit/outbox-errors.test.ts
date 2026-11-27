@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -132,7 +133,7 @@ it.layer(NodeCrypto.layer)('outbox repository failures', (suite) => {
         reason: new ConnectionError({ cause: new Error('private repository defect') }),
       });
       const executor = yield* makeTestDatabase(() => Effect.fail(driverError));
-      const failure = yield* makeOutboxRepository(executor, yield* Crypto.Crypto)
+      const failure = yield* makeOutboxRepository(executor, yield* SecureRandom.SecureRandom)
         .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
         .pipe(Effect.flip);
       expect(failure).toBeInstanceOf(PersistenceFailure);
