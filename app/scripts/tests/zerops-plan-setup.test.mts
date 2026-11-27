@@ -93,6 +93,11 @@ it.effect('plans and builds every push at once, and lets deliveries alone take t
     expect(workflow.concurrency).toBeUndefined();
     expect(workflow.jobs.deliver?.concurrency).toBeUndefined();
     expect(workflow.jobs.deliver_app?.concurrency).toEqual({ 'cancel-in-progress': false, group: 'zerops-stage' });
+    expect(
+      Object.entries(workflow.jobs)
+        .filter(([, job]) => job.concurrency?.group === 'zerops-stage')
+        .map(([name]) => name),
+    ).toEqual(['deliver_app']);
     expect(workflow.jobs.build?.concurrency?.['cancel-in-progress']).toBe(false);
     expect(workflow.jobs.lint?.concurrency).toBeUndefined();
     expect(workflow.jobs['lint-plan']?.concurrency).toBeUndefined();
@@ -105,6 +110,7 @@ it.effect('plans and builds every push at once, and lets deliveries alone take t
     for (const [name, delivers] of [
       ['deliver', false],
       ['build', false],
+      ['stale_plan', false],
       ['deliver_app', true],
     ] as const) {
       const steps = workflow.jobs[name]?.steps ?? [];
@@ -399,71 +405,73 @@ const changing = (changedPaths: readonly string[]) => ({
   comparison: { ancestor: true, base: BASE, changedPaths, truncated: false },
 });
 
-for (const jobName of ['deliver_app']) {
-  it.effect(`refuses ${jobName} from an earlier plan attempt before artifacts or stage mutations`, () =>
-    Effect.gen(function* freshDeliveryPlan() {
-      const fs = yield* FileSystem.FileSystem;
-      const Step = Schema.Struct({
-        env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        name: Schema.String,
-        run: Schema.optionalKey(Schema.String),
-        uses: Schema.optionalKey(Schema.String),
-      });
-      const { jobs: workflowJobs } = Schema.decodeUnknownSync(
-        Schema.Struct({
-          jobs: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              outputs: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-              steps: Schema.Array(Step),
-            }),
-          ),
-        }),
-      )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
-      expect(workflowJobs.deliver?.outputs?.run_attempt).toBe(`\${{ github.run_attempt }}`);
-      const steps = workflowJobs[jobName]?.steps ?? [];
-      const guard = steps.findIndex(({ name }) => name === 'Refuse a delivery planned in another run attempt');
-      expect(guard).toBeGreaterThanOrEqual(0);
-      expect(guard).toBeLessThan(
-        steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true),
-      );
-      expect(guard).toBeLessThan(steps.findIndex(({ name }) => name === MUTATION_MARKER));
-      const step = steps[guard];
-      expect(step?.env?.PLAN_RUN_ATTEMPT).toBe(`\${{ needs.deliver.outputs.run_attempt }}`);
-      const script = step?.run;
-      if (script === undefined) {
-        expect.fail('Missing delivery attempt guard');
-      }
-      for (const [planned, current, allowed] of [
-        ['1', '1', true],
-        ['1', '2', false],
-        ['', '2', false],
-        ['2', '2', true],
-      ] as const) {
-        const result = yield* collectToolingProcess(
-          ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', script], {
-            env: { GITHUB_RUN_ATTEMPT: current, GITHUB_RUN_ID: '2468', PLAN_RUN_ATTEMPT: planned },
-            extendEnv: true,
-          }),
-        );
-        expect(result.status, result.stderr).toBe(allowed ? 0 : 1);
-        if (!allowed) {
-          expect(result.stdout).toContain('gh run rerun 2468 (without --failed)');
-          expect(result.stdout).toContain('dispatch the workflow on the current head');
-        }
-      }
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-}
-
-it.effect('admits stale no-service plans to the attempt guard but skips current no-service plans', () =>
-  Effect.gen(function* noServiceRetryCondition() {
+it.effect('refuses stale plans without delivery concurrency, environments, secrets or artifacts', () =>
+  Effect.gen(function* stalePlanRefusal() {
     const fs = yield* FileSystem.FileSystem;
-    const workflow = Schema.decodeUnknownSync(
-      Schema.Struct({ jobs: Schema.Struct({ deliver_app: Schema.Struct({ if: Schema.String }) }) }),
+    const { jobs: workflowJobs } = Schema.decodeUnknownSync(
+      Schema.Struct({
+        jobs: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            concurrency: Schema.optionalKey(Schema.Unknown),
+            env: Schema.optionalKey(Schema.Unknown),
+            environment: Schema.optionalKey(Schema.Unknown),
+            needs: Schema.optionalKey(Schema.Array(Schema.String)),
+            outputs: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            permissions: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+            secrets: Schema.optionalKey(Schema.Unknown),
+            steps: Schema.Array(
+              Schema.Struct({
+                env: Schema.optionalKey(Schema.Unknown),
+                name: Schema.String,
+                run: Schema.optionalKey(Schema.String),
+                uses: Schema.optionalKey(Schema.String),
+              }),
+            ),
+          }),
+        ),
+      }),
     )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
-    // Run the actual job condition's boolean/comparison subset in bash, with the GitHub context substituted.
-    // This catches a skip before the attempt guard, not just a failure inside that guard's shell body.
+    expect(workflowJobs.deliver?.outputs?.run_attempt).toBe(`\${{ github.run_attempt }}`);
+    const refusal = workflowJobs.stale_plan;
+    expect(refusal?.needs).toEqual(['deliver']);
+    expect(refusal?.concurrency).toBeUndefined();
+    expect(refusal?.env).toBeUndefined();
+    expect(refusal?.environment).toBeUndefined();
+    expect(refusal?.secrets).toBeUndefined();
+    expect(refusal?.permissions).toEqual({});
+    expect(refusal?.steps).toHaveLength(1);
+    expect(refusal?.steps[0]?.env).toBeUndefined();
+    expect(refusal?.steps[0]?.uses).toBeUndefined();
+    expect(
+      workflowJobs.deliver_app?.steps.some(({ name }) => name === 'Refuse a delivery planned in another run attempt'),
+    ).toBe(false);
+    const script = refusal?.steps[0]?.run;
+    if (script === undefined) {
+      expect.fail('Missing stale-plan refusal');
+    }
+    expect(script).not.toContain('secrets.');
+    const result = yield* collectToolingProcess(
+      ChildProcess.make('bash', ['-e', '-u', '-o', 'pipefail', '-c', script], {
+        env: { GITHUB_RUN_ID: '2468' },
+        extendEnv: true,
+      }),
+    );
+    expect(result.status, result.stderr).toBe(1);
+    expect(result.stdout).toContain('gh run rerun 2468 (without --failed)');
+    expect(result.stdout).toContain('dispatch the workflow on the current head');
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps stale plans outside the delivery queue and fails them even when no services were planned', () =>
+  Effect.gen(function* retryJobConditions() {
+    const fs = yield* FileSystem.FileSystem;
+    const Job = Schema.Struct({ if: Schema.String });
+    const workflow = Schema.decodeUnknownSync(
+      Schema.Struct({ jobs: Schema.Struct({ deliver_app: Job, stale_plan: Job }) }),
+    )(parse(yield* fs.readFileString(path.resolve(app, '..', WORKFLOW))));
+    // Run the actual job conditions' boolean/comparison subset in bash, with the GitHub context substituted.
+    // Outputs and run_attempt expose decimal strings; == / != in GitHub also allow numeric coercion.
     const currentNoService = {
       any: 'false',
       build: 'skipped',
@@ -474,20 +482,20 @@ it.effect('admits stale no-service plans to the attempt guard but skips current 
     };
     const staleNoService = { ...currentNoService, planned: '1' };
     const withService = { ...currentNoService, any: 'true', build: 'success' };
-    for (const { admitted, name, ...values } of [
-      { ...currentNoService, admitted: false, name: 'current no-service plan' },
-      { ...staleNoService, admitted: true, name: 'stale no-service plan' },
-      { ...staleNoService, admitted: true, name: 'missing plan attempt', planned: '' },
-      { ...withService, admitted: true, name: 'current service plan' },
-      { ...withService, admitted: true, name: 'stale service plan', planned: '1' },
-      { ...withService, admitted: true, build: 'skipped', name: 'reused unit builds' },
+    for (const { admitted, name, stale, ...values } of [
+      { ...currentNoService, admitted: false, name: 'current no-service plan', stale: false },
+      { ...staleNoService, admitted: false, name: 'stale no-service plan', stale: true },
+      { ...staleNoService, admitted: false, name: 'missing plan attempt', planned: '', stale: true },
+      { ...withService, admitted: true, name: 'current service plan', stale: false },
+      { ...withService, admitted: false, name: 'stale service plan', planned: '1', stale: true },
+      { ...withService, admitted: true, build: 'skipped', name: 'reused unit builds', stale: false },
       ...[staleNoService, withService].flatMap((plan) => [
-        { ...plan, admitted: false, lint: 'failure', name: 'failed lint' },
-        { ...plan, admitted: false, lint: 'cancelled', name: 'cancelled lint' },
-        { ...plan, admitted: false, lint: 'skipped', name: 'skipped lint' },
-        { ...plan, admitted: false, build: 'failure', name: 'failed build' },
-        { ...plan, admitted: false, deliver: 'failure', name: 'failed planner' },
-        { ...plan, admitted: false, cancelled: true, name: 'cancelled run' },
+        { ...plan, admitted: false, lint: 'failure', name: 'failed lint', stale: plan.planned !== '2' },
+        { ...plan, admitted: false, lint: 'cancelled', name: 'cancelled lint', stale: plan.planned !== '2' },
+        { ...plan, admitted: false, lint: 'skipped', name: 'skipped lint', stale: plan.planned !== '2' },
+        { ...plan, admitted: false, build: 'failure', name: 'failed build', stale: plan.planned !== '2' },
+        { ...plan, admitted: false, deliver: 'failure', name: 'failed planner', stale: false },
+        { ...plan, admitted: false, cancelled: true, name: 'cancelled run', stale: false },
       ]),
     ]) {
       const context = {
@@ -499,12 +507,17 @@ it.effect('admits stale no-service plans to the attempt guard but skips current 
         'needs.deliver.result': `'${values.deliver}'`,
         'needs.lint.result': `'${values.lint}'`,
       };
-      let condition = workflow.jobs.deliver_app.if.replaceAll(/^\$\{\{\s*|\s*\}\}$/gu, '');
-      for (const [key, value] of Object.entries(context)) {
-        condition = condition.replaceAll(key, value);
+      for (const [job, eligible] of [
+        [workflow.jobs.deliver_app, admitted],
+        [workflow.jobs.stale_plan, stale],
+      ] as const) {
+        let condition = job.if.replaceAll(/^\$\{\{\s*|\s*\}\}$/gu, '');
+        for (const [key, value] of Object.entries(context)) {
+          condition = condition.replaceAll(key, value);
+        }
+        const result = yield* collectToolingProcess(ChildProcess.make('bash', ['-c', `[[ ${condition} ]]`]));
+        expect(result.status, `${name}: ${job.if}: ${JSON.stringify(values)}`).toBe(eligible ? 0 : 1);
       }
-      const result = yield* collectToolingProcess(ChildProcess.make('bash', ['-c', `[[ ${condition} ]]`]));
-      expect(result.status, `${name}: ${JSON.stringify(values)}`).toBe(admitted ? 0 : 1);
     }
   }).pipe(Effect.provide(NodeServices.layer)),
 );

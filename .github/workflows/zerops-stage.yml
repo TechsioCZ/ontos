@@ -463,12 +463,27 @@ jobs:
           overwrite: true
           retention-days: 3
 
-  # The only delivery, with earlier units or this run's builds. Lint success is required before this job can
-  # enter the delivery queue, including storefront-only plans. Red, cancelled or skipped lint blocks every mutation.
+  # Refuse failed-jobs-only retries outside the delivery queue, even for stale no-service plans. Entering
+  # zerops-stage just to fail would replace a pending lint-green delivery. Re-run all jobs to replan instead.
+  stale_plan:
+    name: Refuse a stale delivery plan
+    needs: [deliver]
+    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.deliver.outputs.run_attempt != github.run_attempt }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    permissions: {}
+    steps:
+      - name: Refuse a delivery planned in another run attempt
+        run: |
+          echo "::error::This delivery's plan belongs to another run attempt. Re-run all jobs: gh run rerun $GITHUB_RUN_ID (without --failed), or dispatch the workflow on the current head."
+          exit 1
+
+  # The only delivery, with earlier units or this run's builds. A current-attempt plan selecting services and lint
+  # success are required before entering the queue. Red, cancelled or skipped lint blocks every mutation.
   deliver_app:
     name: Deliver and verify lint-proven stage
     needs: [deliver, build, lint]
-    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.lint.result == 'success' && (needs.deliver.outputs.any == 'true' || needs.deliver.outputs.run_attempt != github.run_attempt) && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.deliver.result == 'success' && needs.lint.result == 'success' && needs.deliver.outputs.any == 'true' && needs.deliver.outputs.run_attempt == github.run_attempt && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     concurrency:
       group: zerops-stage
       cancel-in-progress: false
@@ -493,18 +508,6 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-
-      # Retrying only failed jobs may reuse a successful planner from an earlier attempt. It did not replan
-      # the services this retry must repair. Even a stale no-service plan must reach this guard and fail.
-      # Re-run all jobs so the retry's conservative full plan is retained; newer deployed commits still skip delivery.
-      - name: Refuse a delivery planned in another run attempt
-        env:
-          PLAN_RUN_ATTEMPT: ${{ needs.deliver.outputs.run_attempt }}
-        run: |
-          if [ "$PLAN_RUN_ATTEMPT" != "$GITHUB_RUN_ATTEMPT" ]; then
-            echo "::error::This delivery's plan belongs to another run attempt. Re-run all jobs: gh run rerun $GITHUB_RUN_ID (without --failed), or dispatch the workflow on the current head."
-            exit 1
-          fi
 
       # No install before the push: the delivery's steps up to the app upload run bash, curl, jq, tar, zstd and git
       # only, and it sets up the toolchain and the whole workspace itself once the upload is done (toolchain: none).
