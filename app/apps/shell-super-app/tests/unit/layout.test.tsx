@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AppThemeProvider } from '@techsio/ui-kit/theme/theme-provider';
 import { Effect } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
@@ -8,6 +9,7 @@ import { AppIdSchema } from '../../shared/browser-api.ts';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
+import { businessShellTheme } from '../../src/routes/tenant-theme.ts';
 import { ShellI18n, shellTestCopy } from '../support/shell-i18n.tsx';
 import { makeShellRouter, renderShellRoute } from '../support/shell-router.tsx';
 
@@ -41,11 +43,20 @@ const copy = shellTestCopy('en', {
   'shell.modules.discovery.timeout': 'Module deployment timed out',
   'shell.modules.discovery.unavailable': 'Module deployment unavailable',
 });
-/** The Shell's real i18n context over this file's English copy. */
+/** The Shell's real i18n context over this file's English copy, in the theme the Shell layout provides. */
 const ShellCopy = ({ children }: { readonly children: ReactNode }) => (
-  <ShellI18n translations={copy}>{children}</ShellI18n>
+  <ShellI18n translations={copy}>
+    <AppThemeProvider brand={businessShellTheme.brand.key} brands={[businessShellTheme.brand]}>
+      {children}
+    </AppThemeProvider>
+  </ShellI18n>
 );
 const renderCopy = (ui: Parameters<typeof render>[0]) => render(ui, { wrapper: ShellCopy });
+/** The text a person perceives in the document body: everything but the theme's pre-paint script. */
+const perceivableBodyText = () => {
+  const scripts = [...document.body.querySelectorAll('script')].map((script) => script.textContent).join('');
+  return document.body.textContent?.replace(scripts, '').trim();
+};
 /** Puts the test document on the page the dashboard is rendered for, as the browser would be. */
 const visit = (path: string) => window.history.replaceState(null, '', path);
 /** The Shell layout as the router renders it around the current route. */
@@ -127,7 +138,7 @@ it.effect('leaves route content free of global user-perceivable UI', () =>
     expect((yield* Effect.promise(() => screen.findByRole('main'))).textContent).toBe('Current route');
     // The kit's one toast region waits, empty, for toasts from the Shell or any module.
     expect(screen.getByRole('region').id).toMatch(/^toast-group:/u);
-    expect(document.body.textContent?.trim()).toBe('Current route');
+    expect(perceivableBodyText()).toBe('Current route');
   }),
 );
 

@@ -19,6 +19,7 @@ import {
   TenantIdSchema,
 } from '../../../../shared/browser-api.ts';
 import type { HomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
+import { businessShellTheme } from '../../../../src/routes/tenant-theme.ts';
 import ShellHome from '../../../../src/routes/[lang]/page.tsx';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
 import { makeShellBff } from '../../../support/shell-bff-double.ts';
@@ -114,6 +115,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
     ],
     state: 'available',
   },
+  theme: businessShellTheme,
 });
 
 /**

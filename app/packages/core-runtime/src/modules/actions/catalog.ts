@@ -1,6 +1,7 @@
 import type { AnyActionRegistration } from '../../actions/definition.ts';
 // <generated-core-action-catalog-imports>
 import { activatePrincipalBindingAction } from './activate-principal-binding.action.ts';
+import { attachTenantThemeAction } from './attach-tenant-theme.action.ts';
 import { bindManagedApiKeyAction } from './bind-managed-api-key.action.ts';
 import { bindSelfApiKeyAction } from './bind-self-api-key.action.ts';
 import { changePrincipalBindingStatusAction } from './change-principal-binding-status.action.ts';
@@ -13,6 +14,7 @@ import { recordAssetIntegrityFailureAction } from './record-asset-integrity-fail
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
 import { renameDisplayFilenameAction } from './rename-display-filename.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
+import { saveTenantThemeAction } from './save-tenant-theme.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
 import { setSelfApiKeyBindingStatusAction } from './set-self-api-key-binding-status.action.ts';
 import { uploadAssetAction } from './upload-asset.action.ts';
@@ -23,6 +25,7 @@ export type CoreActionDescriptor = AnyActionRegistration['descriptor'];
 export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze([
   // <generated-core-action-catalog-values>
   activatePrincipalBindingAction.descriptor,
+  attachTenantThemeAction.descriptor,
   bindManagedApiKeyAction.descriptor,
   bindSelfApiKeyAction.descriptor,
   changePrincipalBindingStatusAction.descriptor,
@@ -35,6 +38,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   recordSupportImpersonationAction.descriptor,
   renameDisplayFilenameAction.descriptor,
   reservePrincipalBindingAction.descriptor,
+  saveTenantThemeAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
   setSelfApiKeyBindingStatusAction.descriptor,
   uploadAssetAction.descriptor,

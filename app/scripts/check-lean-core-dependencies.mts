@@ -306,6 +306,10 @@ const allowedCoreExternalSpecifiers = new Set([
   '@lucas-barake/effect-form-react',
   'react',
   'react/jsx-runtime',
+  // Tenant themes: the UI kit's brand data, its validator and its types, never its components.
+  '@techsio/ui-kit/theme/brand-validator',
+  '@techsio/ui-kit/theme/built-in-brands',
+  '@techsio/ui-kit/theme/ui-provider',
 ]);
 
 /** The design system's atoms and molecules, which the CoreSDK UI surface binds to the form model. */

@@ -38,6 +38,8 @@ import {
   searchProjectionRebuilds,
   tenantModuleStateChanges,
   tenantModuleStates,
+  tenantThemeAttachments,
+  tenantThemes,
   tenants,
   workerCheckpoints,
 } from '../src/db/schema.ts';
@@ -792,6 +794,7 @@ const EXPECTED_COMPOSITE_CONSTRAINTS = [
   'core_module_state_changes_tenant_principal_fk',
   'core_outbox_messages_tenant_domain_event_fk',
   'core_search_index_entries_tenant_legal_entity_fk',
+  'core_tenant_theme_attachments_theme_fk',
 ].toSorted();
 
 const EXPECTED_AUTH_CONSTRAINTS = [
@@ -1047,6 +1050,8 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     tenantModuleStates,
     actionInvocations,
     tenantModuleStateChanges,
+    tenantThemes,
+    tenantThemeAttachments,
     auditEvents,
     dataAccessEvents,
     domainEvents,

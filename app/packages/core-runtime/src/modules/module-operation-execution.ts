@@ -9,6 +9,7 @@ import { assetByteSourceRead } from '../generated-reads/asset-byte-source.ts';
 import { assetDownloadRead } from '../generated-reads/asset-download.ts';
 import { assetMetadataRead } from '../generated-reads/asset-metadata.ts';
 import { legalEntityDetailRead } from '../generated-reads/legal-entity-detail.ts';
+import { tenantThemeRead } from '../generated-reads/tenant-theme.ts';
 import { SHELL_HOST_APP_ID, coreOperations } from '../sdk/core-operations.ts';
 import type { AnyReadOperationRef, RequirementCaller } from '../sdk/index.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
@@ -320,6 +321,7 @@ const coreReads = Object.freeze([
   legalEntityDetailRead,
   assetMetadataRead,
   assetByteSourceRead,
+  tenantThemeRead,
   assetDownloadRead,
   assetCurrentRead,
   readPrincipalBinding,
