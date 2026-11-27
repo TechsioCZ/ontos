@@ -15,8 +15,8 @@ import type { PartyPersistenceUnavailableError } from '../../shared/domain/ident
 import { counterparties, counterpartyRolePeriods } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { authorizePartyClientSourceReference } from './party-client-source-evidence.service.ts';
-import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
-import { loadSourceCorrelatedParty } from './source-person-admission.service.ts';
+import { lockTenantIdentityReads } from './party-identifier-claim.service.ts';
+import { loadAuthorizedSourceCorrelatedParty } from './source-person-admission.service.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.assign(
@@ -42,7 +42,7 @@ export const readSourceCounterpartyAdmission = Effect.fn('SourceCounterpartyAdmi
   yield* authorizePartyClientSourceReference(input.sourceReference, scope, { operation: 'EVIDENCE_READ' }).pipe(
     Effect.mapError(unavailable),
   );
-  yield* lockTenantIdentityWrites(transaction, scope.tenantId);
+  yield* lockTenantIdentityReads(transaction, scope.tenantId);
   const [counterparty] = yield* transaction
     .select()
     .from(counterparties)
@@ -61,7 +61,8 @@ export const readSourceCounterpartyAdmission = Effect.fn('SourceCounterpartyAdmi
     return notAdmissible;
   }
   const partyRef = makePartyRef(scope.tenantId, counterparty.partyId);
-  const correlated = yield* loadSourceCorrelatedParty(transaction, scope, {
+  // The source reference was authorized above; the target-specific check follows.
+  const correlated = yield* loadAuthorizedSourceCorrelatedParty(transaction, scope, {
     partyRef,
     sourceReference: input.sourceReference,
   });
