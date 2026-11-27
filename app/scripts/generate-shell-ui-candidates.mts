@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The Shell consumes this projection, never vertical implementation source. Every release checks ALL verticals,
-// including topology-only units, before candidate publication (not before earlier successful artifact uploads).
+// The Shell consumes this projection, never vertical implementation source. Every Shell build and dev server writes it
+// for ALL verticals, including topology-only units, into the gitignored generated/ directory of the Shell.
 import { createRequire } from 'node:module';
 import path from 'node:path';
 

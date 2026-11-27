@@ -115,7 +115,10 @@ const marketIdOf = async (operation: Operation) =>
 // Merchandise advances the company's catalogue revision with every write (product, category, listing policy, stock).
 // Shared answers belong to the revision they were read at, so the first visit after an admin save waits for a read of
 // the new state instead of being served the previous one. The check is one head read, shared per process for a second.
+// A head read slower than REVISION_WAIT_MS does not hold the visit: it keeps the revision checked last, as during an
+// outage, and the head read, which goes on, decides the visits after it.
 const REVISION_TTL_MS = 1_000;
+const REVISION_WAIT_MS = 300;
 let lastRevision: { revision: number; at: number } | undefined;
 
 const loadRevision = async (operation: Operation): Promise<number> => {
@@ -138,6 +141,7 @@ const catalogRevision = (operation: Operation): Promise<number> => {
   if (held !== undefined) return held;
   const revision = sharedRead("catalog:revision", REVISION_TTL_MS, loadRevision, {
     caller: operation,
+    waitMs: REVISION_WAIT_MS,
   }).catch((error: unknown) => {
     operation.check();
     // While merchandise is unavailable shoppers keep the catalogue they had, as long as any shared answer is served.

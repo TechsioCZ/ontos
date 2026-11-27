@@ -72,6 +72,9 @@ const expectedOperationClientExports = [
   }),
   'executeCurrentRelevantStockPositionSet',
   'executeCurrentRelevantStockPositionSetWithAuthorization',
+  // The demo staff ERP stock edit (9a08eec097): the Shell grants the source authority before it imports the edit.
+  'executeGrantStaffStockSourceAuthority',
+  'executeGrantStaffStockSourceAuthorityWithAuthorization',
 ];
 
 describe('Inventory public owner contracts', () => {

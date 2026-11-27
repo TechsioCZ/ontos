@@ -363,7 +363,7 @@ const skippedCommandInputs = new Map<string, readonly string[]>([
     ),
   ],
   ['pnpm module-entrypoints:check', [...WORKSPACE, 'scripts/zerops/module-credential-callers.generated.mts']],
-  ['pnpm shell:ui-candidates:check', ['apps/shell-super-app/', VERTICALS]],
+  ['pnpm shell:ui-candidates', ['apps/shell-super-app/', VERTICALS]],
   ['pnpm test:generation', ['scripts/scaffolding/', ...WORKSPACE]],
   ['pnpm typecheck', programInputs('tsconfig.json')],
 ]);

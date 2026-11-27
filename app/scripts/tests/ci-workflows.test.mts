@@ -1011,7 +1011,7 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
     TYPECHECK_COMMAND,
     'pnpm api:check:ontos',
     'pnpm handler-services:check',
-    'pnpm shell:ui-candidates:check',
+    'pnpm shell:ui-candidates',
     'pnpm module-entrypoints:check',
     'pnpm test:generation',
     'pnpm --filter ./n1-storefront run lint',

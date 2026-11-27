@@ -165,9 +165,9 @@ export interface BuildDriver {
   readonly tools: ReadonlyMap<string, string>;
 }
 /**
- * Reads a build step makes outside its reference graph. The Shell's build checks the Tailwind candidate projection
- * against every vertical's UI sources (VERTICAL_UI_SOURCES of the script); a stale projection must fail that build,
- * so the Shell is rebuilt whenever those sources change.
+ * Reads a build step makes outside its reference graph. The Shell's build generates its gitignored Tailwind candidate
+ * projection from every vertical's UI sources (VERTICAL_UI_SOURCES of the script), so the Shell is rebuilt whenever
+ * those sources change.
  */
 const BUILD_STEP_READS = new Map([
   [

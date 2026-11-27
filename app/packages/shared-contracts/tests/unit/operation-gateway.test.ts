@@ -1,6 +1,7 @@
 // @rstest-environment happy-dom
-import { Effect, Schema } from 'effect';
+import { Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import {
   DocumentCompositionRevisionError,
@@ -133,26 +134,38 @@ it.effect('keeps the original document revision after renewal and refuses replac
   }),
 );
 
+// Since 15b9d091e0 a browser tab retries a release mismatch for about a minute while a deploy switches releases
+// (re-reading the page's release each round); the test clock runs those backoff rounds instantly.
 it.effect('rejects issuer admission for a different document before constructing the owner invocation', () =>
   Effect.gen(function* rejectedIssuerReleaseEffect() {
     yield* pinDocumentCompositionRevision(compositionRevision);
     let attempts = 0;
+    let issued = 0;
     const gateway = makeOperationGateway(audience, () =>
-      Effect.succeed({
-        ...approvedTarget,
-        compositionRevision: 'b'.repeat(64),
-        expiresAt: 1_700_000_300,
-        token: 'other-release',
+      Effect.sync(() => {
+        issued += 1;
+        return {
+          ...approvedTarget,
+          compositionRevision: 'b'.repeat(64),
+          expiresAt: 1_700_000_300,
+          token: 'other-release',
+        };
       }),
     );
-    const failure = yield* gateway
+    const fiber = yield* gateway
       .invoke(() => {
         attempts += 1;
         return Effect.void;
       })
-      .pipe(Effect.flip);
-    const documentFailure = yield* Schema.decodeUnknownEffect(DocumentCompositionRevisionError)(failure);
-    expect(documentFailure.reason).toBe('revision-mismatch');
+      .pipe(Effect.flip, Effect.forkChild);
+    while (fiber.pollUnsafe() === undefined) {
+      yield* TestClock.adjust('20 seconds');
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+    }
+    const failure = yield* Fiber.join(fiber);
+    expect(failure).toBeInstanceOf(DocumentCompositionRevisionError);
+    expect(failure instanceof DocumentCompositionRevisionError ? failure.reason : undefined).toBe('revision-mismatch');
+    expect(issued).toBe(7);
     expect(attempts).toBe(0);
   }),
 );

@@ -1,13 +1,16 @@
-// Per-variant storefront details: parameters (Akros filters), image (any photo of the product's photo library, or a new
-// upload), labels, unit, order minimum and package, quantity tiers, description, weight and the struck-through price.
-// Edits the variant draft of the Varianty tab in place.
+// Per-variant storefront details: parameters (Akros filters), image (any photo of the product's photo library, picked
+// by its thumbnail, or a new upload), labels, unit, order minimum and package, quantity tiers, description, weight and
+// the struck-through price. Edits the variant draft of the Varianty tab in place.
+import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FileUpload } from '@techsio/ui-kit/molecules/file-upload';
+import { surfaceTileClassName } from '@app/admin-ui';
 import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import { Option } from 'effect';
+import type { ReactNode } from 'react';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
-import { selectItem } from '../../../../ui/select-item.ts';
+import { mediaAssetIdOf } from '../../../../../shared/domain/product-images.ts';
 import { useVariantPhotoUpload } from './product-image-gallery-draft.ts';
 import { ACCEPTED_IMAGE_TYPES, MAX_SOURCE_IMAGE_BYTES } from './product-image-prepare.ts';
 import { useImageSource } from './product-image-source.ts';
@@ -45,8 +48,6 @@ export interface VariantDetailDraft {
   readonly weightGramsText: string;
 }
 
-const NO_IMAGE = '__none__';
-
 const flagLabels = [
   ['isAction', 'Akce'],
   ['isNew', 'Novinka'],
@@ -60,29 +61,92 @@ export interface VariantDetailEditorProps {
   readonly idPrefix: string;
   /** The product's photos (image refs): the gallery first, then the photo library the server keeps. */
   readonly images: readonly string[];
+  /** The product's main photo, the first gallery image: the only one marked "Hlavní"; none with an empty gallery. */
+  readonly mainImage: string | undefined;
   readonly onChange: (next: Partial<VariantDetailDraft>) => void;
   readonly productId: ProductId;
   readonly vatRate: number | undefined;
 }
 
-const imageLabel = (image: string, index: number) => {
-  const main = index === 0 ? ' (hlavní)' : '';
-  const shown = image.length > 48 ? `…${image.slice(-40)}` : image;
-  return `Obrázek ${index + 1}${main} · ${shown}`;
+/** The name under a photo's thumbnail: an imported photo's file name; an uploaded one has no name of its own. */
+const photoCaptionOf = (image: string) => {
+  if (Option.isSome(mediaAssetIdOf(image))) {
+    return 'Nahraný obrázek';
+  }
+  const name = image.split('/').at(-1);
+  return name === undefined || name === '' ? image : name;
 };
 
-/** The chosen photo, small; nothing while it loads or when nothing can serve it. */
-const VariantImagePreview = ({
-  productId,
-  reference,
+/** One choice of the variant photo: a square tile, a caption under it, a primary ring around the chosen one. */
+const ImageChoice = ({
+  caption,
+  children,
+  disabled,
+  onPick,
+  selected,
 }: {
+  readonly caption: string;
+  readonly children: ReactNode;
+  readonly disabled: boolean;
+  readonly onPick: () => void;
+  readonly selected: boolean;
+}) => (
+  <li className="min-w-0">
+    <button
+      aria-pressed={selected}
+      className={`flex w-full flex-col gap-50 rounded-lg p-50 text-left text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed ${selected ? 'ring-2 ring-primary' : 'enabled:hover:bg-fill-hover'}`}
+      data-testid="variant-image-choice"
+      disabled={disabled}
+      onClick={onPick}
+      type="button"
+    >
+      <span
+        className={`${surfaceTileClassName} relative flex aspect-square w-full items-center justify-center overflow-hidden`}
+      >
+        {children}
+      </span>
+      <span className="line-clamp-2 break-all" data-testid="variant-image-caption">
+        {caption}
+      </span>
+    </button>
+  </li>
+);
+
+/** A photo of the product as a thumbnail the operator can recognise, marked "Hlavní" when it is the main photo. */
+const VariantImageTile = ({
+  disabled,
+  image,
+  main,
+  onPick,
+  productId,
+  selected,
+}: {
+  readonly disabled: boolean;
+  readonly image: string;
+  readonly main: boolean;
+  readonly onPick: () => void;
   readonly productId: ProductId;
-  readonly reference: string;
+  readonly selected: boolean;
 }) => {
-  const source = useImageSource(productId, reference, 'thumbnail');
-  return source.status === 'ready' ? (
-    <img alt="Obrázek varianty" className="size-16 rounded object-contain" src={source.src} />
-  ) : null;
+  const source = useImageSource(productId, image, 'thumbnail');
+  return (
+    <ImageChoice caption={photoCaptionOf(image)} disabled={disabled} onPick={onPick} selected={selected}>
+      {source.status === 'ready' ? (
+        <img alt="" className="size-full object-contain" loading="lazy" src={source.src} />
+      ) : (
+        <span className="p-100 text-center text-fg-secondary">
+          {source.status === 'loading' ? 'Načítám náhled…' : 'Náhled není k dispozici'}
+        </span>
+      )}
+      {main ? (
+        <span className="absolute top-100 left-100">
+          <Badge size="sm" variant="info">
+            Hlavní
+          </Badge>
+        </span>
+      ) : null}
+    </ImageChoice>
+  );
 };
 
 /** Uploads a new photo for the variant; the stored photo becomes the variant's image in the draft. */
@@ -160,6 +224,7 @@ export const VariantDetailEditor = ({
   draft,
   idPrefix,
   images,
+  mainImage,
   onChange,
   productId,
   vatRate,
@@ -245,33 +310,41 @@ export const VariantDetailEditor = ({
         )}
       </div>
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <div className="flex flex-col gap-100">
-          <SelectTemplate
-            disabled={disabled}
-            items={[
-              selectItem(NO_IMAGE, 'bez obrázku'),
-              ...imageChoices.map((image, index) => selectItem(image, imageLabel(image, index))),
-            ]}
-            label="Obrázek varianty"
-            name={`${idPrefix}-image`}
-            onValueChange={(details) => {
-              const [next] = details.value;
-              onChange({ imageSrc: next === undefined || next === NO_IMAGE ? '' : next });
-            }}
-            placeholder="bez obrázku"
-            size="sm"
-            value={[draft.imageSrc === '' ? NO_IMAGE : draft.imageSrc]}
-          />
-          <div className="flex flex-wrap items-center gap-150">
-            {draft.imageSrc === '' ? null : <VariantImagePreview productId={productId} reference={draft.imageSrc} />}
-            {disabled ? null : (
-              <VariantPhotoUploadButton
-                name={`${idPrefix}-image-upload`}
-                onStored={(image) => onChange({ imageSrc: image })}
+        <div className="flex flex-col gap-100 sm:col-span-2">
+          <h3 className="font-semibold text-sm" id={`${idPrefix}-image-label`}>
+            Obrázek varianty
+          </h3>
+          <ul
+            aria-labelledby={`${idPrefix}-image-label`}
+            className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-100"
+          >
+            <ImageChoice
+              caption="Bez obrázku"
+              disabled={disabled}
+              onPick={() => onChange({ imageSrc: '' })}
+              selected={draft.imageSrc === ''}
+            >
+              <span aria-hidden className="icon-[mdi--image-off-outline] size-300 text-fg-secondary" />
+            </ImageChoice>
+            {imageChoices.map((image) => (
+              <VariantImageTile
+                disabled={disabled}
+                image={image}
+                key={image}
+                main={image === mainImage}
+                onPick={() => onChange({ imageSrc: image })}
                 productId={productId}
+                selected={image === draft.imageSrc}
               />
-            )}
-          </div>
+            ))}
+          </ul>
+          {disabled ? null : (
+            <VariantPhotoUploadButton
+              name={`${idPrefix}-image-upload`}
+              onStored={(image) => onChange({ imageSrc: image })}
+              productId={productId}
+            />
+          )}
         </div>
         <div className="flex flex-wrap items-end gap-200">
           {flagLabels.map(([flag, label]) => (

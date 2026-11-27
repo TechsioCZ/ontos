@@ -2793,6 +2793,33 @@ describe('explicit organization contextual ICO native path', () => {
         });
       }).pipe(asSymmyWorker),
   );
+  it.effect('writes the company ICO when the owner reads the profile under source-sync processing', () =>
+    Effect.gen(function* organizationIcoSourceSync() {
+      const current = Match.value(organizationIcoCurrentProfile).pipe(
+        Match.tag('CURRENT', (value) => value),
+        Match.orElse(() => {
+          throw new Error('CURRENT fixture invalid');
+        }),
+      );
+      const { icoAuthority: _classification, ...unclassified } = current.item;
+      reset();
+      peer.profileReceipt.succeed(
+        Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema)({
+          ...current,
+          item: { ...unclassified, sourceProcessingMode: 'SOURCE_SYNC' },
+        }),
+      );
+      peer.organizationIco.succeed(organizationIcoNative);
+      const adapter = yield* organizationIcoAdapter;
+      const result = yield* adapter.execute({
+        ...input(),
+        effect: organizationIcoEffect,
+        legalEntityId: sellingLegalEntityId,
+      });
+      expect(result.status).toBe('accepted_change');
+      expect(peer.organizationIco.sent).toHaveLength(1);
+    }).pipe(asSymmyWorker),
+  );
   it.effect('does not write or switch to personal handling for an absent or retargeted source profile', () =>
     Effect.gen(function* organizationSourceRefusal() {
       const current = Match.value(organizationIcoCurrentProfile).pipe(
@@ -2804,6 +2831,7 @@ describe('explicit organization contextual ICO native path', () => {
       for (const response of [
         { _tag: 'ABSENT' },
         { ...current, item: { ...current.item, icoAuthority: 'PERSONAL' } },
+        { ...current, item: { ...current.item, icoAuthority: 'PERSONAL', sourceProcessingMode: 'SOURCE_SYNC' } },
         {
           ...current,
           item: {

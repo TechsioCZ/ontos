@@ -1,0 +1,4 @@
+# The Tailwind candidate projection of every vertical's UI (scripts/generate-shell-ui-candidates.mts). The Shell's build and
+# dev scripts write it first; a committed copy that went stale dirtied the build checkout, so every release identity read
+# `workspace` and the release could not be promoted.
+generated/

@@ -114,7 +114,9 @@ it('catalogs every protected Inventory mutation and audit-read entrypoint under 
   const catalogedActionEntrypoints = Object.values(expectedProtectedEntrypoints)
     .flat()
     .filter((entrypointKey) => !entrypointKey.includes('.api.'));
-  expect(new Set(catalogedActionEntrypoints)).toEqual(
+  // The demo staff ERP stock grant (9a08eec097) is authorized by its own sensitive access declaration, which the
+  // staff grants name, not by a business permission over one Inventory Resource.
+  expect(new Set([...catalogedActionEntrypoints, 'commerce.inventory.grant-staff-stock-source-authority'])).toEqual(
     new Set(inventoryManifest.publicSurface.actions.map(({ descriptor }) => descriptor.entrypoint.entrypointKey)),
   );
 });

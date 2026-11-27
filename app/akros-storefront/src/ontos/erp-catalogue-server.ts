@@ -286,11 +286,14 @@ export const readErpProduct = cache(
 );
 
 /**
- * Search reads are equal for every shopper: concurrent searches share one read for a second, never an older answer.
- * Catalog and Pricing have no revision to check, so a product state or price saved in the ERP editor is searchable
- * on the next visit, as on „Novinky z ERP“.
+ * Search reads are equal for every shopper: concurrent searches share one read for a second. Catalog and Pricing have
+ * no revision to check, so after that second a search waits for a new read, at most ERP_SEARCH_WAIT_MS for each of the
+ * index and the priced answer: a product state or price saved in the ERP editor is searchable on the next visit, as on
+ * „Novinky z ERP“, when the owners answer in time, and on the visit after that when they do not. A search never waits
+ * on slow owners for longer, and never loses its ERP products to them.
  */
 const ERP_SEARCH_TTL_MS = 1_000;
+const ERP_SEARCH_WAIT_MS = 250;
 type ErpPageItem = CatalogProductPage["items"][number];
 
 /** Every product Catalog answers the storefront (up to the detail scan bound), shared across shoppers. */
@@ -307,7 +310,7 @@ const erpIndex = (locale: string, caller: Operation) =>
       }
       return items;
     },
-    { caller },
+    { caller, waitMs: ERP_SEARCH_WAIT_MS },
   );
 
 /**
@@ -332,7 +335,7 @@ export const searchErpProducts = async (
     `erp-search:${locale}:${limit}:${items.map((item) => item.productRef.resourceId).join(",")}`,
     ERP_SEARCH_TTL_MS,
     (detached) => withOffers(offer, { count: items.length, items }, detached, true),
-    { caller: operation },
+    { caller: operation, waitMs: ERP_SEARCH_WAIT_MS },
   );
   return { count: matched.length, products };
 };
