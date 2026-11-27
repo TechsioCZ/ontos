@@ -2746,7 +2746,8 @@ export const workingSetRequestOf = (
         productIds: [symmyProductIdOf(value.catalogProductId)],
         productKeys: {
           sku: value.erpCode,
-          skus: value.variants.map((variant) => variant.sku),
+          // The code too: a Symmy product of one variant links the shop variant holding its code as SKU.
+          skus: [value.erpCode, ...value.variants.map((variant) => variant.sku)],
           slugPrefix: productSlugBase(value.name, value.erpCode),
         },
       }),
