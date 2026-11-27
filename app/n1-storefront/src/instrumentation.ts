@@ -1,4 +1,4 @@
-import { markLandingAnswered } from "./ontos/readiness";
+import { markLandingAnswered } from "./ontos/readiness.ts";
 
 // Shared public reads are served stale for at most 10 minutes (ontos/shared-read.ts). One request to the landing page
 // every few minutes keeps the cart scope, the category tree and the featured products inside that window, so the first

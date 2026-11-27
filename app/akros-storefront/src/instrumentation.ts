@@ -1,4 +1,4 @@
-import { markLandingAnswered } from "./ontos/readiness";
+import { markLandingAnswered } from "./ontos/readiness.ts";
 
 let observing = false;
 
