@@ -5,6 +5,7 @@ import { ImportSourceCatalogPayloadSchema } from '@app/merchandise/contracts/imp
 import { CatalogPagePricesApi, CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Cause, Console, Effect, Redacted, Schema } from 'effect';
+import { HttpClientError } from 'effect/http';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { symmyUnavailableProblem } from './contract.ts';
 import { symmyDemoCatalogDigest, symmyDemoCatalogScopeIdentity } from './demo-catalog-identity.ts';
@@ -264,6 +265,18 @@ const readOnHandPage = Effect.fn('SymmyMerchandiseCopy.onHandPage')(function* on
 
 const describe = (cause: Cause.Cause<unknown>) => Cause.pretty(cause).slice(0, 400);
 
+/** An owner's refusal with its status and body (the refusal code), which an undeclared-status decode error drops. */
+const describeRefusal = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.squash(cause);
+  const response = HttpClientError.isHttpClientError(error) ? error.response : undefined;
+  return response === undefined
+    ? Effect.succeed(describe(cause))
+    : response.text.pipe(
+        Effect.map((body) => `${String(response.status)} ${body.slice(0, 600)} (${describe(cause).slice(0, 200)})`),
+        Effect.orElseSucceed(() => describe(cause)),
+      );
+};
+
 /**
  * The current price and on-hand of every Variant of the products, read page by page. A product whose price page
  * failed is left out of the answer (`skipped`): it is not copied in this sweep rather than sent without a price.
@@ -284,9 +297,13 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* f
   );
   const figures = new Map<string, { priceNetMinor?: number; stockOnHand?: number }>();
   const skipped = new Set<string>();
+  let stocked = true;
   const key = yield* readPriceKey(admission, legalEntityId).pipe(
     Effect.catchCause((cause) =>
-      Console.error(`${LOG} price key unreadable, no prices sent: ${describe(cause)}`).pipe(Effect.as(undefined)),
+      describeRefusal(cause).pipe(
+        Effect.flatMap((text) => Console.error(`${LOG} price key unreadable, no prices sent: ${text}`)),
+        Effect.as(undefined),
+      ),
     ),
   );
   // The Inventory configuration of the company's Symmy stock: on the products route, else on the stock route.
@@ -302,7 +319,8 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* f
     if (key !== undefined) {
       const prices = yield* readPricePage(admission, legalEntityId, key, page).pipe(
         Effect.catchCause((cause) =>
-          Console.error(`${LOG} prices unreadable, ${String(page.length)} variants skipped: ${describe(cause)}`).pipe(
+          describeRefusal(cause).pipe(
+            Effect.flatMap((text) => Console.error(`${LOG} prices unreadable, ${String(page.length)} variants skipped: ${text}`)),
             Effect.as(undefined),
           ),
         ),
@@ -324,15 +342,21 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* f
         page.map(({ variantRef }) => variantRef),
       ).pipe(
         Effect.catchCause((cause) =>
-          Console.error(`${LOG} on-hand unreadable, stock kept: ${describe(cause)}`).pipe(Effect.as(new Map<string, number>())),
+          describeRefusal(cause).pipe(
+            Effect.flatMap((text) => Console.error(`${LOG} on-hand unreadable, stock kept: ${text}`)),
+            Effect.as(undefined),
+          ),
         ),
       );
-      for (const [variantId, stockOnHand] of onHand) {
+      if (onHand === undefined) {
+        stocked = false;
+      }
+      for (const [variantId, stockOnHand] of onHand ?? []) {
         figures.set(variantId, { ...figures.get(variantId), stockOnHand });
       }
     }
   }
-  return { figures, priced: key !== undefined, skipped };
+  return { figures, priced: key !== undefined, skipped, stocked: source !== undefined && stocked };
 });
 
 const upsert = Effect.fn('SymmyMerchandiseCopy.upsert')(function* upsertOne(
@@ -370,8 +394,12 @@ const upsert = Effect.fn('SymmyMerchandiseCopy.upsert')(function* upsertOne(
     { baseUrl, compositionRevision: assertion.compositionRevision, idempotencyKey },
   );
   // The import's result names what the upsert did (sourceUpsert.outcome); an older owner answers without it.
-  const outcome: unknown = (result as { readonly sourceUpsert?: { readonly outcome?: unknown } }).sourceUpsert?.outcome;
-  return typeof outcome === 'string' ? outcome : 'APPLIED';
+  const answer = (result as { readonly sourceUpsert?: { readonly outcome?: unknown; readonly reason?: unknown } })
+    .sourceUpsert;
+  return {
+    outcome: typeof answer?.outcome === 'string' ? answer.outcome : 'APPLIED',
+    reason: typeof answer?.reason === 'string' ? answer.reason : undefined,
+  };
 });
 
 /**
@@ -401,26 +429,40 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
     return yield* Effect.fail(symmyUnavailableProblem);
   }
   const products = yield* readAllSourceProducts(read, admission);
-  const { figures, priced, skipped } = yield* readVariantFigures(admission, legalEntityId, products);
+  const { figures, priced, skipped, stocked } = yield* readVariantFigures(admission, legalEntityId, products);
   yield* selectRoute(admission, 'productsBatch');
-  const outcomes: Record<string, number> = {};
+  const outcomes: Record<string, number> = { CREATED: 0, UPDATED: 0, UNCHANGED: 0, REFUSED: 0 };
+  const refused: string[] = [];
+  const unpriced: string[] = [];
   const runId = yield* newRequestIdentifier;
   for (const item of products) {
+    const code = symmySourceCode(item.source_record_id);
     const command = skipped.has(String(item.product.productRef.resourceId))
       ? undefined
       : symmyUpsertSourceProductCommand(item, figures);
-    const outcome =
-      command === undefined
-        ? 'SKIPPED'
+    // A product whose current price is not known in this sweep is not written: never a row at 0 Kč.
+    const withoutPrice = command !== undefined && command.variants.some((variant) => variant.priceNetMinor === undefined);
+    if (command === undefined || withoutPrice) {
+      unpriced.push(code);
+    }
+    const result =
+      command === undefined || withoutPrice
+        ? { outcome: 'SKIPPED', reason: undefined }
         : yield* upsert({ ...write, legalEntityId }, admission, command, runId).pipe(
             Effect.catchCause((cause) =>
-              Console.error(`${LOG} ${item.source_record_id} failed: ${describe(cause)}`).pipe(Effect.as('FAILED')),
+              Console.error(`${LOG} ${item.source_record_id} failed: ${describe(cause)}`).pipe(
+                Effect.as({ outcome: 'FAILED', reason: undefined }),
+              ),
             ),
           );
-    outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+    outcomes[result.outcome] = (outcomes[result.outcome] ?? 0) + 1;
+    if (result.outcome === 'REFUSED') {
+      refused.push(`${code}:${result.reason ?? 'unknown'}`);
+    }
   }
   yield* Console.log(
-    `${LOG} company=${legalEntityId} products=${String(products.length)} priced=${String(priced)} ${JSON.stringify(outcomes)}`,
+    `${LOG} company=${legalEntityId} products=${String(products.length)} ${JSON.stringify({ ...outcomes, priced, stocked })}` +
+      ` refused=[${refused.join(', ')}] skippedWithoutPrice=[${unpriced.join(', ')}]`,
   );
   return { outcomes } as const;
 });

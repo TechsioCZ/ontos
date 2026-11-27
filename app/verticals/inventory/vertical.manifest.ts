@@ -28,6 +28,7 @@ import { inventoryStockSharingEligibilityManagePermission } from './shared/permi
 import { CatalogToStockBindingResolutionApi } from './shared/apis/catalog-to-stock-binding-resolution.ts';
 import { catalogToStockBindingResourceDescriptor } from './shared/resources/catalog-to-stock-binding.ts';
 import { CatalogVariantOnHandPageApi } from './shared/apis/catalog-variant-on-hand-page.ts';
+import { catalogVariantOnHandPageRead } from './src/api/catalog-variant-on-hand-page.read.ts';
 import { changeStockSharingEligibilityAction } from './src/actions/change-stock-sharing-eligibility.action.ts';
 import { commitmentProtectionResourceDescriptor } from './shared/resources/commitment-protection.ts';
 import { CommitmentProtectionVerificationApi } from './shared/apis/commitment-protection-verification.ts';
@@ -218,6 +219,11 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
         apiKey: 'source-stock-position-resolution',
         operationKey: 'sourceStockPositionResolution.execute',
         registration: sourceStockPositionResolutionRead,
+      },
+      {
+        apiKey: 'catalog-variant-on-hand-page',
+        operationKey: 'catalogVariantOnHandPage.execute',
+        registration: catalogVariantOnHandPageRead,
       },
       // </generated-module-manifest-operation-contracts>
     ],
