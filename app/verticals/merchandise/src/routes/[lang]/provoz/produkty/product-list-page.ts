@@ -35,6 +35,8 @@ export const useCategoryChoices = (legalEntityId: string) => {
   const held = useHeldSnapshot(categoryChoicesData.key(legalEntityId), snapshot);
   return {
     choices: held.state === 'ready' ? held.value : NO_CHOICES,
+    /** The choices answered (or failed): whether the company filters by a tree is known. */
+    settled: held.state !== 'pending',
     reload: () => {
       browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
     },
