@@ -202,8 +202,8 @@ const CreateProjectPageContent = () => {
             onClick={() => {
               findOwners();
             }}
+            severity="secondary"
             type="button"
-            variant="secondary"
           >
             {t('projects.pages.createProject.findOwners')}
           </Button>

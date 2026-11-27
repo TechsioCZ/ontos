@@ -108,8 +108,8 @@ const ReadyRoles = ({ model }: { readonly model: Extract<RolePageModel, { readon
             aria-pressed={selected?.id === role.id}
             key={role.id}
             onClick={() => setSelectedId(role.id)}
+            severity="secondary"
             type="button"
-            variant="secondary"
           >
             {role.name}
           </Button>

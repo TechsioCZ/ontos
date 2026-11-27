@@ -100,7 +100,7 @@ export const ChangesView = (props: ChangesViewProps) => {
         </StatusText>
       )}
       <div className="shell:flex shell:flex-wrap shell:gap-2">
-        <Button disabled={props.busy} onClick={props.onRefresh} type="button" variant="secondary">
+        <Button disabled={props.busy} onClick={props.onRefresh} severity="secondary" type="button">
           {t('shell.accessAdmin.common.refresh')}
         </Button>
         <Button
@@ -124,9 +124,13 @@ export const ChangesView = (props: ChangesViewProps) => {
             <li className="shell:grid shell:gap-3" key={item.id}>
               <h3 className="shell:text-title-md">{item.capabilityKey}</h3>
               <div className="shell:flex shell:flex-wrap shell:gap-2">
-                <Badge variant="outline">{t(`shell.accessAdmin.changes.kind.${item.kind}`)}</Badge>
-                <Badge variant="outline">{t(`shell.accessAdmin.changes.status.${item.status}`)}</Badge>
-                <Badge variant={item.risk === 'routine' ? 'info' : 'warning'}>
+                <Badge appearance="outline" severity="neutral">
+                  {t(`shell.accessAdmin.changes.kind.${item.kind}`)}
+                </Badge>
+                <Badge appearance="outline" severity="neutral">
+                  {t(`shell.accessAdmin.changes.status.${item.status}`)}
+                </Badge>
+                <Badge severity={item.risk === 'routine' ? 'info' : 'warning'}>
                   {t(`shell.accessAdmin.risk.${item.risk}`)}
                 </Badge>
               </div>
@@ -151,8 +155,8 @@ export const ChangesView = (props: ChangesViewProps) => {
                   <Button
                     disabled={disabled}
                     onClick={() => props.onPreview([item.id], 'decline')}
+                    severity="secondary"
                     type="button"
-                    variant="secondary"
                   >
                     {t('shell.accessAdmin.changes.previewDecline')}
                   </Button>
@@ -162,8 +166,8 @@ export const ChangesView = (props: ChangesViewProps) => {
                 <Button
                   disabled={disabled}
                   onClick={() => props.onPreview([item.id], 'undo')}
+                  severity="secondary"
                   type="button"
-                  variant="secondary"
                 >
                   {t('shell.accessAdmin.changes.previewUndo')}
                 </Button>
@@ -176,7 +180,7 @@ export const ChangesView = (props: ChangesViewProps) => {
         </ul>
       )}
       {props.hasMore && (
-        <Button disabled={props.busy} onClick={props.onLoadMore} type="button" variant="secondary">
+        <Button disabled={props.busy} onClick={props.onLoadMore} severity="secondary" type="button">
           {t('shell.accessAdmin.changes.loadMore')}
         </Button>
       )}
@@ -229,7 +233,7 @@ export const ChangesView = (props: ChangesViewProps) => {
             >
               {t(`shell.accessAdmin.changes.${props.preview.decision}`)}
             </Button>
-            <Button disabled={props.busy} onClick={props.onCancel} type="button" variant="secondary">
+            <Button disabled={props.busy} onClick={props.onCancel} severity="secondary" type="button">
               {t('shell.accessAdmin.common.cancel')}
             </Button>
           </div>

@@ -176,14 +176,14 @@ const LoginPage = () => {
                 validateStatus={validation.passwordMissing ? 'error' : 'default'}
               />
               <Button
+                appearance="solid"
                 block
                 disabled={submitting}
                 isLoading={submitting}
                 loadingText={t('shell.login.pending')}
+                severity="primary"
                 size="md"
-                theme="solid"
                 type="submit"
-                variant="primary"
               >
                 {t('shell.login.submit')}
               </Button>

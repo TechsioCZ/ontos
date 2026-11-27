@@ -50,7 +50,7 @@ const loginRouter = (language: ShellLanguage = 'en') =>
 const renderLogin = (router: ShellRouter = loginRouter(), language: ShellLanguage = 'en') =>
   renderShellRoute(router, shellTestCopy(language, copy));
 
-const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
+const getLogin = () => screen.getByRole('textbox', { name: 'Login (required)' });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 /** The submit control, idle or announcing the sign-in it started. */

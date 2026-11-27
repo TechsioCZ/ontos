@@ -42,34 +42,34 @@ const SearchResultItem = ({
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
+        severity="secondary"
         to="/resources/$moduleId/$resourceType/$resourceId"
-        variant="secondary"
       >
         {result.title ?? t('shell.search.name_hidden')}
       </LinkButton>
       <div className="shell:flex shell:flex-wrap shell:gap-2">
-        <Badge size="sm" variant="outline">
+        <Badge appearance="outline" severity="neutral" size="sm">
           {resultKindLabel()}
         </Badge>
         {party?.archived === true ? (
-          <Badge size="sm" variant="warning">
+          <Badge severity="warning" size="sm">
             {t('shell.search.archived')}
           </Badge>
         ) : null}
         {party?.matchedViaAlias === true ? (
-          <Badge size="sm" variant="info">
+          <Badge severity="info" size="sm">
             {t('shell.search.alias_match')}
           </Badge>
         ) : null}
         {result.kind === 'counterparty'
           ? result.currentRoles.map((role) => (
-              <Badge key={role} size="sm" variant="info">
+              <Badge key={role} severity="info" size="sm">
                 {t(`shell.search.roles.${role}`)}
               </Badge>
             ))
           : null}
         {result.kind === 'counterparty' && result.collision !== undefined ? (
-          <Badge size="sm" variant="warning">
+          <Badge severity="warning" size="sm">
             {t('shell.search.reconciliation_required')}
           </Badge>
         ) : null}
