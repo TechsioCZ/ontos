@@ -157,7 +157,8 @@ const fixture = (failAt = 0, exitCode = 7) =>
       Match.value(command).pipe(
         Match.tag('StandardCommand', (standard) => {
           calls.push(standard);
-          // Both streams contain sensitive output: the hook must discard them, not forward them.
+          // Both streams carry sensitive text. Since 0db7495031 the hook forwards the children's output to the stage app
+          // log (the bootstrap scripts redact their own database URLs), but never into the supervisor's own Console.
           return native.spawn(
             ChildProcess.make(
               process.execPath,
@@ -193,8 +194,8 @@ it.live('enrolls the native receiver before all source bootstraps with only supe
       expect(command.options).toMatchObject({
         cwd: workspaceRoot,
         extendEnv: false,
-        stderr: 'ignore',
-        stdout: 'ignore',
+        stderr: 'inherit',
+        stdout: 'inherit',
       });
       const compileCache = command.options.env?.NODE_COMPILE_CACHE;
       expect(compileCache).toEqual(expect.any(String));
