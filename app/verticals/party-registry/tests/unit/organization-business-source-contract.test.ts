@@ -88,6 +88,15 @@ const unsafeCandidates: readonly Schema.Json[] = [
   { ...candidate, email: 'unwanted@example.invalid' },
   { ...candidate, evidenceRefs: ['unbounded-evidence'] },
   { ...candidate, officialIdentifiers: [{ identifierType: 'ICO', value: '27074358' }] },
+  // A nine- or ten-digit DIČ carries a birth number; an organization states one company DIČ at most.
+  { ...candidate, officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ8001011234' }] },
+  {
+    ...candidate,
+    officialIdentifiers: [
+      { identifierType: 'CZ_DIC', value: 'CZ27074358' },
+      { identifierType: 'CZ_DIC', value: 'CZ25209361' },
+    ],
+  },
   { ...candidate, provenance: { ...candidate.provenance, method: 'SIGNED_CONTRACT' } },
   { ...candidate, provenance: { ...candidate.provenance, source: 'arbitrary text' } },
   { ...candidate, provenance: { ...candidate.provenance, externalEvidence: {} } },
@@ -96,6 +105,18 @@ const unsafeCandidates: readonly Schema.Json[] = [
   { ...candidate, subjectEvidence: [{ ...assertion, subjectKey: 'OTHER_RECORD' }] },
   { ...candidate, subjectEvidence: [assertion, assertion] },
 ];
+it.effect('the corporate projection carries the company DIČ', () =>
+  Effect.gen(function* companyDic() {
+    const withDic = yield* organizationBusinessSourceInputDigest({
+      operation: 'CREATE',
+      payload: {
+        candidate: { ...candidate, officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ27074358' }] },
+      },
+    });
+    expect(withDic.inputDigest).not.toBe((yield* organizationBusinessSourceInputDigest(input())).inputDigest);
+  }),
+);
+
 it.effect('the corporate projection refuses personal values, arbitrary evidence and invented authority', () =>
   Effect.gen(function* rejectUnsafeSourceProjection() {
     for (const unsafe of unsafeCandidates) {

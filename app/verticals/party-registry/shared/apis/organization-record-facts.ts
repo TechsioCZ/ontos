@@ -16,6 +16,7 @@ import { CounterpartyCustomerOnboardPayloadSchema } from '../actions/counterpart
 import { SymmySourceOrganizationWitnessSchema } from '@app/shared-contracts/symmy/organization-source-witness';
 import { fingerprintPartySourceEffect } from '../domain/source-fingerprint.ts';
 import { PartyRefSchema } from '../resources/party.ts';
+import { OfficialIdentifierInputSchema } from '../domain/identifier-contracts.ts';
 import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { CounterpartyRolePeriodRefSchema } from '../resources/counterparty-role-period.ts';
 import { PartyMatchDecisionRefSchema } from '../resources/party-match-decision.ts';
@@ -327,6 +328,18 @@ export const organizationBusinessRecordInputDigest = (input: Schema.Json) =>
     ),
   );
 
+/**
+ * The one identifier a source organization states to Party: its company DIČ, CZ and the eight IČO digits. A nine- or
+ * ten-digit DIČ carries a birth number, personal data no organization business fact may hold. The IČO belongs to the
+ * customer profile.
+ */
+export const OrganizationBusinessSourceDicSchema = OfficialIdentifierInputSchema.check(
+  Schema.makeFilter((identifier) =>
+    identifier.identifierType === 'CZ_DIC' && /^CZ[0-9]{8}$/u.test(identifier.value.trim().toUpperCase())
+      ? undefined
+      : 'Expected a company CZ_DIC: CZ and eight digits',
+  ),
+);
 /** A strict subset of the native payload. This validates an existing assertion; it never rewrites one. */
 export const OrganizationBusinessSourceCandidateSchema = Schema.Struct({
   ...PartyCandidateSchema.fields,
@@ -334,7 +347,7 @@ export const OrganizationBusinessSourceCandidateSchema = Schema.Struct({
   firstName: Schema.optionalKey(Schema.Never),
   lastName: Schema.optionalKey(Schema.Never),
   evidenceRefs: Schema.Array(Schema.Never),
-  officialIdentifiers: Schema.Array(Schema.Never),
+  officialIdentifiers: Schema.Array(OrganizationBusinessSourceDicSchema).check(Schema.isMaxLength(1)),
   provenance: Schema.Struct({
     ...PartyCandidateSchema.fields.provenance.fields,
     externalEvidence: Schema.optionalKey(Schema.Never),

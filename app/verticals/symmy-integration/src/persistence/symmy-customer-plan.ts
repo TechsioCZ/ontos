@@ -137,10 +137,9 @@ const profileSubject = (facts: ItemFacts, kind: 'COUNTERPARTY' | 'RETAIL') => ({
 });
 
 const partyCreateIntent = (facts: ItemFacts, row: SymmyCustomerRow) => {
-  // Party's organization source creation takes no official identifier (a DIČ made it refuse the job as unavailable,
-  // so the job retried for hours and blocked every release drain). The ICO reaches the profile below; every other
-  // identifier is reported as unsupported on the item (`identifiersUnwritten`).
-  const identifiers: typeof row.officialIdentifiers = [];
+  // The DIČ goes to Party, which takes a company DIČ (CZ and eight digits) and refuses any other for good; the ICO
+  // reaches the profile below.
+  const identifiers = row.officialIdentifiers.filter(({ identifierType }) => identifierType !== 'ICO');
   const evidence = {
     kind: 'CLIENT_SOURCE_ASSERTION',
     observedSubject: row.kind,
@@ -301,9 +300,8 @@ const contactItem = (
 });
 
 const identifiersUnwritten = (facts: ItemFacts, row: SymmyCustomerRow) =>
-  row.officialIdentifiers.some(({ identifierType }) => identifierType !== 'ICO') ||
-  (row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO') &&
-    !(facts.context.icoEnrolled && Option.isSome(organizationIco(row))));
+  row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO') &&
+  !(facts.context.icoEnrolled && Option.isSome(organizationIco(row)));
 
 const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) => ({
   effects: [
@@ -317,9 +315,8 @@ const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) 
   itemKey,
   source: itemSource(facts),
   sourceOccurrenceId: facts.occurrenceId,
-  // An identifier the item does not write is reported instead of dropped: any identifier but the ICO (a DIČ), a
-  // person's ICO, two different ICOs of one organization, or an organization of a route that does not enroll the
-  // company ICO change.
+  // An ICO the item does not write is reported instead of dropped: a person's ICO, two different ICOs of one
+  // organization, or an organization of a route that does not enroll the company ICO change.
   ...present(
     'unsupportedBranches',
     identifiersUnwritten(facts, row) ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }] : undefined,

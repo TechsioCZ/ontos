@@ -549,6 +549,13 @@ const ownerFailureSchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   status: Schema.optionalKey(Schema.Number),
 });
+/**
+ * An owner that judged the request invalid (400) or refused it (422) without marking it retryable answers every retry
+ * of the same pinned request the same way: the effect is denied, never left unavailable.
+ */
+const ownerRefused = Schema.is(
+  Schema.Struct({ retryable: Schema.optionalKey(Schema.Literal(false)), status: Schema.Literals([400, 422]) }),
+);
 const ownerFailure = Effect.fn('SymmyPartyCommerceAdapters.ownerFailure')(function* ownerFailure(
   input: SymmyEffectAdapterInput,
   cause: unknown,
@@ -589,6 +596,9 @@ const ownerFailure = Effect.fn('SymmyPartyCommerceAdapters.ownerFailure')(functi
     if (status === 409) {
       return yield* outcome(input, 'conflict');
     }
+  }
+  if (ownerRefused(cause)) {
+    return yield* outcome(input, 'denied');
   }
   return yield* symmyJobWorkerUnavailable(cause);
 });
@@ -1199,6 +1209,10 @@ const replayCommittedPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.replayC
     return yield* sendPartyCreate(input, intent, context, originalInvocationId).pipe(
       Effect.map((replayed) => ({ outcome: replayed, status: 'settled' as const })),
       Effect.catchTag('PartyCommandAlreadyCommittedProblem', () => recoverParty(crypto, input, 'CREATE', intent)),
+      // Core replays a committed rejection with its saved reply: Party refused this create for good.
+      Effect.catchIf(ownerRefused, () =>
+        outcome(input, 'denied').pipe(Effect.map((denied) => ({ outcome: denied, status: 'settled' as const }))),
+      ),
     );
   },
 );
