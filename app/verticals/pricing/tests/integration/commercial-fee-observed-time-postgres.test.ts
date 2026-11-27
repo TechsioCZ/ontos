@@ -26,7 +26,8 @@ import { PricingLineCompositionRequestSchema } from '@app/pricing-contracts/doma
 import { PricingEvaluationAttemptSchema } from '@app/pricing-contracts/domain/material-change';
 import { PricingCommercialFeeCalculationInputSchema } from '@app/pricing-contracts/domain/commercial-fee';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, DateTime, Effect, Layer, Logger, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Logger, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -59,7 +60,7 @@ import { pricePersistenceForScope } from '../../src/services/price-persistence.s
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
 import { makeIssue779Scenario } from '../unit/support/issue-779-line-value.fixture.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const FixtureValueSchema = Schema.Union([
   Schema.ObjectKeyword,
   Schema.String,
@@ -189,7 +190,7 @@ const scenarioFor = Effect.fn('test.nativeFeeScenario')(function* scenarioFor(sc
 });
 
 const withNativeCrypto = <Value, Failure, Requirements>(
-  program: Effect.Effect<Value, Failure, Requirements | Crypto.Crypto>,
+  program: Effect.Effect<Value, Failure, Requirements | SecureRandom.SecureRandom>,
 ) =>
   Effect.scoped(
     Effect.gen(function* nativeCryptoBoundary() {

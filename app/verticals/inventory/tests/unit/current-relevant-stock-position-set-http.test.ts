@@ -18,7 +18,8 @@ import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bf
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { DateTime, ConfigProvider, Context, Crypto, Effect, Layer, Result, Schema } from 'effect';
+import { DateTime, ConfigProvider, Context, Effect, Layer, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -53,7 +54,9 @@ const unusedActionRuntime: ActionRuntimeService = {
 };
 
 // The registered Read runtime takes evidence identifiers from Crypto; each live test builds Node Crypto in its scope.
-const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(
+  Effect.map((context) => Context.get(context, SecureRandom.SecureRandom)),
+);
 
 const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegisteredRuntime')(
   function* makeRegisteredPositionSetRuntime(options: {
@@ -76,7 +79,7 @@ const makeRegisteredPositionSetRuntime = Effect.fn('PositionSetTest.makeRegister
       kid: 'inventory-position-set-runtime',
       use: 'sig',
     };
-    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+    const jti = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
     const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
@@ -197,7 +200,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().evidenceWrites).toBe(1);
       expect(runtime.snapshot().stages).toContain('evidence_persisted');
       expect(runtime.snapshot().statements.at(-1)).toBe('COMMIT');
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 
   it.live('registered runtime preserves proven empty broader membership', () =>
@@ -213,7 +216,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().statuses).toEqual([200]);
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 
   it.live('registered runtime releases no complete set when the gate denies its capability', () =>
@@ -229,7 +232,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().statements.some((statement) => statement.startsWith('ROLLBACK TO SAVEPOINT'))).toBe(
         false,
       );
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 
   it.live('registered runtime maps unavailable owner observation to a sanitized typed 503 instead of empty', () =>
@@ -246,7 +249,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(0);
       expect(runtime.snapshot().statements.at(-1)).toBe('ROLLBACK');
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 
   it.live('registered exact mode remains UNPROVEN without a composed Commerce verifier', () =>
@@ -258,7 +261,7 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().redemptions).toBe(1);
       expect(runtime.snapshot().ownerQueries).toEqual([]);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 
   it.effect('real codec rejection is typed by the generated client before authentication or owner effects', () =>

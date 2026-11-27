@@ -1,7 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { CreatePackageDefinitionPayload } from '../../shared/actions/create-package-definition.ts';
 import type { RetirePackageDefinitionPayload } from '../../shared/actions/retire-package-definition.ts';
@@ -61,7 +61,7 @@ export interface PackageContentBasis {
     readonly content: Content;
     readonly definitionId: string;
     readonly tenantId: string;
-  }) => Effect.Effect<boolean, PackagePersistenceUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<boolean, PackagePersistenceUnavailable, SecureRandom.SecureRandom>;
 }
 
 interface Evidence {
@@ -95,11 +95,11 @@ export type PackageMutationOutcome = typeof PackageMutationOutcomeSchema.Type;
 export interface PackagePersistence {
   readonly create: (
     input: CreatePackageInput,
-  ) => Effect.Effect<PackageMutationOutcome, PackagePersistenceUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<PackageMutationOutcome, PackagePersistenceUnavailable, SecureRandom.SecureRandom>;
   readonly retire: (input: RetirePackageInput) => Effect.Effect<PackageMutationOutcome, PackagePersistenceUnavailable>;
   readonly revise: (
     input: RevisePackageInput,
-  ) => Effect.Effect<PackageMutationOutcome, PackagePersistenceUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<PackageMutationOutcome, PackagePersistenceUnavailable, SecureRandom.SecureRandom>;
 }
 
 const unavailable = (cause?: unknown): PackagePersistenceUnavailable => {

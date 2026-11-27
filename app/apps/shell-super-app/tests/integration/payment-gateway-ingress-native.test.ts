@@ -10,7 +10,8 @@ import {
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { DEFAULT_DATA_BATCH_ENDPOINT } from '@modern-js/bff-effect/data-platform';
-import { Config, Crypto, Effect, Layer, Redacted, Schema } from 'effect';
+import { Config, Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -105,9 +106,9 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* realModernPaymentRelayMount() {
-        const crypto = yield* Crypto.Crypto;
-        const credentialTenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
-        const uncredentialedTenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+        const crypto = yield* SecureRandom.SecureRandom;
+        const credentialTenantId = TenantIdSchema.make(yield* crypto.uuidV4());
+        const uncredentialedTenantId = TenantIdSchema.make(yield* crypto.uuidV4());
         const shell = yield* startShell(credentialTenantId);
         expect(shell.apiPrefix).toBe('/shell-super-app-api');
         const client = yield* HttpClient.HttpClient;
@@ -233,8 +234,8 @@ it.live(
           code: 'request_invalid',
         });
         const recoveryPayload = yield* Schema.decodeUnknownEffect(PaymentReconciliationRecoveryPayloadSchema)({
-          operationId: yield* crypto.randomUUIDv4(),
-          paymentId: yield* crypto.randomUUIDv4(),
+          operationId: yield* crypto.uuidV4(),
+          paymentId: yield* crypto.uuidV4(),
           reason: 'Gateway reconciliation round 1',
           trigger: 'OUTCOME_OVERDUE',
         }).pipe(Effect.flatMap(Schema.encodeEffect(RecoveryPayloadJsonSchema)));

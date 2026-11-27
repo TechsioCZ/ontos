@@ -29,20 +29,8 @@ import type { SymmyOwnerEffectRef } from '@app/shared-contracts/symmy';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect, it } from 'effect-rstest';
-import {
-  Clock,
-  Context,
-  Crypto,
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Redacted,
-  Schema,
-  Stream,
-} from 'effect';
+import { Clock, Context, DateTime, Deferred, Effect, Exit, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient, HttpClient } from 'effect/http';
@@ -96,22 +84,35 @@ const signalCycleCompletion = (completed: Deferred.Deferred<OutboxCycleResult, O
 const privacyDispatchGatewayLive = Layer.effect(
   SymmyJobPrivacyDispatchGateway,
   Effect.gen(function* bindPrivacyDispatchTransport() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digest = yield* Digest.Digest;
     const httpClient = yield* HttpClient.HttpClient;
     const operations = yield* symmyJobPrivacyDispatchGatewayService();
     return SymmyJobPrivacyDispatchGateway.of({
       execute: (handoff, context) =>
         operations
           .execute(handoff, context)
-          .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
+          .pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.provideService(Digest.Digest, digest),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          ),
       load: (handoff, context) =>
         operations
           .load(handoff, context)
-          .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
+          .pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.provideService(Digest.Digest, digest),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          ),
       report: (outcome, context) =>
         operations
           .report(outcome, context)
-          .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(HttpClient.HttpClient, httpClient)),
+          .pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.provideService(Digest.Digest, digest),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          ),
     });
   }),
 );

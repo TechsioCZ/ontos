@@ -1,8 +1,9 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
+    "customConditions": ["node"],
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node", "bun-types/sqlite"]
   },
   "include": ["**/*.ts", "**/*.tsx", "**/*.mts"]
 }

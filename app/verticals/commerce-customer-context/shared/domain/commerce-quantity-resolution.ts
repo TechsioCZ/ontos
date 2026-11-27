@@ -1,4 +1,4 @@
-/* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, effect-native/no-sync-schema-codec, effect-native/no-unbranded-identifier-schema, effect-native/prefer-match-over-tag-switch, eslint/default-case, eslint/no-nested-ternary, eslint/prefer-destructuring, react-doctor/js-cache-property-access, react-doctor/js-combine-iterations, sonarjs/too-many-break-or-continue-in-loop, typescript/array-type, typescript/consistent-return, typescript/no-unsafe-type-assertion, unicorn/no-array-reduce, unicorn/no-array-sort, unicorn/switch-case-braces -- This pure, schema-validated resolver is the explicit policy decision table; tracked in: #333; remove-when: the resolver is generated from the approved quantity-policy contract. */
+/* oxlint-disable anti-slop/require-safety-comment-for-type-assertion, effect-native/no-sync-schema-codec, effect-native/no-unbranded-identifier-schema, effect-native/prefer-match-over-tag-switch, eslint/default-case, eslint/prefer-destructuring, react-doctor/js-cache-property-access, react-doctor/js-combine-iterations, sonarjs/too-many-break-or-continue-in-loop, typescript/array-type, typescript/consistent-return, typescript/no-unsafe-type-assertion, unicorn/no-array-reduce, unicorn/no-array-sort, unicorn/switch-case-braces -- This pure, schema-validated resolver is the explicit policy decision table; tracked in: #333; remove-when: the resolver is generated from the approved quantity-policy contract. */
 import { Schema } from 'effect';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog-selection';
@@ -171,7 +171,10 @@ const align = (left: Decimal, right: Decimal): readonly [bigint, bigint, number]
 
 const compare = (left: string, right: string): -1 | 0 | 1 => {
   const [scaledLeft, scaledRight] = align(decimal(left), decimal(right));
-  return scaledLeft < scaledRight ? -1 : scaledLeft > scaledRight ? 1 : 0;
+  if (scaledLeft < scaledRight) {
+    return -1;
+  }
+  return scaledLeft > scaledRight ? 1 : 0;
 };
 
 const add = (left: string, right: string): ExactPositiveCommerceQuantity => {
@@ -182,7 +185,12 @@ const add = (left: string, right: string): ExactPositiveCommerceQuantity => {
   }
   const padded = coefficient.toString().padStart(scale + 1, '0');
   const integer = padded.slice(0, -scale);
-  const fraction = padded.slice(-scale).replace(/0+$/u, '');
+  const rawFraction = padded.slice(-scale);
+  let fractionEnd = rawFraction.length;
+  while (rawFraction[fractionEnd - 1] === '0') {
+    fractionEnd -= 1;
+  }
+  const fraction = rawFraction.slice(0, fractionEnd);
   return (fraction.length === 0 ? integer : `${integer}.${fraction}`) as ExactPositiveCommerceQuantity;
 };
 
@@ -245,8 +253,12 @@ const scopeMatches = (scope: CommerceQuantityPolicyScope, context: CommerceQuant
   return scope.kind === 'MARKET_CHANNEL_SELLER' || scope.storefrontId === context.storefrontId;
 };
 
-const scopeRank = (scope: CommerceQuantityPolicyScope): number =>
-  scope.kind === 'STOREFRONT_MARKET_CHANNEL_SELLER' ? 3 : scope.kind === 'MARKET_CHANNEL_SELLER' ? 2 : 1;
+const scopeRank = (scope: CommerceQuantityPolicyScope): number => {
+  if (scope.kind === 'STOREFRONT_MARKET_CHANNEL_SELLER') {
+    return 3;
+  }
+  return scope.kind === 'MARKET_CHANNEL_SELLER' ? 2 : 1;
+};
 
 const profileMatches = (
   assignment: CurrentCommerceQuantityAssignment,

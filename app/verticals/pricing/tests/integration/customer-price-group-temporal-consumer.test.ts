@@ -31,7 +31,8 @@ import {
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { fileURLToPath } from 'node:url';
-import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { Clock, Config, Context, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -73,7 +74,7 @@ const priceGroupTemporalClosedEnvironment = (bootstrap: typeof PriceGroupTempora
     SPICEDB_PRESHARED_KEY: Redacted.value(bootstrap.spiceDb.token),
   });
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const services = NodeServices.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
@@ -159,7 +160,7 @@ const makeAuthority = Effect.fn('TemporalNative.makeAuthority')(function* makeAu
   buildMarker: string,
   nativeClock: Clock.Clock,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const generated = yield* Effect.tryPromise({
     catch: () => fail('issuer-key'),
     try: () => globalThis.crypto.subtle.generateKey('Ed25519', true, ['sign', 'verify']),
@@ -190,7 +191,7 @@ const makeAuthority = Effect.fn('TemporalNative.makeAuthority')(function* makeAu
         exp: now + GATEWAY_ASSERTION_TTL_SECONDS,
         iat: now,
         iss: issuer,
-        jti: yield* crypto.randomUUIDv4(),
+        jti: yield* crypto.uuidV4(),
         principal: subject,
         sub: subject.principalId,
         targetBuildMarker: buildMarker,
@@ -375,11 +376,13 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
     Effect.flatMap((code) => Effect.fail(fail(`receiver-exited:${code}`))),
   );
   const receive = Effect.raceFirst(channel.next, receiverExited).pipe(
-    Effect.flatMap((response) =>
-      response.type === 'FAILED'
-        ? Effect.fail(fail(response.code === undefined ? response.stage : `${response.stage}:${response.code}`))
-        : Effect.succeed(response),
-    ),
+    Effect.flatMap((response) => {
+      if (response.type === 'FAILED') {
+        const stage = response.code === undefined ? response.stage : `${response.stage}:${response.code}`;
+        return Effect.fail(fail(stage));
+      }
+      return Effect.succeed(response);
+    }),
   );
 
   const send = (command: Schema.Json) =>

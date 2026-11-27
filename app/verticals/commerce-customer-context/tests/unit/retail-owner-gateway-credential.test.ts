@@ -1,6 +1,7 @@
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { ConfigProvider, Crypto, Effect, Redacted, Result, Schema } from 'effect';
+import { ConfigProvider, Effect, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -11,10 +12,7 @@ const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const subjectPrincipalId = '30000000-0000-4000-8000-000000000001';
 const actionInvocationId = '31000000-0000-4000-8000-000000000001';
 const compositionRevision = 'c'.repeat(64);
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 const originator = { actionInvocationId, compositionRevision, tenantId };
 
 /** A version 3 assertion as the Shell issues it, with overridable actor and scope claims. */

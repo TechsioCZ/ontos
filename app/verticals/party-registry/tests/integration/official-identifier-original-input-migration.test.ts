@@ -15,7 +15,8 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { Crypto, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import {
@@ -107,10 +108,10 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
         }),
         (resource) => resource.close().pipe(Effect.orDie),
       );
-      const crypto = yield* Crypto.Crypto;
-      const partyId = yield* crypto.randomUUIDv4();
-      const identifierId = yield* crypto.randomUUIDv4();
-      const oldInvocationId = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const partyId = yield* crypto.uuidV4();
+      const identifierId = yield* crypto.uuidV4();
+      const oldInvocationId = yield* crypto.uuidV4();
       const identifier = normalizeOfficialIdentifier(
         yield* Schema.decodeUnknownEffect(OfficialIdentifierInputSchema)({
           identifierType: 'ICO',
@@ -170,7 +171,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
         'objects',
       );
       expect(security).toEqual({ bypass: false, superuser: false, rls: true, forced: true });
-      const foreignTenantId = yield* crypto.randomUUIDv4();
+      const foreignTenantId = yield* crypto.uuidV4();
       const hidden = yield* database.transaction((transaction) =>
         Effect.gen(function* oldRuntimeIsolation() {
           yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${foreignTenantId}, true)`, 'objects');
@@ -248,7 +249,7 @@ it.layer(nativeServices, { excludeTestServices: true })('original ICO input upgr
         principal: yield* gateway.verifyPrincipal(principal),
         transport: {
           correlationId: 'populated-identifier-reuse',
-          idempotencyKey: yield* crypto.randomUUIDv4(),
+          idempotencyKey: yield* crypto.uuidV4(),
           targetModuleKey: 'party.registry',
         },
       }).pipe(Effect.provideContext(context));

@@ -1,7 +1,8 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { ProductTypeAttributeRule } from '../../shared/domain/product-type-rules.ts';
 import { CatalogRevisionNumberSchema } from '@app/catalog-selection-contracts/catalog-resource-reference';
@@ -86,7 +87,11 @@ export const mapProductTypeCreateWriteError = (
 export interface ProductTypeCreatePersistence {
   readonly create: (
     input: CreateProductTypePersistenceInput,
-  ) => Effect.Effect<CreateProductTypeResult, ProductTypeCreateConflict | CatalogPersistenceUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<
+    CreateProductTypeResult,
+    ProductTypeCreateConflict | CatalogPersistenceUnavailable,
+    SecureRandom.SecureRandom
+  >;
 }
 
 interface DefinitionApplicability {
@@ -122,8 +127,8 @@ export const productTypeCreatePersistenceForScope = (
 
   const create: ProductTypeCreatePersistence['create'] = Effect.fn('ProductTypeCreatePersistence.create')(
     function* create(input) {
-      const crypto = yield* Crypto.Crypto;
-      const productTypeId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+      const crypto = yield* SecureRandom.SecureRandom;
+      const productTypeId = yield* crypto.uuidV4();
       const productTypeRef = {
         moduleId: 'commerce.catalog' as const,
         resourceId: productTypeId,

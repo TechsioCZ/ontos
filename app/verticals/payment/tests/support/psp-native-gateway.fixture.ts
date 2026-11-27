@@ -17,7 +17,8 @@ import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-r
 import { GatewayContextResponseSchema } from '@app/shared-contracts';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { SqlError } from 'effect/sql/SqlError';
 
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
@@ -86,14 +87,14 @@ const MERCHANT_IDENTITY_DOCUMENTS = {
 export interface NativeHarness {
   readonly crypto: { draws: number };
   readonly database: PaymentTestDatabase;
-  readonly runtimeClient: PgClient.PgClient;
+  readonly runtimeClient: (typeof PgClient.PgClient)['Service'];
   readonly scope: PaymentTestScope;
 }
 
 /** The test builds its database and scope (Core test constructors) and hands them in. */
 export const nativeHarnessOf = (
   database: PaymentTestDatabase,
-  runtimeClient: PgClient.PgClient,
+  runtimeClient: (typeof PgClient.PgClient)['Service'],
   scope: PaymentTestScope,
 ): NativeHarness => ({ crypto: { draws: 0 }, database, runtimeClient, scope });
 
@@ -366,13 +367,10 @@ const fanoutOf = (harness: NativeHarness) =>
 /** Distinct deterministic bytes per draw, so every return token of a scope is unique. */
 const testCryptoOf = (seed: { draws: number }) =>
   Layer.succeed(
-    Crypto.Crypto,
-    Crypto.make({
-      digest: (_algorithm, data) => Effect.succeed(data),
-      randomBytes: (size) => {
-        seed.draws += 1;
-        return new Uint8Array(size).fill(seed.draws % 256);
-      },
+    SecureRandom.SecureRandom,
+    SecureRandom.make((size) => {
+      seed.draws += 1;
+      return new Uint8Array(size).fill(seed.draws % 256);
     }),
   );
 

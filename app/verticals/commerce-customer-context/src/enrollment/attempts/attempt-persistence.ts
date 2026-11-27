@@ -605,22 +605,23 @@ const requireAttemptRow = (
   attemptId?: EnrollmentAttemptId,
 ): Effect.Effect<AttemptRoutineRow, CommerceEnrollmentAttemptError> => {
   const [row] = rows;
-  return row === undefined
-    ? Effect.fail(
-        attemptId === undefined
-          ? new CommerceEnrollmentAttemptUnavailable({
-              code: 'attempt_unavailable',
-              reason: `The ${operation} routine returned no result`,
-              retryable: true,
-            })
-          : new CommerceEnrollmentAttemptNotFound({
-              attemptId,
-              code: 'attempt_not_found',
-              reason: ATTEMPT_NOT_FOUND_REASON,
-              retryable: false,
-            }),
-      )
-    : Effect.succeed(row);
+  if (row !== undefined) {
+    return Effect.succeed(row);
+  }
+  return Effect.fail(
+    attemptId === undefined
+      ? new CommerceEnrollmentAttemptUnavailable({
+          code: 'attempt_unavailable',
+          reason: `The ${operation} routine returned no result`,
+          retryable: true,
+        })
+      : new CommerceEnrollmentAttemptNotFound({
+          attemptId,
+          code: 'attempt_not_found',
+          reason: ATTEMPT_NOT_FOUND_REASON,
+          retryable: false,
+        }),
+  );
 };
 
 const requireOwnerRow = (

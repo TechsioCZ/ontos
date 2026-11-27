@@ -2362,19 +2362,16 @@ export const findMatchDecision = Effect.fn('PartyMatchingPersistenceService.find
     input.actionInvocationId !== undefined && input.decisionId === undefined && sourceScope?.tenantId === tenantId
       ? yield* findSourceCreateReceipt(transaction, sourceScope, input.actionInvocationId)
       : undefined;
+  const decisionCondition =
+    input.decisionId === undefined
+      ? eq(partyMatchDecisions.actionInvocationId, input.actionInvocationId ?? '')
+      : eq(partyMatchDecisions.matchDecisionId, input.decisionId);
   const [row] =
     recovery === undefined
       ? yield* transaction
           .select()
           .from(partyMatchDecisions)
-          .where(
-            and(
-              eq(partyMatchDecisions.tenantId, tenantId),
-              input.decisionId === undefined
-                ? eq(partyMatchDecisions.actionInvocationId, input.actionInvocationId ?? '')
-                : eq(partyMatchDecisions.matchDecisionId, input.decisionId),
-            ),
-          )
+          .where(and(eq(partyMatchDecisions.tenantId, tenantId), decisionCondition))
           .limit(1)
           .pipe(Effect.mapError(unavailable))
       : [recovery];

@@ -12,7 +12,8 @@ import {
   readVerifiedGatewayWorkload,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
-import { Config, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Config, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   SourceProcessingEligibilityRequestSchema,
   SourceProcessingEligibilityResponseSchema,
@@ -827,7 +828,7 @@ const verifiedProfileSubject = Effect.fn('Privacy.verifiedProfileSubject')(funct
   subject: PrivacySubjectRecord,
   scope: OperationalScope,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom,
 ) {
   // The person's own source record is known before Commerce is asked, so Commerce proves that exact binding and a
   // second record of the same person on the profile cannot make the proof ambiguous.
@@ -977,7 +978,7 @@ const verifyStandingSubject = Effect.fn('Privacy.verifyStandingSubject')(functio
   subject: PrivacySubjectRecord,
   request: SourceProcessingEligibilityRequest,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom,
   targetAdmission: TargetAdmission,
 ) {
   // A first-contact customer has no reconciled Data Subject yet. Party attests, from its own committed receipt, that
@@ -1019,7 +1020,7 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
   subjectRef: string,
   request: SourceProcessingEligibilityRequest,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom,
   targetAdmission: TargetAdmission,
   admittedAs?: ResolvedSourceSubject['admittedAs'],
 ) {
@@ -1277,7 +1278,7 @@ export const runSourceProcessingEligibility = Effect.fn('Privacy.runSourceProces
 export const sourceProcessingEligibilityServices = Effect.fn('Privacy.sourceProcessingEligibilityServices')(
   function* sourceServices(transaction: SourceTransaction, scope: OperationalScope) {
     yield* traceSourceStage('services-entered');
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const contexts = yield* configuredContexts.pipe(
       Effect.mapError(sourceConfigurationUnavailable),
       Effect.tapError(() => traceSourceStage('configuration-unavailable')),

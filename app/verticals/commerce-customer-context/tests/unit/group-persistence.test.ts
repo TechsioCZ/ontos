@@ -188,15 +188,14 @@ it.effect('maps assignment, removal, and deterministic history documents without
     ];
     let index = 0;
     const invokedValues: (readonly unknown[])[] = [];
-    // SAFETY: Calls are ordered and every row is the exact decoded result of its invocation.
-    const transaction = {
-      invoke: (_routine: ScopedRoutineDefinition, values: readonly unknown[]) => {
+    const transaction: CustomerGroupScopedRoutineInvoker = {
+      invoke: (routine, values) => {
         invokedValues.push(values);
         const row = rows[index] ?? rows[2];
         index += 1;
-        return Effect.succeed([row]);
+        return Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([row]).pipe(Effect.orDie);
       },
-    } as CustomerGroupScopedRoutineInvoker;
+    };
     const persistence = customerGroupPersistenceForTransaction(transaction, scope);
     const assigned = yield* persistence.assign({
       actionInvocationId,

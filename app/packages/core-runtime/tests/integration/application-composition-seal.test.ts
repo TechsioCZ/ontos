@@ -1,6 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -37,12 +38,12 @@ const fixture = (drain = true) =>
     const configuration = yield* loadDatabaseConnectionPair();
     const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
     const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
-    const crypto = yield* Crypto.Crypto;
-    const tenantId = yield* crypto.randomUUIDv4();
-    const domainEventId = yield* crypto.randomUUIDv4();
-    const messageId = yield* crypto.randomUUIDv4();
-    const workId = yield* crypto.randomUUIDv4();
-    const rejectedWorkId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const tenantId = yield* crypto.uuidV4();
+    const domainEventId = yield* crypto.uuidV4();
+    const messageId = yield* crypto.uuidV4();
+    const workId = yield* crypto.uuidV4();
+    const rejectedWorkId = yield* crypto.uuidV4();
     const composition = makeOutboxWorkerComposition();
     const snapshot = yield* freshOutboxWorkerCompositionSnapshot(composition);
     yield* Effect.acquireRelease(Effect.void, () =>

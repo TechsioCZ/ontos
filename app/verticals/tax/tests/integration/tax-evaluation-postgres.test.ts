@@ -7,7 +7,8 @@ import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bf
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
@@ -81,7 +82,7 @@ import {
 } from '../unit/tax-evaluation-fixtures.ts';
 import { occurrenceInput, purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 interface FixtureIdentity {
   readonly principalId: string;
@@ -272,11 +273,15 @@ const evaluationHttp = Effect.fn('TaxEvaluationTest.evaluationHttp')(function* e
 type AdminTestDatabase = TestDatabaseFromClient<typeof taxRelations>;
 
 /** Commits the next VAT_PAYER revision (effective before T) from a separate admin transaction on every run. */
-const concurrentRevisionWriter = (admin: AdminTestDatabase, scope: OperationalScope, crypto: Crypto.Crypto) => {
+const concurrentRevisionWriter = (
+  admin: AdminTestDatabase,
+  scope: OperationalScope,
+  crypto: SecureRandom.SecureRandom['Service'],
+) => {
   const state = { head: 1 };
   return Effect.suspend(() => {
     state.head += 1;
-    return Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
+    return Effect.all([crypto.uuidV4(), crypto.uuidV4()]);
   }).pipe(
     Effect.flatMap(([actionInvocationId, idempotencyKey]) =>
       admin.insert(taxSellerVatRegimeDeclarations).values({
@@ -319,7 +324,7 @@ const racingDeclarations = (
 
 /** Governed TAX setup of one seller, through the same owner services the Actions use. */
 const seller = Effect.fnUntraced(function* makeSeller(runtime: CoreTestDatabase, identity: FixtureIdentity) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const legalEntityId = yield* nextUuid;
   const scope = yield* scopeFor(identity, legalEntityId);
   const { tenantId } = identity;
@@ -529,7 +534,9 @@ const publishedByUnit = (response: Option.Option<TaxEvaluationResponse>) =>
 const centsOf = (amount: string) => BigInt(amount.replace('.', ''));
 
 // Each test stays a live registration against real PostgreSQL and builds Node Crypto in its scope.
-const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(
+  Effect.map((context) => Context.get(context, SecureRandom.SecureRandom)),
+);
 
 it.live('#907 F1 ordinary eligibility survives generated HTTP serialization and persisted TAX evaluation', () =>
   Effect.scoped(
@@ -553,7 +560,7 @@ it.live('#907 F1 ordinary eligibility survives generated HTTP serialization and 
       expect(http.snapshot().evidenceWrites).toBe(1);
       expect(http.snapshot().ownerQueries.length).toBeGreaterThan(0);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#907 F2 HTTP omits rate classification for a persisted NON_PAYER without reading TAX rules', () =>
@@ -586,7 +593,7 @@ it.live('#907 F2 HTTP omits rate classification for a persisted NON_PAYER withou
       expect(http.snapshot().evidenceWrites).toBe(1);
       expect(http.snapshot().ownerQueries.every(({ sql: queryText }) => !queryText.includes('tax_rule'))).toBe(true);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#907 F1 HTTP preserves unsupported and missing eligibility for both persisted seller regimes', () =>
@@ -614,7 +621,7 @@ it.live('#907 F1 HTTP preserves unsupported and missing eligibility for both per
         expect(http.snapshot().evidenceWrites).toBe(2);
       }
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#907 F1 malformed eligibility is an HTTP 400 before Core or TAX reads execute', () =>
@@ -634,7 +641,7 @@ it.live('#907 F1 malformed eligibility is an HTTP 400 before Core or TAX reads e
       expect(http.snapshot().ownerQueries).toEqual([]);
       expect(http.snapshot().evidenceWrites).toBe(0);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#942 #936 #941 a VAT_PAYER seller publishes one rated Decision and Result from complete rule state', () =>
@@ -671,7 +678,7 @@ it.live('#942 #936 #941 a VAT_PAYER seller publishes one rated Decision and Resu
       // #942 F23 the same complete state and input give the same Decision identity.
       expect(decisionIdOf(yield* subject.evaluate())).toBe(decisionIdOf(response));
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(
@@ -693,7 +700,7 @@ it.live(
         expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('NON_PAYER');
         expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluated.customerSafe)).toBe(true);
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C a seller with nothing declared is indeterminate, never a stored final meaning', () =>
@@ -707,7 +714,7 @@ it.live('Unit 10 C a seller with nothing declared is indeterminate, never a stor
       expect(outcomeOf(response)).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(evaluatedOf(response).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(
@@ -741,7 +748,7 @@ it.live(
         expect(outcomeOf(before)).toEqual(TaxStateIndeterminateSchema.make({}));
         expect(evaluatedOf(before).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#942 F12-F15 #938 a VAT_PAYER seller with incomplete or conflicting rule state keeps its typed meaning', () =>
@@ -761,7 +768,7 @@ it.live('#942 F12-F15 #938 a VAT_PAYER seller with incomplete or conflicting rul
       yield* overlapping.createRule('cz.standard-duplicate', 'cz-standard-goods', '21');
       expect(outcomeOf(yield* overlapping.evaluate())).toEqual(TaxRuleOverlapSchema.make({}));
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C a regime revision effective after T but recorded before E still selects the regime at T', () =>
@@ -789,7 +796,7 @@ it.live('Unit 10 C a regime revision effective after T but recorded before E sti
       expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('VAT_PAYER');
       expect(evaluated.evidence.sellerVatRegime.headRevision).toBe(2);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C #942 F17-F18 a declaration head that moves between observations discards the candidate', () =>
@@ -811,7 +818,7 @@ it.live('Unit 10 C #942 F17-F18 a declaration head that moves between observatio
       const { outcome } = evaluated;
       expect(isSuccess(outcome) && outcome.decision.declarationRevisionRef.revision).toBe(2);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C #942 F19 a declaration head that moves within every attempt exhausts as indeterminate', () =>
@@ -836,7 +843,7 @@ it.live('Unit 10 C #942 F19 a declaration head that moves within every attempt e
       expect(evaluated.evidence.sellerVatRegime.headRevision).toBe(4);
       expect(selectedRevisionOf(evaluated.evidence.sellerVatRegime.selection)).toBe(4);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time bound every evaluation', () =>
@@ -877,7 +884,7 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
       );
       expect(isRejected(unbound) && unbound.reasons).toEqual(['STRUCTURAL_BINDING_INVALID']);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(
@@ -945,7 +952,7 @@ it.live(
         expect(replayOutcome.decision.shippingAllocation).toEqual(outcome.decision.shippingAllocation);
         expect(replayOutcome.result.purchaseTaxTotal).toEqual(outcome.result.purchaseTaxTotal);
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from real reads in its own NET basis', () =>
@@ -996,7 +1003,7 @@ it.live('907-Q07 #933 a payer NET Shipping charge over NET lines evaluates from 
       ]);
       expect(outcome.result.purchaseTaxTotal.amount).toBe('49.51');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 1: ordinary B2C for a declared VAT_PAYER seller through the public read handler', () =>
@@ -1036,7 +1043,7 @@ it.live('#961 scenario 1: ordinary B2C for a declared VAT_PAYER seller through t
       expect(declaredRegimeOf(evaluated.evidence.sellerVatRegime.selection)).toBe('VAT_PAYER');
       expect(evaluated.evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 2: ordinary B2B with no buyer VAT status has the same success meaning as B2C', () =>
@@ -1061,7 +1068,7 @@ it.live('#961 scenario 2: ordinary B2B with no buyer VAT status has the same suc
       expect(successOf(b2b).result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
       expect(evaluatedOf(b2b).evidence.foreignEvidenceOrigin).toBe('CALLER_SUPPLIED_UNVERIFIED');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 3: two equal-valued distinct occurrences at 21 % stay two units, each rounded separately', () =>
@@ -1087,7 +1094,7 @@ it.live('#961 scenario 3: two equal-valued distinct occurrences at 21 % stay two
       ]);
       expect(successOf(response).result.purchaseTaxTotal).toEqual({ amount: '0.02', currency: 'CZK' });
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 4: a supported whole-treatment Set is one Taxable Supply Unit with no component prices', () =>
@@ -1127,7 +1134,7 @@ it.live('#961 scenario 4: a supported whole-treatment Set is one Taxable Supply 
       expect(unit.taxableBasisInterpretation.components).toHaveLength(1);
       expect(Schema.is(LineCommercialValueBasisSchema)(unit.taxableBasisInterpretation.components[0])).toBe(true);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 5: a complete empty rule state for a supported case is TAX_RULE_MISSING, never 0 CZK', () =>
@@ -1144,7 +1151,7 @@ it.live('#961 scenario 5: a complete empty rule state for a supported case is TA
         ['TAX_RULE_MISSING', 0],
       ]);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 6: an unavailable delivery destination is TAX_DEPENDENCY_UNAVAILABLE, never a CZ fallback', () =>
@@ -1163,7 +1170,7 @@ it.live('#961 scenario 6: an unavailable delivery destination is TAX_DEPENDENCY_
       });
       expect(outcomeOf(response)).toEqual(TaxDependencyUnavailableSchema.make({}));
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(
@@ -1186,7 +1193,7 @@ it.live(
           TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZECH_DOMESTIC_TAX_PLACE' }),
         );
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 8: a NON_PAYER seller succeeds as non-payer and an undeclared seller is indeterminate', () =>
@@ -1207,7 +1214,7 @@ it.live('#961 scenario 8: a NON_PAYER seller succeeds as non-payer and an undecl
       expect(outcomeOf(undeclaredResponse)).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(evaluatedOf(undeclaredResponse).evidence.notDeterminedBecause).toBe('SELLER_VAT_REGIME_NOT_DECLARED');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 10: a supported 0.00 CZK line is a successful taxable 0.00 with its persisted rule', () =>
@@ -1236,5 +1243,5 @@ it.live('#961 scenario 10: a supported 0.00 CZK line is a successful taxable 0.0
       expect('governingTaxRuleRevisionRef' in unit && unit.governingTaxRuleRevisionRef.revision).toBe(1);
       expect(Schema.is(CustomerSafeSellerNotVatPayerSchema)(evaluatedOf(response).customerSafe)).toBe(false);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );

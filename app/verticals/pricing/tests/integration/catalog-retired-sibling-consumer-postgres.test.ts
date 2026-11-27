@@ -23,7 +23,8 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient } from 'effect/http';
-import { Crypto, DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import {
@@ -60,7 +61,7 @@ class CatalogRetiredReceiverUnavailable extends Schema.TaggedError<CatalogRetire
   },
 ) {}
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -153,7 +154,7 @@ it.layer(services, { excludeTestServices: true })((suite) =>
         }
         const ready = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReceiverReadySchema))(line.value);
         const baseUrl = new URL(`http://127.0.0.1:${ready.port}`);
-        const signingCrypto = yield* Crypto.Crypto;
+        const signingCrypto = yield* SecureRandom.SecureRandom;
         const authorization = Effect.fn('CatalogRetiredConsumer.authorization')(function* authorization() {
           const now = Math.floor(DateTime.toEpochMillis(ready.observedAt) / 1000);
           const headerSchema = Schema.Struct({
@@ -170,7 +171,7 @@ it.layer(services, { excludeTestServices: true })((suite) =>
             exp: now + GATEWAY_ASSERTION_TTL_SECONDS,
             iat: now,
             iss: issuer,
-            jti: yield* signingCrypto.randomUUIDv4(),
+            jti: yield* signingCrypto.uuidV4(),
             principal: ready.actor,
             sub: ready.actor.principalId,
             targetBuildMarker: ready.buildMarker,

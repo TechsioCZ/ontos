@@ -65,8 +65,8 @@ const partyDocument = (tenantId: string, resourceId: string, title: string) => (
   projectionVersion: '1',
   ref: {
     moduleId: 'party.registry',
-    resourceType: 'party.registry.party',
     resourceId,
+    resourceType: 'party.registry.party',
     tenantId,
   },
   searchableText: [title],
@@ -75,16 +75,16 @@ const partyDocument = (tenantId: string, resourceId: string, title: string) => (
 
 const workerContext = (tenantId: string) =>
   attestOutboxWorkerHandlerContext({
-    compositionRevision,
-    tenantId,
     attemptNumber: 1,
     claimId: 'claim-1',
+    compositionRevision,
     consumerModuleKey: 'party.registry',
     deliveryId: 'delivery-1',
     domainEventId: 'event-1',
     legalEntityScope: 'forbidden',
     messageId: 'message-1',
     producerModuleKey: 'party.registry',
+    tenantId,
     tenantSequenceNo: 1n,
     topic: 'party.registry.party-updated.v1',
     workerKey: 'party.registry.project-party-updated-to-search',

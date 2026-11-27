@@ -68,7 +68,6 @@ import {
   Config,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   FileSystem,
@@ -82,6 +81,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
@@ -446,7 +446,7 @@ const reportPriceGroupReadFailure = (cause: Cause.Cause<unknown>) =>
     Effect.catchCause(() => Effect.void),
   );
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const appRoot = fileURLToPath(new URL('../../', pathToFileURL(`${process.cwd()}/`)));
 
 const checkFixedEnvironment = Effect.fn('PriceGroupTemporal.checkFixedEnvironment')(function* checkFixedEnvironment(
@@ -950,7 +950,7 @@ const serveCommerce = Effect.fn('PriceGroupTemporal.serveCommerce')(function* se
     DATABASE_URL: Redacted.value(bootstrap.database.runtimeUrl),
   });
   const compositionRevision = bootstrap.composition.composition.revision;
-  const authorityContext = yield* Effect.context<Crypto.Crypto>();
+  const authorityContext = yield* Effect.context<SecureRandom.SecureRandom>();
   const readParty: typeof executePartyDetail = (request, correlation) =>
     authority.issue(partyAppId, party.buildMarker).pipe(
       Effect.provideContext(authorityContext),

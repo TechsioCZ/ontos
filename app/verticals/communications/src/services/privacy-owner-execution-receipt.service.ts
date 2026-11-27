@@ -24,7 +24,7 @@ import type {
   OwnerEnforcementSignal,
   OwnerMeasureEvaluationInput,
 } from '../../shared/privacy-owner/outcome.ts';
-import type { Crypto } from 'effect';
+import type { Digest } from 'effect/crypto';
 import { Context, DateTime, Effect, Option, Result, Schema } from 'effect';
 import type { PrivacyMeasureEncoded, PrivacyOwnerCoverageResultEncoded } from '@app/shared-contracts';
 
@@ -53,7 +53,7 @@ const unavailable = (cause: unknown) =>
 export interface PrivacyOwnerExecutionReceiptService {
   readonly receipt: (
     request: PrivacyOwnerExecutionOutcomeRequest,
-  ) => Effect.Effect<Option.Option<PrivacyOwnerExecutionReceipt>, PrivacyOwnerCoverageUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<Option.Option<PrivacyOwnerExecutionReceipt>, PrivacyOwnerCoverageUnavailable, Digest.Digest>;
 }
 
 export class OwnerExecutionReceipt extends Context.Service<

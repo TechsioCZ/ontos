@@ -1,4 +1,5 @@
-import { Array as EffectArray, Crypto, DateTime, Effect, Option } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { templateScopeKey } from '../../shared/template-revision.ts';
 import type { TemplateIdentity } from '../../shared/template-revision.ts';
 import { TemplateStoreUnavailable } from '../../shared/template-revision-errors.ts';
@@ -25,7 +26,7 @@ const instantsOf = (activation: TemplateActivationRecord) => [
 ];
 const unavailable = () =>
   new TemplateStoreUnavailable({ code: 'template_store_unavailable', reason: 'Template storage is unavailable' });
-const newId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
+const newId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 interface InMemoryState {
   activations: TemplateActivationRecord[];

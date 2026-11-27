@@ -5,7 +5,8 @@ import type {
   CurrentMarketCatalogResponse,
 } from '@app/commerce-market-catalog/api/client';
 import type { PriceCommercialScope } from '@app/pricing-contracts/domain/price-definition';
-import { Context, DateTime, Effect, Redacted, Schema, Crypto } from 'effect';
+import { Context, DateTime, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PricingCommercialContextUnavailable } from '../../shared/domain/pricing-commercial-context-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
@@ -174,8 +175,8 @@ export const commercialContextAssessmentPortFromEnvironment = Effect.fn(
     readonly scope: OperationalScope;
   },
   execute: CurrentMarketCatalogExecutor = executeCurrentMarketCatalog,
-): Effect.fn.Return<CommercialContextAssessmentPort, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<CommercialContextAssessmentPort, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeCommercialContextAssessmentPort({
     acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
     context,

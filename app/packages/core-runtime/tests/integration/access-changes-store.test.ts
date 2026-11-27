@@ -2,7 +2,8 @@ import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Cause, Crypto, DateTime, Deferred, Effect, Exit, Fiber, FileSystem, Option, Ref, Schema } from 'effect';
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, FileSystem, Option, Ref, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -295,9 +296,9 @@ interface AccessSchema {
 /** A database of this run's own, with the access migration applied and the runtime role granted. */
 const makeAccessSchema = Effect.gen(function* accessChangesSchema() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
-  const database = `${databasePrefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const database = `${databasePrefix}${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const sourceAdmin = yield* makeTestPgClient(connections.admin.connectionString);
   yield* sourceAdmin.unsafe(`create database "${database}"`);
   yield* Effect.addFinalizer(() =>
@@ -343,7 +344,9 @@ const makeAccessSchema = Effect.gen(function* accessChangesSchema() {
   return schema;
 });
 
-it.layer(NodeServices.layer)('the Access changes store', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('the Access changes store', (suite) => {
   suite.effect(
     'publishes overlapping copies once and refuses changes to the immutable catalog identity or entries',
     Effect.fnUntraced(function* concurrentCatalogPublication() {

@@ -7,7 +7,7 @@ import { executeOrganizationRecordFactsWithAuthorization } from '@app/party-regi
 import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { Effect, Option, Redacted, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { readOrganizationProfileOwnerFacts } from './organization-business-applicability.service.ts';
 
@@ -24,7 +24,7 @@ const unavailable = (cause: unknown) =>
 const acquire = Effect.fn('Privacy.customerIntakeOrganizationAuthority')(function* acquire(
   audience: 'commerce-customer-context' | 'party-registry',
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   yield* requireModuleOperation(
     audience === 'commerce-customer-context'
@@ -45,7 +45,7 @@ const acquire = Effect.fn('Privacy.customerIntakeOrganizationAuthority')(functio
 const profileParty = Effect.fn('Privacy.customerIntakeOrganizationProfileParty')(function* profileParty(
   resourceId: string,
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const profileRef = yield* Schema.decodeUnknownEffect(CounterpartyPurchasingProfileRefSchema)({
     moduleId: 'commerce.customer-context',
@@ -69,7 +69,7 @@ export const hasCurrentCustomerIntakeOrganizationProof = Effect.fn('Privacy.cust
   function* currentOrganization(
     request: SourceProcessingEligibilityRequest,
     scope: OperationalScope,
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
   ) {
     const { source, target } = request;
     if (source === null || target === null || scope.authMethod !== 'api_key') {

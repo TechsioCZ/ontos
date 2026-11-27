@@ -14,7 +14,8 @@ import type { PaymentReconciliationRecoveryPayload } from '@app/payment/payment-
 import { makeProblemDetailsSchema, problemDetailsContentType } from '@app/shared-contracts/problem-details';
 import { useEffectContext } from '@modern-js/bff-effect/context';
 import { HttpApiBuilder, HttpEffect } from '@modern-js/bff-effect/effect-edge';
-import { Context, Crypto, Effect, Match, Option, Predicate, Redacted, Schema, Stream } from 'effect';
+import { Context, Effect, Match, Option, Predicate, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Types } from 'effect';
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import type { HttpMethod } from 'effect/http';
@@ -177,8 +178,8 @@ const failRelayCall =
     }).pipe(Effect.andThen(Effect.fail(problem)));
 
 const freshIdentifier = Effect.fn('PaymentGatewayRelay.freshIdentifier')(function* freshIdentifier() {
-  const crypto = yield* Crypto.Crypto;
-  return yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  return yield* crypto.uuidV4();
 });
 
 const classifyBodyFailure = <Failure>(failure: Failure) =>
@@ -266,7 +267,7 @@ const captureNotification = Effect.fn('PaymentNotificationRelay.capture')(functi
   const [idempotencyKey, transportDeliveryRef, requestCorrelation] = yield* Effect.all(
     [freshIdentifier(), freshIdentifier(), freshIdentifier()],
     { concurrency: 1 },
-  ).pipe(Effect.catchTag('PlatformError', failRelayCall('identifier', paymentNotificationUnavailableProblem)));
+  );
   const payload: CaptureProviderNotificationPayload = {
     environment: authority.route.environment,
     family: authority.route.providerFamily,
@@ -434,9 +435,7 @@ const requestRecovery = Effect.fn('PaymentReconciliationRelay.requestRecovery')(
       workload: 'payment.provider-reconciliation',
     })
     .pipe(Effect.catchTag('PaymentRouteRefused', reconciliationRefusal));
-  const requestCorrelation = yield* freshIdentifier().pipe(
-    Effect.catchTag('PlatformError', failRelayCall('identifier', paymentReconciliationUnavailableProblem)),
-  );
+  const requestCorrelation = yield* freshIdentifier();
   const result = yield* executeRequestPaymentOperationRecoveryWithAuthorization(
     input.payload,
     `Bearer ${Redacted.value(authority.assertion)}`,

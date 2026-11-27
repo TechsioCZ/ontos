@@ -3,7 +3,7 @@
 // @ontos-action-slug change-variant
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Match, Schema, Option } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 import { ChangeVariantPayloadSchema, ChangeVariantResultSchema } from '../../shared/actions/change-variant.ts';
@@ -30,7 +30,7 @@ import {
 type ChangeVariantHandlerServices = VariantPersistence & {
   readonly assessOpenSelectionImpact: (
     productRef: NonNullable<ChangeVariantPayload['currentProductRef']>,
-  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, SecureRandom.SecureRandom>;
 };
 type ChangeVariantServices = ChangeVariantHandlerServices & {
   readonly captureResult: (

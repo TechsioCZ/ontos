@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -36,7 +37,7 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
 
 type TaxPrivacyOwnerLookupEncoded = typeof TaxPrivacyOwnerLookupSchema.Encoded;

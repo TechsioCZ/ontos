@@ -16,7 +16,8 @@ import {
 import { OutboxPayloadSchema } from '@app/payment/outbox/payment-core-operation-requested-v1';
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Exit, Option, Schema } from 'effect';
+import { Effect, Exit, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -53,7 +54,7 @@ import {
  * with the production Comgate adapter over a recorded HttpClient.
  */
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const CUSTOMER_CONFIGURATION = 'customer-configuration-payer-contact';
@@ -113,7 +114,7 @@ const setup = Effect.fn('PayerContact.setup')(function* setup() {
     metadataRevision: 1,
     termUse: 'USABLE',
   });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const actions = makeActionRuntime(
     { executor: coreDatabase },
     makeActionRepository(crypto),
@@ -359,7 +360,7 @@ it.live(
         const body = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(
           step.callsTo(COMGATE_CREATE)[0]?.body ?? '',
         );
-        expect([body.fullName, body.email]).toEqual(['Test Payer', EMAIL]);
+        expect([body['fullName'], body['email']]).toEqual(['Test Payer', EMAIL]);
         expect((yield* dispatchStateOf(s.harness, operationId)).pipe(Option.map(([state]) => state))).toEqual(
           Option.some('ACKNOWLEDGED'),
         );

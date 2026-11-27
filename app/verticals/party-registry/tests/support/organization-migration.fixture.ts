@@ -13,7 +13,8 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { sql } from 'drizzle-orm';
-import { Config, Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { CounterpartyRefSchema } from '@app/party-registry-contracts/resources/counterparty';
 import { PartyOfficialIdentifierRefSchema } from '../../shared/resources/party-official-identifier.ts';
@@ -238,12 +239,12 @@ export const seedOrganizationMigrationFixture = Effect.fn('PartyOrganizationMigr
     const seed = yield* Schema.decodeUnknownEffect(SeedSchema)(input).pipe(Effect.mapError(unavailable));
     return yield* withNativeTransaction(input, (transaction) =>
       Effect.gen(function* seedPartyFacts() {
-        const crypto = yield* Crypto.Crypto;
-        const partyId = yield* crypto.randomUUIDv4();
-        const counterpartyId = yield* crypto.randomUUIDv4();
-        const typeAssertionId = yield* crypto.randomUUIDv4();
-        const rolePeriodId = yield* crypto.randomUUIDv4();
-        const invocationId = yield* crypto.randomUUIDv4();
+        const crypto = yield* SecureRandom.SecureRandom;
+        const partyId = yield* crypto.uuidV4();
+        const counterpartyId = yield* crypto.uuidV4();
+        const typeAssertionId = yield* crypto.uuidV4();
+        const rolePeriodId = yield* crypto.uuidV4();
+        const invocationId = yield* crypto.uuidV4();
         const { principal } = seed;
         const { tenantId, principalId, legalEntityId } = principal;
         if (legalEntityId === undefined) {

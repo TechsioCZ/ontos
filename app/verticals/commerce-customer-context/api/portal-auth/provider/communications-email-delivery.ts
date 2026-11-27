@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PortalAuthIssuanceRefSchema } from '../../../shared/portal-auth-communications.ts';
 import type { PortalAuthEmailFlow } from '../../../shared/portal-auth-communications.ts';
@@ -111,7 +112,9 @@ const issuanceOf = Effect.fn('CommercePortalAuthCommunicationsEmail.issuance')(f
   const issuedAt = yield* DateTime.now;
   const issuanceRef = yield* Option.match(reservation, {
     onNone: () =>
-      Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.flatMap((id) => decodeIssuanceRef(`pa-${id}`))),
+      SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()).pipe(
+        Effect.flatMap((id) => decodeIssuanceRef(`pa-${id}`)),
+      ),
     onSome: ({ issuanceRef: reserved }) => Effect.succeed(reserved),
   });
   const base = {
@@ -142,10 +145,10 @@ export const CommercePortalAuthCommunicationsEmailLive = Layer.effect(
     const handoff = yield* CommercePortalAuthProtectedHandoff;
     const trustedScope = yield* CommercePortalAuthTrustedScope;
     const challengeKeys = yield* CommercePortalAuthOtpChallengeKeyReader;
-    const context = yield* Effect.context<Crypto.Crypto | CommercePortalAuthIssuedFacts>();
+    const context = yield* Effect.context<SecureRandom.SecureRandom | CommercePortalAuthIssuedFacts>();
     const runWithContext = Effect.runPromiseWith(context);
     const run: <A, E>(
-      effect: Effect.Effect<A, E, Crypto.Crypto | CommercePortalAuthIssuedFacts>,
+      effect: Effect.Effect<A, E, SecureRandom.SecureRandom | CommercePortalAuthIssuedFacts>,
     ) => ReturnType<typeof runWithContext<A, E>> = runWithContext;
 
     const issue = Effect.fn('CommercePortalAuthCommunicationsEmail.issue')(function* issueMessage(

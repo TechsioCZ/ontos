@@ -1,4 +1,5 @@
-import { Context, Crypto, Effect, Layer } from 'effect';
+import { Context, Effect, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { recoverSqlTransactionError } from '../../actions/repository.ts';
 import { CoreDatabase } from '../../db/client.ts';
@@ -90,17 +91,11 @@ const logUnavailable = (cause: unknown) =>
 /** One evidence row, written in the scope the decision was taken in; the id is minted here. */
 const recordEffect = Effect.fn('AccessDecisionLog.record')(function* recordDecisionLog(
   database: AccessDecisionLogDatabase,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   entry: AccessDecisionLogEntry,
   transaction?: CoreTransaction,
 ) {
-  const decisionLogId = yield* crypto
-    .randomUUIDv4()
-    .pipe(
-      Effect.mapError((cause) =>
-        accessDecisionUnavailable('An identifier for this decision record could not be generated', cause),
-      ),
-    );
+  const decisionLogId = yield* crypto.uuidV4();
   const insert = (opened: CoreTransaction) =>
     installOperationalScope(opened, entry.scope).pipe(
       Effect.andThen(() =>
@@ -129,7 +124,7 @@ const recordEffect = Effect.fn('AccessDecisionLog.record')(function* recordDecis
 
 export const makeDrizzleAccessDecisionLog = (
   database: AccessDecisionLogDatabase,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): AccessDecisionLogWriter => ({
   record: (entry, transaction) =>
     recordEffect(database, crypto, entry, transaction).pipe(
@@ -139,10 +134,11 @@ export const makeDrizzleAccessDecisionLog = (
     ),
 });
 
-export const AccessDecisionLogLive: Layer.Layer<AccessDecisionLog, never, CoreDatabase | Crypto.Crypto> = Layer.effect(
-  AccessDecisionLog,
-  Effect.gen(function* accessDecisionLogLive() {
-    const database = yield* CoreDatabase;
-    return makeDrizzleAccessDecisionLog(database, yield* Crypto.Crypto);
-  }),
-);
+export const AccessDecisionLogLive: Layer.Layer<AccessDecisionLog, never, CoreDatabase | SecureRandom.SecureRandom> =
+  Layer.effect(
+    AccessDecisionLog,
+    Effect.gen(function* accessDecisionLogLive() {
+      const database = yield* CoreDatabase;
+      return makeDrizzleAccessDecisionLog(database, yield* SecureRandom.SecureRandom);
+    }),
+  );

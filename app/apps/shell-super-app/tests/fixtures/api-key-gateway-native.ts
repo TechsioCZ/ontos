@@ -28,7 +28,6 @@ import {
   Context,
   Config,
   Clock,
-  Crypto,
   Duration,
   Effect,
   FileSystem,
@@ -44,6 +43,7 @@ import {
   Semaphore,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
 import { HttpServer, HttpServerResponse } from 'effect/http';
@@ -788,9 +788,9 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
       yield* migrateAuth(Redacted.value(authRuntime.adminConnectionString));
     }
     yield* authRuntime.establish().pipe(Effect.mapError(unavailable));
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
-    const secret = `${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const suffix = yield* crypto.uuidV4();
+    const secret = `${yield* crypto.uuidV4()}${yield* crypto.uuidV4()}`;
     const source = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
     if (!Schema.is(Schema.Struct({ port: Schema.Int }))(source.address)) {
       return yield* unavailable();

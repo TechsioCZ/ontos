@@ -1,19 +1,9 @@
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
-import {
-  Array as EffectArray,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  FileSystem,
-  Layer,
-  Order,
-  Result,
-  Schema,
-} from 'effect';
+import { Array as EffectArray, Context, DateTime, Effect, FileSystem, Layer, Order, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -406,9 +396,9 @@ const seedAccess = (admin: PgClient.PgClient) =>
 const disposableDatabase = Effect.gen(function* disposableDatabaseEffect() {
   // This disposable-database suite uses explicit process configuration, never the workspace .env.
   const connections = yield* loadDatabaseConnectionPair({ envPath: NO_ENVIRONMENT_FILE });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-  const name = `access_canonical_owner_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `access_canonical_owner_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -455,7 +445,7 @@ interface LiveMandateStores {
 const liveApprovals = Effect.fn('CanonicalOwnerFixture.liveApprovals')(function* liveApprovalsEffect(
   executor: LiveDatabase,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const frozenCommands = makeDrizzleFrozenCommandStore({ executor });
   const changes = makeAccessChangesDrizzleStore({ executor });
   const records = Context.get(
@@ -508,7 +498,7 @@ const mandateDispatchFor = (live: LiveApprovalServices & LiveMandateStores, exec
 
 const makeRuntime = (
   executor: LiveDatabase,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   dispatch: ActionMandateDispatch,
   accessDecision: BoundAccessGate,
 ): ActionRuntimeService =>
@@ -745,7 +735,9 @@ const proposeRequest = (principal: OperationalScope, idempotencyKey: string) => 
   transport: { correlationId: CORRELATION_ID, idempotencyKey, intent: 'propose' as const },
 });
 
-it.layer(NodeServices.layer)('access approvals canonical owner over live intent and SpiceDB', (suite) => {
+const approvalNativeServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom);
+
+it.layer(approvalNativeServices)('access approvals canonical owner over live intent and SpiceDB', (suite) => {
   /*
    * The canonical gate itself, with no runtime around it: every outcome below comes from
    * `AccessDecisionLive` over PostgreSQL intent and the SpiceDB graph the production writer projected.
@@ -825,7 +817,7 @@ it.layer(NodeServices.layer)('access approvals canonical owner over live intent 
         const jana = yield* scopeFor(JANA);
         const eva = yield* scopeFor(EVA);
         const mirek = yield* scopeFor(MIREK);
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch, gate);
 

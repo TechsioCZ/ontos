@@ -34,19 +34,18 @@ import {
   Cache,
   Clock,
   Context,
-  Crypto,
   Duration,
   Effect,
   Exit,
   Layer,
   Option,
-  PlatformError,
   Predicate,
   Redacted,
   Ref,
   Schema,
   Semaphore,
 } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -192,32 +191,12 @@ const fromPromise = <Success, Failure>(
     }),
   );
 
-const gatewayCrypto = Crypto.make({
-  digest: (algorithm, data) => {
-    const digestInput = new Uint8Array(data.byteLength);
-    digestInput.set(data);
-    const webCrypto = globalThis.crypto.subtle;
-    return fromPromise(
-      webCrypto.digest.bind(webCrypto, algorithm, digestInput),
-      (failureCause) =>
-        PlatformError.systemError({
-          _tag: 'Unknown',
-          cause: failureCause,
-          method: 'digest',
-          module: 'WebCrypto',
-        }),
-      () =>
-        PlatformError.systemError({
-          _tag: 'TimedOut',
-          method: 'digest',
-          module: 'WebCrypto',
-        }),
-    ).pipe(Effect.map((digest) => new Uint8Array(digest)));
-  },
-  randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
-});
+const gatewayCrypto = SecureRandom.make((size) => globalThis.crypto.getRandomValues(new Uint8Array(size)));
 
-export const ShellCryptoLive = Layer.succeed(Crypto.Crypto, gatewayCrypto);
+export const ShellCryptoLive = Layer.merge(
+  Layer.succeed(SecureRandom.SecureRandom, gatewayCrypto),
+  Digest.layerWebCrypto,
+);
 
 /** The calling module of a delegated call, decoded at the signing boundary. */
 const decodeDelegatedActor = (actor: GatewayActorClaim) =>
@@ -640,9 +619,7 @@ export const GatewayIssuerLive = Layer.unwrap(
     Effect.map((catalog) =>
       makeGatewayIssuerLayer({
         currentTimeSeconds: Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000))),
-        generateJti: gatewayCrypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError((failureCause) => unavailable('signing', failureCause))),
+        generateJti: gatewayCrypto.uuidV4(),
         loadAdmission: catalog.load.pipe(
           Effect.map(({ composition, contracts }) => ({
             audiences: new Map([

@@ -3,7 +3,8 @@
 // @ontos-action-slug create-stock-location
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   CreateStockLocationErrorSchema,
@@ -45,8 +46,8 @@ export const handleCreateStockLocation = Effect.fn('CreateStockLocationAction.ha
   payload: CreateStockLocationPayload,
   context: ActionHandlerContext<typeof domainEvents, Pick<StockLocationPersistence, 'create'>>,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const resourceId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(identityUnavailable));
+  const crypto = yield* SecureRandom.SecureRandom;
+  const resourceId = yield* crypto.uuidV4();
   const ref = yield* Schema.decodeEffect(StockLocationRefSchema)({
     moduleId: MODULE_KEY,
     resourceId,

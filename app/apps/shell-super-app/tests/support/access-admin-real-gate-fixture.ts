@@ -41,7 +41,8 @@ import type { OperationalScope } from '@app/core-runtime/operations/context';
 import { recordObjectId, scopeObjectId } from '../../../../packages/core-runtime/src/access/compiler/object-id.ts';
 import type { AccessCatalogModule } from '../../../../packages/core-runtime/src/authorization/access-declaration.ts';
 import type { CoreDatabaseExecutor } from '../../../../packages/core-runtime/src/db/types.ts';
-import { Cause, Context, Crypto, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 
 import { shellLegalEntityScope } from '../../api/modules/shell-access-decisions';
@@ -510,7 +511,7 @@ const seedAssignments = (
   },
 ) =>
   Effect.gen(function* seedPersonaAssignments() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const assign = (persona: Persona, role: SeededRole, extra: Partial<Parameters<typeof insertAssignment>[1]>) =>
       Effect.gen(function* assignPersona() {
         yield* labelled(
@@ -518,7 +519,7 @@ const seedAssignments = (
           insertAssignment(admin, {
             assignedBy: input.ownerPrincipal,
             holderColumn: holderColumnOf(persona),
-            incarnationId: yield* crypto.randomUUIDv4(),
+            incarnationId: yield* crypto.uuidV4(),
             principalId: input.holderOf(persona),
             roleId: role.roleId,
             roleRevisionId: role.roleRevisionId,
@@ -533,7 +534,7 @@ const seedAssignments = (
     yield* assign('expiredAssignment', input.adminRole, { validUntil: "now() - interval '1 hour'" });
     yield* assign('agent', input.agentRole, {});
 
-    const delegationId = yield* crypto.randomUUIDv4();
+    const delegationId = yield* crypto.uuidV4();
     yield* labelled(
       'delegation',
       insertDelegation(admin, {
@@ -839,12 +840,12 @@ const adminCapabilityKeysOf = (declarations: ReadonlyMap<string, PublishedDeclar
     .map((declaration) => declaration.key);
 
 const seedsOf = Effect.gen(function* makePersonaSeeds() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const seeds = new Map<Persona, SeedPerson>();
   for (const persona of PERSONAS) {
     seeds.set(persona, {
-      authBindingId: yield* crypto.randomUUIDv4(),
-      principalId: yield* crypto.randomUUIDv4(),
+      authBindingId: yield* crypto.uuidV4(),
+      principalId: yield* crypto.uuidV4(),
     });
   }
   return seeds;
@@ -859,14 +860,14 @@ export const withAccessAdminCase = <Value, Failure>(
 ) =>
   Effect.scoped(
     Effect.gen(function* accessAdminCase() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const catalog = yield* loadCatalog;
       const declarations = yield* declarationsOf(catalog);
-      const seedSuffix = (yield* crypto.randomUUIDv4()).replaceAll('-', '');
-      const tenantId = yield* crypto.randomUUIDv4();
-      const foreignTenantId = yield* crypto.randomUUIDv4();
-      const companies = [yield* crypto.randomUUIDv4(), yield* crypto.randomUUIDv4()];
-      const foreignCompanies = [yield* crypto.randomUUIDv4()];
+      const seedSuffix = (yield* crypto.uuidV4()).replaceAll('-', '');
+      const tenantId = yield* crypto.uuidV4();
+      const foreignTenantId = yield* crypto.uuidV4();
+      const companies = [yield* crypto.uuidV4(), yield* crypto.uuidV4()];
+      const foreignCompanies = [yield* crypto.uuidV4()];
       const personas = yield* seedsOf;
       const foreignPersonas = yield* seedsOf;
       const [companyA, companyB] = companies;
@@ -939,8 +940,8 @@ export const withAccessAdminCase = <Value, Failure>(
       const ownerPrincipal = personas.get('owner')?.principalId ?? '';
       const holderOf = (persona: Persona) => personas.get(persona)?.principalId ?? '';
 
-      const adminRoleId = yield* crypto.randomUUIDv4();
-      const adminRoleRevisionId = yield* crypto.randomUUIDv4();
+      const adminRoleId = yield* crypto.uuidV4();
+      const adminRoleRevisionId = yield* crypto.uuidV4();
       yield* labelled(
         'insert-role',
         insertRole(admin, {
@@ -956,8 +957,8 @@ export const withAccessAdminCase = <Value, Failure>(
         }),
       );
       // An agent may only ever propose a sensitive capability (O48a), and every admin one is sensitive.
-      const agentRoleId = yield* crypto.randomUUIDv4();
-      const agentRoleRevisionId = yield* crypto.randomUUIDv4();
+      const agentRoleId = yield* crypto.uuidV4();
+      const agentRoleRevisionId = yield* crypto.uuidV4();
       yield* labelled(
         'insert-agent-role',
         insertRole(admin, {

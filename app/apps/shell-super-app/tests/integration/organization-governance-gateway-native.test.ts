@@ -71,10 +71,11 @@ import {
   SymmySourceOrganizationFactsRequestSchema,
   SymmySourceOrganizationFactsResponseSchema,
 } from '@app/symmy-integration/api/symmy-source-organization-facts';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -286,7 +287,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* nativeOrganizationGovernance() {
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const calls = { actions: 0, reads: 0 };
         const owner = definitions(calls);
         const privacy = makeModuleContractFixture({ appId: 'privacy', moduleId: 'privacy.core', supportedStates });
@@ -312,15 +313,15 @@ it.live(
         const admin = yield* makeCoreDatabase(isolated.connections.admin);
         const runtime = yield* makeCoreDatabase(isolated.connections.runtime);
         const auth = yield* makeAuthDatabase({ connectionString: isolated.connections.runtime.connectionString });
-        const tenantId = yield* crypto.randomUUIDv4();
-        const legalEntityId = yield* crypto.randomUUIDv4();
+        const tenantId = yield* crypto.uuidV4();
+        const legalEntityId = yield* crypto.uuidV4();
         const humans = yield* Effect.forEach(['granted', 'ungranted'], (name) =>
           Effect.gen(function* human() {
             return {
-              authBindingId: yield* crypto.randomUUIDv4(),
+              authBindingId: yield* crypto.uuidV4(),
               name,
-              principalId: yield* crypto.randomUUIDv4(),
-              sessionId: yield* crypto.randomUUIDv4(),
+              principalId: yield* crypto.uuidV4(),
+              sessionId: yield* crypto.uuidV4(),
             };
           }),
         );
@@ -357,7 +358,7 @@ it.live(
           );
         }
         for (const providerKey of [privacyKey, symmyKey]) {
-          const principalId = yield* crypto.randomUUIDv4();
+          const principalId = yield* crypto.uuidV4();
           moduleIds.set(providerKey, principalId);
           yield* admin.executor.execute(
             sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${principalId}::uuid,${tenantId}::uuid,'service','Organization native module','active')`,
@@ -410,7 +411,7 @@ it.live(
         const signerForRevision = (revision: string) =>
           makeGatewayIssuerLayer({
             currentTimeSeconds: DateTime.nowAsDate.pipe(Effect.map((now) => Math.floor(now.getTime() / 1000))),
-            generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+            generateJti: crypto.uuidV4().pipe(Effect.orDie),
             loadAdmission: Effect.succeed({
               audiences: new Map([
                 ['privacy', 'privacy-build'],
@@ -496,7 +497,7 @@ it.live(
             const payload = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)({
               audience,
               compositionRevision: snapshot.composition.revision,
-              exchangeId: yield* crypto.randomUUIDv4(),
+              exchangeId: yield* crypto.uuidV4(),
               legalEntityScope: 'subject',
               subject,
             });
@@ -532,7 +533,7 @@ it.live(
         const actionRuntime = Context.get(runtimes, ActionRuntime);
         const request = yield* Schema.decodeUnknownEffect(SymmySourceOrganizationFactsRequestSchema)({
           effectKey: 'native.organization.source',
-          execution: { jobId: yield* crypto.randomUUIDv4(), kind: 'JOB' },
+          execution: { jobId: yield* crypto.uuidV4(), kind: 'JOB' },
           purpose: 'GOVERNANCE',
           sourceReference: {
             occurrenceId: 'native-occurrence',
@@ -786,7 +787,7 @@ it.live(
             target: {},
           });
           yield* admin.executor.execute(
-            sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_binding_id,auth_context_ref,action_key,idempotency_key,request_hash,status,completed_at) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${human.principalId}::uuid,'session',${human.authBindingId}::uuid,${principal.authContextRef},${actionKey},${cachedKey},${cachedHash},'succeeded',now())`,
+            sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_binding_id,auth_context_ref,action_key,idempotency_key,request_hash,status,completed_at) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${human.principalId}::uuid,'session',${human.authBindingId}::uuid,${principal.authContextRef},${actionKey},${cachedKey},${cachedHash},'succeeded',now())`,
             'objects',
           );
           const write = yield* actionRuntime
@@ -800,9 +801,9 @@ it.live(
             .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry), Effect.flip);
           expect(Schema.is(ActionTrustedContextValidationError)(write)).toBe(true);
           expect(calls.actions).toBe(0);
-          const integrationId = yield* crypto.randomUUIDv4();
-          const integrationBinding = yield* crypto.randomUUIDv4();
-          const integrationKey = yield* crypto.randomUUIDv4();
+          const integrationId = yield* crypto.uuidV4();
+          const integrationBinding = yield* crypto.uuidV4();
+          const integrationKey = yield* crypto.uuidV4();
           yield* admin.executor.execute(
             sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${integrationId}::uuid,${tenantId}::uuid,'integration','Not a human','active')`,
             'objects',
@@ -842,8 +843,8 @@ it.live(
             sql`update core.principal_auth_bindings set status='active',revoked_at=null where provider_subject_id=${privacyKey}`,
             'objects',
           );
-          const otherTenant = yield* crypto.randomUUIDv4();
-          const otherLegalEntity = yield* crypto.randomUUIDv4();
+          const otherTenant = yield* crypto.uuidV4();
+          const otherLegalEntity = yield* crypto.uuidV4();
           yield* admin.executor.execute(
             sql`insert into core.tenants(tenant_id,slug,name,status,default_locale) values(${otherTenant}::uuid,${otherTenant},'Foreign tenant','active','en')`,
             'objects',
@@ -889,5 +890,5 @@ it.live(
           expect(Exit.isFailure(yield* Effect.exit(issue(subject)))).toBe(true);
         }
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom))),
 );

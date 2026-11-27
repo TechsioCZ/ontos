@@ -77,7 +77,7 @@ export const RetainedOwnerHistoryEventSchema = Schema.Struct({
   subjectModuleKey: moduleKey,
   subjectResourceId: resourceId,
   subjectResourceType: boundedKey,
-  tenantSequenceNo: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u)),
+  tenantSequenceNo: Schema.String.check(Schema.isPattern(/^[1-9]\d*$/u)),
 });
 
 type HistoryResourceRef = typeof RetainedOwnerHistoryResourceRefSchema.Type;

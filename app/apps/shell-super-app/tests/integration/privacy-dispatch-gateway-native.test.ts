@@ -74,13 +74,12 @@ import {
   ActionPrincipalInvalidErrorSchema,
   bindGatewayPrincipalVerifier,
 } from '@app/gateway-principal-verifier/server';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
 import {
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -92,6 +91,7 @@ import {
   Redacted,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -435,7 +435,7 @@ const nativeRedemption = (database: Effect.Success<ReturnType<typeof makeCoreDat
 it.live('keeps native Privacy governance company authority separate from Symmy Tenant authority', () =>
   Effect.scoped(
     Effect.gen(function* nativePrivacyGatewayAuthority() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const shellDeployment = { appId: 'shell-super-app' as const, buildMarker: ultramodernDeliveryUnit.buildMarker };
       const inputs = contractInputs();
       const shellRuntime = {
@@ -455,11 +455,11 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       });
       const admin = yield* makeCoreDatabase(fixture.connections.admin);
       const runtime = yield* makeCoreDatabase(fixture.connections.runtime);
-      const tenantId = yield* crypto.randomUUIDv4();
-      const legalEntityId = yield* crypto.randomUUIDv4();
+      const tenantId = yield* crypto.uuidV4();
+      const legalEntityId = yield* crypto.uuidV4();
       const holders = yield* Effect.forEach(['authorized', 'company-only'], (name) =>
         Effect.gen(function* holder() {
-          return { authBindingId: yield* crypto.randomUUIDv4(), name, principalId: yield* crypto.randomUUIDv4() };
+          return { authBindingId: yield* crypto.uuidV4(), name, principalId: yield* crypto.uuidV4() };
         }),
       );
       yield* admin.executor.execute(
@@ -490,7 +490,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
         );
       }
       for (const providerKey of [privacyProviderKey, symmyProviderKey]) {
-        const principalId = yield* crypto.randomUUIDv4();
+        const principalId = yield* crypto.uuidV4();
         yield* admin.executor.execute(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${principalId}::uuid,${tenantId}::uuid,'service','Finite Privacy module','active')`,
           'objects',
@@ -545,7 +545,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       });
       const signer = makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(Math.floor(DateTime.toEpochMillis(snapshot.observedAt) / 1000)),
-        generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+        generateJti: crypto.uuidV4().pipe(Effect.orDie),
         loadAdmission: Effect.succeed({
           audiences: new Map([
             ['symmy-integration', 'symmy-integration-build'],
@@ -624,7 +624,7 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           const payload = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)({
             audience,
             compositionRevision: snapshot.composition.revision,
-            exchangeId: yield* crypto.randomUUIDv4(),
+            exchangeId: yield* crypto.uuidV4(),
             legalEntityScope: 'subject',
             subject,
           });
@@ -749,10 +749,10 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
           expect(receipt.predicate?.groups).toEqual([]);
         }
         expect(scope.legalEntityId).toBe(legalEntityId);
-        const dispatchInvocationId = yield* crypto.randomUUIDv4();
-        const domainEventId = yield* crypto.randomUUIDv4();
-        const messageId = yield* crypto.randomUUIDv4();
-        const resourceRef = `integration.symmy.job:${yield* crypto.randomUUIDv4()}`;
+        const dispatchInvocationId = yield* crypto.uuidV4();
+        const domainEventId = yield* crypto.uuidV4();
+        const messageId = yield* crypto.uuidV4();
+        const resourceRef = `integration.symmy.job:${yield* crypto.uuidV4()}`;
         const payload = yield* Schema.decodeUnknownEffect(OutboxPayloadSchema)({
           handoff: {
             contentScopeRefs: [`${resourceRef}#integration.symmy.job-intent`],
@@ -1439,5 +1439,5 @@ it.live('keeps native Privacy governance company authority separate from Symmy T
       expect(wireRequests).toHaveLength(beforeClosed);
       return yield* Effect.void;
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom))),
 );

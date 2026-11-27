@@ -402,15 +402,17 @@ const delegationCase = Effect.fn('DelegationIssuerTest.case')(function* delegati
       Effect.provideService(OperationalScopeResolver, scopeResolverDouble(input.contextFailure, resolvedScopes)),
       Effect.provide(
         Layer.mock(TenantModuleStateService, {
-          getTenantModuleStates: () =>
-            input.moduleState === 'unavailable'
-              ? Effect.fail(
-                  new TenantModuleStateReadUnavailableError({
-                    code: 'tenant_module_state_read_unavailable',
-                    reason: 'Controlled unavailable module state',
-                  }),
-                )
-              : Effect.succeed(input.moduleState === 'missing' ? [] : moduleStates),
+          getTenantModuleStates: () => {
+            if (input.moduleState === 'unavailable') {
+              return Effect.fail(
+                new TenantModuleStateReadUnavailableError({
+                  code: 'tenant_module_state_read_unavailable',
+                  reason: 'Controlled unavailable module state',
+                }),
+              );
+            }
+            return Effect.succeed(input.moduleState === 'missing' ? [] : moduleStates);
+          },
         }),
       ),
       Effect.provideService(GatewayDelegationExchangeLedger, {

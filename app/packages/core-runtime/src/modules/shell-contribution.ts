@@ -37,9 +37,8 @@ const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const routePath = Schema.String.check(
   Schema.isMinLength(2),
   Schema.isMaxLength(200),
-  Schema.isPattern(
-    /^\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*)(?:\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*))*$/u,
-  ),
+  Schema.isPattern(/^(?:\/[a-z][a-z0-9-]*|\/:[a-z][A-Za-z0-9]*)+$/u),
+  Schema.isPattern(/^(?!.*(?:--|-\/|-$))/u),
 ).pipe(
   Schema.check(
     Schema.makeFilter((value) => {

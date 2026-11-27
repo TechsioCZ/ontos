@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, Deferred, Fiber, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
+import { Cause, Deferred, Fiber, Effect, Exit, Match, Option, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
@@ -324,7 +325,7 @@ const tenantModuleStateTest1 = withDatabase((database) =>
   }),
 );
 const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantModuleState() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const moduleKey = testModuleKey('testing', tenantOne);
 
   yield* withDatabase((database) => {
@@ -401,7 +402,7 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
   );
 });
 const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleStates() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const otherModuleKey = testModuleKey('other', tenantOne);
   const targetModuleKey = testModuleKey('independent', tenantOne);
   const transitionCatalog = catalogFrom(installedContract(otherModuleKey), installedContract(targetModuleKey));
@@ -468,7 +469,7 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
   );
 });
 const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameStateRejection() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const moduleKey = testModuleKey('idempotency', tenantOne);
   const input = actionInput(moduleKey, 'active', 'same-intent');
 
@@ -555,7 +556,7 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
   return { executor };
 };
 const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleStateWrite() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const moduleKey = testModuleKey('rollback', tenantOne);
   const failure = yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
@@ -597,7 +598,7 @@ const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleSt
   );
 });
 const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantModuleStateTransitions() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const moduleKey = testModuleKey('concurrency', tenantOne);
   yield* withDatabase((database) => {
     const runtime = makeActionRuntime(
@@ -653,7 +654,7 @@ const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantMod
   );
 });
 const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const moduleKey = testModuleKey('isolation', tenantOne);
   yield* withDatabase((database) =>
     database.executor.insert(tenantModuleStates).values({
@@ -716,7 +717,7 @@ const intrinsicCatalogFixture = (target: string, provider: string, transitive: s
 
 const tenantModuleStateIntrinsicActivation = withDatabase((database) =>
   Effect.gen(function* intrinsicActivationStateChecks() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const target = testModuleKey('intrinsic-target', tenantOne);
     const provider = testModuleKey('intrinsic-provider', tenantOne);
     const transitive = testModuleKey('intrinsic-transitive', tenantOne);
@@ -798,7 +799,7 @@ const tenantModuleStateIntrinsicActivation = withDatabase((database) =>
 
 const tenantModuleStateIntrinsicSerialization = withDatabase((observer) =>
   Effect.gen(function* serializesIntrinsicActivationWithProviderSuspension() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const providerDatabase = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });
     const consumerDatabase = yield* makeCoreDatabase({ ...configuration, maxConnections: 1 });

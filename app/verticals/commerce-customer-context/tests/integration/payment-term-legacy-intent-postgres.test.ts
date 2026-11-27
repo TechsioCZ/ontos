@@ -148,8 +148,8 @@ const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migra
   );
   if (Number(status) !== 0) {
     const text = diagnostics.join('');
-    const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.sqlState;
-    const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.position;
+    const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.['sqlState'];
+    const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.['position'];
     yield* Effect.logError({
       failureClass: 'MIGRATION_CHILD_FAILURE',
       knownLeasedBoundary: '20261019151457_finite-entitlement-cancellation',

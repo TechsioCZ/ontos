@@ -3,7 +3,8 @@ import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { BindPreVerificationSubjectPayloadSchema } from '@app/privacy/api/bind-pre-verification-subject-action';
 import { executeBindPreVerificationSubjectWithAuthorization } from '@app/privacy/api/bind-pre-verification-subject-action/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Config, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Config, Context, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
 import {
@@ -71,7 +72,7 @@ const decodePayload = Schema.decodeUnknownEffect(BindPreVerificationSubjectPaylo
 /** The registered-workload transport of ONE delivery. */
 const registeredWorkloadTransport = (
   baseUrl: URL,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   context: OutboxWorkerHandlerContext,
 ): PreVerificationPrivacyTransportService => ({
   bind: Effect.fn('PortalAuthPreVerificationPrivacyGateway.transport')(function* bind(encoded) {
@@ -113,7 +114,10 @@ const privacyUnavailable = (cause: unknown) =>
     cause,
   );
 
-const makeGateway = (baseUrl: URL, crypto: Crypto.Crypto): PortalAuthPreVerificationPrivacyGatewayService => ({
+const makeGateway = (
+  baseUrl: URL,
+  crypto: SecureRandom.SecureRandom['Service'],
+): PortalAuthPreVerificationPrivacyGatewayService => ({
   bind: (request, context) =>
     Option.match(preVerificationBindPayloadOfRequest(request), {
       // a request that names no Portal Auth account has no subject to bind
@@ -135,7 +139,7 @@ const makeGateway = (baseUrl: URL, crypto: Crypto.Crypto): PortalAuthPreVerifica
 export const PortalAuthPreVerificationPrivacyGatewayLive = Layer.effect(
   PortalAuthPreVerificationPrivacyGateway,
   Effect.gen(function* portalAuthPreVerificationPrivacyGatewayLayer() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return yield* configuration.pipe(
       Effect.match({
         onFailure: (cause): PortalAuthPreVerificationPrivacyGatewayService => ({

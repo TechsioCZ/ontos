@@ -215,7 +215,7 @@ describe('Owner execution authority-bound Actions', () => {
 
       expect(recordedAuthority).toBe(authority);
       expect(result.status).toBe('SUCCEEDED');
-      expect(collector.snapshot().auditEvidence.recordId).toBe(result.outcomeId);
+      expect(collector.snapshot().auditEvidence['recordId']).toBe(result.outcomeId);
     }),
   );
 
@@ -301,7 +301,7 @@ describe('Owner execution authority-bound Actions', () => {
       const result = yield* handleRecordAntiResurrectionProtection(antiResurrectionRequest, context);
 
       expect(result.outcomeStatus).toBe('SUCCEEDED');
-      expect(collector.snapshot().auditEvidence.recordId).toBe(result.protectionId);
+      expect(collector.snapshot().auditEvidence['recordId']).toBe(result.protectionId);
     }),
   );
 

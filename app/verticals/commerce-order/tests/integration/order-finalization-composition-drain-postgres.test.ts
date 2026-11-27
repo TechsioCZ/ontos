@@ -26,19 +26,8 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { CoreDatabase, testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import {
-  Array as EffectArray,
-  Context,
-  Crypto,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Redacted,
-  Result,
-  Schema,
-} from 'effect';
+import { Array as EffectArray, Context, Deferred, Effect, Exit, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
@@ -83,8 +72,8 @@ class OrderDrainSetupFailed extends Schema.TaggedError<OrderDrainSetupFailed>()(
 const metadataDigest = Effect.fn('OrderFinalizationDrainTests.metadataDigest')(function* metadataDigest(
   document: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+  const crypto = yield* Digest.Digest;
+  return Hex.encode(new Uint8Array(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))));
 });
 const compareOperationKeys = (left: string, right: string): -1 | 0 | 1 => {
   const compared = left.localeCompare(right);

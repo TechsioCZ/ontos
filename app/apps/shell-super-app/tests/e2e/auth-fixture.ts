@@ -29,7 +29,8 @@ import { APP_ENV_PATH, APP_WORKSPACE_ROOT } from '@app/core-runtime/workspace-en
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { and, eq, inArray, ne } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { AccessChangesStore } from '../../../../packages/core-runtime/src/access/changes/persistence/store.ts';
 import type { Cell } from '../../../../packages/core-runtime/src/access/model.ts';
@@ -219,18 +220,18 @@ const swapBackAssignments = Effect.fn('swapBackE2eAssignments')(function* swapBa
 
 export const createAuthenticationFixture = Effect.fn('createAuthenticationFixture')(
   function* createAuthenticationFixtureEffect() {
-    const crypto = yield* Crypto.Crypto;
-    const fixtureId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const fixtureId = yield* crypto.uuidV4();
     const e2eCredentials = {
       email: `e2e.${fixtureId}@example.test`,
       password: 'e2e-correct-horse-battery-staple',
     };
     const makeTenant = (name: string) =>
       Effect.all({
-        legalEntityId: crypto.randomUUIDv4(),
+        legalEntityId: crypto.uuidV4(),
         name: Effect.succeed(name),
-        principalId: crypto.randomUUIDv4(),
-        tenantId: crypto.randomUUIDv4(),
+        principalId: crypto.uuidV4(),
+        tenantId: crypto.uuidV4(),
       });
     const e2eTenants = yield* Effect.all({
       first: makeTenant('E2E Alpha tenant'),
@@ -434,7 +435,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         const restoredAt = yield* DateTime.nowAsDate;
         const regranted: NewAccessAssignment[] = [];
         for (const assignment of revoked) {
-          const incarnationId = yield* crypto.randomUUIDv4();
+          const incarnationId = yield* crypto.uuidV4();
           regranted.push({ ...assignment, incarnationId, status: 'active' as const, validFrom: restoredAt });
         }
         yield* inFirstTenantScope((transaction) =>
@@ -445,8 +446,8 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     // Every cell the owner was bootstrapped with except Party Registry's, as one role of its own.
     const recordAccessWithoutContacts = Effect.gen(function* recordFirstOwnerAccessWithoutContacts() {
       const [roleUuid, roleRevisionUuid, recordedAt] = yield* Effect.all([
-        crypto.randomUUIDv4(),
-        crypto.randomUUIDv4(),
+        crypto.uuidV4(),
+        crypto.uuidV4(),
         DateTime.nowAsDate,
       ]);
       const roleId = RoleIdSchema.make(roleUuid);
@@ -507,7 +508,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
         );
         const replacements: NewAccessAssignment[] = [];
         for (const assignment of revoked) {
-          const incarnationId = yield* crypto.randomUUIDv4();
+          const incarnationId = yield* crypto.uuidV4();
           replacements.push({
             ...assignment,
             incarnationId,

@@ -8,10 +8,11 @@ import {
   CounterpartyReadUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
-import { Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { DateTime, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { ProfilePersistenceDependencyFailure } from '../../src/persistence/profile-persistence.ts';
 import type { DelegatedAcquire } from '../support/delegated-gateway-acquisition.fixture.ts';
@@ -87,10 +88,7 @@ const response = Schema.decodeUnknownSync(CounterpartyReadResponseSchema)({
 
 type CounterpartyReadExecutor = typeof executeCounterpartyRead;
 
-const testCrypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array(32)),
-  randomBytes: (size) => new Uint8Array(size),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size));
 const verifiedOperationalScope: OperationalScope = {
   ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
     authBindingId: '30000000-0000-4000-8000-000000000001',
@@ -345,12 +343,13 @@ it.effect('resolves through a delegated Assertion subject and the authorized Par
       },
     ]);
     const [read] = reads;
-    expect(read?.url).toBe('https://shell.example.test/party-registry-api/reads/counterparty-read');
-    expect(read?.headers.get('authorization')).toBe('Bearer fresh-party-assertion-1');
-    expect(read?.headers.get('x-api-key')).toBeNull();
-    expect(read?.headers.get('x-ontos-composition-revision')).toBe(snapshot.composition.revision);
-    expect(read?.headers.get('x-correlation-id')).toBe(serverScope.requestCorrelation);
-    expect(yield* Effect.promise(() => read?.json())).toEqual({ counterpartyRef: response.counterpartyRef });
+    assert.isDefined(read);
+    expect(read.url).toBe('https://shell.example.test/party-registry-api/reads/counterparty-read');
+    expect(read.headers.get('authorization')).toBe('Bearer fresh-party-assertion-1');
+    expect(read.headers.get('x-api-key')).toBeNull();
+    expect(read.headers.get('x-ontos-composition-revision')).toBe(snapshot.composition.revision);
+    expect(read.headers.get('x-correlation-id')).toBe(serverScope.requestCorrelation);
+    expect(yield* Effect.promise(() => read.json())).toEqual({ counterpartyRef: response.counterpartyRef });
   }),
 );
 

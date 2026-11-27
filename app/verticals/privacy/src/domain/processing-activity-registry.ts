@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { PrincipalRef } from '@app/core-runtime';
 import {
@@ -799,7 +800,7 @@ export const applyProcessingActivityTransition = (
 
 const makeInMemoryRegistry = (
   configuration: InMemoryProcessingActivityRegistryConfiguration,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): ProcessingActivityRepositoryService => {
   const activities = new Map<string, ProcessingActivity>();
   return {
@@ -818,18 +819,7 @@ const makeInMemoryRegistry = (
         });
       }
       const createdAt = DateTime.formatIso(yield* DateTime.now);
-      const resourceId =
-        input.activityRef?.resourceId ??
-        (yield* crypto.randomUUIDv4().pipe(
-          Effect.catchTag('PlatformError', () =>
-            Effect.fail(
-              new ProcessingActivityRegistryError({
-                code: 'privacy_processing_activity_persistence_unavailable',
-                reason: 'Processing Activity identifier could not be generated',
-              }),
-            ),
-          ),
-        ));
+      const resourceId = input.activityRef?.resourceId ?? (yield* crypto.uuidV4());
       const activity = buildProcessingActivity({
         actor,
         createdAt,
@@ -895,5 +885,5 @@ const makeInMemoryRegistry = (
 
 export const makeInMemoryProcessingActivityRegistry = (
   configuration: InMemoryProcessingActivityRegistryConfiguration = {},
-): Effect.Effect<ProcessingActivityRepositoryService, never, Crypto.Crypto> =>
-  Effect.service(Crypto.Crypto).pipe(Effect.map((crypto) => makeInMemoryRegistry(configuration, crypto)));
+): Effect.Effect<ProcessingActivityRepositoryService, never, SecureRandom.SecureRandom> =>
+  Effect.service(SecureRandom.SecureRandom).pipe(Effect.map((crypto) => makeInMemoryRegistry(configuration, crypto)));

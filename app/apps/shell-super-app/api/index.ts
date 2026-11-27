@@ -2144,35 +2144,37 @@ const acquireSymmyOwnerAssertion = Effect.fn('ShellGateway.acquireSymmyOwnerAsse
       GatewayUnavailableProblem: () => Effect.fail(symmyUnavailableProblem),
     }),
   );
-  const assertion =
-    routeProof === undefined
-      ? yield* (
-          input.audience === 'symmy-integration'
-            ? issueSymmyGatewayContextAssertion({
-                compositionRevision: revision,
-                principal: identity.principal,
-                principalKind,
-              })
-            : issueGatewayContextAssertion({
-                audience: input.audience,
-                compositionRevision: revision,
-                principal: identity.principal,
-              })
-        ).pipe(Effect.catchTag('GatewayIssuerError', () => Effect.fail(symmyUnavailableProblem)))
-      : yield* issueSymmyRouteScopeAssertion(
-          routeProof,
-          withOptionalProperty(
-            { audience: input.audience, principal: identity.principal },
-            input.legalEntityId !== undefined,
-            'legalEntityId',
-            input.legalEntityId,
-            {},
-          ),
-        ).pipe(
-          Effect.catchTag('GatewayDelegationError', (error) =>
-            Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
-          ),
-        );
+  let assertion: Effect.Success<ReturnType<typeof issueGatewayContextAssertion>>;
+  if (routeProof === undefined) {
+    const issue =
+      input.audience === 'symmy-integration'
+        ? issueSymmyGatewayContextAssertion({
+            compositionRevision: revision,
+            principal: identity.principal,
+            principalKind,
+          })
+        : issueGatewayContextAssertion({
+            audience: input.audience,
+            compositionRevision: revision,
+            principal: identity.principal,
+          });
+    assertion = yield* issue.pipe(Effect.catchTag('GatewayIssuerError', () => Effect.fail(symmyUnavailableProblem)));
+  } else {
+    assertion = yield* issueSymmyRouteScopeAssertion(
+      routeProof,
+      withOptionalProperty(
+        { audience: input.audience, principal: identity.principal },
+        input.legalEntityId !== undefined,
+        'legalEntityId',
+        input.legalEntityId,
+        {},
+      ),
+    ).pipe(
+      Effect.catchTag('GatewayDelegationError', (error) =>
+        Effect.fail(error.code === 'forbidden' ? gatewayForbiddenProblem() : symmyUnavailableProblem),
+      ),
+    );
+  }
   return {
     apiBaseUrl: assertion.apiBaseUrl,
     assertion: Redacted.make(assertion.token),

@@ -8,7 +8,8 @@ import type {
   PriceGroupAssignmentResolutionRequest,
   PriceGroupAssignmentResolutionResponse,
 } from '@app/pricing-contracts/domain/price-group-interpretation';
-import { Effect, Redacted, Schema, Crypto } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PriceGroupInterpretationDependencyFailure } from '../services/price-group-interpretation.service.ts';
 import type { CommercePriceGroupResolutionPort } from '../services/price-group-interpretation.service.ts';
@@ -133,8 +134,8 @@ export const commercePriceGroupResolutionPortFromEnvironment = Effect.fn(
     readonly tenantId: string;
   },
   execute: CommerceResolutionExecutor = executeAuthorizedCommerceResolution,
-): Effect.fn.Return<CommercePriceGroupResolutionPort, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<CommercePriceGroupResolutionPort, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeCommerceResolutionPort({
     acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
     context,

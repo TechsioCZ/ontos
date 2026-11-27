@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, Deferred, Effect, Exit, Fiber, Option, Predicate } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { CoreDatabase } from '../../src/db/client.ts';
@@ -47,9 +48,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('module state gate', (
     'batches tenant-isolated states once, rejects malformed/unavailable reads, and rechecks transactionally',
     () =>
       Effect.gen(function* moduleStateGate1() {
-        const crypto = yield* Crypto.Crypto;
-        const tenantOne = yield* crypto.randomUUIDv4();
-        const tenantTwo = yield* crypto.randomUUIDv4();
+        const crypto = yield* SecureRandom.SecureRandom;
+        const tenantOne = yield* crypto.uuidV4();
+        const tenantTwo = yield* crypto.uuidV4();
         const moduleKey = `gate.integration-${tenantOne}`;
         const stateModuleKey = (state: (typeof TENANT_MODULE_STATES)[number]): string =>
           `${moduleKey}.${state.replaceAll('_', '-')}`;
@@ -204,10 +205,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('module state gate', (
 });
 
 const concurrentGateFixture = Effect.gen(function* concurrentGateFixtureEffect() {
-  const crypto = yield* Crypto.Crypto;
-  const tenantId = yield* crypto.randomUUIDv4();
-  const principalId = yield* crypto.randomUUIDv4();
-  const actionInvocationId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const tenantId = yield* crypto.uuidV4();
+  const principalId = yield* crypto.uuidV4();
+  const actionInvocationId = yield* crypto.uuidV4();
   const moduleKey = `gate.concurrent-${tenantId}`;
   const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
   // Distinct one-connection pools make each transaction's physical connection explicit.

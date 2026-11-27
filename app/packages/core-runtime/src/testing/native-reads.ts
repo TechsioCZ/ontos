@@ -16,7 +16,8 @@ import type { ReadRegistration } from '../reads/definition.ts';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Crypto, Effect, Layer, Option, Predicate, Redacted, Schema, Scope, Struct } from 'effect';
+import { Effect, Layer, Option, Predicate, Redacted, Schema, Scope, Struct } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { SqlError } from 'effect/sql/SqlError';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
@@ -273,8 +274,8 @@ export const makeNativeReadTestContext = Effect.fn('NativeReadTestContext.make')
   ) {
     return yield* unavailable();
   }
-  const crypto = yield* Crypto.Crypto;
-  const nextId = () => crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+  const crypto = yield* SecureRandom.SecureRandom;
+  const nextId = () => crypto.uuidV4();
   const { authBindingId, legalEntityId, principalId, tenantId } = yield* Effect.all(
     {
       authBindingId: nextId(),
@@ -786,7 +787,7 @@ export const withVerifiedNativeReadScope = Effect.fn('NativeReadTestContext.with
     | OperationContextError
     | ModuleStateGateError
     | ApplicationCompositionAuthorityError,
-    Requirements | Crypto.Crypto | Scope.Scope | AuthenticationNamespaceRegistry
+    Requirements | SecureRandom.SecureRandom | Scope.Scope | AuthenticationNamespaceRegistry
   > {
     const { principal } = input;
     const admittedRevision = verifiedNativeReadRevision(input);

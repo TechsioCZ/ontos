@@ -2,7 +2,8 @@ import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runti
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, Effect, Layer, Option, Redacted, Result, Schema, Stream } from 'effect';
+import { Context, Effect, Layer, Option, Redacted, Result, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { ChildProcessSpawner } from 'effect/process';
@@ -136,8 +137,8 @@ const OrderFinalizationDatabase = Context.Service<Effect.Success<typeof openData
  */
 const openIntentScope = Effect.gen(function* openOrderFinalizationIntentScope() {
   const { admin, migrate, runtime } = yield* OrderFinalizationDatabase;
-  const crypto = yield* Crypto.Crypto;
-  const legalEntity = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const legalEntity = yield* crypto.uuidV4();
   // Minimal owner-local JSON projections isolate native guards. They do not claim
   // foreign proof issuance; the separate public journey must obtain genuine facts.
   const snapshot = {

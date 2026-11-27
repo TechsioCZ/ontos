@@ -227,8 +227,8 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     ]);
   }
   const actorScopes = [
-    { legalEntityId: sellerId, authBindingId, principalId, tenantId },
-    { legalEntityId: otherSellerId, authBindingId, principalId, tenantId },
+    { authBindingId, legalEntityId: sellerId, principalId, tenantId },
+    { authBindingId, legalEntityId: otherSellerId, principalId, tenantId },
     {
       authBindingId: foreignAuthBindingId,
       legalEntityId: foreignSellerId,
@@ -359,7 +359,6 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   }
   yield* actions
     .runAction({
-      principal,
       audience: 'tax',
       payload: {
         effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -367,6 +366,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
         reason: 'Disposable historical-access declaration',
         regime: 'NON_PAYER',
       },
+      principal,
       registration: declareSellerVatRegimeAction,
       transport: yield* transport,
     })
@@ -389,9 +389,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   };
   const final = yield* actions
     .runAction({
+      audience: 'tax',
       payload,
       principal,
-      audience: 'tax',
       registration: finalizeOrderTaxAction,
       transport: yield* transport,
     })
@@ -415,7 +415,7 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   const evaluate = () =>
     transport.pipe(
       Effect.flatMap((readTransport) =>
-        reads.runRead({ input, principal, audience: 'tax', registration: taxEvaluationRead, transport: readTransport }),
+        reads.runRead({ audience: 'tax', input, principal, registration: taxEvaluationRead, transport: readTransport }),
       ),
       Effect.provide(context),
     );
@@ -423,9 +423,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
     transport.pipe(
       Effect.flatMap((actionTransport) =>
         actions.runAction({
+          audience: 'tax',
           payload,
           principal,
-          audience: 'tax',
           registration: finalizeOrderTaxAction,
           transport: actionTransport,
         }),
@@ -447,9 +447,9 @@ const fixture = Effect.fn('TaxHistoricalAccess.fixture')(function* fixtureEffect
   }
   const grant = relationship('context_permission', permissionId, 'grantee', 'principal', principalId);
   return {
-    compositionRevision: snapshot.composition.revision,
     accessGate,
     changeRelationships,
+    compositionRevision: snapshot.composition.revision,
     evaluate,
     final,
     grant,

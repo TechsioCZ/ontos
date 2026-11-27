@@ -5,7 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { Effect, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { CatalogQuantityHandoffReady } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
 import { CatalogQuantityBasisSchema } from '@app/catalog-selection-contracts/catalog-quantity-handoff';
@@ -118,11 +118,7 @@ const assessmentFor = (target: PreparedTarget): CatalogPricingPurposeEquivalence
 const boundaryFor = (handoff: CatalogQuantityHandoffReady): string | undefined =>
   handoff.evidence.validUntil ?? handoff.completeness.nextApplicabilityBoundary;
 
-const finiteCurrentInterval = (
-  effectiveAt: string,
-  observedAt: string | undefined,
-  validThrough: string | undefined,
-) =>
+const finiteCurrentInterval = (effectiveAt: string, observedAt: string | undefined, validThrough: string | undefined) =>
   observedAt !== undefined &&
   validThrough !== undefined &&
   observedAt >= effectiveAt &&
@@ -217,7 +213,7 @@ const hasConflictingRepeatedSelection = (targets: readonly PreparedTarget[]): bo
 export const resolvePricingPurposeEquivalence = Effect.fn('PricingPurposeEquivalenceRead.resolve')(function* resolve(
   request: PricingPurposeEquivalenceRequest,
   services: Pick<Services, 'prepare'>,
-): Effect.fn.Return<PricingPurposeEquivalenceResponse, never, Crypto.Crypto> {
+): Effect.fn.Return<PricingPurposeEquivalenceResponse, never, SecureRandom.SecureRandom> {
   const [first] = request.members;
   if (first === undefined) {
     return {
@@ -427,7 +423,7 @@ export const readPricingPurposeEquivalence = Effect.fn('PricingPurposeEquivalenc
     input: PricingPurposeEquivalenceRequest,
     tenantId: string,
     services: Pick<Services, 'prepare'>,
-  ): Effect.fn.Return<PricingPurposeEquivalenceResponse, ReadHandlerNotFound, Crypto.Crypto> {
+  ): Effect.fn.Return<PricingPurposeEquivalenceResponse, ReadHandlerNotFound, SecureRandom.SecureRandom> {
     if (input.anchorSelection.productRef.tenantId !== tenantId) {
       return yield* new ReadHandlerNotFound({
         code: 'read_handler_not_found',

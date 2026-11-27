@@ -2,7 +2,7 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { AttributeApplicabilityImpactConfirmation } from '../../shared/actions/govern-product-attribute-applicability.ts';
 import type {
@@ -96,7 +96,7 @@ export interface AttributeApplicabilityPersistence {
   ) => Effect.Effect<
     { readonly productLevel: boolean; readonly revision: number; readonly variantLevel: boolean },
     AttributeApplicabilityConflict | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
 }
 

@@ -10,7 +10,7 @@ import type {
   PriceProductTargetSnapshot,
 } from '@app/pricing-contracts/domain/catalog-price-target';
 import { PriceIdentityKeySchema, priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Context, Effect, Schema } from 'effect';
 
 import type {
@@ -502,7 +502,7 @@ export const makeProductPriceBulkCommandPort = (
 
 export const productPriceBulkServiceForScope: ActionServiceFactory<
   ProductPriceBulkService<ManageProductPriceOperation>,
-  Crypto.Crypto | ExternalPriceInputBoundaryFactory
+  SecureRandom.SecureRandom | ExternalPriceInputBoundaryFactory
 > = Effect.fn('ProductPriceBulkService.productPriceBulkServiceForScope')(
   function* makeProductPriceBulkServices(transaction, scope, compositionRevision) {
     const { legalEntityId } = scope;

@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Cause, Crypto, Effect, Exit, FileSystem, Option, Result, Schema } from 'effect';
+import { Cause, Effect, Exit, FileSystem, Option, Result, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -79,9 +80,9 @@ const seed = (admin: PgClient.PgClient) =>
 
 const database = Effect.gen(function* databaseEffect() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
-  const name = `c29_frozen_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `c29_frozen_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString);
   yield* bootstrap.unsafe(`create database "${name}"`);
   yield* Effect.addFinalizer(() =>
@@ -116,7 +117,9 @@ const database = Effect.gen(function* databaseEffect() {
   return { admin, executor, store: makeDrizzleFrozenCommandStore({ executor }) };
 });
 
-it.layer(NodeServices.layer)('frozen-command PostgreSQL repository', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('frozen-command PostgreSQL repository', (suite) => {
   suite.effect(
     'appends, loads and verifies one command; another tenant sees nothing',
     Effect.fnUntraced(function* appendLoad() {

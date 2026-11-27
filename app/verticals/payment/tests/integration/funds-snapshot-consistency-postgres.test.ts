@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -73,7 +74,7 @@ const nativeRuntime = Effect.gen(function* acquireFundsSnapshotRuntime() {
   const coreAdmin = yield* makeTestDatabaseFromClient(admin, paymentTestRelations);
   const actionRuntime = makeActionRuntime(
     { executor: database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     refundRuntimePermission,
     testOperationalScopeResolver,
     {

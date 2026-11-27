@@ -7,7 +7,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import {
   QuantityPreparationRequestSchema,
   QuantityPreparationResponseSchema,
@@ -42,7 +42,11 @@ export const readQuantityPreparation = Effect.fn('QuantityPreparationRead.read')
   input: QuantityPreparationRequest,
   tenantId: string,
   services: ReturnType<typeof catalogQuantityHandoffForScope>,
-): Effect.fn.Return<QuantityPreparationResponse, ReadHandlerNotFound | ReadHandlerUnavailable, Crypto.Crypto> {
+): Effect.fn.Return<
+  QuantityPreparationResponse,
+  ReadHandlerNotFound | ReadHandlerUnavailable,
+  SecureRandom.SecureRandom
+> {
   if (input.selection.productRef.tenantId !== tenantId) {
     return yield* new ReadHandlerNotFound({
       code: 'read_handler_not_found',

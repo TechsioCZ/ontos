@@ -1,6 +1,7 @@
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import type { Effect as EffectType, Option as OptionType } from 'effect';
-import { Crypto, DateTime, Effect, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { DefineSourceProvisioningPolicyPayload } from '../../shared/actions/define-source-provisioning-policy.ts';
 import type { CatalogToStockBindingUnavailable } from '../../shared/domain/catalog-to-stock-binding-unavailable.ts';
@@ -91,9 +92,7 @@ const policyRejected = (
 const sameValue = <Value>(left: Value, right: Value): boolean =>
   computeCanonicalValueHash(left) === computeCanonicalValueHash(right);
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(
-  Effect.mapError(sourceProvisioningUnavailable),
-);
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
 type Qualification = Pick<
@@ -161,7 +160,7 @@ const ensureCorrelation = Effect.fn('SourceProvisioning.ensureCorrelation')(func
 ): EffectType.fn.Return<
   CorrelationOutcome,
   ExternalStockCorrelationPersistenceUnavailable | ExternalStockCorrelationRejected | SourceProvisioningUnavailable,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   const externalKey = yield* qualifiedKey(request.qualification, request);
   const current = yield* correlations.current.findEffective(externalKey, yield* nowIso);
@@ -469,7 +468,7 @@ const adoptRegistrationWinner = Effect.fn('SourceStockItemProvisioning.adoptRegi
 const ensureStockItem = Effect.fn('SourceStockItemProvisioning.ensureStockItem')(function* ensureStockItem(
   ports: SourceStockItemProvisioningPorts,
   request: { readonly input: ProvisionSourceStockItemInput; readonly policy: SourceProvisioningPolicy },
-): EffectType.fn.Return<ProvisionedStockItem, ProvisioningFailure, Crypto.Crypto> {
+): EffectType.fn.Return<ProvisionedStockItem, ProvisioningFailure, SecureRandom.SecureRandom> {
   const { input, policy } = request;
   const { tenantId } = policy.policyRef;
   const existing = yield* ports.stockItems.findByExactSelectionMeaning(tenantId, input.exactSelectionMeaning.id);
@@ -481,7 +480,7 @@ const ensureStockItem = Effect.fn('SourceStockItemProvisioning.ensureStockItem')
     tenantId,
     unitRef: policy.unitRef,
   }).pipe(Effect.mapError(sourceProvisioningUnavailable));
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return yield* stockItemRegistration(
     ports.stockItems,
     crypto,
@@ -498,7 +497,11 @@ const ensurePosition = Effect.fn('SourceStockItemProvisioning.ensurePosition')(f
     readonly location: SourceProvisioningPolicy['locations'][number];
     readonly policy: SourceProvisioningPolicy;
   },
-): EffectType.fn.Return<SourceStockItemProvisioning['positions'][number], ProvisioningFailure, Crypto.Crypto> {
+): EffectType.fn.Return<
+  SourceStockItemProvisioning['positions'][number],
+  ProvisioningFailure,
+  SecureRandom.SecureRandom
+> {
   const { item, location, policy } = request;
   const input: CreateStockPositionInput = {
     onHand: {
@@ -539,7 +542,7 @@ const ensurePosition = Effect.fn('SourceStockItemProvisioning.ensurePosition')(f
 const ensureBinding = Effect.fn('SourceStockItemProvisioning.ensureBinding')(function* ensureBinding(
   ports: SourceStockItemProvisioningPorts,
   request: { readonly input: ProvisionSourceStockItemInput; readonly item: StockItem },
-): EffectType.fn.Return<SourceStockItemProvisioning['binding'], ProvisioningFailure, Crypto.Crypto> {
+): EffectType.fn.Return<SourceStockItemProvisioning['binding'], ProvisioningFailure, SecureRandom.SecureRandom> {
   const { input, item } = request;
   const current = yield* ports.bindings.findCurrentByExactSelectionMeaning(
     item.stockItemRef.tenantId,
@@ -578,7 +581,7 @@ export const provisionSourceStockItem = Effect.fn('SourceStockItemProvisioning.p
       readonly actionInvocationId: SourceStockItemProvisioningInvocationId;
       readonly input: ProvisionSourceStockItemInput;
     },
-  ): EffectType.fn.Return<SourceStockItemProvisioning, ProvisioningFailure, Crypto.Crypto> {
+  ): EffectType.fn.Return<SourceStockItemProvisioning, ProvisioningFailure, SecureRandom.SecureRandom> {
     const { input } = request;
     const found = yield* ports.policies.findByRef(input.policyRef);
     if (Option.isNone(found)) {

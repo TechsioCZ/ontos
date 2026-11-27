@@ -6,7 +6,8 @@ import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privac
 import type { OrganizationIcoApplicabilityResponse } from '@app/privacy/api';
 import { OrganizationIcoApplicabilityRequestSchema } from '@app/privacy/api';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Config, Context, Crypto, Effect, Option, Schema } from 'effect';
+import { Config, Context, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { PartyPersistenceUnavailableError } from '../../shared/domain/identity-contracts.ts';
 import { makePartyRef, PartyPersistenceUnavailable } from '../../shared/domain/identity-contracts.ts';
 
@@ -77,9 +78,7 @@ const failUnavailable = (stage: typeof LegacyIcoPrivacyFailureStageSchema.Type, 
             stage,
             failureTag: Schema.is(Schema.Struct({ _tag: Schema.String }))(cause) ? cause._tag : 'unclassified',
             status: Schema.is(Schema.Struct({ status: Schema.Number }))(cause) ? cause.status : undefined,
-            code: Schema.is(Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_]{1,100}$/u)) }))(
-              cause,
-            )
+            code: Schema.is(Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^\w{1,100}$/u)) }))(cause)
               ? cause.code
               : undefined,
           })
@@ -124,16 +123,14 @@ export const checkLegacyIcoPrivacy = Effect.fn('PartyLegacyIcoPrivacy.check')(fu
   if (partyIds.length === 0) {
     return { outcome: 'ALLOWED' as const, organizationOnlyPartyIds: [] };
   }
-  const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+  const crypto = yield* Effect.serviceOption(SecureRandom.SecureRandom);
   if (Option.isNone(crypto)) {
     return yield* failUnavailable('crypto');
   }
   const checked = yield* Effect.forEach(
     partyIds,
     Effect.fn('PartyLegacyIcoPrivacy.checkParty')(function* checkParty(partyId: string) {
-      const requestCorrelation = yield* crypto.value
-        .randomUUIDv4()
-        .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
+      const requestCorrelation = yield* crypto.value.uuidV4();
       const credential = yield* acquireDelegatedGatewayContext(
         { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject: { _tag: 'Assertion', scope } },
         crypto.value,

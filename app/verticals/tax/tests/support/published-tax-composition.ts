@@ -7,7 +7,8 @@ import {
 } from '@app/core-runtime';
 import type { ApplicationComposition } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Crypto, DateTime, Duration, Effect, FileSystem, Schema } from 'effect';
+import { DateTime, Duration, Effect, FileSystem, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
@@ -73,10 +74,10 @@ export const publishedTaxComposition = Effect.gen(function* publishedTaxComposit
         version: entry.requiredVersion,
       }),
   );
-  const crypto = yield* Crypto.Crypto;
-  const contractDigest = Hex.encode(yield* crypto.digest('SHA-256', contractBytes));
-  const runtimeDigest = Hex.encode(yield* crypto.digest('SHA-256', shellRuntimeBytes));
-  const federationDigest = Hex.encode(yield* crypto.digest('SHA-256', shellFederationBytes));
+  const crypto = yield* Digest.Digest;
+  const contractDigest = Hex.encode(yield* crypto.digest(Digest.sha256, contractBytes));
+  const runtimeDigest = Hex.encode(yield* crypto.digest(Digest.sha256, shellRuntimeBytes));
+  const federationDigest = Hex.encode(yield* crypto.digest(Digest.sha256, shellFederationBytes));
   const candidate: ApplicationComposition = {
     ...infrastructure.composition,
     modules: [

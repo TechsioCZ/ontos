@@ -4,7 +4,6 @@ import { eq } from 'drizzle-orm';
 import {
   Cause,
   Clock,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -14,7 +13,9 @@ import {
   Match,
   Option,
   Schema,
+  Layer,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -433,9 +434,9 @@ interface IntentLoaderSchema {
 
 const makeIntentLoaderSchema = Effect.gen(function* intentLoaderSchema() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
-  const database = `${databasePrefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const database = `${databasePrefix}${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const sourceAdmin = yield* makeTestPgClient(connections.admin.connectionString);
   yield* sourceAdmin.unsafe(`create database "${database}"`);
   yield* Effect.addFinalizer(() =>
@@ -805,7 +806,9 @@ const seedDelegatedMoney = (admin: PgClient.PgClient) =>
        '${delegationEur}', ${envelope(delegationEur, 'EUR')}, 'active', now() - interval '1 day', now() + interval '30 days')`);
   });
 
-it.layer(NodeServices.layer)('the tenant intent loader', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('the tenant intent loader', (suite) => {
   suite.effect(
     'reads one complete tenant projection and answers every resolver port exactly, inside its scope',
     Effect.fnUntraced(function* tenantIntentLoaderIntegration() {
@@ -987,7 +990,7 @@ it.layer(NodeServices.layer)('the tenant intent loader', (suite) => {
   );
 });
 
-it.layer(NodeServices.layer)('the tenant intent loader over delegated money limits', (suite) => {
+it.layer(nativeServices)('the tenant intent loader over delegated money limits', (suite) => {
   suite.effect(
     'answers with the envelope ceiling and drops a cell the envelope never bounded in its own currency',
     Effect.fnUntraced(function* delegatedMoneyCeilings() {
@@ -1120,7 +1123,7 @@ const basisKinds = (bases: readonly AccessConfigureBasis[]): readonly string[] =
     ),
   );
 
-it.layer(NodeServices.layer)('the tenant intent loader read snapshot', (suite) => {
+it.layer(nativeServices)('the tenant intent loader read snapshot', (suite) => {
   suite.effect(
     'answers every SELECT of one read from one snapshot, and the next read from the committed change',
     Effect.fnUntraced(function* oneSnapshotAcrossSelects() {

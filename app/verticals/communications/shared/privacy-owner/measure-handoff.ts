@@ -8,7 +8,8 @@ import type {
 } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import { PrivacyMeasureSchema } from '@app/shared-contracts';
 import type { PrivacyMeasureEncoded, PrivacyOwnerExecutionOutcomeEncoded } from '@app/shared-contracts';
-import { Crypto, DateTime, Effect, Match, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Result, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import { CommunicationsOwnerLookupSchema } from '@app/communications-contracts/privacy-owner-coverage';
@@ -172,8 +173,8 @@ export const ownerScopeCanonicalText = ({ lookups, measure }: DispatchedMeasure)
   ]);
 
 export const sha256Hex = Effect.fn('Communications.PrivacyMeasure.sha256')(function* sha256Hex(text: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(yield* crypto.digest('SHA-256', new TextEncoder().encode(text)));
+  const crypto = yield* Digest.Digest;
+  return Hex.encode(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(text)));
 });
 
 const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHandoffSchema));

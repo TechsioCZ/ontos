@@ -48,7 +48,8 @@ import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-defi
 import type { PriceIdentityKey } from '@app/pricing-contracts/domain/price-definition';
 import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { NodeCrypto } from '@effect/platform-node';
-import { Clock, Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import {
@@ -92,7 +93,7 @@ const definePriceGuardRoutine = defineScopedRoutine({
 });
 
 const withNativeCrypto = <Value, Failure, Requirements>(
-  program: Effect.Effect<Value, Failure, Requirements | Crypto.Crypto>,
+  program: Effect.Effect<Value, Failure, Requirements | SecureRandom.SecureRandom>,
 ) =>
   Effect.scoped(
     Effect.gen(function* nativeCryptoBoundary() {
@@ -101,7 +102,7 @@ const withNativeCrypto = <Value, Failure, Requirements>(
     }),
   );
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const operationTime = '2026-10-19T09:00:00.000Z';
 const productId = '12790000-0000-4000-8000-000000000001';
 const variantId = '12790000-0000-4000-8000-000000000002';
@@ -598,7 +599,7 @@ it.live('rejects missing, malformed, backdated, and future native generation-fen
         const failure = yield* fixture
           .prepareOwner(
             Effect.fn('test.invalidNativePriceInterval')(function* invalidNativePriceInterval(transaction, scope) {
-              const rows = yield* transaction.invoke(verifyExactPriceCandidateSetGenerationRoutine, [
+              return yield* transaction.invoke(verifyExactPriceCandidateSetGenerationRoutine, [
                 {
                   authority: {
                     generation: 0,
@@ -614,7 +615,6 @@ it.live('rejects missing, malformed, backdated, and future native generation-fen
                   through: invalid.through,
                 },
               ]);
-              return rows;
             }),
           )
           .pipe(Effect.provideContext(fixtureContext), Effect.flip);

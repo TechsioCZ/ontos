@@ -1,6 +1,7 @@
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { AccessOperationIdSchema, CommandDigestSchema, TenantIdSchema } from '../../src/access/ids.ts';
 import { tenantContextScopeId } from '../../src/access/bootstrap/persistence.ts';
@@ -131,8 +132,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer), { excludeTestServ
             .pipe(Effect.provide(fixtureContext));
           const tenantId = TenantIdSchema.make(fixture.principal.tenantId);
           const scopeId = tenantContextScopeId(tenantId);
-          const crypto = yield* Crypto.Crypto;
-          const operationId = AccessOperationIdSchema.make(yield* crypto.randomUUIDv4());
+          const crypto = yield* SecureRandom.SecureRandom;
+          const operationId = AccessOperationIdSchema.make(yield* crypto.uuidV4());
           const journal = yield* openOperationJournal({
             commandDigest: CommandDigestSchema.make('a'.repeat(64)),
             operationId,

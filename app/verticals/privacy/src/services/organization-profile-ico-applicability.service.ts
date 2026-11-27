@@ -6,7 +6,8 @@ import { executeCustomerProfileOrganizationIcoFactsWithAuthorization } from '@ap
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { OrganizationIcoFactsResponseSchema } from '@app/party-registry/apis/organization-ico-facts';
-import { Config, Context, Crypto, Effect, Match, Option, Schema } from 'effect';
+import { Config, Context, Effect, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   OrganizationProfileIcoApplicabilityContextSchema,
   OrganizationProfileIcoApplicabilityRequestSchema,
@@ -177,7 +178,7 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationProfileIcoPublicOwnerFac
   request: OrganizationProfileIcoApplicabilityRequest,
   scope: OperationalScope,
   operation: 'READ' | 'RECORD',
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): Effect.fn.Return<
   OrganizationProfileIcoOwnerEvidence,
   ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError
@@ -281,7 +282,7 @@ export const resolveOrganizationProfileIcoBusinessFacts = Effect.fn(
   if (selected.length !== 1 || context === undefined) {
     return yield* authorityFailure();
   }
-  const proof = yield* publicOwnerFacts(context.request, scope, 'RECORD', yield* Crypto.Crypto).pipe(
+  const proof = yield* publicOwnerFacts(context.request, scope, 'RECORD', yield* SecureRandom.SecureRandom).pipe(
     Effect.mapError(authorityFailure),
   );
   if (!evidenceMatches(proof, context.request, scope, request.asOf)) {
@@ -426,7 +427,7 @@ type Transaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>
 export const organizationProfileIcoApplicabilityService = Effect.fn(
   'Privacy.organizationProfileIcoApplicabilityServices',
 )(function* make(transaction: Transaction, scope: OperationalScope) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const owner = yield* Effect.serviceOption(OrganizationProfileIcoFactsOwner);
   const contexts = yield* configuredContexts.pipe(
     Effect.mapError((cause) =>

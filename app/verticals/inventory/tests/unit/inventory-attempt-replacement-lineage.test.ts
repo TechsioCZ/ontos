@@ -1,5 +1,5 @@
 import { Effect, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   classifyLatePredecessorEffect,
@@ -386,9 +386,7 @@ describe('Inventory closed Attempt and replacement lineage', () => {
       const original = released();
       const { reservation } = established();
       const [requirement] = reservation.requirements;
-      if (requirement === undefined) {
-        yield* Effect.die('expected predecessor requirement');
-      }
+      assert(requirement !== undefined, 'expected predecessor requirement');
       const mutatedRequirementRelease = Schema.decodeUnknownSync(ReleasedReservationEffectSchema)({
         ...original,
         request: {

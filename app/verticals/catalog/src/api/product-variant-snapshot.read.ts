@@ -8,7 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import {
@@ -84,7 +84,7 @@ export interface ProductVariantSnapshotServices {
   readonly assess: (input: {
     readonly purpose: 'PRICING';
     readonly selection: ProductVariantSnapshotResponse['targets'][number]['target'];
-  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult, never, Crypto.Crypto>;
+  }) => Effect.Effect<CatalogSelectionEvidenceServiceResult, never, SecureRandom.SecureRandom>;
   readonly source: ProductVariantSnapshotSource;
 }
 
@@ -146,7 +146,11 @@ export const readProductVariantSnapshot = Effect.fn('ProductVariantSnapshotRead.
     input: ProductVariantSnapshotRequest,
     trustedTenantId: string,
     services: ProductVariantSnapshotServices,
-  ): Effect.fn.Return<ProductVariantSnapshotResponse, ReadHandlerNotFound | ReadHandlerUnavailable, Crypto.Crypto> {
+  ): Effect.fn.Return<
+    ProductVariantSnapshotResponse,
+    ReadHandlerNotFound | ReadHandlerUnavailable,
+    SecureRandom.SecureRandom
+  > {
     if (input.productRef.tenantId !== trustedTenantId) {
       return yield* notFound('The requested Product is not in the trusted Tenant');
     }

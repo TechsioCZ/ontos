@@ -3,7 +3,7 @@ import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runt
 import { cancelScopedSourceExecutionFence } from '@app/core-runtime/access/enforcement';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { Clock, Config, Context, DateTime, Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import type { HttpClient } from 'effect/http';
 import {
   SymmyJobRetentionPolicySchema,
@@ -35,7 +35,7 @@ export interface SymmyJobRetentionService {
   ) => Effect.Effect<
     SymmyJobRetentionExecution,
     SymmyJobRetentionError | SymmyJobLifecycleStoreError | SymmyJobPrivacyError,
-    SymmyJobPrivacy | Crypto.Crypto | HttpClient.HttpClient
+    SymmyJobPrivacy | SecureRandom.SecureRandom | HttpClient.HttpClient
   >;
 }
 export class SymmyJobRetention extends Context.Service<SymmyJobRetention, SymmyJobRetentionService>()(

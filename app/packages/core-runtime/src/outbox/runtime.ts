@@ -427,10 +427,10 @@ const runCycleWithRepository = Effect.fn('makeOutboxRuntime.runCycle')(function*
 >(repository: OutboxRepositoryPort, input: RunOutboxCycleInput<Registration>) {
   const validated = yield* validateCycleInput(input);
   const deployedSubscriptions = yield* Effect.try({
-    catch: (error) => {
-      void error;
-      return descriptorFailure('The deployed subscription snapshot is invalid');
-    },
+    catch: (error) =>
+      Schema.is(OutboxWorkerDescriptorError)(error)
+        ? error
+        : descriptorFailure('The deployed subscription snapshot is invalid'),
     try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
   });
   yield* validateDeployedRegistrationSnapshot(validated.registrations, deployedSubscriptions);

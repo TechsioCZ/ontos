@@ -1,6 +1,7 @@
 import type { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -128,10 +129,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       const partyRequest = yield* makeTestPgClient(identities.runtime.party_registry_request.connectionString);
       const issuer = yield* makeTestPgClient(identities.runtime.shell_gateway_issuer.connectionString);
       yield* installSearchTestAuthority();
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4();
-      const otherTenantId = yield* crypto.randomUUIDv4();
-      const principalId = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = yield* crypto.uuidV4();
+      const otherTenantId = yield* crypto.uuidV4();
+      const principalId = yield* crypto.uuidV4();
       yield* addTestGatewayScopeGrantCleanup(admin, [tenantId, otherTenantId]);
       const context = attestOutboxWorkerHandlerContext({
         attemptNumber: 1,
@@ -148,15 +149,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
         topic: 'party.registry.party-updated.v1',
         workerKey: 'party.registry.project-party-updated-to-search',
       });
-      const legalEntityId = yield* crypto.randomUUIDv4();
-      const otherLegalEntityId = yield* crypto.randomUUIDv4();
-      const partyId = yield* crypto.randomUUIDv4();
-      const removedPartyId = yield* crypto.randomUUIDv4();
-      const counterpartyId = yield* crypto.randomUUIDv4();
-      const otherCounterpartyId = yield* crypto.randomUUIDv4();
+      const legalEntityId = yield* crypto.uuidV4();
+      const otherLegalEntityId = yield* crypto.uuidV4();
+      const partyId = yield* crypto.uuidV4();
+      const removedPartyId = yield* crypto.uuidV4();
+      const counterpartyId = yield* crypto.uuidV4();
+      const otherCounterpartyId = yield* crypto.uuidV4();
       const aliasRef = {
         moduleId: 'party.registry',
-        resourceId: yield* crypto.randomUUIDv4(),
+        resourceId: yield* crypto.uuidV4(),
         resourceType: 'party.registry.party',
         tenantId,
       };
@@ -449,8 +450,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       const sameAssigneeOtherRecordId = 'bb000000-0000-4000-8000-000000000001';
       const otherAssignedId = 'cc000000-0000-4000-8000-000000000001';
       const hiddenNameId = 'dd000000-0000-4000-8000-000000000001';
-      const otherPrincipalId = yield* crypto.randomUUIDv4();
-      const teamId = yield* crypto.randomUUIDv4();
+      const otherPrincipalId = yield* crypto.uuidV4();
+      const teamId = yield* crypto.uuidV4();
       const assignedParty = (resourceId: string, title: string, assignee: string) => ({
         ...partyDocument(resourceId, '3', title),
         assignedPrincipalId: assignee,
@@ -523,7 +524,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('search persistence', 
       // An owner dimension the index cannot project denies every row instead of widening the filter,
       // and an agent holder never equals the assignee principal the index records.
       expect(yield* visibleIds(teamMemberOf(teamId))).toEqual([]);
-      expect(yield* visibleIds(agentAssignedTo(yield* crypto.randomUUIDv4()))).toEqual([]);
+      expect(yield* visibleIds(agentAssignedTo(yield* crypto.uuidV4()))).toEqual([]);
 
       // 10,001 further rows match the text and the scope but none of them is assigned to the caller.
       yield* queryEffect(

@@ -1,5 +1,5 @@
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
-import { SyntaxKind } from '@typescript/native/unstable/ast';
+import { SyntaxKind } from 'tsrs/ast';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
@@ -1310,14 +1310,11 @@ const patchSlots = (
       return raiseScaffoldFailure(`generated owner slot contains unsupported developer content: ${start}`);
     }
     const identity = slotEntryIdentity(line);
-    const allOwnerEntries = ownerSlots
-      .filter(([ownerStart, ownerEnd]) => current.includes(ownerStart) && current.includes(ownerEnd))
-      .flatMap(([ownerStart, ownerEnd]) =>
-        readGeneratedSlotEntries(current, ownerStart, ownerEnd).map((entry) => ({
-          entry,
-          start: ownerStart,
-        })),
-      );
+    const allOwnerEntries = ownerSlots.flatMap(([ownerStart, ownerEnd]) =>
+      current.includes(ownerStart) && current.includes(ownerEnd)
+        ? readGeneratedSlotEntries(current, ownerStart, ownerEnd).map((entry) => ({ entry, start: ownerStart }))
+        : [],
+    );
     if (allOwnerEntries.some(({ entry }) => slotEntryIdentity(entry) === undefined)) {
       return raiseScaffoldFailure(`generated owner slot contains unsupported developer content: ${start}`);
     }

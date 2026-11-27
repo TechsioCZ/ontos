@@ -44,7 +44,6 @@ import { Reactivity } from 'effect/reactivity';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices, NodeHttpServer } from '@effect/platform-node';
 import {
   Clock,
-  Crypto,
   DateTime,
   Duration,
   Effect,
@@ -64,6 +63,7 @@ import {
   Deferred,
   Fiber,
 } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -112,7 +112,14 @@ import {
   shellGatewayContextContract,
 } from '@app/shared-contracts';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { FetchHttpClient, HttpServerRequest, HttpServerResponse, HttpClient, HttpClientRequest } from 'effect/http';
+import {
+  FetchHttpClient,
+  HttpServerRequest,
+  HttpServerResponse,
+  HttpClient,
+  HttpClientRequest,
+  HttpMethod,
+} from 'effect/http';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import { manageProductPricesBulkActionApiLive } from '../../api/manage-product-prices-bulk-action-server.ts';
 import { manageProductCommercialFeesBulkActionApiLive } from '../../api/manage-product-commercial-fees-bulk-action-server.ts';
@@ -166,7 +173,7 @@ const databaseContainer = Effect.gen(function* fixtureDatabaseContainer() {
   const name = Option.getOrElse(configured, () => 'ontos-db').trim();
   return name.length === 0 ? 'ontos-db' : name;
 });
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const initialAt = '2026-09-01T09:00:00.000Z';
 const scheduledAt = '2026-10-01T09:00:00.000Z';
 const recoveryAt = '2026-10-19T09:00:00.000Z';
@@ -1073,7 +1080,7 @@ type BulkTestComposition = typeof ActiveApplicationCompositionSnapshotSchema.Typ
 // Real WebCrypto signing. The key exists only within the isolated acceptance scope.
 const makeBulkTestSigningAuthority = Effect.fn('BulkOriginalIntent.makeTestSigningAuthority')(
   function* makeBulkTestSigningAuthority(clock: Clock.Clock) {
-    const signingCrypto = yield* Crypto.Crypto;
+    const signingCrypto = yield* SecureRandom.SecureRandom;
     const keys = yield* Effect.tryPromise({
       catch: () => bulkInfrastructureUnavailable('signing-key'),
       try: () => globalThis.crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']),
@@ -1130,7 +1137,7 @@ const makeBulkTestSigningAuthority = Effect.fn('BulkOriginalIntent.makeTestSigni
         exp: now + GATEWAY_ASSERTION_TTL_SECONDS,
         iat: now,
         iss: issuer,
-        jti: yield* signingCrypto.randomUUIDv4(),
+        jti: yield* signingCrypto.uuidV4(),
         principal: input.actor,
         sub: input.actor.principalId,
         targetBuildMarker: input.buildMarker,
@@ -1246,6 +1253,9 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
           if (value !== undefined) {
             headers[name] = value;
           }
+        }
+        if (!HttpMethod.isHttpMethod(request.method)) {
+          return HttpServerResponse.empty({ status: 405 });
         }
         const target = HttpClientRequest.make(request.method)(
           new URL(`${url.pathname.slice(catalogPath.length)}${url.search}`, input.catalog.baseUrl),
@@ -1417,17 +1427,11 @@ const makeRegisteredBulkHttp = Effect.fn('BulkOriginalIntent.makeRegisteredHttp'
     requireExecutionResult(
       ManageProductPricesBulkResultSchema,
       Effect.gen(function* publicPriceBulk() {
-        const result = yield* executeManageProductPricesBulkWithAuthorization(
-          payload,
-          yield* issuePricing(),
-          yield* nextId,
-          {
-            baseUrl,
-            compositionRevision: input.composition.composition.revision,
-            idempotencyKey,
-          },
-        );
-        return result;
+        return yield* executeManageProductPricesBulkWithAuthorization(payload, yield* issuePricing(), yield* nextId, {
+          baseUrl,
+          compositionRevision: input.composition.composition.revision,
+          idempotencyKey,
+        });
       }),
     );
   const fee = (
@@ -1554,8 +1558,8 @@ const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
   return 0;
 };
 const fixtureDigest = Effect.fn('SourceOwnerFixture.digest')(function* digest(document: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+  const crypto = yield* Digest.Digest;
+  return Hex.encode(new Uint8Array(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))));
 });
 /** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
 const makePricingSourceContract = Effect.fn('BulkOriginalIntent.sourceContract')(function* sourceContract() {

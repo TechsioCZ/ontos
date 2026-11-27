@@ -1,6 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -240,9 +241,9 @@ const buildRuntime = (input: {
   readonly executor: CoreDatabaseExecutor;
   readonly ownerOverlayFacts: Ref.Ref<readonly (OwnerAccessFacts | undefined)[]>;
   readonly unavailable: boolean;
-}): Effect.Effect<ComposedRuntime, never, Crypto.Crypto | Scope.Scope> =>
+}): Effect.Effect<ComposedRuntime, never, SecureRandom.SecureRandom | Scope.Scope> =>
   Effect.gen(function* buildRuntimeEffect() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configuration = yield* loadSpiceDbConfig().pipe(Effect.orDie);
     const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
     const overlay: (typeof OwnerAuthorizationOverlay)['Service'] = {
@@ -361,8 +362,8 @@ const bootstrapScenarioTenant = (
  */
 const buildScenarioTemplate = Effect.gen(function* buildScenarioTemplateEffect() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
-  const database = `c20_scenario_template_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const database = `c20_scenario_template_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const admin = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
   yield* admin.unsafe(`create database "${database}"`);
   yield* Effect.addFinalizer(() => dropDatabase(admin, database));
@@ -379,7 +380,10 @@ const buildScenarioTemplate = Effect.gen(function* buildScenarioTemplateEffect()
 
 const scenarioSuiteLayer = Layer.mergeAll(
   NodeServices.layer,
-  Layer.effect(ScenarioTemplate, buildScenarioTemplate).pipe(Layer.provide(NodeServices.layer)),
+  SecureRandom.layerWebCrypto,
+  Layer.effect(ScenarioTemplate, buildScenarioTemplate).pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+  ),
 );
 
 /**
@@ -389,8 +393,8 @@ const scenarioSuiteLayer = Layer.mergeAll(
 const acquireScenarioDatabase = Effect.gen(function* acquireScenarioDatabaseEffect() {
   const { database: template } = yield* ScenarioTemplate;
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
-  const database = `c20_scenario_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const database = `c20_scenario_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const admin = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
   yield* cloneDatabase(admin, template, database);
   yield* Effect.addFinalizer(() => dropDatabase(admin, database));
@@ -425,8 +429,8 @@ const withAccessScenario = <Value, Failure>(run: (scenario: AccessScenario) => E
         ownerOverlayFacts: yield* Ref.make<readonly (OwnerAccessFacts | undefined)[]>([]),
         unavailable: true,
       });
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = TenantIdSchema.make(yield* crypto.uuidV4());
       return yield* run(
         scenarioOf({
           admin,
@@ -523,8 +527,6 @@ it.layer(scenarioSuiteLayer, { excludeTestServices: true })('access cutover scen
           modules: scenarioModules(),
           principalId: owner,
         });
-        const companyAScope = `00000000-0000-4000-8000-${'a'.repeat(12)}`;
-        void companyAScope;
         const scopeA = yield* legalEntityScopeIdOf(scenario.admin, scenario.tenantId, companyA);
         const tenantScope = yield* tenantScopeIdOf(scenario.admin, scenario.tenantId);
         expect(scopeA.length).toBeGreaterThan(0);

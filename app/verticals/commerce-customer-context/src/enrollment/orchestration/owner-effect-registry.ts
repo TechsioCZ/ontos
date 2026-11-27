@@ -7,7 +7,8 @@ import type {
   ExternalIdentityClientPort,
   ReadPrincipalBindingRequest,
 } from '@app/shared-contracts/server/external-identity-client';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { CommercePortalAuthAccountLookupService } from '../../../api/portal-auth/provider/account-lookup-service.ts';
 import type { CommercePortalAuthAccountLookup } from '../../../api/portal-auth/provider/account-lookup-service.ts';
@@ -293,7 +294,7 @@ const originatorFor = (
       });
 };
 
-const partyEntry = (crypto: Crypto.Crypto): RegistryEntry =>
+const partyEntry = (crypto: SecureRandom.SecureRandom['Service']): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
@@ -443,7 +444,7 @@ const bindProfileCommitResolution = (
 
 const ensureProfileEntry = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(function* ensureProfileEntryEffect(
     transition: JourneyTransitionSpec,
@@ -482,7 +483,7 @@ const ensureProfileEntry = (
 
 const bindProfileEntry = (
   run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.bindProfile')(function* bindProfileEntryEffect(
     transition: JourneyTransitionSpec,
@@ -1034,7 +1035,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const ownerTransactionRun = (yield* Effect.serviceOption(CommerceEnrollmentOwnerTransactionRunner)).pipe(
       Option.map((runner) => runner.run),
     );
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const core: CoreIdentitySeam = {
       client,
       clientOptions: (context) =>

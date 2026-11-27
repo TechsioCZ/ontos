@@ -19,7 +19,7 @@ const translationKey = Schema.String.check(
 const routePath = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^\/(?:[a-z0-9-]+|:[A-Za-z][A-Za-z0-9]*|\*)?(?:\/(?:[a-z0-9-]+|:[A-Za-z][A-Za-z0-9]*))*$/u),
+  Schema.isPattern(/^(?=\/)(?:\/\*?)?(?:\/(?:[a-z0-9-]+|:[A-Za-z][A-Za-z0-9]*))*$/u),
 );
 const localePattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 /** One path per locale; the Shell mounts every locale under its own prefix. */

@@ -20,10 +20,10 @@ export const freshPrivacyLedgerScope = Effect.fn('PrivacyTests.freshLedgerScope'
     { concurrency: 1 },
   );
   const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+    authBindingId,
     authContextRef: `fixture:privacy-ledger:${principalId}`,
     authenticationNamespaceId: 'core.staff',
     authMethod,
-    authBindingId,
     legalEntityId,
     principalId,
     tenantId,

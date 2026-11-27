@@ -129,11 +129,10 @@ it.effect('opens a fresh transaction runner call for every production Attempt ph
     const runner: CommerceEnrollmentOwnerTransactionRunnerService = {
       run: <Value>(
         _scope: CommerceEnrollmentOwnerScope,
-        operation: (
+        _operation: (
           transaction: EnrollmentAttemptScopedRoutineInvoker,
         ) => Effect.Effect<Value, CommerceEnrollmentAttemptError>,
       ): Effect.Effect<Value, CommerceEnrollmentAttemptError> => {
-        void operation;
         transactions += 1;
         return Effect.fail(unavailable());
       },

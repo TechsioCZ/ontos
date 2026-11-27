@@ -7,7 +7,8 @@ import { extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worke
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Clock, ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
+import { Clock, ConfigProvider, Context, DateTime, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Duration, Scope } from 'effect';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
@@ -84,7 +85,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );
 const native = <A, E>(
-  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope>,
+  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope>,
 ) => Effect.scoped(effect).pipe(Effect.provide(services));
 
 /** One request the loopback Shell/Communications peer received. */
@@ -121,7 +122,7 @@ const servePeers = Effect.fnUntraced(function* servePeers(
         yield* Ref.update(received, (all) => [
           ...all,
           {
-            authorization: request.headers.authorization,
+            authorization: request.headers['authorization'],
             body: Schema.decodeUnknownOption(JsonSchema)(text).pipe(Option.getOrUndefined),
             idempotencyKey: request.headers['idempotency-key'],
             path,
@@ -273,7 +274,7 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
     readScope: () => Effect.die('the workload path read a scope'),
     readTeamIds: () => Effect.die('the workload path read teams'),
   };
-  const ports: AccessEnforcementPorts = {
+  const ports = {
     candidates: { listCandidateIds: () => Effect.succeed([]) },
     check: { checkBulk: () => Effect.die('the workload path asked the grant engine') },
     decisionLog: { record: () => Effect.void },
@@ -285,7 +286,7 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
           new Set(query.principalId === relayPrincipalId && query.tenantId === tenantId ? [RELAY_WORKLOAD] : []),
         ),
     },
-  };
+  } satisfies AccessEnforcementPorts;
   const decisions = makeAccessDecisionService({
     authorityFor: ports.intent.authorityFor,
     check: ports.check,
@@ -294,7 +295,7 @@ const scenario = Effect.fn('PortalAuthCommunicationDeliveryTest.scenario')(funct
     principalKinds: ports.principalKinds,
     workloadBindings: ports.workloadBindings,
   });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const actions = makeActionRuntime(
     { executor: database },
     makeActionRepository(crypto),

@@ -5,7 +5,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema, Option } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import {
   RemoveVariantAttributeOverridePayloadSchema,
@@ -39,7 +39,7 @@ const domainEvents = { [SELECTION_SOURCE_CHANGED_EVENT_TYPE]: SelectionSourceCha
 type VariantAttributeServices = AttributeValuesPersistence & {
   readonly assessOpenSelectionImpact: (
     productRef: RemoveVariantAttributeOverridePayload['productRef'],
-  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, SecureRandom.SecureRandom>;
 };
 export const handleRemoveVariantAttributeOverride = Effect.fn('RemoveVariantAttributeOverrideAction.handle')(
   function* handleRemoveVariantAttributeOverride(

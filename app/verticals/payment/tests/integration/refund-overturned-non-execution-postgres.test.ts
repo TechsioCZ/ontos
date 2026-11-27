@@ -83,8 +83,8 @@ const newRefundCase = (options: RefundCaseOptions) =>
 const moveTo = (refundCase: RefundCase, operationId: string, to: PaymentOperationOutcome) =>
   transitionOperation(refundCase.native.database, refundCase.scope, {
     operationId,
-    to,
     paymentId: refundCase.payment.paymentId,
+    to,
   });
 
 const refundKeysOf = (refundCase: RefundCase) =>

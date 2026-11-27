@@ -109,11 +109,11 @@ const makeRuntimes = Effect.fn('AcceptanceEvidenceBoundary.makeRuntimes')(functi
 
 /** The exact Order Commitment Attempt binding a prepaid proof is issued and validated for. */
 const bindingFor = (payment: PaymentRecord, orderCommitmentTime: DateTime.Utc): PaymentAuthorizationBinding => ({
-  orderCommitmentTime,
   amount: payment.amount,
   executionBinding: payment.executionBinding,
   method: payment.method,
   orderCommitmentAttemptId: `attempt-${randomUUID()}`,
+  orderCommitmentTime,
   paymentId: payment.paymentId,
   paymentTermRef: payment.paymentTermRef,
   purchaseCorrelationId: payment.purchaseCorrelationId,
@@ -135,7 +135,6 @@ const boundaryScenario = Effect.fn('AcceptanceEvidenceBoundary.scenario')(functi
   const principal = principalOf(scope);
 
   const configureGatewayAuthority = r1.actions.runAction({
-    principal,
     payload: {
       factFamily: 'GATEWAY_OUTCOME',
       method: 'ONLINE_GATEWAY',
@@ -145,14 +144,15 @@ const boundaryScenario = Effect.fn('AcceptanceEvidenceBoundary.scenario')(functi
       status: 'ACTIVE',
       submitterPrincipalIds: [scope.principalId],
     },
+    principal,
     registration: configurePaymentSourceAuthorityAction,
     transport: { correlationId: 'payment-boundary-configure', idempotencyKey: randomUUID() },
   });
 
   const accept = (statement: Statement, runtimes = r1) =>
     runtimes.actions.runAction({
-      principal,
       payload: statement,
+      principal,
       registration: acceptPaymentObservationAction,
       transport: { correlationId: 'payment-boundary-accept', idempotencyKey: randomUUID() },
     });

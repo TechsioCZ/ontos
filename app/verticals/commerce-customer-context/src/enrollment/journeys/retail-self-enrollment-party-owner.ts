@@ -6,7 +6,7 @@ import {
 } from '@app/party-registry/api/client';
 import type { createParty, executePartyMatch, recoverPartyCreate } from '@app/party-registry/api/client';
 import { Effect, Match, Option, Redacted, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
 import {
@@ -73,7 +73,7 @@ export interface RetailPartyCandidateOwnerInput {
   /** The exact Party candidate submitted for this Attempt.  It never enters a Commerce digest. */
   readonly candidate: PartyCandidate;
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly legalEntityId: string;
   /** The Action invocation the Attempt was created under: the Party Registry acts for its subject. */
   readonly originator: RetailEnrollmentOriginator;
@@ -182,11 +182,13 @@ const soleSameTenantParty = (
 const requireSameTenantCreateResult = (
   result: PartyCreateResponse,
   tenantId: string,
-): Effect.Effect<void, CommerceEnrollmentOwnerEffectError> =>
-  result.decisionRef.tenantId === tenantId &&
-  (result.outcome === 'AMBIGUOUS' ? result.caseRef.tenantId === tenantId : result.partyRef.tenantId === tenantId)
-    ? Effect.void
-    : Effect.fail(unavailable('The Party Registry returned a decision outside the original Attempt Tenant'));
+): Effect.Effect<void, CommerceEnrollmentOwnerEffectError> => {
+  const resultTenantId = result.outcome === 'AMBIGUOUS' ? result.caseRef.tenantId : result.partyRef.tenantId;
+  if (result.decisionRef.tenantId === tenantId && resultTenantId === tenantId) {
+    return Effect.void;
+  }
+  return Effect.fail(unavailable('The Party Registry returned a decision outside the original Attempt Tenant'));
+};
 
 const createVerdict = (created: PartyCreateResponse): PartyVerdict =>
   created.outcome === 'AMBIGUOUS'

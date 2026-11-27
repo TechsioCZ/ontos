@@ -76,11 +76,11 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation
             ]);
             yield* database.insert(legalEntities).values({
               legalEntityId,
-              tenantId,
               legalName: 'Internal company',
               registrationCountry: 'CZ',
               registrationNumber: 'INTERNAL_SYNC_FAULT',
               status: 'active',
+              tenantId,
             });
             // Native Core fact fixtures test the helper. The application conformance test supplies actual admitted Sync facts.
             const seedAdmission = Effect.fn('OwnedSyncFault.seedCoreFacts')(function* seedCoreFacts(
@@ -112,11 +112,11 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned Sync cancellation
             });
             const input: OwnedSyncAdmissionFenceFaultInput = {
               admissionId,
-              ownedDatabase,
-              tenantId,
               expectedLegalEntityId: null,
               expectedOriginalIntegrationPrincipalId: integrationId,
+              ownedDatabase,
               purpose: 'implementation-1096-registered-workload-gateway',
+              tenantId,
             };
             const running = yield* seedAdmission({
               actionKey,

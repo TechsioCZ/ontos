@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
@@ -232,12 +233,12 @@ interface Stage {
 
 const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* stageScenario() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const [connections, spiceDb] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
       concurrency: 2,
     }).pipe(Effect.orDie);
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `stage_bootstrap_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const database = `stage_bootstrap_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
@@ -308,7 +309,7 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
           Effect.mapError(asStageFailure),
           Effect.provide(context),
         ),
-      tenantId: yield* crypto.randomUUIDv4(),
+      tenantId: yield* crypto.uuidV4(),
     });
   }).pipe(Effect.scoped);
 
@@ -354,64 +355,71 @@ const mediaStates = (stage: Stage, tenantId: string) =>
     )
     .pipe(Effect.orDie);
 
-it.layer(NodeServices.layer)('core media on tenants bootstrapped before it', (suite) => {
-  suite.effect(
-    'a first bootstrap that already carries Core Media derives the installation and lets the owner upload and rename',
-    () =>
-      withStage((stage) =>
-        Effect.gen(function* freshEnvironment() {
-          const { tenantId } = stage;
-          yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
-            .pipe(failClosed);
-          // The row is derived from the catalog, never named by the tenant file (its own module list is party.registry).
-          expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
-          for (const input of decisionInputs) {
-            const decision = yield* stage.decide({ ...input, principalId: owner, tenantId });
-            expect(decision.outcome).toBe('ALLOWED');
-          }
-          // The negative control: a named account without a role holds nothing, Core Media included.
-          const denied = yield* stage.decide({ carrier: uploadCarrier, principalId: unassigned, tenantId });
-          expect(denied.outcome).toBe('DENIED');
-        }),
-      ),
-  );
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  'core media on tenants bootstrapped before it',
+  (suite) => {
+    suite.effect(
+      'a first bootstrap that already carries Core Media derives the installation and lets the owner upload and rename',
+      () =>
+        withStage((stage) =>
+          Effect.gen(function* freshEnvironment() {
+            const { tenantId } = stage;
+            yield* stage
+              .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
+              .pipe(failClosed);
+            // The row is derived from the catalog, never named by the tenant file (its own module list is party.registry).
+            expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
+            for (const input of decisionInputs) {
+              const decision = yield* stage.decide({ ...input, principalId: owner, tenantId });
+              expect(decision.outcome).toBe('ALLOWED');
+            }
+            // The negative control: a named account without a role holds nothing, Core Media included.
+            const denied = yield* stage.decide({ carrier: uploadCarrier, principalId: unassigned, tenantId });
+            expect(denied.outcome).toBe('DENIED');
+          }),
+        ),
+    );
 
-  suite.effect(
-    'a tenant bootstrapped before Core Media gets the derived installation row on a re-run, but never a capability of a release it already pinned',
-    () =>
-      withStage((stage) =>
-        Effect.gen(function* existingTenant() {
-          const { tenantId } = stage;
-          // The tenant existed before D20: its release has no Core Media entry and no installation row.
-          yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, modules)
-            .pipe(failClosed);
-          expect(yield* mediaStates(stage, tenantId)).toEqual([]);
-          expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
+    suite.effect(
+      'a tenant bootstrapped before Core Media gets the derived installation row on a re-run, but never a capability of a release it already pinned',
+      () =>
+        withStage((stage) =>
+          Effect.gen(function* existingTenant() {
+            const { tenantId } = stage;
+            // The tenant existed before D20: its release has no Core Media entry and no installation row.
+            yield* stage
+              .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, modules)
+              .pipe(failClosed);
+            expect(yield* mediaStates(stage, tenantId)).toEqual([]);
+            expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe(
+              'ALLOWED',
+            );
 
-          // The operator re-runs the stage bootstrap with the catalog of this build, which now carries Core Media.
-          yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
-            .pipe(failClosed);
-          // The derived installation is written (and a second run adds nothing: one row, not two).
-          expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
-          yield* stage
-            .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
-            .pipe(failClosed);
-          expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
-          // What the earlier release already granted is untouched.
-          expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe('ALLOWED');
+            // The operator re-runs the stage bootstrap with the catalog of this build, which now carries Core Media.
+            yield* stage
+              .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
+              .pipe(failClosed);
+            // The derived installation is written (and a second run adds nothing: one row, not two).
+            expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
+            yield* stage
+              .reconcile({ retiredTenants: [], tenants: [tenantBootstrap(tenantId)] }, releaseWithMedia)
+              .pipe(failClosed);
+            expect(yield* mediaStates(stage, tenantId)).toEqual([{ state: 'active' }]);
+            // What the earlier release already granted is untouched.
+            expect((yield* stage.decide({ carrier: readCarrier, principalId: owner, tenantId })).outcome).toBe(
+              'ALLOWED',
+            );
 
-          // But the bootstrap never rewrites a published release (it is global and pinned by every role revision):
-          // the Core Media capabilities are not in it, so even the full-access owner holds none of them. They reach
-          // an existing environment only through a later release and its adoption (Novinky), never from this re-run.
-          for (const input of decisionInputs) {
-            const decision = yield* stage.decide({ ...input, principalId: owner, tenantId });
-            expect(decision.outcome).toBe('DENIED');
-            expect(decision.reasons.map(({ code }) => code)).toContain('deny.insufficient_grant');
-          }
-        }),
-      ),
-  );
-});
+            // But the bootstrap never rewrites a published release (it is global and pinned by every role revision):
+            // the Core Media capabilities are not in it, so even the full-access owner holds none of them. They reach
+            // an existing environment only through a later release and its adoption (Novinky), never from this re-run.
+            for (const input of decisionInputs) {
+              const decision = yield* stage.decide({ ...input, principalId: owner, tenantId });
+              expect(decision.outcome).toBe('DENIED');
+              expect(decision.reasons.map(({ code }) => code)).toContain('deny.insufficient_grant');
+            }
+          }),
+        ),
+    );
+  },
+);

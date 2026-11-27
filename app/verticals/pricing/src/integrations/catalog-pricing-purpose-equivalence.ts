@@ -19,7 +19,8 @@ import type {
 } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import { CatalogPricingPurposeEquivalenceResolutionSchema } from '@app/pricing-contracts/domain/quantity-tier-aggregation';
 import { PricingCommercialScopeSchema } from '@app/pricing-contracts/domain/pricing-commercial-scope';
-import { Context, Crypto, Effect, Redacted, Schema } from 'effect';
+import { Context, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
@@ -320,8 +321,8 @@ export const catalogPricingPurposeEquivalencePortFromEnvironment = Effect.fn(
     readonly tenantId: string;
   },
   execute: Executor = executeAuthorized,
-): Effect.fn.Return<CatalogPricingPurposeEquivalencePort, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<CatalogPricingPurposeEquivalencePort, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeCatalogPricingPurposeEquivalencePort({
     acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
     context,

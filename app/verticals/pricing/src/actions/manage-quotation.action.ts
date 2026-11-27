@@ -19,7 +19,8 @@ import {
 import type { PricingQuotationBinding, PricingQuotationIssuanceRequest } from '@app/pricing-contracts/domain/quotation';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Context, Crypto, DateTime, Duration, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Duration, Effect, Layer, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -101,7 +102,7 @@ export interface ManageQuotationFreshCurrentAuthorityService {
   ) => Effect.Effect<
     ManageQuotationFreshCurrentResolver,
     OperationContextUnavailable,
-    Crypto.Crypto | PricingExternalOwnerEvidenceValidation
+    SecureRandom.SecureRandom | PricingExternalOwnerEvidenceValidation
   >;
 }
 
@@ -644,7 +645,7 @@ export const manageQuotationAction = defineAction(
     }
     return Effect.all(
       {
-        crypto: Crypto.Crypto,
+        crypto: SecureRandom.SecureRandom,
         currentAuthority: Effect.serviceOption(ManageQuotationFreshCurrentAuthority).pipe(
           Effect.flatMap(
             Option.match({

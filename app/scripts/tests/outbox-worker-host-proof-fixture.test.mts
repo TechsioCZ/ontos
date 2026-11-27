@@ -9,6 +9,7 @@ import { expect, it } from 'effect-rstest';
 import {
   assertHostProofAuthorityEmpty,
   OutboxWorkerHostProofFixtureError,
+  ownerSharedClaims,
   requireHostProofDatabase,
 } from '../outbox-worker-host-proof-fixture.mts';
 
@@ -26,6 +27,27 @@ const nodeModuleTypeWarnings = new RegExp(
 );
 const hasOnlyNativeModuleTypeWarnings = (stderr: string): boolean =>
   stderr === '' || nodeModuleTypeWarnings.test(stderr);
+
+it.effect('uses each real owner federation policy router requirement rather than its installed package version', () =>
+  Effect.gen(function* declaredRouterRequirements() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const ownerPackageSchema = Schema.fromJsonString(
+      Schema.Struct({ dependencies: Schema.Struct({ '@tanstack/react-router': Schema.NonEmptyString }) }),
+    );
+    for (const directory of ['apps/shell-super-app', 'verticals/party-registry']) {
+      const ownerDirectory = path.join(workspaceRoot, directory);
+      const { dependencies } = yield* Schema.decodeEffect(ownerPackageSchema)(
+        yield* fileSystem.readFileString(path.join(ownerDirectory, 'package.json')),
+      );
+      const claims = yield* ownerSharedClaims(ownerDirectory, directory === 'apps/shell-super-app' ? 'host' : 'remote');
+      expect(claims.find(({ name }) => name === '@tanstack/react-router')).toEqual({
+        name: '@tanstack/react-router',
+        requiredVersion: dependencies['@tanstack/react-router'],
+        singleton: true,
+      });
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 const runSignalControl = (control: 'signal' | 'signal-finalizer-failure') =>
   Effect.gen(function* realNativeSignal() {

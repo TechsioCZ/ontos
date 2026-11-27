@@ -3,7 +3,8 @@
 // @ontos-action-slug bind-pre-verification-subject
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   BindPreVerificationSubjectPayloadSchema,
@@ -79,10 +80,10 @@ export const bindPreVerificationSubjectAction = defineAction(
   },
   handleBindPreVerificationSubject,
   Effect.fn('BindPreVerificationSubjectAction.services')(function* services(transaction, scope) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const policies = yield* preVerificationBindingPolicies;
     return {
-      newBindingRef: crypto.randomUUIDv4().pipe(Effect.orDie),
+      newBindingRef: crypto.uuidV4(),
       policies,
       repository: preVerificationBindingRepositoryFor(transaction, scope),
     };

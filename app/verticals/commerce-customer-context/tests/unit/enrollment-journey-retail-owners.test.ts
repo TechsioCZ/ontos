@@ -1,5 +1,6 @@
 import { PartyCommandNotFoundProblemSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { RetailPortalBindingResult } from '../../shared/actions/bind-retail-portal-profile.ts';
@@ -125,10 +126,7 @@ const candidate: RetailPartyCandidateOwnerInput['candidate'] = {
   validFrom: effectiveAt,
 };
 
-const ownerCrypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const ownerCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 const originator = {
   actionInvocationId,
   compositionRevision: 'c'.repeat(64),

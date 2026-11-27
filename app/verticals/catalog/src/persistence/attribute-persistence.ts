@@ -1,7 +1,8 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -190,7 +191,7 @@ export interface ChangeControlledAttributeValueInput extends ChangeMetadata {
 }
 
 export interface RenameControlledAttributeValueInput extends ChangeControlledAttributeValueInput {
-  readonly localizedNames?: ColorDetails['localizedNames'] | undefined;
+  readonly localizedNames?: ColorDetails['localizedNames'];
   readonly name: string;
   readonly sameMeaning: true;
 }
@@ -742,8 +743,8 @@ export const attributePersistenceForScope = (
     ) {
       return yield* conflict('INVALID_INPUT', 'Controlled definition specialization is missing or inapplicable');
     }
-    const crypto = yield* Crypto.Crypto;
-    const attributeDefinitionId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const attributeDefinitionId = yield* crypto.uuidV4();
     const snapshot = {
       allowsNone: input.allowsNone ? 1 : 0,
       allowsNotApplicable: input.allowsNotApplicable ? 1 : 0,
@@ -1095,8 +1096,8 @@ export const attributePersistenceForScope = (
     if (definition.controlledValueKind !== input.specialization) {
       return yield* conflict('INVALID_STATE', 'Controlled value specialization differs from its definition');
     }
-    const crypto = yield* Crypto.Crypto;
-    const controlledAttributeValueId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const controlledAttributeValueId = yield* crypto.uuidV4();
     const snapshot = {
       attributeDefinitionId: input.attributeDefinitionRef.resourceId,
       colorDetails: input.color ?? null,

@@ -19,7 +19,8 @@ import {
 } from '@app/privacy/api/admit-source-processing-subject-action';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Array as EffectArray, Context, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Context, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { SymmyPinnedEffect, SymmyPinnedJobPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyPartyCommerceIntentSchema } from '../../shared/domain/symmy-party-commerce-intents.ts';
@@ -339,9 +340,9 @@ const admitSubject = Effect.fn('SymmyCustomerIntakePrivacy.admitSubject')(functi
   scope: OperationalScope,
   payload: AdmitSourceProcessingSubjectPayload,
   idempotencyKey: string,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom,
 ) {
-  const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+  const requestCorrelation = yield* crypto.uuidV4().pipe(Effect.mapError(unavailable));
   const gateway = yield* acquireDelegatedGatewayContext(
     {
       audience: 'privacy',
@@ -543,16 +544,16 @@ export class SymmyPreparedCustomerIntake extends Context.Service<
 
 const customerIntakePrivacyCalls = Effect.fn('SymmyCustomerIntakePrivacy.calls')(function* calls(
   scope: OperationalScope,
-): Effect.fn.Return<SymmyCustomerIntakePrivacyCalls, SymmyJobStoreError, Crypto.Crypto> {
+): Effect.fn.Return<SymmyCustomerIntakePrivacyCalls, SymmyJobStoreError, SecureRandom.SecureRandom> {
   if (scope.authMethod !== 'api_key' || scope.legalEntityId === undefined) {
     return yield* unavailable();
   }
   yield* requireModuleOperation(customerIntakePrivacyRequirement).pipe(Effect.mapError(unavailable));
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return {
     admit: (payload, idempotencyKey) => admitSubject(scope, payload, idempotencyKey, crypto),
     check: Effect.fn('SymmyCustomerIntakePrivacy.check')(function* check(request) {
-      const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+      const requestCorrelation = yield* crypto.uuidV4().pipe(Effect.mapError(unavailable));
       const gateway = yield* acquireDelegatedGatewayContext(
         {
           audience: 'privacy',

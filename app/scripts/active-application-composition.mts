@@ -395,10 +395,9 @@ export const deriveApplicationComposition = Effect.fn('ActiveApplicationComposit
     const validated = yield* validateApplicationCompositionCandidate(candidate, evidence).pipe(
       Effect.mapError(invalidObservation('pinned artifacts do not form a valid Application Composition')),
     );
-    const composition = yield* Schema.decodeEffect(CompositionJsonSchema)(
-      canonicalizeApplicationComposition(validated),
-    ).pipe(Effect.mapError(invalidObservation('canonical Application Composition does not round-trip')));
-    return composition;
+    return yield* Schema.decodeEffect(CompositionJsonSchema)(canonicalizeApplicationComposition(validated)).pipe(
+      Effect.mapError(invalidObservation('canonical Application Composition does not round-trip')),
+    );
   },
 );
 

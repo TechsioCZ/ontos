@@ -1,7 +1,8 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Cause, Crypto, DateTime, Effect, Exit, Option, Predicate, Schema, Stream } from 'effect';
+import { Cause, DateTime, Effect, Exit, Option, Predicate, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
@@ -64,7 +65,7 @@ import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-g
  * and workload-binding tables, so a binding row is the only thing that admits it.
  */
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const digestOf = (bytes: Uint8Array) => Hex.encode(sha256(bytes));
 const bytesOf = (text: string) => new TextEncoder().encode(text);
 const INGEST_WORKLOAD = WorkloadKeySchema.make('core.media.ingest');
@@ -228,7 +229,7 @@ const transportOf = (idempotencyKey: string) => ({
 const openHarness = Effect.fn('CoreMediaAcceptance.harness')(function* openHarness(
   storageOptions: InMemoryObjectStorageOptions = {},
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const connections = yield* loadDatabaseConnectionPair();
   const admin = yield* makeTestPgClient(connections.admin.connectionString);
   const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });

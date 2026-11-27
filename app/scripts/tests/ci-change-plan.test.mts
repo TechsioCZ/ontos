@@ -742,7 +742,7 @@ it.live('uses the exact Git comparison for documentation and refuses mixed, unav
         git('add', '--all');
         git('commit', '--quiet', '-m', file);
         const plan = run('merge_group', git('rev-parse', 'HEAD~1'));
-        return /^lintSweep=(?<sweep>\w+)$/mu.exec(plan)?.groups?.sweep;
+        return /^lintSweep=(?<sweep>\w+)$/mu.exec(plan)?.groups?.['sweep'];
       };
       for (const configuration of [
         'lefthook.yml',
@@ -891,7 +891,7 @@ it.live('compares a push without a merge queue with its newest green push, and r
       return {
         calls: readFileSync(calls, 'utf-8').split('\n').filter(Boolean),
         log,
-        mode: /^mode=(?<mode>\w+)$/mu.exec(readFileSync(output, 'utf-8'))?.groups?.mode,
+        mode: /^mode=(?<mode>\w+)$/mu.exec(readFileSync(output, 'utf-8'))?.groups?.['mode'],
         paths: readFileSync(path.join(directory, 'paths'), 'utf-8').split('\0').filter(Boolean),
       };
     };
@@ -1072,7 +1072,7 @@ it('plans with no installed dependencies using the same tested impact algorithm'
         );
         expect(native).toEqual(installed);
         if (bootstrapMode === 'full') {
-          expect(native.mode).toBe('full');
+          expect(native['mode']).toBe('full');
         }
       }
     }

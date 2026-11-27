@@ -1,6 +1,6 @@
 import { ActionCoreErrorSchema } from '@app/core-runtime';
 import { hasOwnerBoundGovernedRuntime } from '../../generated-governed-http-boundary.mts';
-import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
+import { LanguageVariant, SyntaxKind, createScanner } from 'tsrs/ast';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
 import {
@@ -302,17 +302,17 @@ const collectPayloadDiscriminator = (ast: SchemaAstLike): PayloadDiscriminator |
     return undefined;
   }
   const candidates = [...firstBranch.entries()]
-    .filter(
-      ([key, values]) =>
-        /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(key) &&
-        values.size === 1 &&
-        branchValues.every((branch) => branch.get(key)?.size === 1),
-    )
-    .map(([key]) => ({
-      key,
-      values: branchValues.flatMap((branch) => [...(branch.get(key) ?? [])]),
-    }))
-    .filter(({ values }) => new Set(values).size === branchValues.length)
+    .flatMap(([key, firstValues]) => {
+      if (
+        !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(key) ||
+        firstValues.size !== 1 ||
+        !branchValues.every((branch) => branch.get(key)?.size === 1)
+      ) {
+        return [];
+      }
+      const values = branchValues.flatMap((branch) => [...(branch.get(key) ?? [])]);
+      return new Set(values).size === branchValues.length ? [{ key, values }] : [];
+    })
     .toSorted((left, right) => {
       const leftRank = payloadDiscriminatorRank.get(left.key) ?? payloadDiscriminatorPriority.length;
       const rightRank = payloadDiscriminatorRank.get(right.key) ?? payloadDiscriminatorPriority.length;
@@ -389,7 +389,7 @@ const literalList = (values: readonly string[]): string => {
 };
 
 const domainCodes = (errors: readonly DomainErrorIdentity[], kind: DomainProblemKind): readonly string[] => [
-  ...new Set(errors.filter((error) => error.kind === kind).map((error) => error.code)),
+  ...new Set(errors.flatMap((identity) => (identity.kind === kind ? [identity.code] : []))),
 ];
 
 export const renderActionHttpContract = (
@@ -1020,7 +1020,7 @@ const canonicalClientMembers = (tokens: readonly ClientExportToken[], type: stri
   }
   const inner = tokens.slice(1, -1);
   const members = clientTokenKind(inner, -1) === SyntaxKind.CommaToken ? inner.slice(0, -1) : inner;
-  const names = members.filter((_token, index) => index % 2 === 0).map((token) => token.text);
+  const names = members.flatMap((token, index) => (index % 2 === 0 ? [token.text] : []));
   const expected = typeOnly ? [`${type}ActionClientOptions`] : [`execute${type}`, `execute${type}WithAuthorization`];
   if (
     names.length !== expected.length ||

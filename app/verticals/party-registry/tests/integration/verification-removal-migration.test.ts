@@ -6,7 +6,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
-import { Crypto, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import { makePartyDatabase } from '../../src/db/client.ts';
@@ -74,15 +75,15 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
           migrationsFolder: directory,
         };
         yield* migrate(admin, options);
-        const crypto = yield* Crypto.Crypto;
-        const tenantId = yield* crypto.randomUUIDv4();
-        const partyId = yield* crypto.randomUUIDv4();
-        const identifierId = yield* crypto.randomUUIDv4();
-        const contactPointId = yield* crypto.randomUUIDv4();
-        const obsoleteCaseId = yield* crypto.randomUUIDv4();
-        const unaffectedCaseId = yield* crypto.randomUUIDv4();
-        const invocationId = yield* crypto.randomUUIDv4();
-        const principalId = yield* crypto.randomUUIDv4();
+        const crypto = yield* SecureRandom.SecureRandom;
+        const tenantId = yield* crypto.uuidV4();
+        const partyId = yield* crypto.uuidV4();
+        const identifierId = yield* crypto.uuidV4();
+        const contactPointId = yield* crypto.uuidV4();
+        const obsoleteCaseId = yield* crypto.uuidV4();
+        const unaffectedCaseId = yield* crypto.uuidV4();
+        const invocationId = yield* crypto.uuidV4();
+        const principalId = yield* crypto.uuidV4();
         const validFrom = DateTime.toDateUtc(DateTime.makeUnsafe('2020-01-01T00:00:00.000Z'));
         yield* admin.execute(
           sql`insert into party.parties (party_id,tenant_id,current_type)
@@ -153,8 +154,8 @@ it.layer(nativeServices, { excludeTestServices: true })('verification removal up
             'objects',
           );
         expect(yield* readAcceptance()).toEqual([{ accepted: 3 }]);
-        const legacyCaseId = yield* crypto.randomUUIDv4();
-        const legacyNameId = yield* crypto.randomUUIDv4();
+        const legacyCaseId = yield* crypto.uuidV4();
+        const legacyNameId = yield* crypto.uuidV4();
         const encodeSnapshot = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
         const provenance = { source: 'disposable-upgrade-fixture', method: 'DOCUMENT' };
         const legacySnapshot = yield* encodeSnapshot({ names: [], provenance, validFrom: validFrom.toISOString() });

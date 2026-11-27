@@ -1,6 +1,6 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { CatalogSelectionCurrentFacts } from '../../shared/domain/catalog-selection-assessment.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
@@ -42,7 +42,7 @@ export interface CatalogSelectionEvidenceAssemblyInput {
   readonly purpose: CatalogSelectionPurpose;
   readonly requestedAt?: CatalogSelectionEvidence['assessedAt'] | undefined;
   readonly selection: CatalogSelection;
-  readonly validUntil?: CatalogSelectionEvidence['validUntil'] | undefined;
+  readonly validUntil?: CatalogSelectionEvidence['validUntil'];
 }
 
 /**
@@ -80,7 +80,7 @@ export interface CatalogSelectionCurrentBasisReader {
   readonly read: (input: {
     readonly purpose: string;
     readonly selection: CatalogSelection;
-  }) => Effect.Effect<CatalogSelectionCurrentFacts, CatalogPersistenceUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<CatalogSelectionCurrentFacts, CatalogPersistenceUnavailable, SecureRandom.SecureRandom>;
 }
 
 /**
@@ -170,7 +170,7 @@ export const catalogSelectionEvidenceFromCurrentReader = (
 ) => ({
   assess: Effect.fn('CatalogSelectionEvidence.assess')(function* assess(
     input: CatalogSelectionEvidenceRequest,
-  ): Effect.fn.Return<CatalogSelectionEvidenceServiceResult, never, Crypto.Crypto> {
+  ): Effect.fn.Return<CatalogSelectionEvidenceServiceResult, never, SecureRandom.SecureRandom> {
     const { at, purpose, selection, validUntil } = input;
     return yield* Effect.gen(function* prepareAndRevalidate() {
       const request = { purpose, selection };

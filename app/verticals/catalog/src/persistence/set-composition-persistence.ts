@@ -1,7 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { SetCompositionRevision } from '../../shared/domain/set-composition.ts';
 import { SetCompositionRevisionSchema, classifySetCompositionChange } from '../../shared/domain/set-composition.ts';
@@ -52,7 +52,7 @@ export interface SetCompositionBasis {
   readonly verify: (input: {
     readonly at: Date;
     readonly revision: SetCompositionRevision;
-  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable, SecureRandom.SecureRandom>;
 }
 
 /**
@@ -66,7 +66,7 @@ export interface SetCompositionSelectionImpact {
     readonly compositionId: string;
     readonly previousRevision: number;
     readonly tenantId: string;
-  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<boolean, SetCompositionPersistenceUnavailable, SecureRandom.SecureRandom>;
 }
 
 export interface PublishSetCompositionInput {
@@ -97,7 +97,7 @@ interface StoredSetCompositionRevision {
 export interface SetCompositionPersistence {
   readonly publish: (
     input: PublishSetCompositionInput,
-  ) => Effect.Effect<PublishSetCompositionOutcome, SetCompositionPersistenceUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<PublishSetCompositionOutcome, SetCompositionPersistenceUnavailable, SecureRandom.SecureRandom>;
   readonly readCurrent: (input: {
     readonly at: Date;
     readonly compositionId: string;
@@ -152,7 +152,7 @@ const correctionImpactOutcome = Effect.fn('SetCompositionPersistence.correctionI
   ): Effect.fn.Return<
     Option.Option<PublishSetCompositionOutcome>,
     SetCompositionPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   > {
     if (classification !== 'EVIDENCE_CORRECTION') {
       return Option.none();

@@ -22,7 +22,8 @@ import { currentConsentRead } from '../../src/api/current-consent.read.ts';
 import { processingPurposesRead } from '../../src/api/processing-purposes.read.ts';
 import { consentDecisions, consentScopeBindings, purposeVersions } from '../../src/database/schema.ts';
 import { NodeCrypto, NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -42,7 +43,7 @@ import { processingPurposeRepositoryForScope } from '../../src/persistence/proce
 const atGrant = '2026-01-02T00:00:00.000Z';
 const atEnd = '2026-02-01T00:00:00.000Z';
 const atWithdrawal = '2026-03-01T00:00:00.000Z';
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),

@@ -3,7 +3,8 @@ import { CommunicationRequestSchema } from '@app/communications-contracts/commun
 import { executeSubmitCommunicationRequestWithAuthorization } from '@app/communications-contracts/submit-communication-request/client';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Config, Context, Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Config, Context, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { withSafeCause } from '../../api/portal-auth/provider/safe-failure.ts';
 import type { PortalAuthSubmission } from '../portal-auth/communications/communication-request-submitter.ts';
@@ -86,7 +87,10 @@ const isInvalidRequestProblem = Schema.is(InvalidRequestProblemSchema);
 const decodeCodedRefusal = Schema.decodeUnknownOption(CodedRefusalProblemSchema);
 const refused = (code: PortalAuthCommunicationRefusalCode) => new PortalAuthCommunicationRequestRefused({ code });
 
-const makeGateway = (baseUrl: URL, crypto: Crypto.Crypto): PortalAuthCommunicationSourceGatewayService => ({
+const makeGateway = (
+  baseUrl: URL,
+  crypto: SecureRandom.SecureRandom['Service'],
+): PortalAuthCommunicationSourceGatewayService => ({
   submit: Effect.fn('PortalAuthCommunicationSourceGateway.submit')(function* submit(request, context) {
     const requestCorrelation = context.correlationId ?? context.messageId;
     const issued = yield* acquireDelegatedGatewayContext(
@@ -131,7 +135,7 @@ const unconfiguredGateway = (cause: unknown): PortalAuthCommunicationSourceGatew
 export const PortalAuthCommunicationSourceGatewayLive = Layer.effect(
   PortalAuthCommunicationSourceGateway,
   Effect.gen(function* portalAuthCommunicationSourceGatewayLayer() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return yield* configuration.pipe(
       Effect.match({ onFailure: unconfiguredGateway, onSuccess: (baseUrl) => makeGateway(baseUrl, crypto) }),
     );

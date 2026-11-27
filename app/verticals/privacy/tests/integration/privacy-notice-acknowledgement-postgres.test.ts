@@ -5,7 +5,8 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq, getTableName, sql } from 'drizzle-orm';
-import { Clock, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { Clock, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
@@ -68,8 +69,8 @@ it.live(
           scope: OperationalScope,
         ) => Effect.Effect<Value, Failure, Requirements>,
       ) => native.prepareOwner(producer).pipe(Effect.provide(native.layer));
-      const crypto = yield* Crypto.Crypto;
-      const nextId = () => crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const nextId = () => crypto.uuidV4();
       const servedAt = DateTime.formatIso(yield* DateTime.now);
       const subjectId = yield* nextId();
       const presentationId = yield* nextId();

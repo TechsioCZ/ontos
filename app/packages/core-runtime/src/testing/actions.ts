@@ -1,7 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
 import { NodeCrypto } from '@effect/platform-node';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Crypto, DateTime, Deferred, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
+import { DateTime, Deferred, Effect, Layer, Option, Predicate, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import type { Connection } from 'effect/sql/SqlConnection';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
@@ -13,7 +14,6 @@ import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
-  createActionInvocationPersistenceErrorWithCause,
 } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
 import type {
@@ -193,7 +193,7 @@ const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionErro
 
 const actionTestHarness = Effect.fn('ActionTestHarness.make')(
   function* actionTestHarness(options: ActionTestHarnessOptions = {}) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const transactionTime = options.transactionTime ?? completionTime;
     const invocations = new Map<string, ActionTestInvocation>();
     const idempotency = new Map<string, string>();
@@ -228,17 +228,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(
       if (existing !== undefined) {
         return yield* find(existing);
       }
-      const actionInvocationId = yield* crypto.randomUUIDv4().pipe(
-        Effect.mapError((cause) =>
-          createActionInvocationPersistenceErrorWithCause(
-            {
-              code: 'action_invocation_persistence_failed',
-              reason: 'The test invocation identifier could not be generated',
-            },
-            cause,
-          ),
-        ),
-      );
+      const actionInvocationId = yield* crypto.uuidV4();
       const invocation: ActionTestInvocation = {
         actionInvocationId,
         actionKey: input.actionKey,

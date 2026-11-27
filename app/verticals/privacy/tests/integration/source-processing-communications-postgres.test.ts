@@ -2,7 +2,8 @@ import { ReadHandlerUnavailable } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { SourceProcessingEligibilityResponseSchema } from '@app/privacy-contracts/source-processing-eligibility';
@@ -106,7 +107,7 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
   scope: PrivacyLedgerScope,
   subjectKind: 'PARTY_TARGET' | 'SOURCE_ASSERTED' = 'SOURCE_ASSERTED',
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const { principalId, tenantId } = scope;
   const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
   return yield* inPrivacyLedger(
@@ -117,7 +118,7 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
       const repository = yield* privacyOperationRepositoryForScope(transaction, scope).pipe(
         Effect.provideService(PrivacySubjectPartyOwner, partyOwnerDouble('2026-11-01T00:00:00.000Z')),
       );
-      const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), {
+      const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.uuidV4(), {
         businessCode: 'COMMUNICATIONS_ELIGIBILITY_FIXTURE',
         effectiveFrom: '2026-11-01T00:00:00.000Z',
         governanceOwnerId: principalId,
@@ -129,11 +130,11 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
         legalEntityId,
         principalId,
         purposeId: purpose.purposeRef.resourceId,
-        subjectId: yield* crypto.randomUUIDv4(),
+        subjectId: yield* crypto.uuidV4(),
         tenantId,
         versionId: firstVersion.versionId,
       });
-      const partyId = `party-${yield* crypto.randomUUIDv4()}`;
+      const partyId = `party-${yield* crypto.uuidV4()}`;
       const request: SourceProcessingEligibilityRequest =
         subjectKind === 'PARTY_TARGET'
           ? {
@@ -151,7 +152,7 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
       yield* repository.createSubject(
         { legalEntityId, tenantId },
         {
-          actionInvocationId: yield* crypto.randomUUIDv4(),
+          actionInvocationId: yield* crypto.uuidV4(),
           subject: {
             createdAt: base.from,
             subject:
@@ -171,11 +172,11 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
           },
         },
       );
-      yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), base.policy);
+      yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* crypto.uuidV4(), base.policy);
       yield* repository.recordApplicability(
         tenantId,
         legalEntityId,
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         context.applicabilityAuthority.decisionRef,
         base.decision,
       );
@@ -184,7 +185,7 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
         applicabilityDecision: base.decision,
         assignmentRef: {
           moduleId: 'privacy.core',
-          resourceId: yield* crypto.randomUUIDv4(),
+          resourceId: yield* crypto.uuidV4(),
           resourceType: 'privacy.core.legal-basis-assignment',
           tenantId,
         },
@@ -208,7 +209,7 @@ const seed = Effect.fn('PrivacyTests.seedCommunicationsLedger')(function* seedLe
           purposeVersionId: firstVersion.versionId,
         },
       });
-      yield* repository.assignLegalBasis(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), assignment);
+      yield* repository.assignLegalBasis(tenantId, legalEntityId, yield* crypto.uuidV4(), assignment);
       return { ...base, context, purpose, request, source: base.request.source, version: firstVersion };
     }),
   );
@@ -240,13 +241,13 @@ const interveneOn = Effect.fn('PrivacyTests.interveneOnScope')(function* interve
   revision: string,
   intendedScope: SourceProcessingContext['intendedScope'] = ledger.context.intendedScope,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
   yield* inPrivacyLedger(
     scope,
     Effect.fn('PrivacyTests.recordIntervention')(function* recordIntervention(transaction) {
       const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-      const actionInvocationId = yield* crypto.randomUUIDv4();
+      const actionInvocationId = yield* crypto.uuidV4();
       yield* repository.recordProcessingIntervention(scope.tenantId, legalEntityId, actionInvocationId, {
         actionInvocationId,
         asOf: observedAt,
@@ -277,7 +278,7 @@ const withoutLegalBasis = Effect.fn('PrivacyTests.useWithoutLegalBasis')(functio
   scope: PrivacyLedgerScope,
   ledger: Ledger,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
   return yield* inPrivacyLedger(
     scope,
@@ -300,11 +301,11 @@ const withoutLegalBasis = Effect.fn('PrivacyTests.useWithoutLegalBasis')(functio
         scope: applicabilityScope,
       });
       const decisionRef = `fixture:read-applicability:${scope.tenantId}`;
-      yield* repository.recordApplicabilityPolicy(scope.tenantId, legalEntityId, yield* crypto.randomUUIDv4(), policy);
+      yield* repository.recordApplicabilityPolicy(scope.tenantId, legalEntityId, yield* crypto.uuidV4(), policy);
       yield* repository.recordApplicability(
         scope.tenantId,
         legalEntityId,
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         decisionRef,
         decision,
       );
@@ -514,7 +515,7 @@ it.live('proves the three outcomes for a Party target subject as well', () =>
 
 it.live('isolates one Tenant and one Legal Entity from another in the same cluster', () =>
   Effect.gen(function* isolation() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const first = yield* freshPrivacyLedgerScope();
     const second = yield* freshPrivacyLedgerScope();
     const firstLedger = yield* seed(first);
@@ -543,7 +544,7 @@ it.live('isolates one Tenant and one Legal Entity from another in the same clust
     });
 
     // Another Legal Entity of the SAME Tenant has none of the first one's ledgers either.
-    const otherLegalEntity = { ...second, legalEntityId: yield* crypto.randomUUIDv4() };
+    const otherLegalEntity = { ...second, legalEntityId: yield* crypto.uuidV4() };
     const withinOtherEntity = Schema.decodeUnknownSync(SourceProcessingContextSchema)({
       ...secondLedger.context,
       legalEntityId: otherLegalEntity.legalEntityId,

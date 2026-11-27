@@ -93,22 +93,11 @@ import {
   OutboxPayloadSchema as SymmyJobPayloadSchema,
 } from '@app/symmy-integration/outbox/integration-symmy-job-admitted-v1';
 import { importJobResourceDescriptor } from '@app/symmy-integration/resources/import-job';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import {
-  Cause,
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Cause, ConfigProvider, Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt, exportJWK, generateKeyPair } from 'jose';
@@ -909,7 +898,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* registeredGatewayNative() {
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const shellDeployment = { appId: 'shell-super-app', buildMarker: ultramodernDeliveryUnit.buildMarker } as const;
         const snapshot = yield* makeCompositionSnapshot(contractInputs(), 600_000, {
           document: JSON.stringify({
@@ -935,22 +924,22 @@ it.live(
         const issuerClient = yield* PgClient.make({
           url: Redacted.make(replaceIdentity(fixture.connections.runtime.connectionString, 'shell_gateway_issuer')),
         }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
-        const tenantId = yield* crypto.randomUUIDv4();
-        const legalEntityId = yield* crypto.randomUUIDv4();
-        const otherTenantId = yield* crypto.randomUUIDv4();
-        const foreignLegalEntityId = yield* crypto.randomUUIDv4();
-        const originalPrincipal = yield* crypto.randomUUIDv4();
-        const machinePrincipal = yield* crypto.randomUUIDv4();
-        const modulePrincipal = yield* crypto.randomUUIDv4();
-        const originalAuthBinding = yield* crypto.randomUUIDv4();
-        const moduleAuthBinding = yield* crypto.randomUUIDv4();
-        const admissionId = yield* crypto.randomUUIDv4();
-        const originalOwnerBinding = yield* crypto.randomUUIDv4();
-        const machineBinding = yield* crypto.randomUUIDv4();
-        const machineIncarnation = yield* crypto.randomUUIDv4();
-        const privacyMachine = yield* crypto.randomUUIDv4();
-        const partyModulePrincipal = yield* crypto.randomUUIDv4();
-        const privacyOriginalBinding = yield* crypto.randomUUIDv4();
+        const tenantId = yield* crypto.uuidV4();
+        const legalEntityId = yield* crypto.uuidV4();
+        const otherTenantId = yield* crypto.uuidV4();
+        const foreignLegalEntityId = yield* crypto.uuidV4();
+        const originalPrincipal = yield* crypto.uuidV4();
+        const machinePrincipal = yield* crypto.uuidV4();
+        const modulePrincipal = yield* crypto.uuidV4();
+        const originalAuthBinding = yield* crypto.uuidV4();
+        const moduleAuthBinding = yield* crypto.uuidV4();
+        const admissionId = yield* crypto.uuidV4();
+        const originalOwnerBinding = yield* crypto.uuidV4();
+        const machineBinding = yield* crypto.uuidV4();
+        const machineIncarnation = yield* crypto.uuidV4();
+        const privacyMachine = yield* crypto.uuidV4();
+        const partyModulePrincipal = yield* crypto.uuidV4();
+        const privacyOriginalBinding = yield* crypto.uuidV4();
         const insert = (statement: Parameters<typeof admin.executor.execute>[0]) =>
           admin.executor.execute(statement, 'objects');
         yield* insert(
@@ -969,7 +958,7 @@ it.live(
           sql`update core.principal_auth_bindings set status='revoked',revoked_at=now() where principal_auth_binding_id=${originalAuthBinding}::uuid`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${sourceWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${originalOwnerBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${machineBinding}::uuid,${tenantId}::uuid,${machinePrincipal}::uuid,${targetWorkload},${machineIncarnation}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${sourceWorkload},${yield* crypto.uuidV4()}::uuid,'active'),(${originalOwnerBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.uuidV4()}::uuid,'active'),(${machineBinding}::uuid,${tenantId}::uuid,${machinePrincipal}::uuid,${targetWorkload},${machineIncarnation}::uuid,'active')`,
         );
         yield* insert(
           sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_binding_id,auth_context_ref,action_key,status,request_hash,started_at,completed_at) values(${admissionId}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${originalPrincipal}::uuid,'api_key',${originalAuthBinding}::uuid,'better-auth-api-key:retired-ingress-key',${sourceAction},'succeeded',${'a'.repeat(64)},now()-interval '400 days',now()-interval '400 days')`,
@@ -987,16 +976,16 @@ it.live(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${privacyMachine}::uuid,${tenantId}::uuid,'system','Privacy system','active'),(${partyModulePrincipal}::uuid,${tenantId}::uuid,'service','Party module','active')`,
         );
         yield* insert(
-          sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${partyModulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${partyProviderKey},'active')`,
+          sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${partyModulePrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${partyProviderKey},'active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${privacyOriginalBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active'),(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${privacyMachine}::uuid,${privacyWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${privacyOriginalBinding}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${privacyWorkload},${yield* crypto.uuidV4()}::uuid,'active'),(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${privacyMachine}::uuid,${privacyWorkload},${yield* crypto.uuidV4()}::uuid,'active')`,
         );
         yield* insert(
           sql`insert into core.tenant_module_states(tenant_id,module_key,state) values(${tenantId}::uuid,'privacy.core','active')`,
         );
-        const sourceFactsMachine = yield* crypto.randomUUIDv4();
-        const privacyModulePrincipal = yield* crypto.randomUUIDv4();
+        const sourceFactsMachine = yield* crypto.uuidV4();
+        const privacyModulePrincipal = yield* crypto.uuidV4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${sourceFactsMachine}::uuid,${tenantId}::uuid,'system','Symmy processing source facts','active'),(${privacyModulePrincipal}::uuid,${tenantId}::uuid,'service','Privacy module','active')`,
         );
@@ -1013,7 +1002,7 @@ it.live(
           ([principalId, workload]) =>
             Effect.gen(function* enrollProcessingBinding() {
               yield* insert(
-                sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${principalId}::uuid,${workload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+                sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${principalId}::uuid,${workload},${yield* crypto.uuidV4()}::uuid,'active')`,
               );
             }),
           { concurrency: 1, discard: true },
@@ -1057,7 +1046,7 @@ it.live(
         });
         const signer = makeGatewayIssuerLayer({
           currentTimeSeconds: Effect.succeed(Math.floor(DateTime.toEpochMillis(snapshot.observedAt) / 1000)),
-          generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+          generateJti: crypto.uuidV4().pipe(Effect.orDie),
           loadAdmission: Effect.succeed({
             audiences: new Map([
               [sourceApp, `${sourceApp}-build`],
@@ -1092,7 +1081,7 @@ it.live(
             const payload = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)({
               audience,
               compositionRevision: snapshot.composition.revision,
-              exchangeId: yield* crypto.randomUUIDv4(),
+              exchangeId: yield* crypto.uuidV4(),
               legalEntityScope,
               subject,
             });
@@ -1452,7 +1441,7 @@ it.live(
             scope: requestScope,
           });
         expect((yield* decide(scope)).outcome).toBe('ALLOWED');
-        const routeBindingId = yield* crypto.randomUUIDv4();
+        const routeBindingId = yield* crypto.uuidV4();
         const currentRouteKeyId = 'native-current-route-key';
         yield* insert(
           sql`insert into core.principal_auth_bindings(principal_auth_binding_id,tenant_id,principal_id,authentication_namespace_id,provider,subject_type,provider_subject_id,status) values(${routeBindingId}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${authenticationNamespaceId},'better_auth','api_key',${currentRouteKeyId},'active')`,
@@ -1473,10 +1462,10 @@ it.live(
           legalEntityId,
           operations: [{ entrypointKey: targetKey, schemaVersion: '1' }],
           principalId: originalPrincipal,
-          routeId: yield* crypto.randomUUIDv4(),
+          routeId: yield* crypto.uuidV4(),
           routeKey: 'native-product-route',
           routeRevision: 'route-1',
-          sourceRouteId: yield* crypto.randomUUIDv4(),
+          sourceRouteId: yield* crypto.uuidV4(),
           sourceRouteRevision: 'source-1',
           tenantId,
         });
@@ -1602,7 +1591,7 @@ it.live(
         expect(Exit.isFailure(yield* Effect.exit(issue(nestedSubject, 'privacy', partyProviderKey)))).toBe(true);
         expect(Exit.isFailure(yield* Effect.exit(issue(admission)))).toBe(true);
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${originalPrincipal}::uuid,${targetWorkload},${yield* crypto.uuidV4()}::uuid,'active')`,
         );
         const renewedSource = yield* issue(admission);
         const renewedNestedSubject = { ...nestedSubject, sourceAssertion: renewedSource.token };
@@ -1611,10 +1600,10 @@ it.live(
           sql`update core.access_workload_bindings set status='revoked',revoked_at=now() where binding_id=${privacyOriginalBinding}::uuid`,
         );
         expect(Exit.isFailure(yield* Effect.exit(issue(renewedNestedSubject, 'privacy', partyProviderKey)))).toBe(true);
-        const eventId = yield* crypto.randomUUIDv4();
-        const messageId = yield* crypto.randomUUIDv4();
-        const deliveryId = yield* crypto.randomUUIDv4();
-        const historicalJobId = yield* crypto.randomUUIDv4();
+        const eventId = yield* crypto.uuidV4();
+        const messageId = yield* crypto.uuidV4();
+        const deliveryId = yield* crypto.uuidV4();
+        const historicalJobId = yield* crypto.uuidV4();
         yield* insert(
           sql`insert into core.domain_events(domain_event_id,tenant_id,legal_entity_id,action_invocation_id,producer_module_key,event_type,subject_module_key,subject_resource_type,subject_resource_id,payload_json) values(${eventId}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${admissionId}::uuid,${sourceModule},${outboxTopic},${sourceModule},${importJobResourceDescriptor.key},${historicalJobId},${JSON.stringify({ jobId: historicalJobId })}::jsonb)`,
         );
@@ -1704,7 +1693,7 @@ it.live(
           const processingRequest = yield* Schema.decodeUnknownEffect(
             SymmySourceOrganizationFactsProcessingSelectorSchema,
           )({
-            effectId: yield* crypto.randomUUIDv4(),
+            effectId: yield* crypto.uuidV4(),
             originalAdmissionInvocationId: admissionId,
             purpose: 'PROCESSING',
           });
@@ -1934,7 +1923,7 @@ it.live(
           expect(calls.reads).toBe(1);
           const changedRequest = yield* Schema.decodeUnknownEffect(
             SymmySourceOrganizationFactsProcessingSelectorSchema,
-          )({ ...processingRequest, effectId: yield* crypto.randomUUIDv4() });
+          )({ ...processingRequest, effectId: yield* crypto.uuidV4() });
           expect(Exit.isFailure(yield* Effect.exit(runRead(changedRequest)))).toBe(true);
           expect(calls.reads).toBe(1);
           const governanceRequest = yield* Schema.decodeUnknownEffect(SymmySourceOrganizationFactsRequestSchema)({
@@ -1980,7 +1969,7 @@ it.live(
             target: {},
           });
           yield* insert(
-            sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_context_ref,action_key,idempotency_key,status,request_hash,completed_at) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${sourceFactsMachine}::uuid,'system',${processingPrincipal.authContextRef},${receiverFixture.probeActionKey},${cachedKey},'succeeded',${cachedHash},now())`,
+            sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,auth_context_ref,action_key,idempotency_key,status,request_hash,completed_at) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,${sourceFactsMachine}::uuid,'system',${processingPrincipal.authContextRef},${receiverFixture.probeActionKey},${cachedKey},'succeeded',${cachedHash},now())`,
           );
           const deniedAction = yield* actionRuntime
             .runAction({
@@ -2074,12 +2063,12 @@ it.live(
             tenantId,
           })).principalId,
         ).toBe(machinePrincipal);
-        const otherMachine = yield* crypto.randomUUIDv4();
+        const otherMachine = yield* crypto.uuidV4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${otherMachine}::uuid,${otherTenantId}::uuid,'system','Other tenant machine','active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${otherTenantId}::uuid,${otherMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.uuidV4()}::uuid,${otherTenantId}::uuid,${otherMachine}::uuid,${targetWorkload},${yield* crypto.uuidV4()}::uuid,'active')`,
         );
         expect(
           (yield* enrolled.resolveEnrolled({
@@ -2088,12 +2077,12 @@ it.live(
             tenantId: otherTenantId,
           })).principalId,
         ).toBe(otherMachine);
-        const ambiguousMachine = yield* crypto.randomUUIDv4();
+        const ambiguousMachine = yield* crypto.uuidV4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${ambiguousMachine}::uuid,${tenantId}::uuid,'system','Ambiguous machine','active')`,
         );
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${ambiguousMachine}::uuid,${targetWorkload},${yield* crypto.uuidV4()}::uuid,'active')`,
         );
         expect(
           Exit.isFailure(
@@ -2150,18 +2139,18 @@ it.live(
         // A current independent receipt actor may recover only an exact historical owner invocation,
         // even after the integration and its original write permission have been revoked.
         yield* issue({ ...admission, expectedPrincipalId: ambiguousMachine });
-        const recoveryPrincipalId = yield* crypto.randomUUIDv4();
-        const recoveryBindingId = yield* crypto.randomUUIDv4();
-        const recoveryIncarnation = yield* crypto.randomUUIDv4();
+        const recoveryPrincipalId = yield* crypto.uuidV4();
+        const recoveryBindingId = yield* crypto.uuidV4();
+        const recoveryIncarnation = yield* crypto.uuidV4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${recoveryPrincipalId}::uuid,${tenantId}::uuid,'system','Independent receipt actor','active')`,
         );
         yield* insert(
           sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${recoveryBindingId}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${recoveryIncarnation}::uuid,'active')`,
         );
-        const originalOwnerInvocation = yield* crypto.randomUUIDv4();
-        const originalWorkerInvocation = yield* crypto.randomUUIDv4();
-        const originalTenantInvocation = yield* crypto.randomUUIDv4();
+        const originalOwnerInvocation = yield* crypto.uuidV4();
+        const originalWorkerInvocation = yield* crypto.uuidV4();
+        const originalTenantInvocation = yield* crypto.uuidV4();
         const originalIdempotencyKey = 'native-original-owner-command';
         const originalRequestHash = 'b'.repeat(64);
         const receiptRequestHash = 'c'.repeat(64);
@@ -2600,7 +2589,7 @@ it.live(
         expect((yield* decideRecovery(recoveredScope)).outcome).toBe('DENIED');
         expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
         yield* insert(
-          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.randomUUIDv4()}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${yield* crypto.randomUUIDv4()}::uuid,'active')`,
+          sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${yield* crypto.uuidV4()}::uuid,${tenantId}::uuid,${recoveryPrincipalId}::uuid,${recoveryWorkload},${yield* crypto.uuidV4()}::uuid,'active')`,
         );
         yield* issue(admissionRecovery);
         yield* insert(
@@ -2608,5 +2597,5 @@ it.live(
         );
         expect(Exit.isFailure(yield* Effect.exit(issue(admissionRecovery)))).toBe(true);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom))),
 );

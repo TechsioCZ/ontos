@@ -4,7 +4,8 @@ import { AccessScopeIdSchema } from '@app/core-runtime/access/ids';
 import { inertAccessEnforcementPorts } from '@app/core-runtime/testing/access-gate';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -66,7 +67,7 @@ import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
 
 const RECONCILIATION_WORKLOAD = 'payment.provider-reconciliation';
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const nativeDatabase = Effect.gen(function* nativeDatabase() {
@@ -97,12 +98,12 @@ const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
 
 /** The real Core access decision: an integration principal bound to exactly `boundKeys` (O73). */
 const workloadGate = (boundKeys: readonly string[]): BoundAccessGate => {
-  const ports: AccessEnforcementPorts = {
+  const ports = {
     ...inertAccessEnforcementPorts(),
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some('integration')) },
     workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)) },
-  };
+  } satisfies AccessEnforcementPorts;
   return bindAccessGate(
     makeAccessDecisionService({
       authorityFor,
@@ -122,7 +123,7 @@ const makeActions = Effect.fn('RecoveryRouteScope.makeActions')(function* makeAc
 ) {
   return makeActionRuntime(
     { executor: database.database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     evidenceAllowedPermission,
     testOperationalScopeResolver,
     {

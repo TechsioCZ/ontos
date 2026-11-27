@@ -60,7 +60,7 @@ const authFixture = Effect.gen(function* authFixture() {
 
 const createUser = (adapter: DBAdapter, name: string, email: string) =>
   Effect.promise(() =>
-    adapter.create<Omit<UserRow, 'id'>, UserRow>({ data: { email, name, emailVerified: false }, model: 'user' }),
+    adapter.create<Omit<UserRow, 'id'>, UserRow>({ data: { email, emailVerified: false, name }, model: 'user' }),
   );
 
 const findUser = (adapter: DBAdapter, where: Where[]) =>
@@ -165,8 +165,8 @@ describe('Better Auth adapter on the native Effect executor', () => {
         yield* Effect.promise(() =>
           adapter.create({
             data: {
-              identifier,
               expiresAt: fixtureExpiresAt,
+              identifier,
               value: 'secret',
             },
             model: 'verification',

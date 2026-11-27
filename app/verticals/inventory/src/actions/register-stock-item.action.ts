@@ -3,7 +3,8 @@
 // @ontos-action-slug register-stock-item
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   RegisterStockItemErrorSchema,
@@ -105,7 +106,7 @@ export const registerStockItemAction = defineAction(
   },
   handleRegisterStockItem,
   (transaction) =>
-    Crypto.Crypto.use((crypto) =>
+    SecureRandom.SecureRandom.use((crypto) =>
       Effect.succeed({ register: stockItemRegistration(makeDrizzleStockItemRepository(transaction), crypto) }),
     ),
 );

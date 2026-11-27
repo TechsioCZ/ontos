@@ -23,7 +23,7 @@ import type { Scope } from 'effect';
 import { HttpEffect, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { ChildProcess } from 'effect/process';
-import { describe, afterEach, expect, it, rs } from 'effect-rstest';
+import { describe, afterEach, assert, expect, it, rs } from 'effect-rstest';
 import { transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -635,8 +635,8 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.7');
-    expect(sharedContractsPackage.dependencies['@effect/opentelemetry']).toBe('4.0.7');
+    expect(sharedContractsPackage.dependencies['effect']).toBe('4.1.4');
+    expect(sharedContractsPackage.dependencies['@effect/opentelemetry']).toBe('4.1.4');
   }),
 );
 
@@ -650,30 +650,32 @@ it.live(
           ? require(modulePath)
           : yield* Effect.promise(() => import(pathToFileURL(modulePath).href));
       const generator = yield* Schema.decodeUnknownEffect(PackageGeneratorModuleSchema)(source);
-      const packageSource = { modernPackageVersion: '3.9.3-ultramodern.18', strategy: 'install' } as const;
+      const packageSource = { modernPackageVersion: '3.11.3-ultramodern.12', strategy: 'install' } as const;
       const root = yield* Schema.decodeUnknownEffect(GeneratedRootPackageSchema)(
         generator.createRootPackageJson('fixture', packageSource),
       );
-      expect(root.devDependencies['@effect/tsgo'], moduleFormat).toBe('0.67.0');
-      expect(root.devDependencies.tsrs, moduleFormat).toBe('0.21.0-ts7.1.0-beta');
-      expect(root.devDependencies.typescript, moduleFormat).toBe('7.0.2');
+      expect(root.devDependencies['@effect/tsgo'], moduleFormat).toBe('0.73.2');
+      expect(root.devDependencies['tsrs'], moduleFormat).toBe('7.1.0-beta.tsrs3');
+      // Assert the published generator contract, not a compiler command: validation/architecture.js
+      // resolves @typescript/native/unstable/{ast,sync} from fresh scaffolds. tsrs exposes different subpaths.
+      expect(root.devDependencies['typescript'], moduleFormat).toBe('7.0.2');
       expect(root.devDependencies['@typescript/native'], moduleFormat).toBe('npm:typescript@7.0.2');
-      expect(root.devDependencies.effect, moduleFormat).toBe('4.0.7');
-      expect(root.devDependencies['@effect/opentelemetry'], moduleFormat).toBe('4.0.7');
-      expect(root.scripts.postinstall, moduleFormat).toBe(
+      expect(root.devDependencies['effect'], moduleFormat).toBe('4.1.4');
+      expect(root.devDependencies['@effect/opentelemetry'], moduleFormat).toBe('4.1.4');
+      expect(root.scripts['postinstall'], moduleFormat).toBe(
         'ultramodern-create ultramodern compiler-prepare && ultramodern-create ultramodern skills install --postinstall',
       );
       const shared = generator.createSharedPackage('fixture', 'shared-contracts', 'fixture contracts', packageSource);
-      expect(shared.dependencies.effect, moduleFormat).toBe('4.0.7');
-      expect(shared.dependencies['@effect/opentelemetry'], moduleFormat).toBe('4.0.7');
+      expect(shared.dependencies['effect'], moduleFormat).toBe('4.1.4');
+      expect(shared.dependencies['@effect/opentelemetry'], moduleFormat).toBe('4.1.4');
     }
     const preparationOutput = yield* Effect.sync(() =>
       runNode([path.join(generatorRoot, 'templates/workspace-scripts/ultramodern-compiler-prepare.mjs')], {
         cwd: workspaceRoot,
       }),
     );
-    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 0.25.0-ts7.1.0-beta');
-    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.70.0');
+    expect(preparationOutput).toContain('Validating Effect-enabled tsrs 7.1.0-beta.tsrs3');
+    expect(preparationOutput).toContain('7.1.0-beta+effect-tsgo.0.73.2');
   }),
 );
 
@@ -1952,10 +1954,14 @@ it.live(
       extends: '../../../tsconfig.base.json',
       include: ['api/**/*.ts', 'shared/**/*.ts'],
     });
-    execFileSync(path.join(workspaceRoot, 'node_modules/.bin/tsc'), ['-p', tsconfigFile], {
-      cwd: fixture,
-      encoding: 'utf-8',
-    });
+    execFileSync(
+      path.join(workspaceRoot, 'node_modules/.bin/effect-tsgo'),
+      ['tsrs@7.1.0-beta.tsrs3', '-p', tsconfigFile],
+      {
+        cwd: fixture,
+        encoding: 'utf-8',
+      },
+    );
     yield* writeText(
       fixture,
       'runtime-proof.mjs',
@@ -2338,7 +2344,7 @@ it.live(
     const source = yield* Effect.promise(() => readFile(path.join(partyRoot, 'api/index.ts'), 'utf-8'));
     const reader =
       /(?<reader>declare const ULTRAMODERN_SHELL_ORIGIN[\s\S]+?const shellOrigin = readShellOrigin\(\);)/u.exec(source)
-        ?.groups?.reader;
+        ?.groups?.['reader'];
     expect(reader, 'compile the actual API origin-reader boundary').not.toBe(undefined);
     const appToolsPath = require.resolve('@modern-js/app-tools-extensions/config', {
       paths: [partyRoot],
@@ -2545,12 +2551,8 @@ it.live(
             include: ['api/**/*.ts', 'shared/**/*.ts', 'src/**/*.ts'],
           });
           const typecheck = spawnSync(
-            process.execPath,
-            [
-              path.join(path.dirname(require.resolve('@typescript/native-preview/package.json')), 'bin/tsgo'),
-              '-p',
-              ownerRoot,
-            ],
+            path.join(workspaceRoot, 'node_modules/.bin/effect-tsgo'),
+            ['tsrs@7.1.0-beta.tsrs3', '-p', ownerRoot],
             { cwd: workspaceRoot, encoding: 'utf-8' },
           );
           expect(typecheck.status, `${typecheck.stdout}\n${typecheck.stderr}`).toBe(0);
@@ -3403,8 +3405,10 @@ it.live(
     expect(party.cloudflare.routes.locale).toBe(undefined);
     expect(party.cloudflare.routes.mfManifest).toBe(mfManifestPath);
     expect(party.cloudflare.routes.apiReadiness).toBe(readinessPath);
-    expect(party.backendFederation.exposes['./effect-api'].contract).toBe('verticals/party-registry/shared/api.ts');
-    expect(party.backendFederation.exposes['./effect-api'].openapi).toBe('/party-registry-api/openapi.json');
+    const effectApi = party.backendFederation.exposes['./effect-api'];
+    assert.isDefined(effectApi, 'Party backend federation must expose its Effect API');
+    expect(effectApi.contract).toBe('verticals/party-registry/shared/api.ts');
+    expect(effectApi.openapi).toBe('/party-registry-api/openapi.json');
   }),
 );
 
@@ -3489,8 +3493,10 @@ it.live(
     expect(requested).toEqual([apiOnlyReadinessPath, apiOnlyReadinessPath]);
     const report = yield* readJson(CloudflareReportSchema, reportPath);
     expect(report.status).toBe('pass');
-    expect(report.results[0].appId).toBe(apiOnlyId);
-    expect(report.results[0].assertions.every((entry) => entry.status === 'pass')).toBe(true);
+    const [deploymentResult] = report.results;
+    assert.isDefined(deploymentResult, 'Cloudflare proof must include a deployment result');
+    expect(deploymentResult.appId).toBe(apiOnlyId);
+    expect(deploymentResult.assertions.every((entry) => entry.status === 'pass')).toBe(true);
   }),
 );
 
@@ -3576,7 +3582,7 @@ describe('consumer migration preserves native tooling and governed safety', () =
           'makeMicroverticalHttpPrincipalAuthentication(forgedPrincipal)',
         ],
         ["'@app/core-runtime/http/principal-authentication'", "'./counterfeit.ts'"],
-      ]) {
+      ] satisfies [string, string][]) {
         expect(hasGeneratedOperationPrincipalContract(principal.replace(before, after))).toBe(false);
       }
       const audience = "ACTION_GATEWAY_AUDIENCE = 'party-registry'";

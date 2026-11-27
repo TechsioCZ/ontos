@@ -21,7 +21,7 @@ import { PricingEvaluationAttemptSchema } from '@app/pricing-contracts/domain/ma
 import type { PricingRawCompositionReady } from '@app/pricing-contracts/domain/line-composition';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { NodeCrypto } from '@effect/platform-node';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Cause, Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 import { assert, describe, expect, it } from 'effect-rstest';
@@ -73,7 +73,7 @@ import { calculatePricingUnitPrice } from '../../src/services/unit-price-calcula
 
 /** Scoped owner adapters need the Crypto service that the production runtime provides at its root. */
 const itWithCrypto = {
-  effect: (name: string, body: () => Effect.Effect<void, unknown, Crypto.Crypto>) =>
+  effect: (name: string, body: () => Effect.Effect<void, unknown, SecureRandom.SecureRandom>) =>
     it.layer(NodeCrypto.layer)(name, (suite) => {
       suite.effect(name, body);
     }),

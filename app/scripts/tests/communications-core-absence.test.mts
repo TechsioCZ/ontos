@@ -136,10 +136,12 @@ const COMMUNICATIONS_CONTRACTS_SPECIFIER = new RegExp(
 );
 
 /** Subpaths of a package a source names (empty for the bare package) that are not in the allowed set. */
-const unpublishedSubpaths = (specifier: RegExp, source: string, allowed: readonly string[]) =>
-  [...source.matchAll(specifier)]
-    .map((match) => match.groups?.subpath ?? '')
-    .filter((subpath) => !allowed.includes(subpath));
+const unpublishedSubpaths = (specifier: RegExp, source: string, allowed: readonly string[]) => {
+  const published = new Set(allowed);
+  return [...source.matchAll(specifier)]
+    .map((match) => match.groups?.['subpath'] ?? '')
+    .filter((subpath) => !published.has(subpath));
+};
 const unpublishedUses = (specifier: RegExp, directory: string, allowed: readonly string[]) =>
   sourceFiles(directory).filter(
     (file) => unpublishedSubpaths(specifier, readFileSync(path.join(appRoot, file), 'utf-8'), allowed).length > 0,
@@ -374,9 +376,9 @@ const REVIEWED_COMMUNICATIONS_CONSTANTS = {
     'privacy.core.requirement.communications-owner-execution-outcome',
   ],
 } satisfies Record<string, readonly string[]>;
-const COMMUNICATIONS_IDENTIFIER = /[A-Za-z0-9_.-]*[Cc]ommunications?[A-Za-z0-9_.-]*/gu;
+const COMMUNICATIONS_IDENTIFIER = /(?<![\w.-])[\w.-]*[Cc]ommunications?[\w.-]*/gu;
 const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//gu;
-const LINE_COMMENT = /\/\/.*$/gmu;
+const LINE_COMMENT = /\/\/.*/gu;
 
 /** The distinct identifiers of a source that mention Communications, outside comments. */
 const communicationsIdentifiersOf = (source: string): readonly string[] => [

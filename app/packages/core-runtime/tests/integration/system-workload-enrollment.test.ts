@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, asc, eq } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Match, Predicate, Ref, Schema } from 'effect';
+import { DateTime, Effect, Match, Predicate, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { PrincipalIdSchema, TenantIdSchema } from '../../src/access/ids.ts';
@@ -78,7 +79,7 @@ const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
     trustedAttesterPrincipalIds: [],
   }),
 ]);
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const capability = 'core.identity.system-workload-enrollment.change';
 const statusCapability = 'core.identity.principal.change-status';
 const workerModule = enrollmentWorkerModule;
@@ -208,7 +209,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       const authority = makeAuthority(identityAuthority);
       const actionRuntime = makeActionRuntime(
         { executor: runtimeDatabase },
-        makeActionRepository(yield* Crypto.Crypto),
+        makeActionRepository(yield* SecureRandom.SecureRandom),
         makeActionPermissionService(permissionClient),
         operationalScope,
         {

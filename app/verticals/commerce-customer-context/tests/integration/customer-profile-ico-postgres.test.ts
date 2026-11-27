@@ -712,7 +712,7 @@ it.live(
           })
           .pipe(Effect.provideContext(test.context));
         expect('history' in unresolved).toBe(false);
-        expect(authority?.plan.migrationRequiredProfileIds).toEqual(
+        expect(authority?.plan['migrationRequiredProfileIds']).toEqual(
           expect.arrayContaining([outsidePlanTime.profileRef.resourceId, foreignUnique.profileRef.resourceId]),
         );
         const correctedPayload = yield* Schema.decodeUnknownEffect(ChangeCustomerProfileIcoPayloadSchema)({
@@ -758,10 +758,10 @@ it.live(
           revision: 2,
         });
         const [reconciledAuthority] = yield* test.admin.select().from(customerProfileIcoAuthority);
-        expect(reconciledAuthority?.plan.migrationRequiredProfileIds).toEqual(
+        expect(reconciledAuthority?.plan['migrationRequiredProfileIds']).toEqual(
           expect.arrayContaining([newlyAmbiguous.profileRef.resourceId]),
         );
-        expect(reconciledAuthority?.plan.migrationRequiredProfileIds).not.toEqual(
+        expect(reconciledAuthority?.plan['migrationRequiredProfileIds']).not.toEqual(
           expect.arrayContaining([p1.profileRef.resourceId]),
         );
         expect(yield* read(newlyResolved)).toMatchObject({

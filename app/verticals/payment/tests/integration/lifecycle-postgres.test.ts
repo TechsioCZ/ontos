@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { NodeCrypto } from '@effect/platform-node';
 import { trustVerifiedGatewayPrincipalContext, makeActiveApplicationCompositionService } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Deferred, Effect, Fiber, Layer, Option, Result, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Layer, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -102,12 +103,13 @@ type TrackedComposition = Effect.Success<ReturnType<typeof installPaymentTestCom
  * gateway COLLECT is completion-bound executor work of the admitting revision (#1158).
  */
 const runTracked = <A, E>(
-  body: (composition: TrackedComposition) => Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>,
+  body: (composition: TrackedComposition) => Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>,
 ) =>
   Effect.scoped(installPaymentTestCompositionAuthority(COMPOSITION_R1).pipe(Effect.flatMap(body))).pipe(
     Effect.provide(NodeCrypto.layer),
   );
-const runNative = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) => runTracked(() => effect);
+const runNative = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
+  runTracked(() => effect);
 
 const PAYMENT_CREATED = 'payment.core.payment-created.v1';
 const OPERATION_REQUESTED = 'payment.core.operation-requested.v1';
@@ -152,7 +154,7 @@ const makeLifecycleRuntimes = Effect.fn('LifecycleNative.makeRuntimes')(function
   compositionRevision: string,
   composition: Pick<ActionRuntimeOptions, 'applicationComposition' | 'expectedDeployment'> = {},
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const actions = makeActionRuntime(
     { executor: native.database },

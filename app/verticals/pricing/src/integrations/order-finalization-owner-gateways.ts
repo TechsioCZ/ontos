@@ -9,7 +9,8 @@ import { executePreparedOrderPricingBindingWithAuthorization } from '@app/commer
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingCommitmentConfirmationBindingSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
 import type { PricingCommitmentConfirmationBinding } from '@app/pricing-contracts/domain/commitment-confirmation';
-import { Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { CurrentPricingDecisionCustomerContextGatewayIssuerService } from '../services/current-pricing-decision-subject-authority.service.ts';
 import {
   CurrentPricingDecisionCustomerContextGatewayIssuer,
@@ -53,7 +54,7 @@ const sameRequest = Schema.toEquivalence(CurrentPricingDecisionRequestSchema);
 export const pricingFinalizationOwnerGateways = Effect.fn('PricingFinalization.ownerGateways')(function* ownerGateways(
   scope: OperationalScope,
   compositionRevision: string,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   if (!finalizationCallerMatches(readVerifiedGatewayActor(scope))) {
     return yield* unavailable('The caller is not the Order module acting for its buyer');
@@ -145,7 +146,7 @@ export const pricingFinalizationOwnerGateways = Effect.fn('PricingFinalization.o
 export const pricingFinalizationCustomerContextGatewayIssuerLive = Layer.effect(
   CurrentPricingDecisionCustomerContextGatewayIssuer,
   Effect.gen(function* pricingFinalizationCustomerContextGatewayIssuer() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       issue: Effect.fn('PricingFinalizationCustomerContext.issue')(function* issueCustomerContextCredential(
         input: Parameters<CurrentPricingDecisionCustomerContextGatewayIssuerService['issue']>[0],
@@ -155,7 +156,7 @@ export const pricingFinalizationCustomerContextGatewayIssuerLive = Layer.effect(
             reason: 'GATEWAY_ISSUER_UNAVAILABLE',
           });
         }
-        const connection = yield* acquireOwnerGatewayConnection(
+        return yield* acquireOwnerGatewayConnection(
           {
             audience: 'commerce-customer-context',
             compositionRevision: input.compositionRevision,
@@ -173,7 +174,6 @@ export const pricingFinalizationCustomerContextGatewayIssuerLive = Layer.effect(
               }),
           ),
         );
-        return connection;
       }),
     };
   }),
@@ -188,7 +188,7 @@ export const verifyFinalCartQuotationRequest = Effect.fn('PricingFinalization.ve
     },
     scope: OperationalScope,
     compositionRevision: string,
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
   ) {
     if (input.candidateHash === undefined) {
       return yield* unavailable('Final Cart candidate hash is required');

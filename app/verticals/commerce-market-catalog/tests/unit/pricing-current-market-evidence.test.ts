@@ -191,12 +191,16 @@ describe('Pricing Current Market evidence owner boundary', () => {
       expect(changed.outcome).toBe('PRICING_MARKET_SOURCE_CHANGED');
 
       const absent = yield* readPricingCurrentMarketEvidence(
-        persistence({
-          generation: 9,
-          nextApplicabilityBoundary: presentSnapshot.nextApplicabilityBoundary,
-          observedAt: presentSnapshot.observedAt,
-          state: 'ABSENT',
-        }),
+        persistence(
+          presentSnapshot.nextApplicabilityBoundary === undefined
+            ? { generation: 9, observedAt: presentSnapshot.observedAt, state: 'ABSENT' }
+            : {
+                generation: 9,
+                nextApplicabilityBoundary: presentSnapshot.nextApplicabilityBoundary,
+                observedAt: presentSnapshot.observedAt,
+                state: 'ABSENT',
+              },
+        ),
         request,
         trustedScope,
       );

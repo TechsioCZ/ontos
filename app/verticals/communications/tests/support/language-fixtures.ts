@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { LanguagePolicyStoreUnavailable } from '../../shared/language-policy-errors.ts';
 import { LanguagePolicyVersionIdSchema } from '../../shared/language-policy.ts';
 import type { LanguageMode } from '../../shared/language-policy.ts';
@@ -80,7 +81,7 @@ export const makeInMemoryLanguagePolicyPort = () => {
         if (state.unreadable) {
           return yield* storeUnavailable();
         }
-        const policyVersionId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()).pipe(Effect.orDie);
+        const policyVersionId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
         const record: LanguageModeVersionRecord = {
           mode: input.mode,
           policyVersionId,

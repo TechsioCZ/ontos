@@ -1214,7 +1214,7 @@ const verifyOrganizationBusinessNameUpdate = Effect.fn('OrganizationSourceCustom
     const counts =
       yield* fixture.admin`select action_key as "actionKey",count(*)::integer as count from core.action_invocations where tenant_id=${fixture.tenantId} and status='succeeded' and action_key in ('party.registry.create-party','party.registry.update-party','party.registry.counterparty-customer-onboard','commerce.customer-context.create-counterparty-purchasing-profile') group by action_key order by action_key`;
     expect(counts).toHaveLength(4);
-    expect(counts.every((row) => row.count === 1)).toBe(true);
+    expect(counts.every((row) => row['count'] === 1)).toBe(true);
     yield* Effect.logInfo({ phase: 'company-name-updated-and-readback-under-fresh-governance' });
     return yield* Effect.void;
   },

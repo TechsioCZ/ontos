@@ -6,7 +6,8 @@ import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/ap
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Arbitrary, Clock, ConfigProvider, Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Arbitrary, Clock, ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -22,7 +23,7 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
 import type { AresSubjectServiceContract } from '../../src/integrations/ares/ares-subject.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',
@@ -64,8 +65,8 @@ const makeAssertion = () =>
     const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
-        compositionRevision: compositionSnapshot.composition.revision,
         principal,
+        compositionRevision: compositionSnapshot.composition.revision,
         targetBuildMarker: ultramodernApiMarker.buildMarker,
         ver: 1,
       })
@@ -482,9 +483,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           },
           '/party-registry/actions/match-party': { candidate },
           '/party-registry/actions/update-party': {
+            partyRef,
             businessName: 'Updated runtime assembly proof',
             expectedRevision: 1,
-            partyRef,
             provenanceMethod: 'DOCUMENT',
             provenanceSource: 'runtime-assembly-proof',
             validFrom: '2026-09-07T00:00:00.000Z',

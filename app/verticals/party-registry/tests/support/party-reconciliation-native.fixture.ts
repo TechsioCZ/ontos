@@ -17,7 +17,8 @@ import { makeGatewayScopeGrantRegistrar } from '@app/core-runtime/testing/action
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Context, Crypto, Effect, FileSystem, Layer, Redacted, Schema, Stream } from 'effect';
+import { Config, Context, Effect, FileSystem, Layer, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { makePublishedApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
@@ -231,10 +232,10 @@ export const makePartyReconciliationGateway = Effect.fn('PartyReconciliation.mak
     native: { readonly partyConfiguration: DatabaseConnectionPair['runtime']; readonly issuer: PgClient.PgClient },
     composition: ActiveApplicationCompositionSnapshot,
   ) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const pair = yield* Effect.tryPromise(() => generateKeyPair('Ed25519'));
     const publicJwk = yield* Effect.tryPromise(() => exportJWK(pair.publicKey));
-    const kid = `party-reconciliation-${yield* crypto.randomUUIDv4()}`;
+    const kid = `party-reconciliation-${yield* crypto.uuidV4()}`;
     const issuer = 'https://disposable-shell.ontos.test';
     const jwks = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
       keys: [{ ...publicJwk, alg: 'EdDSA', kid, use: 'sig' }],
@@ -257,16 +258,16 @@ export const makePartyReconciliationGateway = Effect.fn('PartyReconciliation.mak
       }>`select floor(extract(epoch from clock_timestamp()))::int as "nowSeconds"`;
       const issuedAt = yield* Schema.decodeUnknownEffect(Schema.Number)(clock?.nowSeconds);
       const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
-      const jti = yield* crypto.randomUUIDv4();
+      const jti = yield* crypto.uuidV4();
       const principal = yield* Schema.encodeEffect(TrustedPrincipalContextSchema)(actor);
       const token = yield* Effect.tryPromise(() =>
         new SignJWT({
-          compositionRevision: composition.composition.revision,
           principal,
+          compositionRevision: composition.composition.revision,
           targetBuildMarker: ultramodernApiMarker.buildMarker,
           ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
         })
-          .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
+          .setProtectedHeader({ kid, alg: 'EdDSA', typ: 'JWT' })
           .setIssuer(issuer)
           .setAudience('party-registry')
           .setSubject(actor.principalId)

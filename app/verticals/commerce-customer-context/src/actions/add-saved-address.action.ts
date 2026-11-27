@@ -3,7 +3,8 @@
 // @ontos-action-slug add-saved-address
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Crypto, Effect } from 'effect';
+import { Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { AddSavedAddressPayloadSchema, AddSavedAddressResultSchema } from '../../shared/actions/add-saved-address.ts';
 import type { AddSavedAddressPayload } from '../../shared/actions/add-saved-address.ts';
 import {
@@ -136,8 +137,8 @@ export const addSavedAddressAction = defineAction(
   },
   handle,
   Effect.fn('AddSavedAddressAction.addSavedAddressAction')(
-    function* addressServices(transaction, scope): Effect.fn.Return<Services, never, Crypto.Crypto> {
-      const crypto = yield* Crypto.Crypto;
+    function* addressServices(transaction, scope): Effect.fn.Return<Services, never, SecureRandom.SecureRandom> {
+      const crypto = yield* SecureRandom.SecureRandom;
       return savedAddressSourceService(
         transaction,
         scope,

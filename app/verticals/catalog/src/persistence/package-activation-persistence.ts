@@ -1,7 +1,7 @@
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { PackageDefinitionContentInputSchema } from '../../shared/actions/package-definition-contract.ts';
 import {
@@ -29,7 +29,7 @@ export interface PackageActivationSelectionImpact {
     readonly packageDefinitionId: string;
     readonly revision: number;
     readonly tenantId: string;
-  }) => Effect.Effect<boolean, PackageActivationUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<boolean, PackageActivationUnavailable, SecureRandom.SecureRandom>;
 }
 
 export interface PackageActivationInput {
@@ -53,7 +53,7 @@ export interface PackagePromotionSelectionImpact {
     readonly priorRevision: number;
     readonly successorRevision: number;
     readonly tenantId: string;
-  }) => Effect.Effect<boolean, PackageActivationUnavailable, Crypto.Crypto>;
+  }) => Effect.Effect<boolean, PackageActivationUnavailable, SecureRandom.SecureRandom>;
 }
 
 const unavailable = (cause?: unknown): PackageActivationUnavailable => {

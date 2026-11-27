@@ -15,7 +15,6 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import {
   Context,
-  Crypto,
   DateTime,
   Effect,
   Exit,
@@ -28,6 +27,7 @@ import {
   Scope,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpServer } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
@@ -60,7 +60,7 @@ import {
 } from '../support/whole-candidate-catalog-receiver.fixture.ts';
 
 const version = 'ontos.catalog.whole-candidate.fixture.v1' as const;
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),

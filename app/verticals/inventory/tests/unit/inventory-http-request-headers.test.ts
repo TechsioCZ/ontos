@@ -10,7 +10,8 @@ import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/ap
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
 import { GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -104,8 +105,11 @@ const proposal = {
   sourceReference: 'erp-stock:snapshot:1',
 } as const;
 
-// The registered Read runtime takes evidence identifiers from Crypto; each live test builds Node Crypto in its scope.
-const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+// The registered Read runtime takes evidence identifiers from SecureRandom.
+// Each live test builds Node Crypto in its scope.
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(
+  Effect.map((context) => Context.get(context, SecureRandom.SecureRandom)),
+);
 
 interface SentRequest {
   readonly body: string;
@@ -159,7 +163,7 @@ const makeRegisteredInventory = Effect.fn('InventoryRequestHeadersTest.make')(fu
     use: 'sig',
   };
   const issuedAt = Math.floor((yield* DateTime.nowAsDate).getTime() / 1000);
-  const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const jti = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   const token = yield* Effect.promise(() =>
     new SignJWT({
       compositionRevision: revision,
@@ -412,7 +416,7 @@ describe('Inventory HTTP requests with transport headers', () => {
         expect(Schema.is(action.invalid)(overlongTrace)).toBe(true);
         expect(inventory.snapshot().redemptions).toBe(2);
         expect(inventory.snapshot().actions.stages).toEqual(stages);
-      }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+      }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
     );
   }
 
@@ -432,7 +436,7 @@ describe('Inventory HTTP requests with transport headers', () => {
       yield* inventory.send(withUndeclaredPayloadField, readReceipt);
       expect(inventory.snapshot().delivered[1]?.status).toBe(400);
       expect(inventory.snapshot().redemptions).toBe(1);
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 });
 
@@ -478,7 +482,7 @@ describe('Inventory HTTP requests asking for a proposal', () => {
       const ran = yield* inventory.attempt(asSent, (authorization) => selectBackend(authorization, 'run-key'));
       expect(Result.isSuccess(ran)).toBe(true);
       expect(writes).toBe(1);
-    }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
   );
 
   for (const action of actionCases.filter(({ name }) => name !== 'select-inventory-backend')) {
@@ -501,7 +505,7 @@ describe('Inventory HTTP requests asking for a proposal', () => {
         const ran = inventory.snapshot().actions;
         expect(ran.permissionDenials).toHaveLength(1);
         expect(ran.stages.slice(refused.stages.length)).toContain('policy_boundary');
-      }).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+      }).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
     );
   }
 });

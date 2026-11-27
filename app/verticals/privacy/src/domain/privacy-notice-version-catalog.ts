@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   InvalidPrivacyNoticeContent,
@@ -9,7 +10,7 @@ import type {
   PrivacyNoticeVersion,
 } from '../../shared/domain/privacy-notice-version.ts';
 import type { PrivacyNoticeVersionRef } from '../../shared/resources/privacy-notice-version.ts';
-import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-persistence-error.ts';
+import type { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-persistence-error.ts';
 
 export interface PrivacyNoticeVersionCatalog {
   addVersion: (
@@ -68,18 +69,8 @@ const createVersion = (options: {
   wording: options.input.wording,
 });
 
-const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
+const makeCatalog = (crypto: SecureRandom.SecureRandom['Service']): PrivacyNoticeVersionCatalog => {
   const notices = new Map<string, PrivacyNoticeVersion[]>();
-  const nextIdentifier = (reason: string) =>
-    crypto
-      .randomUUIDv4()
-      .pipe(
-        Effect.catchTag('PlatformError', () =>
-          Effect.fail(
-            new PrivacyOperationPersistenceError({ code: 'privacy_operation_persistence_unavailable', reason }),
-          ),
-        ),
-      );
   return {
     addVersion: Effect.fn('makeInMemoryPrivacyNoticeVersionCatalog.addVersion')(function* addVersion(noticeId, input) {
       const current = notices.get(noticeId);
@@ -98,7 +89,7 @@ const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
       }
       const valid = yield* validateContent(input);
       const recordedAt = DateTime.formatIso(yield* DateTime.now);
-      const versionId = yield* nextIdentifier('Notice Version identifier could not be generated');
+      const versionId = yield* crypto.uuidV4();
       const version = createVersion({
         input: valid,
         noticeId,
@@ -112,13 +103,7 @@ const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
     }),
     create: Effect.fn('makeInMemoryPrivacyNoticeVersionCatalog.create')(function* create(tenantId, input) {
       const valid = yield* validateContent(input);
-      const [noticeId, versionId] = yield* Effect.all(
-        [
-          nextIdentifier('Privacy Notice identifier could not be generated'),
-          nextIdentifier('Notice Version identifier could not be generated'),
-        ],
-        { concurrency: 2 },
-      );
+      const [noticeId, versionId] = yield* Effect.all([crypto.uuidV4(), crypto.uuidV4()], { concurrency: 2 });
       const recordedAt = DateTime.formatIso(yield* DateTime.now);
       const version = createVersion({ input: valid, noticeId, recordedAt, tenantId, versionId, versionNumber: 1 });
       notices.set(noticeId, [version]);
@@ -139,5 +124,5 @@ const makeCatalog = (crypto: Crypto.Crypto): PrivacyNoticeVersionCatalog => {
 export const makeInMemoryPrivacyNoticeVersionCatalog = (): Effect.Effect<
   PrivacyNoticeVersionCatalog,
   never,
-  Crypto.Crypto
-> => Effect.service(Crypto.Crypto).pipe(Effect.map(makeCatalog));
+  SecureRandom.SecureRandom
+> => Effect.service(SecureRandom.SecureRandom).pipe(Effect.map(makeCatalog));

@@ -1,7 +1,8 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { OwnerAuthorizationDecision } from '../../src/access/enforcement/owner-overlay.ts';
@@ -35,7 +36,7 @@ const activeRevision = 'a'.repeat(64);
 const staleRevision = 'b'.repeat(64);
 const gatewayAudience = 'party-registry';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const kernelClients = Effect.gen(function* acquireKernelClients() {
   const shared = yield* loadDatabaseConnectionPair();

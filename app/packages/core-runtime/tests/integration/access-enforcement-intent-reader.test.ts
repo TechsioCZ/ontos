@@ -287,16 +287,16 @@ const scopeFor = (
   Schema.decodeEffect(TrustedPrincipalContextSchema)(
     legalEntityId === undefined
       ? {
-          principalId,
           authContextRef: 'job:access-enforcement-intent:run:1',
           authMethod: 'system',
+          principalId,
           tenantId: TENANT_A,
         }
       : {
-          legalEntityId,
-          principalId,
           authContextRef: 'job:access-enforcement-intent:run:1',
           authMethod: 'system',
+          legalEntityId,
+          principalId,
           tenantId: TENANT_A,
         },
   ).pipe(

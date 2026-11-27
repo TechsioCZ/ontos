@@ -3,7 +3,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq, gte, inArray, isNull } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Cause, Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { isSqlError } from 'effect/sql/SqlError';
 import type { SqlError } from 'effect/sql/SqlError';
@@ -364,16 +365,14 @@ const invocationSelection = {
   status: actionInvocations.status,
 } as const;
 
-const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = createActionInvocationPersistenceErrorWithCause(
+const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) =>
+  createActionInvocationPersistenceErrorWithCause(
     {
       code: 'action_invocation_persistence_failed',
       reason,
     },
     cause,
   );
-  return failure;
-};
 
 /**
  * Bridge used by the transaction boundary to preserve the original defect.
@@ -399,16 +398,14 @@ export const logActionInvocationPersistenceFailureCause = (
     : Effect.annotateLogs(Effect.logError('Unexpected Action invocation persistence failure', cause), annotations);
 };
 
-const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
-  const failure = createActionTransactionErrorWithCause(
+const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) =>
+  createActionTransactionErrorWithCause(
     {
       code: 'action_transaction_failed',
       reason,
     },
     cause,
   );
-  return failure;
-};
 
 /**
  * Bridge used by the transaction boundary to preserve the original defect.
@@ -549,7 +546,7 @@ const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executo
     );
 };
 
-export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositoryService => {
+export const makeActionRepository = (crypto: SecureRandom.SecureRandom['Service']): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = Effect.fn(
     'makeActionRepository.createOrResolveInvocation',
   )(function* createOrResolveInvocationEffect(
@@ -1057,8 +1054,7 @@ export const makeActionRepository = (crypto: Crypto.Crypto): ActionRepositorySer
       const persistedDomainEvents = yield* Effect.forEach(
         input.evidence.domainEvents,
         (event) =>
-          crypto.randomUUIDv4().pipe(
-            Effect.mapError((cause) => transactionFailure(failureReason, cause)),
+          crypto.uuidV4().pipe(
             Effect.map((domainEventId) => ({
               actionInvocationId: input.actionInvocationId,
               domainEventId,
@@ -1165,7 +1161,7 @@ export class ActionRepository extends Context.Service<ActionRepository, ActionRe
 export const ActionRepositoryLive = Layer.effect(
   ActionRepository,
   Effect.gen(function* makeActionRepositoryService() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return makeActionRepository(crypto);
   }),
 );

@@ -177,11 +177,11 @@ const resolveLocalSource = (
     );
   }
   const packageGroups = /^@app\/(?<packageName>[^/]+)(?:\/(?<subpath>.+))?$/u.exec(specifier)?.groups;
-  const packageName = packageGroups?.packageName;
+  const packageName = packageGroups?.['packageName'];
   if (packageName === undefined) {
     return undefined;
   }
-  const subpath = packageGroups?.subpath;
+  const subpath = packageGroups?.['subpath'];
   const unsupported = packageExports.get(`@app/${packageName}/`);
   if (unsupported !== undefined) {
     const exported = packageExports.get(specifier);
@@ -1115,8 +1115,8 @@ const isPrimitiveScopedFactCall = (
 ): boolean =>
   value.callee.type === 'Identifier' &&
   value.arguments.length === 2 &&
-  exposedArguments[0] &&
-  !exposedArguments[1] &&
+  exposedArguments[0] === true &&
+  exposedArguments[1] !== true &&
   isScopedCoreFactConsumer(value.callee.name, program);
 
 const declaresEffectValueImport = (program: Program, local: string): boolean =>
@@ -1154,6 +1154,23 @@ const hasUnprovedMemberHandoff = (call: CallExpression, program: Program, proof:
   }
   // An unresolvable declared receiver still lacks custody of the raw argument.
   return proof?.module.declaredMemberReceivers.has(name) === true;
+};
+
+const hasSoleNativeExecutorArgument = (
+  value: CallExpression,
+  exposedArguments: readonly boolean[],
+  receivers: ReadonlySet<string>,
+): boolean => {
+  const [firstArgument] = value.arguments;
+  if (
+    firstArgument === undefined ||
+    firstArgument.type === 'SpreadElement' ||
+    exposedArguments[0] !== true ||
+    exposedArguments.some((exposed, index) => index > 0 && exposed)
+  ) {
+    return false;
+  }
+  return nativeExecutorPaths(firstArgument, receivers).includes('');
 };
 
 const executorCallExposes = (
@@ -1201,17 +1218,10 @@ const executorCallExposes = (
       !requireResultWitness || value.callee.type === 'Identifier' || hasUnprovedMemberHandoff(value, program, proof)
     );
   }
+  const nativeBooleanFactArgument =
+    candidates.length > 0 && proof !== undefined && hasSoleNativeExecutorArgument(value, exposedArguments, receivers);
   return candidates.some((target) => {
-    const [firstArgument] = value.arguments;
-    if (
-      proof !== undefined &&
-      firstArgument !== undefined &&
-      firstArgument.type !== 'SpreadElement' &&
-      exposedArguments[0] &&
-      exposedArguments.every((exposed, index) => index === 0 || !exposed) &&
-      nativeExecutorPaths(firstArgument, receivers).includes('') &&
-      proof.graph.provesBooleanFact(target)
-    ) {
+    if (proof !== undefined && nativeBooleanFactArgument && proof.graph.provesBooleanFact(target)) {
       return false;
     }
     const local = target.implementation;
@@ -1226,7 +1236,7 @@ const executorCallExposes = (
     const parameterNames = new Set(
       local.params.flatMap((parameter, index) => {
         const argument = value.arguments[index];
-        return !exposedArguments[index] ||
+        return exposedArguments[index] !== true ||
           parameter.type !== 'Identifier' ||
           argument === undefined ||
           argument.type === 'SpreadElement'
@@ -1519,7 +1529,7 @@ const legacyReturnsExecutorValue = (
         }
         const parameterNames = new Set(
           local.params.flatMap((parameter, index) =>
-            exposedArguments[index] && parameter.type === 'Identifier' ? [parameter.name] : [],
+            exposedArguments[index] === true && parameter.type === 'Identifier' ? [parameter.name] : [],
           ),
         );
         return legacyReturnsExecutorValue(local, parameterNames, functions, program, nextVisiting);
@@ -2433,7 +2443,7 @@ const globalDatabaseCapabilityClosure = (
         pending.push(file);
       }
       for (const match of source.matchAll(importedSpecifier)) {
-        const specifier = match.groups?.specifier;
+        const specifier = match.groups?.['specifier'];
         const dependency =
           specifier === undefined
             ? undefined
@@ -2467,8 +2477,8 @@ const crossOwnerPrivateImport = (
   relative: string,
   line: string,
 ): boolean => {
-  const sourceOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\/src\//u.exec(relative)?.groups?.owner;
-  const specifier = importSpecifier.exec(line)?.groups?.specifier;
+  const sourceOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\/src\//u.exec(relative)?.groups?.['owner'];
+  const specifier = importSpecifier.exec(line)?.groups?.['specifier'];
   if (sourceOwner === undefined || specifier === undefined) {
     return false;
   }
@@ -2478,7 +2488,7 @@ const crossOwnerPrivateImport = (
         .split(path.sep)
         .join('/')
     : specifier.replace(/^@app\//u, '');
-  const targetOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(targetRelative)?.groups?.owner;
+  const targetOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(targetRelative)?.groups?.['owner'];
   return (
     targetOwner !== undefined &&
     targetOwner !== sourceOwner &&
@@ -2539,8 +2549,8 @@ const privateDatabaseOrigin = (
   if (relative === `${coreRuntimeSourcePrefix}db/scoped-routine.ts`) {
     return relative;
   }
-  const owner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(relative)?.groups?.owner;
-  const consumerOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(context.relative)?.groups?.owner;
+  const owner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(relative)?.groups?.['owner'];
+  const consumerOwner = /(?:^|\/)verticals\/(?<owner>[^/]+)\//u.exec(context.relative)?.groups?.['owner'];
   if (owner !== undefined && owner === consumerOwner) {
     return undefined;
   }
@@ -2549,7 +2559,7 @@ const privateDatabaseOrigin = (
   }
   visited.add(dependency);
   for (const match of (context.sources.get(dependency) ?? '').matchAll(importedSpecifier)) {
-    const next = match.groups?.specifier;
+    const next = match.groups?.['specifier'];
     if (next !== undefined) {
       const origin = privateDatabaseOrigin(context, dependency, next, visited);
       if (origin !== undefined) {
@@ -2568,7 +2578,7 @@ const recordResolvedPrivateDatabaseImports = (context: SourceCheckContext): void
     return;
   }
   for (const match of context.source.matchAll(importedSpecifier)) {
-    const specifier = match.groups?.specifier;
+    const specifier = match.groups?.['specifier'];
     if (
       specifier === undefined ||
       crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, match[0])
@@ -2608,7 +2618,7 @@ const recordProductionTestingImports = (context: SourceCheckContext): void => {
     return;
   }
   for (const match of context.source.matchAll(importedSpecifier)) {
-    const specifier = match.groups?.specifier;
+    const specifier = match.groups?.['specifier'];
     if (specifier === undefined) {
       continue;
     }
@@ -2645,7 +2655,7 @@ const recordTransitiveDatabaseCapabilities = (context: SourceCheckContext): void
     return;
   }
   for (const match of context.source.matchAll(importedSpecifier)) {
-    const specifier = match.groups?.specifier;
+    const specifier = match.groups?.['specifier'];
     if (specifier === undefined) {
       continue;
     }
@@ -2699,7 +2709,7 @@ const recordLineDatabaseViolations = (context: SourceCheckContext): void => {
       (isVerticalOwnerSource(context.relative) && importsCoreDatabaseSchema.test(line)) ||
       crossOwnerPrivateImport(context.path, context.root, context.file, context.relative, line);
     if (directImport) {
-      const specifier = importSpecifier.exec(line)?.groups?.specifier;
+      const specifier = importSpecifier.exec(line)?.groups?.['specifier'];
       const origin =
         specifier === undefined ? undefined : privateDatabaseOrigin(context, context.file, specifier, new Set());
       const violation: DatabaseAccessViolation = {
@@ -2875,7 +2885,7 @@ const nativeTestSourceFiles = (
       continue;
     }
     for (const match of (sources.get(file) ?? '').matchAll(importedSpecifier)) {
-      const specifier = match.groups?.specifier;
+      const specifier = match.groups?.['specifier'];
       const dependency =
         specifier === undefined
           ? undefined
@@ -2899,7 +2909,7 @@ const modeledNativeRegistryImports = new Set([
   'effect/Effect',
   'effect/Layer',
   'effect/Context',
-  'effect/Crypto',
+  'effect/crypto',
   'effect/Schema',
   'effect/SchemaIssue',
   'effect/Logger',
@@ -3108,8 +3118,8 @@ const nativeRegistryOriginMatches = (
   path: Path.Path,
 ): boolean => {
   const alias = /^npm:(?<name>.+)@(?<version>[^@]+)$/u.exec(declaration);
-  const expectedName = alias?.groups?.name ?? name;
-  const expectedVersion = alias?.groups?.version ?? declaration;
+  const expectedName = alias?.groups?.['name'] ?? name;
+  const expectedVersion = alias?.groups?.['version'] ?? declaration;
   return (
     origin !== undefined &&
     origin.metadata.name === expectedName &&
@@ -3187,8 +3197,8 @@ const nativeRegistrySourceEdges = (
     if (files.some((file) => file === undefined || !sources.has(file))) {
       return undefined;
     }
-    if (record?.workerd !== undefined) {
-      const file = containedPublicSourceTarget(base, record.workerd, path);
+    if (record?.['workerd'] !== undefined) {
+      const file = containedPublicSourceTarget(base, record['workerd'], path);
       if (file !== undefined) {
         workerdTargets.add(file);
       }

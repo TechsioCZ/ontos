@@ -62,7 +62,7 @@ export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;
 
 const deploymentIdPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const moduleFederationBoundaryPattern = /^[A-Za-z][A-Za-z0-9]*$/u;
-const schemaVersionPattern = /^[0-9]+$/u;
+const schemaVersionPattern = /^\d+$/u;
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 
 export const OntosDeploymentAppIdSchema = Schema.String.check(Schema.isPattern(deploymentIdPattern)).pipe(

@@ -14,7 +14,8 @@ import { makeGovernedReadProblems } from '@app/shared-contracts/server/effect-bf
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq, sql } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
@@ -59,7 +60,7 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 import { purchaseBindingInput } from '../unit/tax-domain-fixtures.ts';
 import { evaluationRequestInput } from '../unit/tax-evaluation-fixtures.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const T = '2026-06-01T10:00:00.000Z';
 
 /** One seller scope of one Tenant, fresh for each test. */

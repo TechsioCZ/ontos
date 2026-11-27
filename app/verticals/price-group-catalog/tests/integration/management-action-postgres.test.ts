@@ -9,7 +9,8 @@ import {
   getActionAccessTargetResolver,
   scopedRoutineInvokerFromTransaction,
 } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -211,7 +212,7 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
 
       const runtime = makeActionRuntime(
         { executor: database },
-        makeActionRepository(yield* Crypto.Crypto),
+        makeActionRepository(yield* SecureRandom.SecureRandom),
         allowedPermission,
         testOperationalScopeResolver,
         {
@@ -457,7 +458,7 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
       // services. This is the recovery case where write authority has already been revoked.
       const revokedRuntime = makeActionRuntime(
         { executor: database },
-        makeActionRepository(yield* Crypto.Crypto),
+        makeActionRepository(yield* SecureRandom.SecureRandom),
         allowedPermission,
         testOperationalScopeResolver,
         {

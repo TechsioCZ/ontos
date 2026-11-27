@@ -21,19 +21,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import { retireVariantActionApiLive } from '../../api/retire-variant-action-server.ts';
@@ -98,7 +87,7 @@ export const retiredSiblingTestServices = NodeChildProcessSpawner.layer.pipe(
 const demand = (condition: boolean, reason: string) =>
   condition ? Effect.void : Effect.fail(new RetiredSiblingReceiverFailure({ reason }));
 const catalogModuleKey = 'commerce.catalog' as const;
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const produceCatalogSelection = Effect.fn('RetiredSibling.produceSelection')(function* produceSelection(
   transaction: ScopedTransactionExecutor,

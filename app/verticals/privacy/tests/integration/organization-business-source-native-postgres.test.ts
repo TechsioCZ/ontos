@@ -13,7 +13,8 @@ import {
   ORGANIZATION_PROFILE_SOURCE_CREATE_TEMPLATE_VERSION,
 } from '@app/commerce-customer-context/domain/organization-profile-source';
 import { SymmySourceOrganizationFactsGovernanceSelectorSchema } from '@app/symmy-integration/api/symmy-source-organization-facts';
-import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { OrganizationBusinessSourceIntentSchema } from '../../shared/apis/organization-business-applicability.ts';
@@ -36,10 +37,10 @@ it.live('prepares only exact source organization governance using its real nativ
       mode: 'schema-only',
       purpose: 'implementation-1096-registered-workload-gateway',
     });
-    const crypto = yield* Crypto.Crypto;
-    const tenantId = yield* crypto.randomUUIDv4();
-    const legalEntityId = yield* crypto.randomUUIDv4();
-    const governancePrincipalId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const tenantId = yield* crypto.uuidV4();
+    const legalEntityId = yield* crypto.uuidV4();
+    const governancePrincipalId = yield* crypto.uuidV4();
     const sourceReference = {
       occurrenceId: 'internal-organization-occurrence',
       recordId: 'internal-organization-source-record',
@@ -62,7 +63,7 @@ it.live('prepares only exact source organization governance using its real nativ
     // A locator template only; no Symmy provider proof or business decision is manufactured here.
     const governanceSelector = yield* Schema.decodeUnknownEffect(SymmySourceOrganizationFactsGovernanceSelectorSchema)({
       effectKey: 'company-create',
-      execution: { jobId: yield* crypto.randomUUIDv4(), kind: 'JOB' },
+      execution: { jobId: yield* crypto.uuidV4(), kind: 'JOB' },
       purpose: 'GOVERNANCE',
       sourceReference,
     });

@@ -35,7 +35,6 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import {
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -46,6 +45,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from 'effect/http';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -92,7 +92,7 @@ const actionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const reason = 'Observe distinct sample forms for the native whole-candidate acceptance fixture';
 const evidenceRefs: readonly [string, ...string[]] = ['TEST:1225:physical-sample-observation'];
 const populationToken = 'TEST:1225:owned-empty-open-selection-population';
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 /** Fixed fixture setup catalog only; this never discovers or grants the application catalog. */
 export const wholeCandidateCatalogActionKeys = [

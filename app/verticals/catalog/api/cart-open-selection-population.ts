@@ -56,9 +56,9 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         // verifies the subject's assertion; the receiving Cart owner checks the calling module (Catalog).
         const credential = yield* acquireDelegatedGatewayContext(
           {
-            requestCorrelation,
             audience: 'commerce-cart',
             legalEntityScope: 'tenant',
+            requestCorrelation,
             subject: { _tag: 'Assertion', scope: input.scope },
           },
           crypto,

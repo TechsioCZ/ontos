@@ -6,7 +6,8 @@ import {
 } from '@app/commerce-cart-contracts/open-selection-population';
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import { and, asc, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import type { CreateCartDraftPayload } from '../../shared/actions/create-cart-draft.ts';
 import type { ReviseCartDraftPayload } from '../../shared/actions/revise-cart-draft.ts';
 import type { CloseCartDraftPayload } from '../../shared/actions/close-cart-draft.ts';
@@ -45,15 +46,9 @@ const reference = (tenantId: string, cartId: string) => ({
   tenantId,
 });
 
-const serverId = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4()),
-  Effect.mapError(unavailable),
-);
+const serverId = SecureRandom.SecureRandom.pipe(Effect.flatMap((crypto) => crypto.uuidV4()));
 const hashPopulation = (bytes: Uint8Array) =>
-  Crypto.Crypto.pipe(
-    Effect.flatMap((crypto) => crypto.digest('SHA-256', bytes)),
-    Effect.mapError(unavailable),
-  );
+  Digest.Digest.pipe(Effect.flatMap((messageDigest) => messageDigest.digest(Digest.sha256, bytes)));
 export interface CartAuthority {
   readonly assertCartWriteAuthority: (target: ResourceAccessTarget) => Effect.Effect<void, CartDraftRejected>;
   readonly assertInitializationAuthority: () => Effect.Effect<void, CartDraftRejected>;

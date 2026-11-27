@@ -123,7 +123,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(problemOf(foreignDownload)).toBe(problemOf(unknownDownload));
               expect(foreignDownload.bytes.byteLength).toBeLessThan(2048);
               // And nothing of the foreign tenant exists under the asset's tenant either.
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
             }),
           ),
         ),
@@ -199,7 +199,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect(currentBefore.entries.map(({ kind }) => kind)).toEqual(['AVAILABLE']);
               expect(yield* currentOf(world, owner, [refOf(world.tenantId, id)])).toEqual(currentBefore);
               expect((yield* downloadOf(edge, owner, id)).bytes).toEqual(bytes);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
             }),
           ),
         ),
@@ -405,7 +405,7 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               injection.engine.setDown(false);
               expect(reserved.status).toBe(503);
               expect(renamed.status).toBe(503);
-              expect((yield* rowsOf(world)).length).toBe(1);
+              expect(yield* rowsOf(world)).toHaveLength(1);
               expect(yield* rowOf(world, id)).toEqual(sealed);
 
               // The engine is back: the same rename, under a new attempt, is answered.
@@ -487,13 +487,13 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect((yield* metadataOf(edge, reader, a)).json).toEqual(metadataA.json);
               expect((yield* downloadOf(edge, reader, a)).bytes).toEqual(first);
               expect((yield* downloadOf(edge, reader, b)).bytes).toEqual(second);
-              expect((yield* rowsOf(world)).length).toBe(2);
+              expect(yield* rowsOf(world)).toHaveLength(2);
               // The same reservation key with the later bytes is a conflict, not the earlier asset with new bytes.
               const conflicting = yield* failureTagOf(
                 reserve(world, uploader, second, { idempotencyKey: 'earlier-a' }),
               );
               expect(conflicting).toBe('ActionRequestHashConflict');
-              expect((yield* rowsOf(world)).length).toBe(2);
+              expect(yield* rowsOf(world)).toHaveLength(2);
             }),
           ),
         ),

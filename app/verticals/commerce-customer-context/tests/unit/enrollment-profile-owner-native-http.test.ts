@@ -1,7 +1,8 @@
 import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { ConfigProvider, Crypto, DateTime, Effect, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -18,10 +19,7 @@ const principalId = '30000000-0000-4000-8000-000000000001';
 const revision = 'a'.repeat(64);
 const callingModulePrincipalId = '40000000-0000-4000-8000-000000000001';
 const originatorInvocationId = '31000000-0000-4000-8000-000000000001';
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 const originator = { actionInvocationId: originatorInvocationId, compositionRevision: revision, tenantId };
 /** A version 3 assertion: the enrolling person is the subject and this Commerce module is the verified actor. */
 const issuedAssertion = (mode: string): string => {

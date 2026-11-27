@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
-import { SyntaxKind } from '@typescript/native/unstable/ast';
+import { SyntaxKind } from 'tsrs/ast';
 import { Option, Schema } from 'effect';
 import { parseSync } from 'oxc-parser';
 import type {
@@ -346,7 +346,7 @@ const constInitializerRange = (source: string, name: string): SourceRange | unde
     return undefined;
   }
   const searchStart = match.index + match[0].length;
-  const equals = [...structure.slice(searchStart).matchAll(/[=](?![=>])/gu)]
+  const equals = [...structure.slice(searchStart).matchAll(/(?:=)(?![=>])/gu)]
     .map((candidate) => searchStart + (candidate.index ?? -1))
     .find((index) => index >= searchStart && isTopLevelCodePosition(source, index));
   if (equals === undefined) {
@@ -529,7 +529,7 @@ const entriesAcrossSlots = (
 
 const objectEntryKey = (entry: string): string | undefined => {
   const match = /^(?:'(?<single>[^']+)'|"(?<double>[^"]+)"|(?<bare>[A-Za-z][A-Za-z0-9-]*))\s*:/u.exec(entry);
-  return match?.groups?.single ?? match?.groups?.double ?? match?.groups?.bare;
+  return match?.groups?.['single'] ?? match?.groups?.['double'] ?? match?.groups?.['bare'];
 };
 
 const slotHasExactlyOneCodeMatch = (
@@ -584,7 +584,7 @@ const slotIsInsideObjectProperty = (
 };
 
 const defaultExportExpression = (source: string): string | undefined =>
-  assignedExpression(source, /^\s*export default\s+/mu);
+  assignedExpression(source, /^[ \t]*export default\s+/mu);
 
 const returnedEffectBffDefinition = (source: string): string | undefined => {
   const returned = callbackReturnedExpression(source);
@@ -612,7 +612,9 @@ const exportedRuntimeFactory = (source: string): RuntimeFactoryRange | undefined
     return undefined;
   }
   const runtimeInitializer = constInitializer(source, exported);
-  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(runtimeInitializer ?? '')?.groups?.factory;
+  const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(runtimeInitializer ?? '')?.groups?.[
+    'factory'
+  ];
   if (
     factory === undefined ||
     runtimeInitializer === undefined ||
@@ -674,9 +676,9 @@ const hasExactValueImport = (
     ),
   ].filter((candidate) => candidate.index !== undefined && isTopLevelCodePosition(source, candidate.index));
   const importedValues = imports.flatMap((candidate) =>
-    (candidate.groups?.values ?? '').split(',').map((entry) => entry.trim()),
+    (candidate.groups?.['values'] ?? '').split(',').map((entry) => entry.trim()),
   );
-  const importedBinding = /\bas\s+(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*$/u.exec(value)?.groups?.binding ?? value;
+  const importedBinding = /\bas\s+(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*$/u.exec(value)?.groups?.['binding'] ?? value;
   return (
     (allowAdditionalImports || imports.length === 1) &&
     importedValues.filter((candidate) => candidate === value).length === 1 &&
@@ -787,7 +789,7 @@ const definesExpectedRuntime = (definition: string | undefined, expectedApi: str
   hasExactlyOne(
     definition,
     runtimeName === 'layer'
-      ? /(?:\{|,)\s*layer(?:\s*:\s*layer)?\s*(?:,|\})/gu
+      ? /[{,]\s*layer(?:\s*:\s*layer)?\s*[,}]/gu
       : new RegExp(`(?:\\{|,)\\s*layer\\s*:\\s*${escapeRegExp(runtimeName)}\\s*(?:,|\\})`, 'gu'),
   );
 
@@ -800,7 +802,7 @@ const legacyRuntimeMount = (
   expectedApi: string,
 ): boolean => {
   const runtimeDeclaration = /const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApiBuilder\.layer\(/u.exec(runtimeSource);
-  const runtimeName = runtimeDeclaration?.groups?.name;
+  const runtimeName = runtimeDeclaration?.groups?.['name'];
   if (runtimeDeclaration === null || runtimeName === undefined) {
     return false;
   }
@@ -841,7 +843,7 @@ const slotIsInsideMountedLayer = (
       declaration = candidate;
     }
   }
-  const layerName = declaration?.groups?.name;
+  const layerName = declaration?.groups?.['name'];
   if (declaration === undefined || layerName === undefined) {
     return false;
   }
@@ -884,22 +886,20 @@ export const governedApiBinding = (source: string): string | undefined => {
     ...maskComments(source).matchAll(
       new RegExp(`${governedApiDeclarationPrefix('(?<name>[A-Za-z][A-Za-z0-9]*)')}HttpApi\\.make\\(`, 'gu'),
     ),
-  ]
-    .filter((match) => isTopLevelCodePosition(source, match.index))
-    .map((match) => match.groups?.name)
-    .filter((name) => {
-      if (name === undefined) {
-        return false;
-      }
-      const root = assignedExpressionRange(source, new RegExp(governedApiDeclarationPrefix(escapeRegExp(name)), 'u'));
-      const statementEnd = root === undefined ? undefined : apiStatementEnd(source, root.start);
-      return (
-        root !== undefined &&
-        statementEnd !== undefined &&
-        slot.markerStart > root.start &&
-        slot.markerEnd < statementEnd
-      );
-    });
+  ].flatMap((match) => {
+    const name = match.groups?.['name'];
+    if (name === undefined || !isTopLevelCodePosition(source, match.index)) {
+      return [];
+    }
+    const root = assignedExpressionRange(source, new RegExp(governedApiDeclarationPrefix(escapeRegExp(name)), 'u'));
+    const statementEnd = root === undefined ? undefined : apiStatementEnd(source, root.start);
+    return root !== undefined &&
+      statementEnd !== undefined &&
+      slot.markerStart > root.start &&
+      slot.markerEnd < statementEnd
+      ? [name]
+      : [];
+  });
   return candidates.length === 1 ? candidates[0] : undefined;
 };
 
@@ -970,8 +970,8 @@ const runtimeRestTupleType = (factory: RuntimeFactoryRange, args: string): strin
     `^\\(\\s*\\.\\.\\.${escapeRegExp(args)}:\\s*(?<type>[A-Za-z][A-Za-z0-9]*)\\s*\\)`,
     'u',
   ).exec(maskNonCode(factory.value));
-  if (inline?.groups?.type !== undefined) {
-    return inline.groups.type;
+  if (inline?.groups?.['type'] !== undefined) {
+    return inline.groups['type'];
   }
   const inferred = new RegExp(`^\\(\\s*\\.\\.\\.${escapeRegExp(args)}\\s*\\)\\s*=>`, 'u').test(
     maskNonCode(factory.value),
@@ -980,7 +980,7 @@ const runtimeRestTupleType = (factory: RuntimeFactoryRange, args: string): strin
     /^\(\s*\.\.\.[A-Za-z][A-Za-z0-9]*:\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*\)\s*=>\s*[A-Za-z][A-Za-z0-9]*$/u.exec(
       maskComments(factory.declarationType ?? ''),
     );
-  return inferred ? declared?.groups?.type : undefined;
+  return inferred ? declared?.groups?.['type'] : undefined;
 };
 
 const hasInjectedGovernedReadRuntime = (source: string): boolean => {
@@ -991,9 +991,10 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   const code = maskNonCode(factory.value);
   // The generated binding may be the first explicitly typed injection in an owner runtime
   // factory. Its caller and mounted layers are checked separately, and TS checks the layer type.
-  const injection =
-    /const\s+\[\s*governedReadRuntimeLive,\s*[A-Za-z0-9_,\s]+\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/u.exec(code);
-  const args = injection?.groups?.args;
+  const injection = /const\s+\[\s*governedReadRuntimeLive,[\w,\s]+\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/u.exec(
+    code,
+  );
+  const args = injection?.groups?.['args'];
   if (
     args === undefined ||
     injection?.index === undefined ||
@@ -1028,28 +1029,36 @@ const topLevelBindingDeclarations = (source: string, binding: string): readonly 
     ),
   ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
 
+const IMPORT_KEYWORD = String.raw`^[ \t]*import\s+(?:(?<typeOnly>type)\s+)?`;
+const DEFAULT_IMPORT_BINDING = String.raw`(?:[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*)?`;
+const NAMED_IMPORT_BINDINGS = String.raw`\{(?<values>[^}]*)\}`;
+const IMPORT_MODULE_SOURCE = String.raw`\s*from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;?`;
+/** One line-leading named import: `import [type] [Default,] { values } from 'module';`. */
+const NAMED_IMPORT_DECLARATION = new RegExp(
+  `${IMPORT_KEYWORD}${DEFAULT_IMPORT_BINDING}${NAMED_IMPORT_BINDINGS}${IMPORT_MODULE_SOURCE}`,
+  'gmu',
+);
+
 const namedSourceImport = (source: string, binding: string, allowTypeOnly = false): NamedSourceImport | undefined => {
-  const imports = [
-    ...maskComments(source).matchAll(
-      /^\s*import\s+(?:(?<typeOnly>type)\s+)?(?:[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*)?\{(?<values>[^}]*)\}\s*from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;?/gmu,
-    ),
-  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+  const imports = [...maskComments(source).matchAll(NAMED_IMPORT_DECLARATION)].filter(
+    (match) => match.index !== undefined && isTopLevelCodePosition(source, match.index),
+  );
   const candidates = imports.flatMap((match) =>
-    (match.groups?.values ?? '').split(',').flatMap((entry) => {
+    (match.groups?.['values'] ?? '').split(',').flatMap((entry) => {
       const imported =
         /^(?:(?<typeOnly>type)\s+)?(?<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?<local>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
           entry.trim(),
         );
-      const name = imported?.groups?.imported;
-      const local = imported?.groups?.local ?? name;
-      const modulePath = match.groups?.modulePath;
+      const name = imported?.groups?.['imported'];
+      const local = imported?.groups?.['local'] ?? name;
+      const modulePath = match.groups?.['modulePath'];
       return name === undefined || local !== binding || modulePath === undefined
         ? []
         : [
             {
               imported: name,
               modulePath,
-              typeOnly: match.groups?.typeOnly !== undefined || imported?.groups?.typeOnly !== undefined,
+              typeOnly: match.groups?.['typeOnly'] !== undefined || imported?.groups?.['typeOnly'] !== undefined,
             },
           ];
     }),
@@ -1069,8 +1078,8 @@ const cryptoReadTuple = (source: string, factory: SourceRange) => {
   const signature = /^\(\s*\.\.\.(?<args>[A-Za-z][A-Za-z0-9]*):\s*(?<type>[A-Za-z][A-Za-z0-9]*)\s*\)/u.exec(
     factorySource,
   );
-  const args = signature?.groups?.args;
-  const tupleType = signature?.groups?.type;
+  const args = signature?.groups?.['args'];
+  const tupleType = signature?.groups?.['type'];
   if (args === undefined || tupleType === undefined || signature === null) {
     return null;
   }
@@ -1122,7 +1131,7 @@ const cryptoReadBinding = (factorySource: string, args: string) => {
     ...factoryCode.matchAll(/const\s*\[(?<bindings>[A-Za-z0-9_,\s]+)\]\s*=\s*(?<args>[A-Za-z][A-Za-z0-9]*)\s*;/gu),
   ];
   const injection = destructures.length === 1 ? destructures[0] : undefined;
-  const local = injection?.groups?.bindings?.split(',')[0]?.trim();
+  const local = injection?.groups?.['bindings']?.split(',')[0]?.trim();
   const mergePattern = new RegExp(
     `const governedReadRuntimeLive\\s*=\\s*Layer\\.merge\\(nodeCryptoLayer,\\s*${escapeRegExp(local ?? '')}\\s*\\)\\s*;`,
     'gu',
@@ -1142,7 +1151,7 @@ const cryptoReadBinding = (factorySource: string, args: string) => {
     return null;
   }
   if (
-    injection.groups?.args !== args ||
+    injection.groups?.['args'] !== args ||
     !hasCryptoReadDominance(factorySource, injection.index, merge.index, slot, returned.index)
   ) {
     return null;
@@ -1153,7 +1162,7 @@ const cryptoReadBinding = (factorySource: string, args: string) => {
 const cryptoReadInvocation = (source: string, elements: readonly string[]) => {
   const exported = defaultExportExpression(source);
   const invocation = exported === undefined ? undefined : constInitializer(source, exported);
-  const maker = /^(?<name>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(invocation ?? '')?.groups?.name;
+  const maker = /^(?<name>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(invocation ?? '')?.groups?.['name'];
   const actualArguments =
     maker === undefined || invocation === undefined
       ? undefined
@@ -1189,11 +1198,11 @@ export const governedRedemptionRuntimeTarget = (source: string, ownerPath: strin
     /^export\s*\{(?<bindings>[^}]+)\}\s*from\s*(?<quote>['"])(?<module>\.\.?\/[^'"]+\.ts)\k<quote>;?$/u.exec(
       maskComments(source).trim(),
     );
-  const bindings = delegation?.groups?.bindings
+  const bindings = delegation?.groups?.['bindings']
     ?.split(',')
     .map((binding) => binding.trim())
     .filter(Boolean);
-  const modulePath = delegation?.groups?.module;
+  const modulePath = delegation?.groups?.['module'];
   if (
     modulePath === undefined ||
     bindings === undefined ||
@@ -1281,7 +1290,7 @@ const configuredRedemptionDatabase = (
   const transforms = pipeline?.transforms.map((transform) => maskComments(transform).replaceAll(/\s+/gu, ''));
   const client = /^Layer\.provide\(PgClient\.layerFrom\((?<client>[A-Za-z][A-Za-z0-9]*)\)\)$/u.exec(
     transforms?.[0] ?? '',
-  )?.groups?.client;
+  )?.groups?.['client'];
   if (
     declaration === undefined ||
     pipeline === undefined ||
@@ -1327,11 +1336,11 @@ const configuredImportIdentities = (
 const hasClosedConfiguredImports = (source: string, identities: readonly ConfiguredImportIdentity[]): boolean => {
   const imports = [
     ...maskComments(source).matchAll(
-      /^\s*import\s+(?:(?<typeOnly>type)\s+)?(?<clause>[^;]+?)\s+from\s*(?<quote>['"])(?<module>[^'"]+)\k<quote>;?/gmu,
+      /^[ \t]*import\s+(?:(?<typeOnly>type)\s+)?(?<clause>[^;\s](?:[^;]*?[^;\s])?)\s+from\s*(?<quote>['"])(?<module>[^'"]+)\k<quote>;?/gmu,
     ),
   ].filter((declaration) => declaration.index !== undefined && isTopLevelCodePosition(source, declaration.index));
   return imports.every((declaration) => {
-    const modulePath = declaration.groups?.module;
+    const modulePath = declaration.groups?.['module'];
     const family = identities.filter(
       (identity) => path.posix.normalize(identity.modulePath) === path.posix.normalize(modulePath ?? ''),
     );
@@ -1343,14 +1352,14 @@ const hasClosedConfiguredImports = (source: string, identities: readonly Configu
         modulePath === direct &&
         identities.some((identity) => identity.modulePath === module && identity.imported === exported),
     );
-    if ((family.length === 0 && !nativeNamespace) || declaration.groups?.typeOnly !== undefined) {
+    if ((family.length === 0 && !nativeNamespace) || declaration.groups?.['typeOnly'] !== undefined) {
       return true;
     }
-    const clause = /^\{(?<values>[^}]*)\}$/u.exec(declaration.groups?.clause?.trim() ?? '');
+    const clause = /^\{(?<values>[^}]*)\}$/u.exec(declaration.groups?.['clause']?.trim() ?? '');
     if (clause === null) {
       return false;
     }
-    return (clause.groups?.values ?? '')
+    return (clause.groups?.['values'] ?? '')
       .split(',')
       .filter((entry) => entry.trim() !== '')
       .every((entry) => {
@@ -1361,15 +1370,15 @@ const hasClosedConfiguredImports = (source: string, identities: readonly Configu
         if (specifier === null) {
           return false;
         }
-        if (specifier.groups?.typeOnly !== undefined) {
+        if (specifier.groups?.['typeOnly'] !== undefined) {
           return true;
         }
         if (nativeNamespace) {
           return false;
         }
-        const imported = specifier.groups?.imported;
+        const imported = specifier.groups?.['imported'];
         const identity = family.find((candidate) => candidate.imported === imported);
-        return identity === undefined || (specifier.groups?.binding ?? imported) === identity.binding;
+        return identity === undefined || (specifier.groups?.['binding'] ?? imported) === identity.binding;
       });
   });
 };
@@ -1519,7 +1528,12 @@ const hasCryptoReadImports = (source: string, importedArguments: ReadonlySet<str
   for (const [binding, [modulePath, original]] of expectedImports) {
     const typeOnly = binding === 'ReadRuntime' || binding === 'GatewayAssertionRedemptionService';
     const imported = namedSourceImport(source, binding, typeOnly);
-    if (imported?.modulePath !== modulePath || imported.imported !== original || (typeOnly && !imported.typeOnly)) {
+    if (
+      imported === undefined ||
+      imported.modulePath !== modulePath ||
+      imported.imported !== original ||
+      (typeOnly && !imported.typeOnly)
+    ) {
       return false;
     }
   }
@@ -1554,30 +1568,33 @@ const cryptoReadRemainingSource = (
   );
   remaining = remaining.slice(0, tupleIndex) + ' '.repeat(closing + 1 - tupleIndex) + remaining.slice(closing + 1);
   let invalidImport = false;
-  remaining = remaining.replaceAll(/^\s*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gmu, (declaration) => {
-    const values = /\{(?<values>[^}]*)\}/u.exec(declaration)?.groups?.values ?? '';
-    for (const entry of values.split(',').map((value) => value.trim())) {
-      if (
-        /^GatewayAssertionRedemptionLive\b/u.test(entry) &&
-        ![...importedArguments].some(
-          (argument) =>
-            entry ===
-            (argument === 'GatewayAssertionRedemptionLive'
-              ? argument
-              : `GatewayAssertionRedemptionLive as ${argument}`),
-        )
-      ) {
-        invalidImport = true;
+  remaining = remaining.replaceAll(
+    /^[ \t]*import\s+(?:type\s+)?\{[^}]*\}\s*from\s*['"][^'"]+['"];?/gmu,
+    (declaration) => {
+      const values = declaration.slice(declaration.indexOf('{') + 1, declaration.indexOf('}'));
+      for (const entry of values.split(',').map((value) => value.trim())) {
+        if (
+          /^GatewayAssertionRedemptionLive\b/u.test(entry) &&
+          ![...importedArguments].some(
+            (argument) =>
+              entry ===
+              (argument === 'GatewayAssertionRedemptionLive'
+                ? argument
+                : `GatewayAssertionRedemptionLive as ${argument}`),
+          )
+        ) {
+          invalidImport = true;
+        }
+        if (
+          /^(?:type\s+)?(?:Layer|layer|ReadRuntime)\b/u.test(entry) &&
+          !/^(?:Layer|Layer as GovernedReadLayer|layer as nodeCryptoLayer|(?:type )?ReadRuntime)$/u.test(entry)
+        ) {
+          invalidImport = true;
+        }
       }
-      if (
-        /^(?:type\s+)?(?:Layer|layer|ReadRuntime)\b/u.test(entry) &&
-        !/^(?:Layer|Layer as GovernedReadLayer|layer as nodeCryptoLayer|(?:type )?ReadRuntime)$/u.test(entry)
-      ) {
-        invalidImport = true;
-      }
-    }
-    return ' '.repeat(declaration.length);
-  });
+      return ' '.repeat(declaration.length);
+    },
+  );
   if (invalidImport) {
     return null;
   }
@@ -1798,8 +1815,8 @@ const hasConstructorOwnerPair = (
   if (pair === undefined) {
     return false;
   }
-  const deployment = namedSourceImport(source, pair.deployment ?? '');
-  const registration = namedSourceImport(source, pair.registration ?? '');
+  const deployment = namedSourceImport(source, pair['deployment'] ?? '');
+  const registration = namedSourceImport(source, pair['registration'] ?? '');
   if (
     deployment?.modulePath !== '../shared/ultramodern-build.ts' ||
     deployment.imported !== 'ultramodernDeliveryUnit' ||
@@ -1816,8 +1833,8 @@ const hasConstructorOwnerPair = (
   }
   for (const [local, imported] of [
     [factory, importedFactory],
-    [pair.deployment, deployment],
-    [pair.registration, registration],
+    [pair['deployment'], deployment],
+    [pair['registration'], registration],
   ] as const) {
     if (
       local === undefined ||
@@ -1840,7 +1857,7 @@ const hasBoundOwnerRuntimeConstructor = (
   runtimeCall: RegExpMatchArray,
   backendRegistration?: string,
 ): boolean => {
-  const factory = runtimeCall.groups?.factory;
+  const factory = runtimeCall.groups?.['factory'];
   if (factory === undefined || runtimeCall.index === undefined || source[runtimeCall.index - 1] === '.') {
     return false;
   }
@@ -2165,7 +2182,7 @@ export const hasOwnerBoundGovernedRuntime = (
     readPipeline === undefined
       ? undefined
       : wholeCallArguments(readPipeline.base, governedRuntimeConstruction.read.factory);
-  return readArgs?.length === 2 && readArgs.every((argument, index) => argument === args[index]);
+  return readArgs?.length === 2 && readArgs[0] === args[0] && readArgs[1] === args[1];
 };
 
 const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
@@ -2234,7 +2251,9 @@ const governedReadContribution = (contractStem: string, source: string): Governe
   if (hasGeneratedSourceHeader(source, MODULE_API_HEADER)) {
     return { contractStem, kind: MODULE_API_KIND, name: contractStem };
   }
-  const candidateKind = /^\/\/ @ontos-contribution-kind (?<kind>report|search-provider)$/mu.exec(source)?.groups?.kind;
+  const candidateKind = /^\/\/ @ontos-contribution-kind (?<kind>report|search-provider)$/mu.exec(source)?.groups?.[
+    'kind'
+  ];
   if (!hasGeneratedSourceHeader(source, GOVERNED_CONTRIBUTION_HEADER) || !isGovernedReadKind(candidateKind)) {
     return undefined;
   }
@@ -2367,7 +2386,7 @@ const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<s
   const policies = objectProperty(read, 'policies');
   const accessKind = objectProperty(read, 'accessKind');
   const permissionTarget = objectProperty(read, 'permissionTarget');
-  const normalizedAccessKind = /^['"](?<value>[^'"]+)['"]$/u.exec(accessKind ?? '')?.groups?.value;
+  const normalizedAccessKind = /^['"](?<value>[^'"]+)['"]$/u.exec(accessKind ?? '')?.groups?.['value'];
   return (
     normalizedAccessKind !== undefined &&
     allowedAccessKinds.has(`'${normalizedAccessKind}'`) &&
@@ -2381,8 +2400,8 @@ const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<s
 
 const nativeReadFactoryAnnotationBinding = (source: string, annotation: string): string | undefined => {
   const nativeType = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<arguments><[\s\S]+>)$/u.exec(annotation);
-  const binding = nativeType?.groups?.binding;
-  const argumentsSource = nativeType?.groups?.arguments;
+  const binding = nativeType?.groups?.['binding'];
+  const argumentsSource = nativeType?.groups?.['arguments'];
   const imported = binding === undefined ? undefined : namedSourceImport(source, binding, true);
   return argumentsSource !== undefined &&
     topLevelSeparators(maskNonCode(argumentsSource), '>', 0, argumentsSource.length, true)[0] ===
@@ -2413,9 +2432,9 @@ interface ScopedFactorySource {
 
 const hasBuiltinUtilityType = (source: string, binding: string): boolean =>
   topLevelBindingDeclarations(source, binding).length === 0 &&
-  [...maskComments(source).matchAll(/\bimport\s+(?<clause>[^;]+?)\s+from\s*['"]/gu)].every(
+  [...maskComments(source).matchAll(/\bimport\s+(?<clause>[^;\s](?:[^;]*?[^;\s])?)\s+from\s*['"]/gu)].every(
     (declaration) =>
-      !tokenizeGovernedClient(declaration.groups?.clause ?? '').some(
+      !tokenizeGovernedClient(declaration.groups?.['clause'] ?? '').some(
         (token) => token.kind === SyntaxKind.Identifier && token.value === binding,
       ),
   );
@@ -2445,12 +2464,12 @@ const ownerCallableTransactionType = (
     1,
     closing,
   );
-  const type = /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>[\s\S]+)$/u.exec(parameter ?? '')?.groups?.type;
+  const type = /^[A-Za-z_$][A-Za-z0-9_$]*:\s*(?<type>\S[\s\S]*)$/u.exec(parameter ?? '')?.groups?.['type'];
   return type === undefined ? undefined : { context: { ...context, file }, type };
 };
 
 const scopedTransactionProjection = (source: string, type: string): string | undefined => {
-  const body = /^Pick<(?<body>[\s\S]+)>$/u.exec(type)?.groups?.body;
+  const body = /^Pick<(?<body>[\s\S]+)>$/u.exec(type)?.groups?.['body'];
   if (body === undefined || !hasBuiltinUtilityType(source, 'Pick')) {
     return undefined;
   }
@@ -2478,7 +2497,7 @@ const hasScopedTransactionType = (context: ScopedFactorySource, type: string, vi
   if (projection !== undefined) {
     return hasScopedTransactionType(context, projection, visited);
   }
-  const operand = /^Parameters<(?<operand>[\s\S]+)>\s*\[\s*0\s*\]$/u.exec(type)?.groups?.operand;
+  const operand = /^Parameters<(?<operand>[\s\S]+)>\s*\[\s*0\s*\]$/u.exec(type)?.groups?.['operand'];
   if (operand !== undefined) {
     if (!hasBuiltinUtilityType(source, 'Parameters')) {
       return false;
@@ -2486,7 +2505,7 @@ const hasScopedTransactionType = (context: ScopedFactorySource, type: string, vi
     if (nativeReadFactoryAnnotationBinding(source, operand) !== undefined) {
       return true;
     }
-    const callable = /^typeof\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(operand)?.groups?.name;
+    const callable = /^typeof\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)$/u.exec(operand)?.groups?.['name'];
     const resolved = callable === undefined ? undefined : ownerCallableTransactionType(context, source, callable);
     return resolved !== undefined && hasScopedTransactionType(resolved.context, resolved.type, visited);
   }
@@ -2507,7 +2526,7 @@ const hasOperationalScopeType = (context: ScopedFactorySource, type: string, vis
   if (imported?.imported === 'OperationalScope' && imported.modulePath === CORE_RUNTIME_MODULE) {
     return true;
   }
-  const operand = /^Parameters<(?<operand>[\s\S]+)>\s*\[\s*1\s*\]$/u.exec(type)?.groups?.operand;
+  const operand = /^Parameters<(?<operand>[\s\S]+)>\s*\[\s*1\s*\]$/u.exec(type)?.groups?.['operand'];
   if (operand !== undefined) {
     return (
       hasBuiltinUtilityType(source, 'Parameters') && nativeReadFactoryAnnotationBinding(source, operand) !== undefined
@@ -2521,8 +2540,8 @@ const hasOperationalScopeType = (context: ScopedFactorySource, type: string, vis
 };
 
 const hasScopedFactoryInputTypes = (parameters: readonly string[], context: ScopedFactorySource): boolean => {
-  const transactionType = /^transaction:\s*(?<type>[\s\S]+)$/u.exec(parameters[0] ?? '')?.groups?.type;
-  const scopeType = /^scope:\s*(?<type>[\s\S]+)$/u.exec(parameters[1] ?? '')?.groups?.type;
+  const transactionType = /^transaction:\s*(?<type>\S[\s\S]*)$/u.exec(parameters[0] ?? '')?.groups?.['type'];
+  const scopeType = /^scope:\s*(?<type>\S[\s\S]*)$/u.exec(parameters[1] ?? '')?.groups?.['type'];
   return (
     parameters.length >= 2 &&
     parameters.length <= 3 &&
@@ -2607,8 +2626,8 @@ const hasNativeReadServiceFactoryExport = (source: string, binding: string): boo
   }
   const annotation = code.slice(annotationStart, separator).trim();
   const nativeType = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<arguments><[\s\S]+>)$/u.exec(annotation);
-  const typeBinding = nativeType?.groups?.binding;
-  const argumentsSource = nativeType?.groups?.arguments;
+  const typeBinding = nativeType?.groups?.['binding'];
+  const argumentsSource = nativeType?.groups?.['arguments'];
   const nativeImport = typeBinding === undefined ? undefined : namedSourceImport(source, typeBinding, true);
   return (
     argumentsSource !== undefined &&
@@ -3085,7 +3104,7 @@ interface LocalReadFactoryMaker {
 
 const localReadFactoryMaker = (source: string, candidate: string): LocalReadFactoryMaker | undefined => {
   const initializer = constInitializer(source, candidate);
-  const maker = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(initializer ?? '')?.groups?.name;
+  const maker = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(initializer ?? '')?.groups?.['name'];
   const makerSource = maker === undefined ? undefined : constInitializer(source, maker);
   if (initializer === undefined || maker === undefined || makerSource === undefined || !makerSource.startsWith('(')) {
     return undefined;
@@ -3233,8 +3252,8 @@ const localReadFactoryDataOptions = (
   argument: string | undefined,
 ): { readonly bindings: ReadonlyMap<string, number>; readonly name: string } | undefined => {
   const parsed = /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*(?<optionsType>\{[\s\S]*\})\s*=\s*\{\s*\}$/u.exec(parameter);
-  const name = parsed?.groups?.name;
-  const optionsType = parsed?.groups?.optionsType;
+  const name = parsed?.groups?.['name'];
+  const optionsType = parsed?.groups?.['optionsType'];
   if (name === undefined || optionsType === undefined) {
     return undefined;
   }
@@ -3252,7 +3271,7 @@ const localReadFactoryDataOptions = (
   );
   if (
     descriptors.some((descriptor) => descriptor === undefined) ||
-    new Set(descriptors.map((descriptor) => descriptor?.key)).size !== descriptors.length
+    new Set(descriptors.map((descriptor) => descriptor?.['key'])).size !== descriptors.length
   ) {
     return undefined;
   }
@@ -3263,7 +3282,7 @@ const localReadFactoryDataOptions = (
   }
   for (const entry of entries) {
     const key = objectEntryKey(entry);
-    const type = descriptors.find((property) => property?.key === key)?.type;
+    const type = descriptors.find((property) => property?.['key'] === key)?.['type'];
     const value = key === undefined ? undefined : objectProperty(argument ?? '', key);
     if (
       type === undefined ||
@@ -3320,9 +3339,9 @@ const localReadFactoryDependencies = (
       /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*typeof\s+(?<dependency>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*=\s*(?<default>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
         parameter,
       );
-    const dependency = parsed?.groups?.dependency;
-    const defaultValue = parsed?.groups?.default;
-    const parameterName = parsed?.groups?.name;
+    const dependency = parsed?.groups?.['dependency'];
+    const defaultValue = parsed?.groups?.['default'];
+    const parameterName = parsed?.groups?.['name'];
     if (
       dependency === undefined ||
       parameterName === undefined ||
@@ -3384,7 +3403,7 @@ export const hasOwnerLocalReadServiceFactoryResult = (
 const READ_OWNER_PERMISSION_CALL = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)(?:<[\s\S]+>)?\(/u;
 
 const isCoreReadOwnerPermissionDeclaration = (source: string, value: string): boolean => {
-  const binding = READ_OWNER_PERMISSION_CALL.exec(value)?.groups?.binding;
+  const binding = READ_OWNER_PERMISSION_CALL.exec(value)?.groups?.['binding'];
   const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
   return (
     wholeCallArguments(value, READ_OWNER_PERMISSION_CALL, true)?.length === 2 &&
@@ -3409,7 +3428,7 @@ const hasOwnerReadPermissionFactoryExport = (source: string, binding: string): b
     return false;
   }
   const returned = initializer.slice(arrow + 2).trim();
-  const coreBinding = READ_OWNER_PERMISSION_CALL.exec(returned)?.groups?.binding;
+  const coreBinding = READ_OWNER_PERMISSION_CALL.exec(returned)?.groups?.['binding'];
   return (
     coreBinding !== undefined &&
     !new RegExp(`\\b${escapeRegExp(coreBinding)}\\b`, 'u').test(initializer.slice(0, arrow)) &&
@@ -3441,7 +3460,7 @@ export const hasReadOwnerPermissionDeclaration = (
   if (isCoreReadOwnerPermissionDeclaration(source, expression)) {
     return true;
   }
-  const binding = READ_OWNER_PERMISSION_CALL.exec(expression)?.groups?.binding;
+  const binding = READ_OWNER_PERMISSION_CALL.exec(expression)?.groups?.['binding'];
   const imported = binding === undefined ? undefined : namedSourceImport(source, binding);
   if (
     imported === undefined ||
@@ -3482,7 +3501,7 @@ const hasReadCallbacks = (
       return false;
     }
     const initializer = constInitializer(source, candidate);
-    const factory = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(initializer ?? '')?.groups?.name;
+    const factory = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(initializer ?? '')?.groups?.['name'];
     return (
       initializer !== undefined &&
       factory !== undefined &&
@@ -3615,7 +3634,7 @@ const publishesModuleApiContract = (
   packageName: string,
   exportName: string,
 ): boolean => {
-  const contractName = MODULE_API_CONTRACT_EXPORT.exec(exportName)?.groups?.name;
+  const contractName = MODULE_API_CONTRACT_EXPORT.exec(exportName)?.groups?.['name'];
   return (
     contractName !== undefined &&
     [...sources.entries()].filter(([candidate, source]) => {
@@ -3705,10 +3724,11 @@ const topLevelConstInitializers = (program: Program): ReadonlyMap<string, Expres
     if (declaration?.type === 'VariableDeclaration' && declaration.kind === 'const') {
       for (const declarator of declaration.declarations) {
         if (declarator.id.type === 'Identifier' && declarator.init !== null && declarator.init !== undefined) {
-          if (initializers.has(declarator.id.name)) {
-            repeated.add(declarator.id.name);
+          const { name: bindingName } = declarator.id;
+          if (initializers.has(bindingName)) {
+            repeated.add(bindingName);
           }
-          initializers.set(declarator.id.name, declarator.init);
+          initializers.set(bindingName, declarator.init);
         }
       }
     }
@@ -4029,13 +4049,13 @@ const hasReadEntrypoint = (source: string, entrypoint: string, identity: Readonl
     ];
     return declarations.length === 1;
   };
-  const result =
+  return (
     (access === "'read'" || access === '"read"' || access === "'historical_read'" || access === '"historical_read"') &&
     Object.entries(identity).every(([property, value]) => {
       const actual = objectPropertyValue(entrypoint, property);
       return matchesExactString(actual, value);
-    });
-  return result;
+    })
+  );
 };
 
 const hasReadContract = (
@@ -4200,13 +4220,12 @@ const isAllowedThinServerImport = (module: string, allowedImports: ReadonlySet<s
 
 const thinServerImportSpans = (source: string, allowedImports: ReadonlySet<string>): readonly SourceSpan[] => {
   const imports = /\bimport\s+(?:type\s+)?\{[^}]*\}\s+from\s+['"](?<module>[^'"]+)['"]\s*;/gu;
-  return [...source.matchAll(imports)]
-    .filter(
-      (match) =>
-        isTopLevelCodePosition(source, match.index) &&
-        isAllowedThinServerImport(match.groups?.module ?? '', allowedImports),
-    )
-    .map((match) => ({ end: match.index + match[0].length, start: match.index }));
+  return [...source.matchAll(imports)].flatMap((match) =>
+    isTopLevelCodePosition(source, match.index) &&
+    isAllowedThinServerImport(match.groups?.['module'] ?? '', allowedImports)
+      ? [{ end: match.index + match[0].length, start: match.index }]
+      : [],
+  );
 };
 
 const thinServerDeclarations = (exportedName: string, domainMapperName: string | undefined): readonly RegExp[] => [
@@ -4329,7 +4348,7 @@ const hasDomainMapperContract = (
   ];
   return (
     expression !== undefined &&
-    /^\([^)]*\)\s*:\s*[\s\S]*=>\s*\{/u.test(expression) &&
+    /^\([^)]*\)\s*:[\s\S]*=>\s*\{/u.test(expression) &&
     constructors.length > 0 &&
     constructors.every((problemConstructor) => hasExactValueImport(source, problemConstructor, contractImport)) &&
     hasExactValueImport(source, 'Schema', 'effect') &&
@@ -4462,11 +4481,11 @@ const hasHttpContractImports = (source: string): boolean =>
 const hasExactDomainProblemImport = (source: string, problem: string): boolean => {
   const imports = [
     ...source.matchAll(
-      /^\s*import\s*\{(?<values>[^}]*)\}\s*from\s*'(?<module>\.[/][a-z][a-z0-9-]*-domain-(?:conflict|policy|unavailable)-problem\.ts)';/gmu,
+      /^[ \t]*import\s*\{(?<values>[^}]*)\}\s*from\s*'(?<module>\.\/[a-z][a-z0-9-]*-domain-(?:conflict|policy|unavailable)-problem\.ts)';/gmu,
     ),
   ];
   return imports.some((candidate) =>
-    (candidate.groups?.values ?? '')
+    (candidate.groups?.['values'] ?? '')
       .split(',')
       .map((entry) => entry.trim())
       .includes(problem),
@@ -4609,17 +4628,23 @@ const hasPublishedRegistration = (registration: string, contribution: GovernedRe
     `^(?:'${escapedName}'|${escapedName})\\s*:\\s*\\(\\s*\\)\\s*=>\\s*import\\(\\s*'${escapedClient}'\\s*\\)$`,
     'u',
   );
-  const canonicalRegistrationPattern =
-    /^(?:'(?<quoted>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)'|(?<bare>[a-z][a-z0-9]*(?:-[a-z0-9]+)*))\s*:\s*\(\s*\)\s*=>\s*import\(\s*'(?:\.\/src\/api\/(?<file>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-client\.ts|@app\/[a-z][a-z0-9-]*\/(?<published>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/client)'\s*\)$/u;
+  const kebab = String.raw`[a-z][a-z0-9]*(?:-[a-z0-9]+)*`;
+  const canonicalRegistrationPattern = new RegExp(
+    String.raw`^(?:'(?<quoted>${kebab})'|(?<bare>${kebab}))\s*:\s*\(\s*\)\s*=>\s*import\(\s*'(?:\.\/src\/api\/(?<file>${kebab})-client\.ts|@app\/[a-z][a-z0-9-]*\/(?<published>${kebab})\/client)'\s*\)$`,
+    'u',
+  );
   return (
     registrationEntries?.filter((entry) => registrationPattern.test(entry)).length === 1 &&
     allRegistrationEntries?.every((entry) => {
       const match = canonicalRegistrationPattern.exec(entry);
-      const name = match?.groups?.quoted ?? match?.groups?.bare;
-      const file = match?.groups?.file;
+      const name = match?.groups?.['quoted'] ?? match?.groups?.['bare'];
+      const file = match?.groups?.['file'];
       return (
         name !== undefined &&
-        (match?.groups?.published === name || file === name || file === `${name}-report` || file === `${name}-search`)
+        (match?.groups?.['published'] === name ||
+          file === name ||
+          file === `${name}-report` ||
+          file === `${name}-search`)
       );
     }) === true &&
     allRegistrationEntries?.filter((entry) => objectEntryKey(entry) === contribution.name).length === 1 &&
@@ -5260,10 +5285,9 @@ const reexportedProblems = (graph: ModuleGraph, entry: OwnerEntry): readonly str
           };
         });
   const heldFiles = new Set(
-    referred
-      .flatMap(({ held }) => held)
-      .flatMap(([, origin]) => origin.trail.slice(1))
-      .filter((file) => !files.has(file)),
+    referred.flatMap(({ held }) =>
+      held.flatMap(([, origin]) => origin.trail.slice(1).filter((file) => !files.has(file))),
+    ),
   );
   const how = (file: string): string => (heldFiles.has(file) ? 'holds a whole module through' : 're-exports through');
   const problems: string[] = [];
@@ -5462,9 +5486,7 @@ const hasPublishedContract = (
     ),
     sharedRoot: hasGovernedSharedApiRoot(sharedApi),
   };
-  const failed = Object.entries(publicationChecks)
-    .filter(([, valid]) => !valid)
-    .map(([name]) => name);
+  const failed = Object.entries(publicationChecks).flatMap(([name, valid]) => (valid ? [] : [name]));
   if (failed.length > 0) {
     diagnostics?.push(`${contribution.name} publication: ${failed.join(', ')}`);
   }
@@ -5513,7 +5535,7 @@ const nativeMetadataRoot = (source: string, factory: string): NativeMetadataRoot
     (declaration) => declaration.index !== undefined && isTopLevelCodePosition(source, declaration.index),
   );
   const roots = declarations.flatMap((declaration) => {
-    const name = declaration.groups?.name;
+    const name = declaration.groups?.['name'];
     const initializer = name === undefined ? undefined : constInitializer(source, name);
     const args =
       initializer === undefined
@@ -5637,7 +5659,7 @@ const hasMatchingModuleApiSlots = (
       '// </generated-module-manifest-operation-contracts>',
     );
   const keys = manifestApis.map(objectEntryKey);
-  const publishedKeys = nativeOperations?.publicApiNames ?? keys;
+  const publishedKeys = new Set(nativeOperations?.publicApiNames ?? keys);
   return (
     readApis.length === moduleApiCount &&
     new Set(keys).size === keys.length &&
@@ -5645,7 +5667,7 @@ const hasMatchingModuleApiSlots = (
       operationEntries.every((entry) => {
         const apiKey = tokenizeGovernedClient(objectProperty(entry, 'apiKey') ?? '');
         return (
-          apiKey.length === 1 && apiKey[0]?.kind === SyntaxKind.StringLiteral && publishedKeys.includes(apiKey[0].value)
+          apiKey.length === 1 && apiKey[0]?.kind === SyntaxKind.StringLiteral && publishedKeys.has(apiKey[0].value)
         );
       })) &&
     actionApis.every((entry) => {
@@ -5681,7 +5703,7 @@ const hasMatchingModuleApiSlots = (
 };
 
 const governedOwnerModuleId = (manifest: string | undefined): string | undefined =>
-  /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(manifest ?? '')?.groups?.moduleId;
+  /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(manifest ?? '')?.groups?.['moduleId'];
 
 /** Keep the generated call shape while permitting a checked, declaration-safe Action type. */
 export const hasGeneratedActionRegistrationBinding = (
@@ -5704,8 +5726,8 @@ export const hasGeneratedActionRegistrationBinding = (
   return (
     typedMatch !== null &&
     isCodePosition(source, typedMatch.index) &&
-    source.includes(`domainErrorSchema: ${typedMatch.groups?.error},`) &&
-    (typedMatch.groups?.events !== 'typeof domainEvents' || source.includes('domainEvents,')) &&
+    source.includes(`domainErrorSchema: ${typedMatch.groups?.['error']},`) &&
+    (typedMatch.groups?.['events'] !== 'typeof domainEvents' || source.includes('domainEvents,')) &&
     source.includes(`payloadSchema: ${type}PayloadSchema,`) &&
     source.includes(`resultSchema: ${type}ResultSchema,`)
   );
@@ -5722,11 +5744,11 @@ export const hasGeneratedActionKeyIdentity = (source: string, expectedKey: strin
     ),
   ].filter((match) => isCodePosition(source, match.index));
   return declarations.some((declaration) => {
-    if (declaration.groups?.key !== expectedKey) {
+    if (declaration.groups?.['key'] !== expectedKey) {
       return false;
     }
     const { alias } = declaration.groups;
-    if (declarations.filter((candidate) => candidate.groups?.alias === alias).length !== 1) {
+    if (alias === undefined || declarations.filter((candidate) => candidate.groups?.['alias'] === alias).length !== 1) {
       return false;
     }
     const property = new RegExp(`\\bactionKey\\s*(?::\\s*${escapeRegExp(alias)}\\b|(?=\\s*[,}]))`, 'gu');
@@ -6123,7 +6145,7 @@ interface PublicContractSourceLocation {
 const publicContractSpecifier = (source: string): string | undefined =>
   /^\s*export\s+\*\s+from\s+(?<quote>['"])(?<specifier>@app\/[a-z][a-z0-9-]*(?:\/[a-z][a-z0-9-]*)*)\k<quote>;\s*$/u.exec(
     maskComments(source),
-  )?.groups?.specifier;
+  )?.groups?.['specifier'];
 
 const isClosedPublicContractExport = (source: string, specifier: string): boolean =>
   publicContractSpecifier(source) === specifier &&
@@ -6369,7 +6391,7 @@ export const hasPublishedGeneratedActionContractShim = (
   if (!hasCompleteGeneratedModuleApiSeamInputs(inputs)) {
     return false;
   }
-  const appId = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(inputs.manifest)?.groups?.appId;
+  const appId = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(inputs.manifest)?.groups?.['appId'];
   if (appId === undefined) {
     return false;
   }
@@ -6456,8 +6478,8 @@ const headerCarryingPackageFiles = (sources: ReadonlyMap<string, string>): reado
 export const publishedPackageReads = (sources: ReadonlyMap<string, string>): readonly PublishedPackageRead[] =>
   headerCarryingPackageFiles(sources).flatMap(([contractPath, contractSource]): readonly PublishedPackageRead[] => {
     const leaf = PACKAGE_READ_PATTERN.exec(contractPath)?.groups;
-    const packagePath = leaf?.packagePath;
-    const name = leaf?.name;
+    const packagePath = leaf?.['packagePath'];
+    const name = leaf?.['name'];
     if (packagePath === undefined || name === undefined) {
       return [];
     }
@@ -6524,7 +6546,7 @@ export const packageReadProblems = (
   const misplaced = headerCarryingPackageFiles(sources).flatMap(([file]) => {
     const client = PACKAGE_CLIENT_PATTERN.exec(file)?.groups;
     const canonical =
-      reads.has(file) || (client !== undefined && reads.has(`${client.packagePath}/src/apis/${client.name}.ts`));
+      reads.has(file) || (client !== undefined && reads.has(`${client['packagePath']}/src/apis/${client['name']}.ts`));
     return canonical
       ? []
       : [
@@ -6839,9 +6861,7 @@ const hasCompleteGeneratedContribution = (
       context.deploymentAppId,
     ),
   };
-  const failed = Object.entries(checks)
-    .filter(([, valid]) => !valid)
-    .map(([name]) => name);
+  const failed = Object.entries(checks).flatMap(([name, valid]) => (valid ? [] : [name]));
   if (failed.length > 0) {
     context.diagnostics?.push(`${contribution.name}: ${failed.join(', ')}`);
   }
@@ -6875,12 +6895,12 @@ const workspaceOf = (sources: ReadonlyMap<string, string>): Workspace => {
   // The packages whose files the sources hold, beside their manifests.
   const held = new Set(
     [...sources.keys()].flatMap((file) => {
-      const dir = /^(?<dir>(?:apps|verticals|packages)\/[^/]+)\/(?!package\.json$)/u.exec(file)?.groups?.dir;
+      const dir = /^(?<dir>(?:apps|verticals|packages)\/[^/]+)\/(?!package\.json$)/u.exec(file)?.groups?.['dir'];
       return dir === undefined ? [] : [dir];
     }),
   );
   for (const [file, source] of sources) {
-    const root = /^(?<root>apps|verticals|packages)\/[^/]+\/package\.json$/u.exec(file)?.groups?.root;
+    const root = /^(?<root>apps|verticals|packages)\/[^/]+\/package\.json$/u.exec(file)?.groups?.['root'];
     const manifest = root === undefined ? undefined : packageReadManifest(source);
     if (manifest?.name !== undefined) {
       packages.set(manifest.name, {

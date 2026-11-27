@@ -299,6 +299,7 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/pg-core',
   'cloudflare:workers',
   'effect',
+  'effect/crypto',
   'pg',
   // The CoreSDK UI surface: the one form model and the React it renders with. The kit's own modules
   // are admitted by `kitSubpath` below.
@@ -428,9 +429,10 @@ const resolveIndexedSource = (
   const extension = posixPath.extname(target);
   const candidates =
     extension === ''
-      ? [...sourceExtensions]
-          .map((sourceExtension) => `${target}${sourceExtension}`)
-          .filter((file) => sources.has(file))
+      ? [...sourceExtensions].flatMap((sourceExtension) => {
+          const file = `${target}${sourceExtension}`;
+          return sources.has(file) ? [file] : [];
+        })
       : [];
   return candidates.length === 1 ? candidates[0] : undefined;
 };
@@ -458,37 +460,38 @@ const sourceHostEdges = (
   if (source === undefined) {
     return { files: [], unsupported: true };
   }
-  const edges = source.occurrences
-    .filter(({ isTypeOnly }) => !isTypeOnly)
-    .map((occurrence): HostEdges => {
-      let target: string | undefined;
-      if (occurrence.specifier.startsWith('.')) {
-        target = resolveRelativeSpecifier(file, occurrence.specifier);
-      } else if (occurrence.specifier.startsWith('#')) {
-        const condition = boundary.imports.get(occurrence.specifier);
-        if (condition === undefined || !hasSupportedConditions(condition)) {
-          return { files: [], unsupported: true };
-        }
-        const selected = selectHostTarget(condition, host);
-        if (selected === undefined) {
-          return { files: [], unsupported: false };
-        }
-        const resolvedManifestFile = resolveManifestSource(selected, sources);
-        return resolvedManifestFile === undefined
-          ? { files: [], unsupported: true }
-          : { files: [resolvedManifestFile], unsupported: false };
-      } else {
-        return { files: [], unsupported: false };
+  const edges = source.occurrences.flatMap((occurrence): HostEdges[] => {
+    if (occurrence.isTypeOnly) {
+      return [];
+    }
+    let target: string | undefined;
+    if (occurrence.specifier.startsWith('.')) {
+      target = resolveRelativeSpecifier(file, occurrence.specifier);
+    } else if (occurrence.specifier.startsWith('#')) {
+      const condition = boundary.imports.get(occurrence.specifier);
+      if (condition === undefined || !hasSupportedConditions(condition)) {
+        return [{ files: [], unsupported: true }];
       }
-      if (target === undefined) {
-        return { files: [], unsupported: false };
+      const selected = selectHostTarget(condition, host);
+      if (selected === undefined) {
+        return [{ files: [], unsupported: false }];
       }
-      const resolved = resolveIndexedSource(target, sources);
-      if (resolved === undefined || !isInsideCoreSource(resolved)) {
-        return { files: [], unsupported: true };
-      }
-      return { files: [resolved], unsupported: false };
-    });
+      const resolvedManifestFile = resolveManifestSource(selected, sources);
+      return resolvedManifestFile === undefined
+        ? [{ files: [], unsupported: true }]
+        : [{ files: [resolvedManifestFile], unsupported: false }];
+    } else {
+      return [{ files: [], unsupported: false }];
+    }
+    if (target === undefined) {
+      return [{ files: [], unsupported: false }];
+    }
+    const resolved = resolveIndexedSource(target, sources);
+    if (resolved === undefined || !isInsideCoreSource(resolved)) {
+      return [{ files: [], unsupported: true }];
+    }
+    return [{ files: [resolved], unsupported: false }];
+  });
   return {
     files: edges.flatMap(({ files }) => files),
     unsupported: source.unsupportedRuntimeImport || edges.some(({ unsupported }) => unsupported),
@@ -532,23 +535,23 @@ const nodeOnlyCoreSources = (
   }
   const consumedImports = new Set(
     [...sources.values()].flatMap(({ occurrences }) =>
-      occurrences.filter(({ isTypeOnly }) => !isTypeOnly).map(({ specifier }) => specifier),
+      occurrences.flatMap(({ isTypeOnly, specifier }) => (isTypeOnly ? [] : [specifier])),
     ),
   );
   const conditions = [
     ...boundary.exports.values(),
-    ...[...boundary.imports].filter(([name]) => consumedImports.has(name)).map(([, target]) => target),
+    ...[...boundary.imports].flatMap(([name, target]) => (consumedImports.has(name) ? [target] : [])),
   ];
   const nodeRoots = conditions.flatMap((target) => {
     if (
       Predicate.isString(target) ||
       !hasSupportedConditions(target) ||
-      target.node === undefined ||
-      selectHostTarget(target, 'node') !== target.node
+      target['node'] === undefined ||
+      selectHostTarget(target, 'node') !== target['node']
     ) {
       return [];
     }
-    const file = resolveManifestSource(target.node, sources);
+    const file = resolveManifestSource(target['node'], sources);
     return file === undefined ? [] : [file];
   });
   const node = hostClosure(nodeRoots, 'node', sources, boundary);
@@ -1027,9 +1030,12 @@ export const checkLeanCoreDependencies = (
     );
     const sourceFiles = new Set(files);
     const additionalGraphSources = yield* Effect.all(
-      coreGraphFiles
-        .filter((file) => !sourceFiles.has(file))
-        .map((file) => fileSystem.readFileString(file, 'utf-8').pipe(Effect.map((source) => [file, source] as const))),
+      coreGraphFiles.flatMap((file) => {
+        if (sourceFiles.has(file)) {
+          return [];
+        }
+        return [fileSystem.readFileString(file, 'utf-8').pipe(Effect.map((source) => [file, source] as const))];
+      }),
       { concurrency: 32 },
     );
 
@@ -1197,10 +1203,10 @@ const listedWorkspacePackages = (
   Effect.gen(function* listedWorkspacePackagesProgram() {
     const manifests = EffectArray.sort(listed, Order.String).flatMap((file) => {
       const groups = workspacePackageManifest.exec(file)?.groups;
-      const kind = workspacePackageParents.find(([parent]) => parent === groups?.parent)?.[1];
+      const kind = workspacePackageParents.find(([parent]) => parent === groups?.['parent'])?.[1];
       return groups === undefined || kind === undefined
         ? []
-        : [{ directory: `${groups.parent}/${groups.entry}`, file, kind }];
+        : [{ directory: `${groups['parent']}/${groups['entry']}`, file, kind }];
     });
     return yield* Effect.all(
       manifests.map(({ directory, file, kind }) =>
@@ -1721,12 +1727,13 @@ const helperCalls = (analysis: LoadAnalysis, name: Node): readonly CallExpressio
   if (name.type !== 'Identifier') {
     return undefined;
   }
-  const calls = (analysis.names.get(name.name) ?? [])
-    .filter((occurrence) => occurrence !== name)
-    .map((occurrence) => {
-      const call = analysis.parents.get(occurrence);
-      return call?.type === 'CallExpression' && call.callee === occurrence ? call : undefined;
-    });
+  const calls = (analysis.names.get(name.name) ?? []).flatMap((occurrence) => {
+    if (occurrence === name) {
+      return [];
+    }
+    const call = analysis.parents.get(occurrence);
+    return [call?.type === 'CallExpression' && call.callee === occurrence ? call : undefined];
+  });
   return calls.every((call) => call !== undefined) ? calls.filter((call) => call !== undefined) : undefined;
 };
 
@@ -2053,11 +2060,13 @@ const seedCapabilityUses = (analysis: LoadAnalysis): void => {
     const parent = analysis.parents.get(identifier);
     const grandparent = parent === undefined ? undefined : analysis.parents.get(parent);
     const known = identifier.type === 'Identifier' ? analysis.capabilities.get(identifier.name) : undefined;
-    const capability =
-      identifier.type === 'Identifier'
-        ? (capabilityOf(analysis, identifier.name) ??
-          (known === undefined ? moduleRequireObject(identifier, parent) : undefined))
-        : undefined;
+    let capability: Capability | undefined;
+    if (identifier.type === 'Identifier') {
+      capability = capabilityOf(analysis, identifier.name);
+      if (capability === undefined && known === undefined) {
+        capability = moduleRequireObject(identifier, parent);
+      }
+    }
     if (analysis.declaredIds.has(identifier) || isNameOnly(identifier, parent, grandparent)) {
       continue;
     }
@@ -2253,12 +2262,17 @@ const packageTypes = (
     const nearest = new Map(files.map((file) => [file, nearestManifest(manifests, posixPath.dirname(file))] as const));
     const types = new Map(
       yield* Effect.all(
-        [...new Set(nearest.values())].filter(Predicate.isString).map((manifest) =>
-          fileSystem.readFileString(path.join(root, manifest), 'utf-8').pipe(
-            Effect.flatMap((raw) => Schema.decodeUnknownEffect(PackageTypeFromJson)(raw).pipe(Effect.orDie)),
-            Effect.map(({ type }) => [manifest, type] as const),
-          ),
-        ),
+        [...new Set(nearest.values())].flatMap((manifest) => {
+          if (!Predicate.isString(manifest)) {
+            return [];
+          }
+          return [
+            fileSystem.readFileString(path.join(root, manifest), 'utf-8').pipe(
+              Effect.flatMap((raw) => Schema.decodeUnknownEffect(PackageTypeFromJson)(raw).pipe(Effect.orDie)),
+              Effect.map(({ type }) => [manifest, type] as const),
+            ),
+          ];
+        }),
         { concurrency: 32 },
       ),
     );
@@ -2306,13 +2320,13 @@ const loadsIn = (file: string, source: string, packageType: string | undefined):
   }
   for (const comment of result.comments) {
     const directive = comment.type === 'Line' ? referenceDirective.exec(comment.value)?.groups : undefined;
-    const target = directive?.target;
+    const target = directive?.['target'];
     if (target !== undefined) {
       // A path directive is relative to its file even without a leading dot.
       recordReference(
         analysis,
         comment.start,
-        directive?.kind === 'path' && !target.startsWith('.') ? `./${target}` : target,
+        directive?.['kind'] === 'path' && !target.startsWith('.') ? `./${target}` : target,
       );
     }
   }
@@ -2385,13 +2399,13 @@ const workspaceResolver = (
    */
   const declaredTarget = (directory: string, name: string, range: string): string | undefined => {
     const groups = versionProtocol.exec(range)?.groups;
-    const protocol = groups?.protocol ?? 'catalog';
-    const rest = groups?.rest ?? '';
+    const protocol = groups?.['protocol'] ?? 'catalog';
+    const rest = groups?.['rest'] ?? '';
     const isPath = rest.startsWith('.') || rest.startsWith('/');
     if (pathProtocols.has(protocol) || (protocol === 'workspace' && isPath)) {
       return ownerOfPath(directory, rest);
     }
-    const alias = aliasedPackage.exec(rest)?.groups?.name;
+    const alias = aliasedPackage.exec(rest)?.groups?.['name'];
     if (protocol === 'npm' || (protocol === 'workspace' && rest.includes('@', 1))) {
       return directoryByName.get(alias ?? '');
     }
@@ -2399,9 +2413,11 @@ const workspaceResolver = (
   };
   const declarations = (directory: string, manifest: PackageEdgeManifest) =>
     new Map(
-      dependencyFields
-        .flatMap((field) => Object.entries(manifest[field] ?? {}))
-        .map(([name, range]) => [name, declaredTarget(directory, name, range)] as const),
+      dependencyFields.flatMap((field) =>
+        Object.entries(manifest[field] ?? {}).map(
+          ([name, range]) => [name, declaredTarget(directory, name, range)] as const,
+        ),
+      ),
     );
   const declared = new Map(
     packages.map(({ directory, manifest }) => [directory, declarations(directory, manifest)] as const),

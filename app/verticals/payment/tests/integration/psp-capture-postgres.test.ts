@@ -4,10 +4,11 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { and, eq } from 'drizzle-orm';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Layer, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -86,7 +87,7 @@ import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
 type GatewayFamily = typeof PaymentGatewayProviderFamilySchema.Type;
 type StripeEvent = ReturnType<typeof stripeEventEnvelope>;
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 /** The fixture webhook signing secret of the binding's credential reference; no real account. */
@@ -151,7 +152,7 @@ const AdaptersLive = Layer.succeed(GatewayProviderAdapters, {
 const makeActions = Effect.fn('PspCaptureNative.makeActions')(function* makeActions(database: EvidenceNativeDatabase) {
   return makeActionRuntime(
     { executor: database.database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     evidenceAllowedPermission,
     testOperationalScopeResolver,
     {
@@ -706,7 +707,9 @@ describe('#1157 capture-provider-notification through the Core Action runtime', 
 
         // The worker still has everything it needs: the transaction to look up through the binding, and the
         // pushed status to compare with that lookup.
-        const read = yield* readAsWorker(database, scope, notificationIdOf(paid));
+        const paidNotificationId = notificationIdOf(paid);
+        assert.isDefined(paidNotificationId);
+        const read = yield* readAsWorker(database, scope, paidNotificationId);
         expect(
           read.pipe(
             Option.map((notification) => [

@@ -580,8 +580,8 @@ it.live(
     yield* coreDatabase.insert(principals).values({
       displayName: 'Runtime fixture',
       kind: 'human',
-      status: 'active',
       principalId,
+      status: 'active',
       tenantId,
     });
     yield* coreDatabase.insert(principals).values({
@@ -602,11 +602,11 @@ it.live(
     yield* coreDatabase.insert(principalAuthBindings).values({
       authenticationNamespaceId: staffAuthenticationNamespaceId,
       principalAuthBindingId: fixtureAuthBindingId,
+      principalId,
       provider: 'better_auth',
       providerSubjectId: betterAuthUserId,
       status: 'active',
       subjectType: 'user',
-      principalId,
       tenantId,
     });
     yield* coreDatabase.insert(tenantModuleStates).values([
@@ -1625,8 +1625,8 @@ it.live(
         expiresAt: partyRegistryClaims.payload.exp,
         jti: partyRegistryClaims.payload.jti,
         legalEntityId: fixtureLegalEntityId,
-        registeredBy: 'shell_gateway_issuer',
         principalId,
+        registeredBy: 'shell_gateway_issuer',
         tenantId,
       },
     ]);

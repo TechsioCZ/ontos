@@ -97,7 +97,6 @@ import {
   ConfigProvider,
   Context,
   Config,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -110,6 +109,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Cause, Scope, Exit } from 'effect';
 import { ChildProcess } from 'effect/process';
 import type { ChildProcessSpawner } from 'effect/process';
@@ -119,6 +119,7 @@ import {
   HttpClientRequest,
   HttpServer,
   HttpServerRequest,
+  HttpMethod,
   HttpServerResponse,
 } from 'effect/http';
 import { assert, expect } from 'effect-rstest';
@@ -275,7 +276,7 @@ const catalogActionKeys = [
   'revise-product-unit',
   'publish-product-configuration',
 ].map((slug) => ActionKeySchema.make(`commerce.catalog.${slug}`));
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 /** Services the harness needs from its caller: process spawning, crypto, HTTP and the staff authentication namespaces. */
 export const publicPricingReadHarnessServices = NodeChildProcessSpawner.layer.pipe(
@@ -1061,8 +1062,9 @@ interface HarnessAttemptHooks {
 }
 
 /** A failing hook is a test defect, so it surfaces as one instead of being absorbed by the Read. */
-const hookWithCrypto = (hook: (ordinal: number) => HarnessEffect<void>, crypto: Crypto.Crypto) => (ordinal: number) =>
-  hook(ordinal).pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.orDie);
+const hookWithCrypto =
+  (hook: (ordinal: number) => HarnessEffect<void>, crypto: SecureRandom.SecureRandom['Service']) => (ordinal: number) =>
+    hook(ordinal).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto), Effect.orDie);
 
 const observeWholeEvaluation = (
   factory: CurrentPricingDecisionEvaluationFactoryService,
@@ -1599,7 +1601,7 @@ const declaredCustomerPriceGroupResolution = (
     return yield* Schema.encodeEffect(CustomerPriceGroupResolutionResponseSchema)(response);
   }).pipe(Effect.orDie, Effect.provideService(Clock.Clock, nativeClock));
 
-type HarnessEffect<Success> = Effect.Effect<Success, WholeCandidateReceiverTestUnavailable, Crypto.Crypto>;
+type HarnessEffect<Success> = Effect.Effect<Success, WholeCandidateReceiverTestUnavailable, SecureRandom.SecureRandom>;
 type HarnessCatalogHandoff = typeof CatalogQuantityHandoffReadySchema.Type;
 type HarnessPriceGroupRef = HarnessProfileIdentity['priceGroupRef'];
 interface HarnessProfileSubject {
@@ -1776,7 +1778,11 @@ export interface PublicPricingReadHarness {
    */
   readonly runRegisteredReadExit: (
     request: typeof CurrentPricingDecisionRequestSchema.Type,
-  ) => Effect.Effect<Exit.Exit<typeof CurrentPricingDecisionResponseSchema.Type, unknown>, never, Crypto.Crypto>;
+  ) => Effect.Effect<
+    Exit.Exit<typeof CurrentPricingDecisionResponseSchema.Type, unknown>,
+    never,
+    SecureRandom.SecureRandom
+  >;
   readonly selections: {
     readonly p1: HarnessCatalogSelection;
     readonly p2: HarnessCatalogSelection;
@@ -2150,7 +2156,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     }).pipe(
       Effect.orDie,
       Effect.provideService(Clock.Clock, nativeClock),
-      Effect.provideService(Crypto.Crypto, yield* Crypto.Crypto),
+      Effect.provideService(SecureRandom.SecureRandom, yield* SecureRandom.SecureRandom),
     );
     const apiBaseUrlFor = (audience: string) =>
       Match.value(audience).pipe(
@@ -2201,7 +2207,7 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
     const wholeAttempts: HarnessWholeAttemptObservation[] = [];
     const fenceCalls: HarnessFenceObservation[] = [];
     const attemptHooks: HarnessAttemptHooks = { afterWholeAttempt: null };
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     yield* shell.serve(
       Effect.gen(function* harnessShell() {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -2213,6 +2219,9 @@ const startHarnessEffect = (options: PublicPricingReadHarnessOptions) =>
             if (value !== undefined) {
               headers[name] = value;
             }
+          }
+          if (!HttpMethod.isHttpMethod(request.method)) {
+            return HttpServerResponse.empty({ status: 405 });
           }
           const target = HttpClientRequest.make(request.method)(
             new URL(`${url.pathname.slice(catalogPath.length)}${url.search}`, endpoint.baseUrl),
@@ -2769,5 +2778,9 @@ export const startPublicPricingReadHarness: (
 ) => Effect.Effect<
   PublicPricingReadHarness,
   WholeCandidateReceiverTestUnavailable,
-  ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | FileSystem.FileSystem | HttpClient.HttpClient | Scope.Scope
+  | ChildProcessSpawner.ChildProcessSpawner
+  | SecureRandom.SecureRandom
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | Scope.Scope
 > = startHarnessEffect;

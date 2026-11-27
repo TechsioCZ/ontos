@@ -8,7 +8,8 @@ import {
 import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
 import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Config, Crypto, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Config, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 
 import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
@@ -705,8 +706,8 @@ const seedNativeProcessing = Effect.fn('PrivacyNativeFixture.seedSourceProcessin
     const database = yield* makeWithDefaults({ relations: privacyRelations }).pipe(
       Effect.provideService(PgClient.PgClient, adminClient),
     );
-    const crypto = yield* Crypto.Crypto;
-    const nextId = () => crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const nextId = () => crypto.uuidV4();
     const now = yield* DateTime.now;
     const from = DateTime.formatIso(DateTime.subtract(now, { minutes: 1 }));
     const until = DateTime.formatIso(DateTime.add(now, { hours: 1 }));

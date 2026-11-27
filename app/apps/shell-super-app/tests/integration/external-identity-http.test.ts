@@ -35,7 +35,8 @@ import {
   staffAuthenticationNamespaceRegistration,
 } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
@@ -146,10 +147,7 @@ const configuration = decode(ExternalIdentityHttpConfigurationSchema, {
   providerEndpointAudience: audience,
 });
 
-const testCrypto = Crypto.make({
-  digest: (_algorithm, data) => Effect.succeed(data),
-  randomBytes: (size) => new Uint8Array(size),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size));
 
 const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
   decode(AuthenticationNamespaceRegistrationSchema, {
@@ -329,7 +327,7 @@ const makeServer = (
         decide: () => Effect.die('No support impersonation belongs in this workload fixture'),
         selectableLegalEntities: () => Effect.die('No selected Legal Entity belongs in this tenant-only fixture'),
       },
-    ).pipe(Effect.provideService(Crypto.Crypto, testCrypto));
+    ).pipe(Effect.provideService(SecureRandom.SecureRandom, testCrypto));
     const admitWorkload = (input: Parameters<typeof scopeResolver.resolve>[0]) =>
       scopeResolver.resolve(input).pipe(Effect.provideService(AuthenticationNamespaceRegistry, receivingRegistry));
     const invocationContextSchema = Schema.Struct({
@@ -388,7 +386,7 @@ const makeServer = (
       Layer.succeed(GatewayIssuer, gatewayIssuer),
       Layer.succeed(PrincipalResolver, principalResolver),
       Layer.succeed(ReadRuntime, scopedReadRuntime),
-      Layer.succeed(Crypto.Crypto, testCrypto),
+      Layer.succeed(SecureRandom.SecureRandom, testCrypto),
       Layer.succeed(TrustedAuthenticationAdmissionService, authenticationAdmissionService),
       Layer.succeed(TrustedExternalSubjectAdmissionService, admissionService),
       makeInstalledModuleCatalogLayer(

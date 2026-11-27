@@ -13,9 +13,9 @@ import { jwtVerify } from 'jose';
 import { NodeSocketServer } from '@effect/platform-node';
 import {
   Config,
-  Crypto,
   Deferred,
   Effect,
+  Fiber,
   FileSystem,
   Option,
   Path,
@@ -25,11 +25,14 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { HttpClient } from 'effect/http';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
 import { readCompiledNodeShellIdentity } from '../../../../scripts/ontos-shell-runtime-contract.ts';
+import { withNativeStartupReceipt } from './native-startup-receipt.ts';
+import type { StartupObservation } from './native-startup-receipt.ts';
 
 const SHELL_APP_ID = 'shell-super-app';
 const CUSTOMER_CONTEXT_APP_ID = 'commerce-customer-context';
@@ -81,9 +84,10 @@ const ReleaseEnvelopeSchema = Schema.Struct({
   target: Schema.Literal('node'),
 });
 const sameIdentity = Schema.toEquivalence(IdentitySchema);
-const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]*$/u));
+const ReadyOriginSchema = Schema.String.check(Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9]\d*$/u));
 
 const PACKAGED_STARTUP_PHASE = 'Packaged native startup phase';
+const STARTUP_RECEIPT_DRAIN_TIMEOUT = '250 millis';
 
 interface PackagedApplicationInput {
   readonly appId:
@@ -138,8 +142,8 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
       Object.assign(environment, { DATABASE_URL: Redacted.value(yield* Config.Redacted('DATABASE_URL')) });
     }
     if (input.appId === SHELL_APP_ID) {
-      const crypto = yield* Crypto.Crypto;
-      const anonymousSecret = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const anonymousSecret = yield* crypto.uuidV4();
       Object.assign(environment, {
         BETTER_AUTH_SECRET: anonymousSecret,
         BETTER_AUTH_TRUSTED_ORIGINS: 'http://localhost:3020',
@@ -190,8 +194,8 @@ const makePackagedEnvironment = Effect.fn('ServerOwnerRelayNative.makePackagedEn
   },
 );
 
-export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startPackagedApplication')(
-  function* startPackagedApplication(input: PackagedApplicationInput) {
+const launchPackagedApplication = Effect.fn('ServerOwnerRelayNative.startPackagedApplication')(
+  function* startPackagedApplication(input: PackagedApplicationInput, startup: StartupObservation) {
     const filesystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = path.resolve(input.relativeDirectory);
@@ -231,6 +235,7 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       return yield* new PackagedOwnerStartupError({ reason: 'Packaged API prefix is missing' });
     }
     const environment = yield* makePackagedEnvironment(input);
+    startup.phase('spawn');
     const child = yield* ChildProcess.make('node', ['.output/index.js'], {
       cwd: directory,
       env: environment,
@@ -240,12 +245,14 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       stdin: 'ignore',
       stdout: 'pipe',
     });
+    startup.phase('ready_address');
     const diagnostics: Redacted.Redacted[] = [];
     const ready = yield* Deferred.make<string, PackagedOwnerStartupError>();
-    yield* child.stdout.pipe(
+    const stdout = yield* child.stdout.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.runForEach((line) => {
+        startup.line(line);
         const candidate = /Server is listening on (?<origin>http:\/\/[^\s]+)/u.exec(line)?.groups?.['origin'];
         if (candidate === undefined) {
           return Effect.sync(() => {
@@ -262,11 +269,12 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
       }),
       Effect.forkScoped,
     );
-    yield* child.stderr.pipe(
+    const stderr = yield* child.stderr.pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.runForEach((line) =>
         Effect.sync(() => {
+          startup.line(line);
           diagnostics.push(Redacted.make(line));
         }),
       ),
@@ -276,11 +284,21 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     const origin = yield* Effect.raceFirst(
       Deferred.await(ready),
       child.exitCode.pipe(
+        Effect.tap((status) => Effect.sync(() => startup.exited(status))),
         Effect.flatMap(() =>
           Effect.fail(new PackagedOwnerStartupError({ reason: 'Packaged application exited before readiness' })),
         ),
       ),
+    ).pipe(
+      // Observe output only after the original race has failed; never let readiness beat an already-observed exit.
+      Effect.tapCause(() =>
+        Effect.all([Fiber.await(stdout), Fiber.await(stderr)]).pipe(
+          Effect.timeoutOption(STARTUP_RECEIPT_DRAIN_TIMEOUT),
+          Effect.ignoreCause,
+        ),
+      ),
     );
+    startup.phase('contract');
     yield* Effect.logInfo(PACKAGED_STARTUP_PHASE, { appId: input.appId, phase: 'ready-address-observed' });
     const client = yield* HttpClient.HttpClient;
     const contractPath = input.appId === SHELL_APP_ID ? ONTOS_SHELL_RUNTIME_CONTRACT_PATH : ONTOS_MODULE_CONTRACT_PATH;
@@ -314,6 +332,11 @@ export const startPackagedApplication = Effect.fn('ServerOwnerRelayNative.startP
     return { apiPrefix: apiRoute.urlPath, child, compiled: compiled.deliveryUnit, diagnostics, origin };
   },
 );
+
+export const startPackagedApplication = (input: PackagedApplicationInput) =>
+  withNativeStartupReceipt({ appId: input.appId, launch: 'packaged' }, (startup) =>
+    launchPackagedApplication(input, startup),
+  );
 
 interface FixtureStorefrontActor {
   readonly authBindingId: string;
@@ -459,13 +482,14 @@ export const allocateLoopbackPort = Effect.fn('ServerOwnerRelayNative.allocateLo
  * Serve the actual local Node compiler output without claiming a promotable release envelope. The Payment
  * relay mount is always compiled in; the internal Symmy mount is required unless `internalSymmyIngress` is false.
  */
-export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCompiledSymmyShell')(
+const launchCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCompiledSymmyShell')(
   function* startCompiledSymmyShell(
     input: PackagedApplicationInput & {
       readonly appId: typeof SHELL_APP_ID;
       readonly authentication: NonNullable<PackagedApplicationInput['authentication']>;
       readonly internalSymmyIngress?: false;
     },
+    startup: StartupObservation,
   ) {
     const symmyIngress = input.internalSymmyIngress !== false;
     const filesystem = yield* FileSystem.FileSystem;
@@ -493,6 +517,7 @@ export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCo
       });
     }
     const environment = yield* makePackagedEnvironment(input);
+    startup.phase('spawn');
     const child = yield* ChildProcess.make('mise', ['exec', '--', 'pnpm', 'serve'], {
       cwd: directory,
       env: symmyIngress ? { ...environment, ONTOS_INTERNAL_SYMMY_INGRESS: '1' } : environment,
@@ -502,22 +527,21 @@ export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCo
       stdin: 'ignore',
       stdout: 'pipe',
     });
+    startup.phase('contract');
     const diagnostics = yield* Ref.make<readonly string[]>([]);
-    yield* Effect.forEach(
-      [child.stdout, child.stderr],
-      (stream) =>
-        stream.pipe(
-          Stream.decodeText(),
-          Stream.splitLines,
-          Stream.runForEach((line) => {
-            const status = /['"]http\.status['"]:\s*(?<status>[1-5][0-9]{2})/u.exec(line)?.groups?.['status'];
-            return status === undefined
-              ? Effect.void
-              : Ref.update(diagnostics, (previous) => [...previous, `http.status=${status}`].slice(-16));
-          }),
-          Effect.forkScoped,
-        ),
-      { discard: true },
+    const output = yield* Effect.forEach([child.stdout, child.stderr], (stream) =>
+      stream.pipe(
+        Stream.decodeText(),
+        Stream.splitLines,
+        Stream.runForEach((line) => {
+          startup.line(line);
+          const status = /['"]http\.status['"]:\s*(?<status>[1-5]\d{2})/u.exec(line)?.groups?.['status'];
+          return status === undefined
+            ? Effect.void
+            : Ref.update(diagnostics, (previous) => [...previous, `http.status=${status}`].slice(-16));
+        }),
+        Effect.forkScoped,
+      ),
     );
     const origin = `http://127.0.0.1:${input.authentication.port}`;
     const client = yield* HttpClient.HttpClient;
@@ -536,8 +560,16 @@ export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCo
     const body = yield* Effect.raceFirst(
       ready,
       child.exitCode.pipe(
+        Effect.tap((status) => Effect.sync(() => startup.exited(status))),
         Effect.flatMap(() =>
           Effect.fail(new PackagedOwnerStartupError({ reason: 'Compiled Shell process exited before readiness' })),
+        ),
+      ),
+    ).pipe(
+      Effect.tapCause(() =>
+        Effect.forEach(output, Fiber.await, { discard: true }).pipe(
+          Effect.timeoutOption(STARTUP_RECEIPT_DRAIN_TIMEOUT),
+          Effect.ignoreCause,
         ),
       ),
     );
@@ -548,6 +580,11 @@ export const startCompiledSymmyShell = Effect.fn('ServerOwnerRelayNative.startCo
     return { apiPrefix: prefixes[0], diagnostics: Ref.get(diagnostics), origin };
   },
 );
+
+export const startCompiledSymmyShell = (input: Parameters<typeof launchCompiledSymmyShell>[0]) =>
+  withNativeStartupReceipt({ appId: input.appId, launch: 'compiled' }, (startup) =>
+    launchCompiledSymmyShell(input, startup),
+  );
 
 const PostalFactoryResultSchema = Schema.Struct({
   compositionRevision: Schema.String,

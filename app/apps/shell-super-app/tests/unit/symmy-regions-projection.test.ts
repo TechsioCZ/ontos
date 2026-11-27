@@ -6,7 +6,8 @@ import {
   CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesSuccessSchema,
 } from '@app/pricing-contracts/current-supported-currencies';
-import { Crypto, DateTime, Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
@@ -162,12 +163,9 @@ const fixture = (mode: Mode = 'current') => {
   const requests: Request[] = [];
   const acquisitions: Parameters<AcquireSymmyRegionOwnerAssertion>[0][] = [];
   let randomSequence = 0;
-  const crypto = Crypto.make({
-    digest: () => Effect.succeed(new Uint8Array()),
-    randomBytes: (size) => {
-      randomSequence += 1;
-      return new Uint8Array(size).fill(randomSequence);
-    },
+  const crypto = SecureRandom.make((size) => {
+    randomSequence += 1;
+    return new Uint8Array(size).fill(randomSequence);
   });
   const acquire: AcquireSymmyRegionOwnerAssertion = (target) => {
     acquisitions.push(target);
@@ -224,7 +222,7 @@ const runProjectionPage = (
         current.acquire,
       ),
     ),
-    Effect.provideService(Crypto.Crypto, current.crypto),
+    Effect.provideService(SecureRandom.SecureRandom, current.crypto),
     Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
   );
 const runProjection = (current: ReturnType<typeof fixture>, selected = configuration, selectedScope = scope) =>
@@ -279,7 +277,7 @@ describe('Symmy internal CZ region projection', () => {
         { compositionRevision, configuration, page: { limit: 1, offset: 1 }, scope },
         current.acquire,
       ).pipe(
-        Effect.provideService(Crypto.Crypto, current.crypto),
+        Effect.provideService(SecureRandom.SecureRandom, current.crypto),
         Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
       );
       expect(next.count).toBe(2);
@@ -406,7 +404,7 @@ describe('Symmy internal CZ region projection', () => {
         acquire,
       ).pipe(
         Effect.flip,
-        Effect.provideService(Crypto.Crypto, current.crypto),
+        Effect.provideService(SecureRandom.SecureRandom, current.crypto),
         Effect.provideService(FetchHttpClient.Fetch, current.fakeFetch),
       );
       expect(error).toMatchObject({ reason: 'owner_unavailable' });

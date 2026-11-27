@@ -1,9 +1,10 @@
 import { BindPreVerificationSubjectResultSchema } from '@app/privacy/actions/bind-pre-verification-subject';
 import { NodeCrypto } from '@effect/platform-node';
+import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { splitSetCookieHeader, applySetCookies } from 'better-auth/cookies';
 import { and, eq, inArray, isNotNull, like } from 'drizzle-orm';
-import { Config, ConfigProvider, Context, Crypto, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
-import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { Config, ConfigProvider, Context, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { randomInt, randomUUID } from 'node:crypto';
 
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
@@ -149,15 +150,6 @@ const AUTH_DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').p
   Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 const RELAY = { leaseMillis: 30_000, leaseOwner: 'auth-world-relay', limit: 16, maxRetryMillis: 1000, retryMillis: 0 };
-
-const cryptoLive = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    digest: (algorithm, data) =>
-      Effect.sync(() => new Uint8Array(createHash(algorithm.toLowerCase().replace('-', '')).update(data).digest())),
-    randomBytes: (size) => new Uint8Array(randomBytes(size)),
-  }),
-);
 
 const realmConfiguration = Effect.gen(function* configuration() {
   return yield* parseCommercePortalAuthConfig({
@@ -316,7 +308,7 @@ export const makePortalAuthSource = Effect.fn('PortalAuthCommunicationsSource.ma
             Layer.succeed(CommercePortalAuthTrustedScope, { current: Effect.succeed({ tenantId }) }),
             Layer.succeed(CommercePortalAuthIssuedFacts, delegatingStore),
             CommercePortalAuthOtpChallengeKeyReaderLive,
-            cryptoLive,
+            NodeCrypto.layer,
           ),
         ),
       ),
@@ -402,7 +394,7 @@ export const makePostgresRealm = Effect.fn('PortalAuthCommunicationsRealm.postgr
     Layer.build(
       CommercePortalAuthRecoveryStoreLive.pipe(
         Layer.provideMerge(realmDatabaseLayer(configuration)),
-        Layer.provide(cryptoLive),
+        Layer.provide(commercePortalAuthPlatformCryptoLive),
       ),
     ),
   );
@@ -522,7 +514,11 @@ export const makeEnrollmentGateway = Effect.fn('PortalAuthCommunicationsRealm.ga
   );
   const replay = verificationReplayLayer.pipe(
     Layer.provide(
-      Layer.mergeAll(Layer.succeed(CommercePortalAuthProtectedHandoff, options.handoff), outcomes, cryptoLive),
+      Layer.mergeAll(
+        Layer.succeed(CommercePortalAuthProtectedHandoff, options.handoff),
+        outcomes,
+        commercePortalAuthPlatformCryptoLive,
+      ),
     ),
   );
   return yield* makeGatewayOverReplay(realm, options.withReplay ? replay : directVerificationReplayLayer);
@@ -595,7 +591,7 @@ export const makeProductionRouteRealm = Effect.fn('PortalAuthCommunicationsRealm
       Layer.build(
         CommercePortalAuthRecoveryStoreLive.pipe(
           Layer.provideMerge(realmDatabaseLayer(configuration)),
-          Layer.provide(cryptoLive),
+          Layer.provide(commercePortalAuthPlatformCryptoLive),
         ),
       ),
     );
@@ -608,7 +604,8 @@ export const makeProductionRouteRealm = Effect.fn('PortalAuthCommunicationsRealm
               Context.get(storage, CommercePortalAuthRecoveryStoreService),
             ),
             Layer.succeed(CommercePortalAuthConfig, configuration),
-            cryptoLive,
+            commercePortalAuthPlatformCryptoLive,
+            NodeCrypto.layer,
             ConfigProvider.layer(ConfigProvider.fromUnknown({ [PORTAL_AUTH_TRUSTED_TENANT_VARIABLE]: tenantId })),
           ),
         ),

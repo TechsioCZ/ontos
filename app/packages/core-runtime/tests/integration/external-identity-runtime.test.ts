@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Clock, Crypto, DateTime, Effect, Exit, Option, Predicate, Schema } from 'effect';
-import type { PlatformError } from 'effect';
+import { Cause, Clock, DateTime, Effect, Exit, Option, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
@@ -99,7 +99,7 @@ const makeAdmissionClock = (initial: DateTime.Utc) => {
   return { clock, set: (time: DateTime.Utc) => (currentMillis = DateTime.toEpochMillis(time)) };
 };
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const makeSubject = () =>
   nextUuid.pipe(
@@ -209,11 +209,7 @@ const withOutboxInsertFailure = (database: ActionDatabase): ActionDatabase => {
 const makeSubjectAdmission = (
   subject: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>,
   tenantId: Schema.Schema.Type<typeof TenantIdSchema>,
-): Effect.Effect<
-  ExternalIdentityAdmissionContext,
-  ExternalIdentityFailure | PlatformError.PlatformError,
-  Crypto.Crypto
-> =>
+): Effect.Effect<ExternalIdentityAdmissionContext, ExternalIdentityFailure, SecureRandom.SecureRandom> =>
   Effect.all([nextUuid, nextUuid]).pipe(
     Effect.flatMap(([nonce, operationId]) => {
       const observedAt = admissionNow;
@@ -259,11 +255,7 @@ const makeBoundAdmission = (
   authBindingId: string,
   principalId: string,
   bindingRevision: number,
-): Effect.Effect<
-  ExternalIdentityAdmissionContext,
-  ExternalIdentityFailure | PlatformError.PlatformError,
-  Crypto.Crypto
-> =>
+): Effect.Effect<ExternalIdentityAdmissionContext, ExternalIdentityFailure, SecureRandom.SecureRandom> =>
   Effect.all([nextUuid, nextUuid]).pipe(
     Effect.flatMap(([nonce, operationId]) => {
       const observedAt = admissionNow;
@@ -545,7 +537,7 @@ const runGeneratedReservationThroughActionRuntime = Effect.scoped(
   Effect.gen(function* governedExternalIdentityActionIntegration() {
     const configuration = yield* loadDatabaseConfig({ identity: SHARED_RUNTIME_IDENTITY });
     const database = yield* makeCoreDatabase(configuration);
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(yield* nextUuid);
     const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(yield* nextUuid);
     const actor = systemActionPrincipal(tenantId, actorPrincipalId);

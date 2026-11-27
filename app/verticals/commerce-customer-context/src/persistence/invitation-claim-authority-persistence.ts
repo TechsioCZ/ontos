@@ -6,8 +6,9 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
-import { Effect, Redacted, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import { Effect, Match, Redacted, Schema } from 'effect';
+import type { CommerceAuthSha256 } from '../portal-auth/sha256.ts';
+import type { SecureRandom } from 'effect/crypto';
 
 import type {
   CounterpartyPermissionScope,
@@ -218,10 +219,8 @@ const unavailable = (cause?: unknown) => {
   return cause === undefined ? error : Object.defineProperty(error, 'cause', { enumerable: false, value: cause });
 };
 
-const digestRawProof = (crypto: Crypto.Crypto, rawProof: Redacted.Redacted) =>
-  crypto
-    .digest('SHA-256', new TextEncoder().encode(Redacted.value(rawProof)))
-    .pipe(Effect.map(bytesToHex), Effect.mapError(unavailable));
+const digestRawProof = (digest: CommerceAuthSha256['Service'], rawProof: Redacted.Redacted) =>
+  digest.hash(Redacted.value(rawProof)).pipe(Effect.mapError(unavailable), Effect.map(bytesToHex));
 
 const violation = (
   code: ConstructorParameters<typeof CounterpartyAccessContractViolation>[0]['code'],
@@ -291,13 +290,14 @@ const requireInviterAuthority = (
 };
 
 interface ProofLifecycleOwnerScope {
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
+  readonly digest: CommerceAuthSha256['Service'];
   readonly stageDelivery: CounterpartyInvitationProofDeliveryService['stage'];
   readonly transaction: InvitationClaimScopedRoutineInvoker;
 }
 
 interface ClaimAuthorityOwnerScope {
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly currentOwnerAccess?: CurrentOwnerAccessDecisionReader | undefined;
   readonly transaction: InvitationClaimScopedRoutineInvoker;
 }
@@ -332,40 +332,30 @@ const validateRegistrationTenant = (
       )
     : Effect.void;
 
-const validateClaimTenant = (
-  input: ClaimVerificationInput,
-): Effect.Effect<void, CounterpartyAccessContractViolation> =>
+const validateClaimTenant = (input: ClaimVerificationInput): Effect.Effect<void, CounterpartyAccessContractViolation> =>
   input.claimant.tenantId !== input.invitationRef.tenantId ||
   input.counterpartyRef.tenantId !== input.invitationRef.tenantId ||
   input.inviter.tenantId !== input.invitationRef.tenantId
     ? Effect.fail(violation('invitation_claimant_mismatch', 'The invitation claim proof is outside the trusted Tenant'))
     : Effect.void;
 
-// oxlint-disable-next-line typescript/consistent-return -- The decoded operation outcome is an exhaustive schema union, so every reachable switch branch returns an Effect.
 const validatePreflightOutcome = (
   row: InvitationClaimPreflightRow | undefined,
 ): Effect.Effect<InvitationClaimPreflightRow, CounterpartyAccessContractViolation> => {
   if (row === undefined) {
     return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
   }
-  // oxlint-disable-next-line eslint/default-case, effect-native/prefer-match-over-tag-switch -- The decoded operation-outcome schema is exhaustive here, and the grouped invalid/revoked branches are the validator's established failure mapping.
-  switch (row.operation_outcome) {
-    case 'INVALID':
-    case 'REVOKED': {
-      return Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason));
-    }
-    case 'EXPIRED': {
-      return Effect.fail(violation('invitation_expired', invitationExpiredReason));
-    }
-    case 'CONSUMED': {
-      return Effect.fail(
-        violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed'),
-      );
-    }
-    case 'VERIFIED': {
-      return Effect.succeed(row);
-    }
-  }
+  return Match.value(row.operation_outcome).pipe(
+    Match.whenOr('INVALID', 'REVOKED', () =>
+      Effect.fail(violation('invitation_claim_proof_invalid', invitationClaimProofInvalidReason)),
+    ),
+    Match.when('EXPIRED', () => Effect.fail(violation('invitation_expired', invitationExpiredReason))),
+    Match.when('CONSUMED', () =>
+      Effect.fail(violation('invitation_claim_proof_consumed', 'The invitation claim proof has already been consumed')),
+    ),
+    Match.when('VERIFIED', () => Effect.succeed(row)),
+    Match.exhaustive,
+  );
 };
 
 const validatePreflightBinding = (
@@ -483,12 +473,10 @@ const registerAndStage = Effect.fn('InvitationClaimAuthorityPersistence.register
     input: CounterpartyInvitationProofRegistrationInput,
   ) {
     yield* validateRegistrationTenant(input);
-    const rawProofBytes = yield* ownerScope.crypto.randomBytes(32).pipe(Effect.mapError(unavailable));
+    const rawProofBytes = yield* ownerScope.crypto.randomBytes(32);
     const rawProof = Redacted.make(bytesToHex(rawProofBytes));
-    const digest = yield* digestRawProof(ownerScope.crypto, rawProof);
-    const reference = yield* ownerScope.crypto
-      .randomUUIDv4()
-      .pipe(Effect.mapError(unavailable), Effect.flatMap(proofReference));
+    const digest = yield* digestRawProof(ownerScope.digest, rawProof);
+    const reference = yield* ownerScope.crypto.uuidV4().pipe(Effect.flatMap(proofReference));
     const [registration] = yield* ownerScope.transaction
       .invoke(registerProofRoutine, [
         input.invitationRef.resourceId,
@@ -559,9 +547,7 @@ const claimAuthorityForOwnerScope = (
       function* verifyAndConsumeInvitationProof(input: ClaimVerificationInput) {
         yield* validateClaimTenant(input);
         yield* requireInviterAuthority(ownerScope, input);
-        const attestation = yield* ownerScope.crypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError(unavailable), Effect.flatMap(proofReference));
+        const attestation = yield* ownerScope.crypto.uuidV4().pipe(Effect.flatMap(proofReference));
         const [row] = yield* ownerScope.transaction
           .invoke(consumeProofRoutine, [
             input.invitationRef.resourceId,
@@ -597,7 +583,8 @@ const claimAuthorityForOwnerScope = (
 
 export const counterpartyInvitationClaimServicesForTransaction = (
   transaction: InvitationClaimScopedRoutineInvoker,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
+  digest: CommerceAuthSha256['Service'],
   delivery: { readonly stage: ProofLifecycleOwnerScope['stageDelivery'] },
   currentOwnerAccess?: CurrentOwnerAccessDecisionReader,
 ) =>
@@ -609,6 +596,7 @@ export const counterpartyInvitationClaimServicesForTransaction = (
     }),
     proofLifecycle: proofLifecycleForOwnerScope({
       crypto,
+      digest,
       stageDelivery: delivery.stage,
       transaction,
     }),
@@ -616,7 +604,7 @@ export const counterpartyInvitationClaimServicesForTransaction = (
 
 export const counterpartyInvitationClaimRedemptionForTransaction = (
   transaction: InvitationClaimScopedRoutineInvoker,
-  crypto: Crypto.Crypto,
+  digestService: CommerceAuthSha256['Service'],
   trustedScope: OperationalScope & { readonly legalEntityId: string },
 ): CounterpartyInvitationClaimRedemptionService => ({
   redeem: Effect.fn('InvitationClaimAuthorityPersistence.redeem')(function* redeemInvitationSecret(
@@ -628,7 +616,7 @@ export const counterpartyInvitationClaimRedemptionForTransaction = (
         'The invitation proof is outside the authenticated Tenant',
       );
     }
-    const digest = yield* digestRawProof(crypto, input.rawProof);
+    const digest = yield* digestRawProof(digestService, input.rawProof);
     const [row] = yield* transaction
       .invoke(redeemProofRoutine, [
         input.invitationRef.resourceId,

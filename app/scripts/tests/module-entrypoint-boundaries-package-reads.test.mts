@@ -1536,7 +1536,7 @@ const EXPORT_CONSUMERS: readonly CarryConsumer[] = [
       PASSES_ON_READ,
     ]),
     files: (sources, imported) => {
-      const from = /from '(?<specifier>[^']+)'/u.exec(imported)?.groups?.specifier ?? '';
+      const from = /from '(?<specifier>[^']+)'/u.exec(imported)?.groups?.['specifier'] ?? '';
       return [[sharedApiFile, `${required(sources, sharedApiFile)}\nexport * as Carriers from '${from}';\n`]];
     },
   },
@@ -1584,7 +1584,7 @@ const MOUNT_CONSUMER: CarryConsumer = {
 const wholeModuleConsumer = (label: string, entryFile: string, barrel: string, held: string): CarryConsumer => ({
   diagnostics: [`${entryFile}: export Wrapped reaches a package read of the module`],
   files: (sources, imported) => {
-    const from = /from '(?<specifier>[^']+)'/u.exec(imported)?.groups?.specifier ?? '';
+    const from = /from '(?<specifier>[^']+)'/u.exec(imported)?.groups?.['specifier'] ?? '';
     return [
       [`${owner}/shared/carriers.ts`, `export * as Carriers from '${from}';\n`],
       [
@@ -1803,10 +1803,12 @@ it.live(
           ],
         ]);
       const mutableOption = `(cannot be followed: ${owner}/shared/options.ts onExcessProperty is declared with let, so what it holds cannot be read from its declaration)`;
-      const optionVerdicts = [
-        ['a mounted declaration spreading a whole module whose name is a let', 'let', mutableOption],
-        ['a mounted declaration spreading a whole module whose name is a const', 'const', null],
-      ].map(([label, binding, reason]) => {
+      const optionVerdicts = (
+        [
+          ['a mounted declaration spreading a whole module whose name is a let', 'let', mutableOption],
+          ['a mounted declaration spreading a whole module whose name is a const', 'const', null],
+        ] as const
+      ).map(([label, binding, reason]) => {
         const seen = optionsMount(binding ?? '');
         const mountLine = seen.diagnostics
           .split('\n')
@@ -1832,20 +1834,22 @@ it.live(
         [`${owner}/shared/relay.ts`, `export { ${OWN_READ.name} } from '${OWN_READ.specifier}';\n`],
         [`${owner}/shared/carriers.ts`, CARRIERS_RELAY],
       ] as const;
-      const sites = [
+      const sites = (
         [
-          "export const loadCarriers = () => import('./carriers.ts');\n",
-          `loads the package read ${owner}/shared/carriers.ts`,
-        ],
-        [
-          "export type Held = typeof import('./carriers.ts');\n",
-          `${sharedApiFile}: export Held reaches a package read`,
-        ],
-        [
-          "import { Carriers } from './carriers.ts';\nexport default { carriers: Carriers };\n",
-          `${sharedApiFile}: export default reaches a package read`,
-        ],
-      ].map(([appended, expected]) => [
+          [
+            "export const loadCarriers = () => import('./carriers.ts');\n",
+            `loads the package read ${owner}/shared/carriers.ts`,
+          ],
+          [
+            "export type Held = typeof import('./carriers.ts');\n",
+            `${sharedApiFile}: export Held reaches a package read`,
+          ],
+          [
+            "import { Carriers } from './carriers.ts';\nexport default { carriers: Carriers };\n",
+            `${sharedApiFile}: export default reaches a package read`,
+          ],
+        ] as const
+      ).map(([appended, expected]) => [
         appended,
         judged(sources, [
           ...barrel,

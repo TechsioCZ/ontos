@@ -20,7 +20,8 @@ import {
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Exit, Layer, Option, Redacted, Predicate, Schema } from 'effect';
+import { Effect, Exit, Layer, Option, Redacted, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
@@ -83,7 +84,7 @@ const candidate = (ico: string, extra: Partial<EncodedPartyCandidate> = {}): Enc
   validFrom: '2020-01-01T00:00:00.000Z',
   ...extra,
 });
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const transport = (idempotencyKey: string) => ({
   correlationId: `live-${idempotencyKey}`,
   idempotencyKey,
@@ -151,8 +152,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ].map(({ descriptor }) => descriptor.actionKey);
           const fixture = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
-              access: 'allowed',
               actionKeys,
+              access: 'allowed',
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
@@ -163,8 +164,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           );
           const other = yield* Effect.acquireRelease(
             makeLiveOperationFixture({
-              access: 'allowed',
               actionKeys,
+              access: 'allowed',
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
               compositionRevision: compositionSnapshot.composition.revision,
@@ -222,8 +223,9 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             legalEntityId: fixture.legalEntityId,
           });
           const otherManagerPrincipal = yield* withGatewayScope(other.manager);
-          const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer> | Crypto.Crypto>) =>
-            effect.pipe(Effect.provideContext(fixtureContext));
+          const run = <A, E>(
+            effect: Effect.Effect<A, E, Layer.Success<typeof fixture.layer> | SecureRandom.SecureRandom>,
+          ) => effect.pipe(Effect.provideContext(fixtureContext));
           const create = (
             value: EncodedPartyCandidate,
             idempotencyKey?: string,

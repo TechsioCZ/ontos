@@ -35,7 +35,6 @@ import { defineEffectBff, dispatchEffectBffRequest } from '@modern-js/bff-effect
 import {
   Array as EffectArray,
   ConfigProvider,
-  Crypto,
   Context,
   Duration,
   Effect,
@@ -48,6 +47,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { Digest } from 'effect/crypto';
 
 import { NodeCrypto, NodeHttpServer } from '@effect/platform-node';
 import { ChildProcess } from 'effect/process';
@@ -246,8 +246,8 @@ const compareFixtureApiKeys = (left: string, right: string): -1 | 0 | 1 => {
   return 0;
 };
 const fixtureDigest = Effect.fn('SourceOwnerFixture.digest')(function* digest(document: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+  const crypto = yield* Digest.Digest;
+  return Hex.encode(new Uint8Array(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))));
 });
 /** Controlled SOURCE fixture DTO from the actual owner; this is not a published receiver claim. */
 const makeRegistrySourceContract = Effect.fn('CurrentStorefrontNative.sourceContract')(function* sourceContract() {

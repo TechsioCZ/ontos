@@ -1,5 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, FileSystem, Option, Schema } from 'effect';
+import { Effect, FileSystem, Option, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -165,8 +166,8 @@ const accessMigrationProgram = Effect.gen(function* accessIntentTriggers() {
   const connections = yield* loadDatabaseConnectionPair();
   const session = yield* makeTestPgSession(connections.admin.connectionString);
   const fileSystem = yield* FileSystem.FileSystem;
-  const crypto = yield* Crypto.Crypto;
-  const schemaName = `access_triggers_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const schemaName = `access_triggers_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const schema = `"${schemaName}"`;
   const table = (name: string) => `${schema}."${name}"`;
   yield* admin.unsafe(`create schema ${schema}`);
@@ -977,7 +978,9 @@ const accessMigrationProgram = Effect.gen(function* accessIntentTriggers() {
   expect(remaining.length).toBeGreaterThan(0);
 });
 
-it.layer(NodeServices.layer)('the access intent migration enforces its triggers', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('the access intent migration enforces its triggers', (suite) => {
   suite.effect(
     'refuses every forbidden write and accepts the allowed one beside it',
     Effect.fnUntraced(function* accessIntentMigrationEffect() {

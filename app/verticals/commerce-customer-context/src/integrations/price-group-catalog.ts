@@ -11,7 +11,8 @@ import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-princ
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { callAnswer } from '@app/core-runtime/sdk';
 import type { CallOutcome } from '@app/core-runtime/sdk';
-import { Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Effect, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type {
   PriceGroupCatalogOutcome,
@@ -166,26 +167,30 @@ const requestPayload = (
   requiredContractId: typeof CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
   trustedOperationAt: PriceGroupInstant,
   expected: PriceGroupCompatibilityEvidence | undefined,
-): Effect.Effect<ValidatePriceGroupCompatibilityRequest, CustomerPriceGroupCatalogUnavailable> =>
-  expected !== undefined &&
-  (!sameReference(priceGroupRef, expected.priceGroupRef) ||
-    expected.requiredContract.contractId !== requiredContractId ||
-    expected.requiredContract.version !== compatibilityContractVersion)
-    ? Effect.fail(unavailableEvidence())
-    : Schema.decodeUnknownEffect(ValidatePriceGroupCompatibilityRequestSchema)(
-        expected === undefined
-          ? {
-              priceGroupRef,
-              requiredContract: { contractId: requiredContractId, version: compatibilityContractVersion },
-              trustedOperationAt,
-            }
-          : {
-              expectedCurrent: expectedCurrent(expected),
-              priceGroupRef,
-              requiredContract: { contractId: requiredContractId, version: compatibilityContractVersion },
-              trustedOperationAt,
-            },
-      ).pipe(Effect.mapError(unavailable));
+): Effect.Effect<ValidatePriceGroupCompatibilityRequest, CustomerPriceGroupCatalogUnavailable> => {
+  if (
+    expected !== undefined &&
+    (!sameReference(priceGroupRef, expected.priceGroupRef) ||
+      expected.requiredContract.contractId !== requiredContractId ||
+      expected.requiredContract.version !== compatibilityContractVersion)
+  ) {
+    return Effect.fail(unavailableEvidence());
+  }
+  return Schema.decodeUnknownEffect(ValidatePriceGroupCompatibilityRequestSchema)(
+    expected === undefined
+      ? {
+          priceGroupRef,
+          requiredContract: { contractId: requiredContractId, version: compatibilityContractVersion },
+          trustedOperationAt,
+        }
+      : {
+          expectedCurrent: expectedCurrent(expected),
+          priceGroupRef,
+          requiredContract: { contractId: requiredContractId, version: compatibilityContractVersion },
+          trustedOperationAt,
+        },
+  ).pipe(Effect.mapError(unavailable));
+};
 
 /** The port over one source of Catalog decisions; every decision is checked against the exact request. */
 const catalogPortOver = (
@@ -232,7 +237,7 @@ type DelegatedGatewayAcquisition = typeof acquireDelegatedGatewayContext;
 const authorizedExecutor =
   (
     subject: GatewayDelegationSubject,
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     execute: AuthorizedPriceGroupCompatibilityExecutor,
     acquire: DelegatedGatewayAcquisition,
     operationRequirementKey: PriceGroupCatalogRequirement | undefined,
@@ -289,7 +294,7 @@ export const priceGroupCatalogPortFromEnvironment = Effect.fn('PriceGroupCatalog
     execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
     acquire: DelegatedGatewayAcquisition = acquireDelegatedGatewayContext,
   ) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return priceGroupCatalogPort(
       context.requestCorrelation,
       authorizedExecutor(context.subject, crypto, execute, acquire, context.operationRequirementKey),

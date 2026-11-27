@@ -21,12 +21,12 @@ const uiKit = resolveUiKitShare(import.meta.url);
 // A host with no static remotes otherwise consumes these contexts only as private fallbacks.
 // Publish the exact modules that own the Shell's resolver and translation providers for dynamic remotes.
 const hostContext = (request: string, version: string) => ({
-  version,
   import: require.resolve(request),
   requiredVersion: version,
   singleton: true,
   strictVersion: true,
   treeShaking: false,
+  version,
 });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({

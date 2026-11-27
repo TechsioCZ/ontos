@@ -112,7 +112,8 @@ import { executeCustomerProfileIcoWithAuthorization } from '@app/commerce-custom
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { Config, Context, Crypto, Effect, Layer, Match, Option, Schema, Struct } from 'effect';
+import { Config, Context, Effect, Layer, Match, Option, Schema, Struct } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   SymmyPartyCommerceIntentSchema,
@@ -134,7 +135,7 @@ import { symmyJobWorkerUnavailable } from './symmy-job-worker-error.ts';
 import { readOriginalOwnerAttempt } from './symmy-owner-request-recovery.ts';
 
 const DiagnosticFailureSchema = Schema.Struct({
-  _tag: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,99}$/u))),
+  _tag: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[A-Za-z]\w{0,99}$/u))),
   status: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 599, minimum: 400 }))),
 });
 const traceProfileStage = Effect.fn('SymmyPartyCommerceAdapters.traceProfileStage')(function* traceProfileStage(
@@ -665,7 +666,7 @@ const originalOwnerRequestMatches = (
   (input.originalRequestHash === undefined || input.originalRequestHash === requestHash);
 
 const freshOwnerContext = Effect.fn('SymmyPartyCommerceAdapters.freshContext')(function* freshOwnerContext(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   declarationKey: string,
   moduleId: string,
@@ -676,7 +677,7 @@ const freshOwnerContext = Effect.fn('SymmyPartyCommerceAdapters.freshContext')(f
   if (moduleId === commerce && input.legalEntityId === undefined) {
     return yield* symmyJobWorkerUnavailable();
   }
-  const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  const requestCorrelation = yield* crypto.uuidV4();
   const common: RegisteredSubjectContext = {
     declarationKey,
     operationRequirementKey: symmyOwnerOperationRequirementKey(
@@ -757,7 +758,7 @@ const readRequestHash = Effect.fn('SymmyPartyCommerceAdapters.readRequestHash')(
   return yield* Effect.try({ catch: symmyJobWorkerUnavailable, try: () => computeCanonicalValueHash(decoded) });
 });
 const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryContext')(function* freshRecoveryContext(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   declarationKey: string,
   moduleId: string,
@@ -804,7 +805,7 @@ const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryConte
   if (input.legalEntityId !== undefined) {
     source = { ...source, legalEntityId: input.legalEntityId };
   }
-  const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  const requestCorrelation = yield* crypto.uuidV4();
   const context = yield* acquireDelegatedGatewayContext(
     {
       audience: moduleId === party ? 'party-registry' : 'commerce-customer-context',
@@ -1024,7 +1025,7 @@ const recordMatchedParty = Effect.fn('SymmyPartyCommerceAdapters.recordMatchedPa
 });
 
 const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(function* recoverParty(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   operation: (typeof PartySourceEffectReceiptRequestSchema.Type)['operation'],
   intent: SymmyPartyCommerceIntent,
@@ -1130,7 +1131,7 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
  */
 const replayCommittedPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.replayCommittedPartyCreate')(
   function* replayCommittedPartyCreate(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     input: SymmyEffectAdapterInput,
     intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'PartyCreate' }>,
   ) {
@@ -1154,7 +1155,7 @@ const replayCommittedPartyCreate = Effect.fn('SymmyPartyCommerceAdapters.replayC
 
 const contactReceiptAfterAcknowledgement = Effect.fn('SymmyPartyCommerceAdapters.contactReceiptAfterAcknowledgement')(
   function* contactReceiptAfterAcknowledgement(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     input: SymmyEffectAdapterInput,
     operation: (typeof PartySourceEffectReceiptRequestSchema.Type)['operation'],
     intent: SymmyPartyCommerceIntent,
@@ -1477,7 +1478,7 @@ const captureAcknowledgedNativeInvocation = Effect.fn('SymmyPartyCommerceAdapter
 
 const currentOrganizationIcoTarget = Effect.fn('SymmyPartyCommerceAdapters.currentOrganizationIcoTarget')(
   function* currentOrganizationIcoTarget(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     input: SymmyEffectAdapterInput,
     intent: SymmyPartyCommerceIntent,
   ) {
@@ -1544,7 +1545,7 @@ const currentOrganizationIcoTarget = Effect.fn('SymmyPartyCommerceAdapters.curre
 );
 const currentMembershipDefinition = Effect.fn('SymmyPartyCommerceAdapters.currentMembershipDefinition')(
   function* currentMembershipDefinition(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     input: SymmyEffectAdapterInput,
     intent: SymmyPartyCommerceIntent,
   ) {
@@ -1633,7 +1634,11 @@ const currentMembershipDefinition = Effect.fn('SymmyPartyCommerceAdapters.curren
   },
 );
 const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
-  function* executeIntent(crypto: Crypto.Crypto, operation: Operation, originalInput: SymmyEffectAdapterInput) {
+  function* executeIntent(
+    crypto: SecureRandom.SecureRandom['Service'],
+    operation: Operation,
+    originalInput: SymmyEffectAdapterInput,
+  ) {
     const input = yield* resolveDependencies(originalInput);
     if (!input.canExecuteNewEffects) {
       return yield* symmyJobWorkerUnavailable();
@@ -1983,7 +1988,7 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
 );
 
 const recoverGroup = Effect.fn('SymmyPartyCommerceAdapters.recoverGroup')(function* recoverGroup(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerGroupCreate' | 'CustomerGroupUpdate' }>,
 ) {
@@ -2042,7 +2047,7 @@ const recoverGroup = Effect.fn('SymmyPartyCommerceAdapters.recoverGroup')(functi
 });
 
 const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembership')(function* recoverMembership(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerGroupMembership' }>,
 ) {
@@ -2083,7 +2088,7 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
 
 const recoverOrganizationIco = Effect.fn('SymmyPartyCommerceAdapters.recoverOrganizationIco')(
   function* recoverOrganizationIco(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     input: SymmyEffectAdapterInput,
     intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'OrganizationCustomerProfileIco' }>,
   ) {
@@ -2169,7 +2174,7 @@ const recoverOrganizationIco = Effect.fn('SymmyPartyCommerceAdapters.recoverOrga
 );
 const sameIcoIntent = Schema.toEquivalence(ChangeCustomerProfileIcoPayloadSchema);
 const recoverIco = Effect.fn('SymmyPartyCommerceAdapters.recoverIco')(function* recoverIco(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerProfileIco' }>,
 ) {
@@ -2236,7 +2241,7 @@ const profilePayloadSchema = Schema.Union([
 ]);
 const sameProfileIntent = Schema.toEquivalence(profilePayloadSchema);
 const recoverProfileMode = Effect.fn('SymmyPartyCommerceAdapters.recoverProfileMode')(function* recoverProfileMode(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'EnsureRetailProfile' | 'CreateCounterpartyProfile' }>,
   mode: 'RECEIPT' | 'MINIMAL_RECEIPT' | 'ORG_RECEIPT',
@@ -2355,7 +2360,7 @@ const recoverProfileMode = Effect.fn('SymmyPartyCommerceAdapters.recoverProfileM
 });
 
 const recoverProfile = Effect.fn('SymmyPartyCommerceAdapters.recoverProfile')(function* recoverProfile(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'EnsureRetailProfile' | 'CreateCounterpartyProfile' }>,
 ) {
@@ -2377,7 +2382,7 @@ const recoverProfile = Effect.fn('SymmyPartyCommerceAdapters.recoverProfile')(fu
 });
 
 const recoverAssignment = Effect.fn('SymmyPartyCommerceAdapters.recoverAssignment')(function* recoverAssignment(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<
     SymmyPartyCommerceIntent,
@@ -2451,7 +2456,7 @@ const recoverAssignment = Effect.fn('SymmyPartyCommerceAdapters.recoverAssignmen
 });
 
 const recoverSavedAddress = Effect.fn('SymmyPartyCommerceAdapters.recoverSavedAddress')(function* recoverSavedAddress(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
   intent: Extract<
     SymmyPartyCommerceIntent,
@@ -2526,7 +2531,7 @@ const recoverSavedAddress = Effect.fn('SymmyPartyCommerceAdapters.recoverSavedAd
 });
 
 const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* recoverIntent(
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   operation: Operation,
   input: SymmyEffectAdapterInput,
 ) {
@@ -2569,7 +2574,7 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
 
 const recoverWithOriginalCommand = Effect.fn('SymmyPartyCommerceAdapters.recoverOriginalCommand')(
   function* recoverWithOriginalCommand(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     operation: Operation,
     originalInput: SymmyEffectAdapterInput,
   ) {
@@ -2589,7 +2594,7 @@ const recoverWithOriginalCommand = Effect.fn('SymmyPartyCommerceAdapters.recover
 );
 
 export const makeSymmyPartyCommerceAdapters = Effect.gen(function* partyCommerceAdapters() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return operations.map((operation): SymmyEffectAdapter => ({
     execute: (input) => executeIntent(crypto, operation, input),
     operation: { entrypointKey: operation.entrypointKey, moduleId: operation.moduleId, schemaVersion: '1' },

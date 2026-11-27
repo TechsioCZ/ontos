@@ -17,7 +17,8 @@ import {
 } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -97,7 +98,7 @@ const MERCHANT_IDENTITIES = {
   STRIPE: '{"_tag":"STRIPE","accountId":"acct_1TestAccount"}',
 } as const satisfies Record<Family, string>;
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const nativeDatabase = Effect.gen(function* driverNativeDatabase() {
@@ -109,7 +110,7 @@ const nativeDatabase = Effect.gen(function* driverNativeDatabase() {
 
 /** Real Core runtimes whose Module State gate reads the Tenant's `core.tenant_module_states` row. */
 const makeRuntimes = Effect.fn('DriverNative.runtimes')(function* makeRuntimes(database: EvidenceNativeDatabase) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const gate = makeModuleStateGate(makeTenantModuleStateService({ executor: database.coreAdmin }));
   const gateway = makeModuleEntrypointGateway(gate);

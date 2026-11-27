@@ -4,6 +4,7 @@ import { Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect
 import type { Effect as EffectType } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Reactivity } from 'effect/reactivity';
+import { SqlClient } from 'effect/sql';
 import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 
 import { makeGatewayScopeGrantRegistrar } from '../../src/auth/gateway-scope-grant.ts';
@@ -46,6 +47,22 @@ const registerWith = (
       scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
     ),
   );
+
+it.effect('scripted PostgreSQL clients retain native SQL identity and single-session pool statistics', () =>
+  Effect.gen(function* scriptedClientNativeContract() {
+    const client = yield* PgClient.PgClient;
+    const sqlClient = SqlClient.SqlClient.of(client);
+    expect(yield* sqlClient.unsafe('select 1')).toEqual([]);
+    expect(client.poolStats).toBeDefined();
+    expect(yield* client.poolStats).toEqual({ idle: 0, max: 1, min: 1, pending: 0, used: 1 });
+  }).pipe(
+    Effect.provide(
+      scriptedPgClientLayer(Effect.succeed(testSqlConnection(() => Effect.succeed([])))).pipe(
+        Layer.provideMerge(Reactivity.layer),
+      ),
+    ),
+  ),
+);
 
 it.effect('audiences without a gateway-grant identity register nothing', () =>
   Effect.gen(function* catalogGrantIsNoOp() {

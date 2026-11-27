@@ -6,7 +6,8 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -332,7 +333,7 @@ export const makeCorrectCatalogToStockBindingServices = Effect.fn('CorrectCatalo
       transaction,
       makeDrizzleCatalogToStockBindingPersistence(transaction),
     );
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       bindings,
       impacts: makeBindingCorrectionImpactService(bindingCorrectionImpactPersistenceForScope(transaction, scope)),
@@ -353,7 +354,7 @@ export const makeCorrectCatalogToStockBindingServices = Effect.fn('CorrectCatalo
           });
         }
         const now = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-        const stockItemId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(bindingReplacementUnavailable));
+        const stockItemId = yield* crypto.uuidV4();
         const replacement = yield* Schema.decodeEffect(StockItemSchema)({
           createdAt: now,
           exactSelectionMeaning: current.exactSelectionMeaning,

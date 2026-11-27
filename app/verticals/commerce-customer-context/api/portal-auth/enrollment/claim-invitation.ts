@@ -1,4 +1,6 @@
-import { Cause, Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Cause, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
+import { CommerceAuthSha256 } from '../../../src/portal-auth/sha256.ts';
 import type { HttpServerRequest } from 'effect/http';
 
 import { ActionTransportMetadataSchema } from '@app/core-runtime';
@@ -254,7 +256,7 @@ interface ClaimSeams {
    * can run there: Core gives it the invitee portal role until the proof expires or the claim consumes it.
    */
   readonly admitRecipient: (redeemed: RedeemedClaimProof) => Effect.Effect<void, ClaimOwnerFailure>;
-  readonly crypto: Crypto.Crypto;
+  readonly digest: CommerceAuthSha256['Service'];
   readonly run: CommerceEnrollmentOwnerTransactionRun;
   /** The authenticated scope the redemption stamps its claimant from; never a caller-named value. */
   readonly trustedScope: OperationalScope & { readonly legalEntityId: string };
@@ -277,7 +279,7 @@ export const claimInvitationEffect = Effect.fn('CommercePortalAuthEnrollment.cla
       payload: ClaimCounterpartyAccessInvitationPayload,
     ) => Effect.Effect<typeof ClaimCounterpartyAccessInvitationResultSchema.Type, ClaimOwnerFailure>,
   ): Effect.fn.Return<CommerceEnrollmentOwnerEffectOutcome, ClaimOwnerFailure> {
-    const { crypto, run, trustedScope } = seams;
+    const { digest, run, trustedScope } = seams;
     const { legalEntityId, principalId, tenantId } = trustedScope;
     const invitationRef = {
       moduleId: 'commerce.customer-context' as const,
@@ -286,7 +288,7 @@ export const claimInvitationEffect = Effect.fn('CommercePortalAuthEnrollment.cla
       tenantId,
     };
     const redemption = yield* run({ legalEntityId, tenantId }, (transaction) =>
-      counterpartyInvitationClaimRedemptionForTransaction(transaction, crypto, trustedScope)
+      counterpartyInvitationClaimRedemptionForTransaction(transaction, digest, trustedScope)
         .redeem({ invitationRef, proofReference: input.claimProofReference, rawProof: input.secret })
         .pipe(
           Effect.flatMap((redeemed) =>
@@ -493,7 +495,7 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
 
   const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
   const continuation = yield* CommerceEnrollmentContinuation;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* CommerceAuthSha256;
   const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId }, runner.run);
   const attempt = yield* store
     .read({ portalEnrollmentAttemptId, tenantId })
@@ -590,7 +592,12 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
    * so the services this route was composed with travel into that effect explicitly.
    */
   const claimActionServices = yield* Effect.context<
-    AccessPortalProjection | ActionRuntime | CounterpartyInvitationProofDelivery | Crypto.Crypto | PrincipalEligibility
+    | AccessPortalProjection
+    | ActionRuntime
+    | CounterpartyInvitationProofDelivery
+    | SecureRandom.SecureRandom
+    | CommerceAuthSha256
+    | PrincipalEligibility
   >();
   const admissions = yield* AccessPortalAdmissions;
   const projection = yield* AccessPortalProjection;
@@ -665,7 +672,7 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
             ),
           ),
         ),
-    crypto,
+    digest,
     run: runner.run,
     trustedScope,
   };

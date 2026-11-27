@@ -1,8 +1,8 @@
 import { OutboxWorkerDeferred, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
-import type { PlatformError } from 'effect';
-import { Crypto, DateTime, Effect, Match, Option, Predicate, Ref, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Predicate, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 import { PaymentGatewayAccountBindingSchema } from '../../../shared/domain/payment-execution-binding.ts';
@@ -130,10 +130,9 @@ type StepFailure =
   | GatewayDispatchConflictError
   | GatewayEvidenceConflictError
   | GatewayLedgerUnavailableError
-  | GatewayProviderUnavailableError
-  | PlatformError.PlatformError;
+  | GatewayProviderUnavailableError;
 type StepServices =
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | GatewayBindingResolver
   | GatewayProviderAdapters
   | ProviderDispatchLedger
@@ -447,7 +446,7 @@ const prepareThen = (
   );
 
 /** 128 random bits as unpadded base64url: exactly 22 characters. */
-const newReturnToken = Crypto.Crypto.pipe(
+const newReturnToken = SecureRandom.SecureRandom.pipe(
   Effect.flatMap((crypto) => crypto.randomBytes(RETURN_TOKEN_BYTES)),
   Effect.map((bytes) => GatewayReturnTokenSchema.make(Base64Url.encode(bytes))),
 );

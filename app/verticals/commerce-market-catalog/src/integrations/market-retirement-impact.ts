@@ -15,7 +15,8 @@ import type {
 import { executeReserveMarketRetirementWithAuthorization } from '@app/customer-market-retirement-contracts/reserve-market-retirement/client';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { Crypto, DateTime, Effect, Function as EffectFunction, Layer, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Function as EffectFunction, Layer, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type {
   MarketRetirementImpactAssessment,
@@ -367,11 +368,13 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
     }).pipe(
       Effect.mapError(mapReservationFailure),
       Effect.flatMap(executedReservationResult),
-      Effect.flatMap((result) =>
-        finishedReservationMatches(result, input.assessment, operation === 'COMMIT' ? 'COMMITTED' : 'RELEASED')
-          ? Effect.void
-          : Effect.fail(stale(`Customer Context returned mismatched ${operation} reservation evidence`)),
-      ),
+      Effect.flatMap((result) => {
+        const expectedStatus = operation === 'COMMIT' ? 'COMMITTED' : 'RELEASED';
+        if (finishedReservationMatches(result, input.assessment, expectedStatus)) {
+          return Effect.void;
+        }
+        return Effect.fail(stale(`Customer Context returned mismatched ${operation} reservation evidence`));
+      }),
     );
   };
   return {
@@ -455,7 +458,7 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
   readonly basis?: MarketRetirementStoredBasis;
   readonly beforeGateway?: (operationKey: string) => Effect.Effect<void, MarketRetirementImpactAssessmentUnavailable>;
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly originalCompositionRevision: string;
   readonly releaseGuardHash: string;
   readonly retirement: RetireMarketPayload;
@@ -694,7 +697,7 @@ export const makeMarketRetirementImpactAuthorityFromPublishedClient = ({
 export const MarketRetirementImpactAuthorityLive = Layer.effect(
   MarketRetirementImpactAuthorityFactory,
   Effect.gen(function* retirementAuthorityFactory() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return {
       forAdmission: (attempt) =>
         makeMarketRetirementImpactAuthorityFromPublishedClient({

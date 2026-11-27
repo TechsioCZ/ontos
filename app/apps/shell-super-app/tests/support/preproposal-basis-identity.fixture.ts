@@ -46,7 +46,8 @@ import { PgClient } from '@effect/sql-pg';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { inspect } from 'node:util';
 import { finished } from 'node:stream/promises';
-import { Cause, Config, Context, Crypto, Effect, Layer, Logger, Redacted, Schema, Stream } from 'effect';
+import { Cause, Config, Context, Effect, Layer, Logger, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -325,10 +326,10 @@ export const runPreproposalIdentityProtocol = <InputError, OutputError>(
   transport: PreproposalIdentityTransport<InputError, OutputError>,
 ) =>
   Effect.gen(function* runPreproposalIdentity() {
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const suffix = yield* crypto.uuidV4();
     const email = `preproposal-${suffix}@fixture.invalid`;
-    const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+    const password = Redacted.make(`${yield* crypto.uuidV4()}${yield* crypto.uuidV4()}`);
     const providerUserId = yield* participants.authentication.createFixtureUser(
       email,
       'Preproposal native human buyer',
@@ -617,7 +618,7 @@ if (process.argv.includes('--describe-preproposal-basis')) {
               }
             }
             diagnostic = diagnostic
-              .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+              .replaceAll(/(?<scheme>(?<!\w)\w+:\/\/)[^\s/@][^\s/@:]*:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
               .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, redacted)
               .replaceAll(/(?<field>"d"\s*:\s*")[^"]+"/gu, '$<field>[REDACTED]"');
             process.stderr.write(`${diagnostic}\n`);

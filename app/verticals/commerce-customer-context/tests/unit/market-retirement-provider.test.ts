@@ -16,7 +16,7 @@ import {
   MarketAffectedUseSourceEvidenceSchema,
 } from '@app/customer-market-retirement-contracts';
 import { DateTime, Effect, Match, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { reserveMarketRetirementAction } from '../../src/actions/reserve-market-retirement.action.ts';
 import {
@@ -223,6 +223,7 @@ it.effect('publishes the Market affected-use provider through the owner module c
       'market-affected-use-assessment'
     ];
     expect(loadClient).toBeTypeOf('function');
+    assert.isDefined(loadClient);
     const client = yield* Effect.promise(loadClient);
     expect('executeMarketAffectedUseAssessment' in client).toBe(true);
   }),

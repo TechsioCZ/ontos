@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Context, Crypto, DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -180,10 +181,10 @@ interface Tenant {
 const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* tenantScenario() {
     const connections = yield* loadDatabaseConnectionPair();
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configuration = yield* loadSpiceDbConfig();
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `access_portal_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const database = `access_portal_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
@@ -192,7 +193,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       maxConnections: 2,
     });
     yield* createTemplateDatabase(admin);
-    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+    const tenantId = TenantIdSchema.make(yield* crypto.uuidV4());
     yield* seedTenant(admin, tenantId);
     const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
       maxConnections: 3,
@@ -335,7 +336,9 @@ const runAt = (instant: Date) => {
 const portalRefusalCode = <Value>(exit: Exit.Exit<Value, AccessPortalError>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.flatMap((reason) => ('error' in reason ? [reason.error.code] : [])) : [];
 
-it.layer(NodeServices.layer)('portal access written by Core', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('portal access written by Core', (suite) => {
   suite.effect('gives a granted customer its portal role, ends it with the grant, and grants it afresh later', () =>
     withTenant((tenant) =>
       Effect.gen(function* grantsAndRevokes() {

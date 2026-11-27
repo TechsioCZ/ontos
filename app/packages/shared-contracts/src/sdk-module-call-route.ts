@@ -8,7 +8,8 @@
 import { ModuleCallRoute, RouteAnswerSchema } from '@app/core-runtime/execution/module-call-route';
 import type { CallRouteRequest, RouteAnswer } from '@app/core-runtime/execution/module-call-route';
 import { ModuleOperationRouteSchema } from '@app/core-runtime/sdk';
-import { Cause, Crypto, Effect, Layer, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { Cause, Effect, Layer, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 
 import { acquireDelegatedGatewayContext } from './gateway-context-server.ts';
@@ -66,7 +67,7 @@ const delegationSubjectOf = (request: CallRouteRequest): Option.Option<GatewayDe
 /** The provider deployment's operation URL: the delegated API base path followed by the operation path. */
 export const operationUrl = (apiBaseUrl: string, path: string): URL => {
   const base = new URL(apiBaseUrl);
-  return new URL(`${base.pathname.replace(/\/+$/u, '')}${path}`, base);
+  return new URL(`${base.pathname.replace(/(?<!\/)\/+$/u, '')}${path}`, base);
 };
 
 const ProblemBodySchema = Schema.Struct({
@@ -192,12 +193,15 @@ export const makeModuleCallRoute = Effect.fn('ModuleCallRoute.make')(function* m
  * (`FetchHttpClient.RequestInit` `{ cache: 'no-store', redirect: 'manual' }`), so the delegated
  * credential reaches only the provider deployment the gateway named.
  */
-export const ModuleCallRouteLive: Layer.Layer<ModuleCallRoute, never, Crypto.Crypto | HttpClient.HttpClient> =
-  Layer.effect(
-    ModuleCallRoute,
-    Crypto.Crypto.pipe(
-      Effect.flatMap((crypto) =>
-        makeModuleCallRoute({ acquire: (request) => acquireDelegatedGatewayContext(request, crypto) }),
-      ),
+export const ModuleCallRouteLive: Layer.Layer<
+  ModuleCallRoute,
+  never,
+  SecureRandom.SecureRandom | HttpClient.HttpClient
+> = Layer.effect(
+  ModuleCallRoute,
+  SecureRandom.SecureRandom.pipe(
+    Effect.flatMap((crypto) =>
+      makeModuleCallRoute({ acquire: (request) => acquireDelegatedGatewayContext(request, crypto) }),
     ),
-  );
+  ),
+);

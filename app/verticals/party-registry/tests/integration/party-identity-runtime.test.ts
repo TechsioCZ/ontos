@@ -28,7 +28,8 @@ import {
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Crypto, DateTime, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Config, DateTime, Deferred, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import type { Row } from 'effect/sql/SqlConnection';
 
@@ -64,7 +65,7 @@ type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
 
 const testAuthenticationNamespaceId = 'test.party.identity-runtime.v1';
 const sharedIco = '27074358';
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const freshTransport = nextUuid.pipe(
   Effect.map((idempotencyKey) => ({
     correlationId: `identity-runtime-${idempotencyKey}`,
@@ -138,7 +139,7 @@ const runCycleOnce = (compositionRevision: string) =>
         Layer.succeed(OutboxRuntime, {
           ...runtime,
           runCycle: () =>
-            runtime.runCycle({ claimOwner, compositionRevision, registrations: outboxWorkers, subscriptions }).pipe(
+            runtime.runCycle({ claimOwner, compositionRevision, subscriptions, registrations: outboxWorkers }).pipe(
               Effect.provideContext(workerServices),
               Effect.onExit((exit) => Deferred.done(completed, exit)),
             ),
@@ -219,11 +220,11 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           ].map(({ descriptor }) => descriptor.actionKey);
           const openFixture = Effect.acquireRelease(
             makeLiveOperationFixture({
-              access: 'allowed',
               actionKeys,
+              compositionRevision,
+              access: 'allowed',
               adminConnectionString: Redacted.make(connections.admin.connectionString),
               authenticationNamespaceId: testAuthenticationNamespaceId,
-              compositionRevision,
               ownerRegistration: partyRegistryBackendRegistration,
               runtimeConnectionString: Redacted.make(partyRuntimeConnectionString),
             }).pipe(Effect.orDie),
@@ -301,6 +302,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
           const addContactPoint = (principal: TrustedPrincipalContext) =>
             Effect.gen(function* addContactPointEffect() {
               return yield* runAction({
+                principal,
                 registration: addContactPointAction,
                 payload: {
                   contactPoint: { preferred: true, type: 'EMAIL', value: 'identity-runtime@example.test' },
@@ -309,7 +311,6 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   provenance: contactPointProvenance,
                   validFrom: '2026-09-01T00:00:00.000Z',
                 },
-                principal,
                 transport: yield* freshTransport,
               });
             }).pipe(Effect.provideContext(fixtureContext));

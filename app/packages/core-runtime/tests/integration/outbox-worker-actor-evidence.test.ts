@@ -1,7 +1,8 @@
 import { expect, it } from 'effect-rstest';
 import { eq, inArray } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
@@ -27,10 +28,10 @@ const payloadSchema = Schema.Struct({ mergeId: MergeIdSchema });
 it.layer(NodeCrypto.layer, { excludeTestServices: true })('outbox worker actor evidence', (suite) => {
   suite.effect('derives worker actor evidence from the exact same-Tenant Action invocation', () =>
     Effect.gen(function* workerActorEvidenceIntegration() {
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4();
-      const legalEntityId = yield* crypto.randomUUIDv4();
-      const principalId = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = yield* crypto.uuidV4();
+      const legalEntityId = yield* crypto.uuidV4();
+      const principalId = yield* crypto.uuidV4();
       const configuration = yield* loadDatabaseConnectionPair();
       const { executor } = yield* makeCoreDatabase(configuration.runtime);
       const { executor: adminExecutor } = yield* makeCoreDatabase(configuration.admin);

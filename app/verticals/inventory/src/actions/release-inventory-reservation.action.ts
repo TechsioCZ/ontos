@@ -3,7 +3,8 @@
 // @ontos-action-slug release-inventory-reservation
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   ReleaseInventoryReservationErrorSchema,
@@ -122,7 +123,7 @@ export const releaseInventoryReservationAction = defineAction(
   handleReleaseInventoryReservation,
   (transaction, scope) => {
     const obligationPersistence = inventoryObligationPersistenceForScope(transaction, scope);
-    return Crypto.Crypto.pipe(
+    return SecureRandom.SecureRandom.pipe(
       Effect.map((crypto) =>
         makeInventoryReservationReleaseService({
           effects: reservationReleaseEffectPersistenceForScope(transaction, scope),
@@ -131,7 +132,7 @@ export const releaseInventoryReservationAction = defineAction(
             DateTime.now.pipe(Effect.map(DateTime.formatIso)),
           ),
           makeMutationId: crypto
-            .randomUUIDv4()
+            .uuidV4()
             .pipe(Effect.map((mutationId) => ReservationReleaseMutationIdSchema.make(mutationId))),
           obligations: {
             read: (ref) =>

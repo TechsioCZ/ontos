@@ -32,7 +32,6 @@ import {
   Array as EffectArray,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Layer,
@@ -41,7 +40,8 @@ import {
   Ref,
   Schema,
 } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { SecureRandom } from 'effect/crypto';
+import { assert, expect, it } from 'effect-rstest';
 import { createHttpApiHandler } from '@modern-js/bff-effect/effect-edge';
 import { asc, sql } from 'drizzle-orm';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
@@ -84,7 +84,7 @@ import { dsrCases, dsrDeadlines } from '../../src/database/schema.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -268,8 +268,8 @@ const makeDsrNative = Effect.fn('DsrExactDeadline.makeNative')(function* makeDsr
   );
   const context = Context.merge(fixtureContext, ownerRuntimeContext);
   // HTTP runs later under this exported context, independently of setup's ambient services.
-  const exportedContextCrypto = Context.get(context, Crypto.Crypto);
-  const exportedContextId = yield* exportedContextCrypto.randomUUIDv4();
+  const exportedContextCrypto = Context.get(context, SecureRandom.SecureRandom);
+  const exportedContextId = yield* exportedContextCrypto.uuidV4();
   expect(Schema.is(Schema.String.check(Schema.isUUID()))(exportedContextId)).toBe(true);
   // v2: one access gate decides every protected read (O62); the removed context permission no
   // longer refuses anyone, so "grant"/"revoke" flip the fixture's own gate answer for this capability.
@@ -503,6 +503,7 @@ const makeDsrHttp = Effect.fn('DsrExactDeadline.makeHttp')(function* makeDsrHttp
     principal: typeof native.principal,
     invalidCredential: boolean,
   ) {
+    assert(native.receipts[0] !== undefined);
     return yield* executeRecordDsrDeadlineWithAuthorization(
       { caseRef: native.caseRef, controllerRef: testController, obligationRef: native.receipts[0].obligationRef },
       invalidCredential ? 'Bearer TEST.invalid' : yield* authorize(principal),
@@ -523,6 +524,7 @@ for (const reverse of [false, true]) {
           const http = yield* makeDsrHttp(native);
           yield* http.create();
           const before = yield* http.read();
+          assert(before.items[0] !== undefined);
           expect(before.items[0].caseRecord.controllerObligations.map(({ obligationRef }) => obligationRef)).toEqual(
             native.request.controllerObligations.map(({ obligationRef }) => obligationRef),
           );
@@ -540,6 +542,7 @@ for (const reverse of [false, true]) {
             });
           }
           const retained = yield* http.read();
+          assert(retained.items[0] !== undefined);
           expect(retained.items[0].deadlines).toHaveLength(2);
           expect(
             new Set(
@@ -549,7 +552,9 @@ for (const reverse of [false, true]) {
             ),
           ).toEqual(new Set(native.receipts.map(({ obligationRef }) => obligationRef)));
           const restarted = yield* makeDsrHttp(native);
-          expect((yield* restarted.read()).items[0].deadlines).toEqual(retained.items[0].deadlines);
+          const [restartedCase] = (yield* restarted.read()).items;
+          assert(restartedCase !== undefined);
+          expect(restartedCase.deadlines).toEqual(retained.items[0].deadlines);
         }).pipe(Effect.provide(nativeServices)),
       120_000,
     );
@@ -566,6 +571,7 @@ it.live(
       const http = yield* makeDsrHttp(native);
       yield* http.create();
       const [first, second] = native.receipts;
+      assert(first !== undefined && second !== undefined);
       expect(first.controllerRef).toBe(second.controllerRef);
       expect(first.obligationRef).not.toBe(second.obligationRef);
       expect(first.receivedAt).not.toBe(second.receivedAt);
@@ -636,7 +642,9 @@ it.live(
       const storedBefore = yield* storedBytes();
       const evidenceBefore = yield* coreEvidence;
       expect(storedBefore.deadlines).toHaveLength(1);
-      const seeded = JSON.parse(storedBefore.deadlines[0].record);
+      const [originalDeadline] = storedBefore.deadlines;
+      assert(originalDeadline !== undefined);
+      const seeded = JSON.parse(originalDeadline.record);
       expect(seeded).toEqual(legacyRecord);
       expect(seeded).not.toHaveProperty('obligationRef');
       expect(seeded).not.toHaveProperty('version');
@@ -646,6 +654,7 @@ it.live(
       const calls = yield* Ref.get(native.deadlineAuthorityCalls);
       const readLegacyOnly = Effect.fn('DsrExactDeadline.readRetainedLegacy')(function* readLegacyOnly() {
         const [item] = (yield* http.read()).items;
+        assert(item !== undefined);
         expect(item.caseRecord.controllerObligations.map(({ obligationRef }) => obligationRef)).toEqual(
           native.receipts.map(({ obligationRef }) => obligationRef),
         );
@@ -692,7 +701,9 @@ it.live(
         version: 2,
       });
       const afterWrite = yield* http.read();
-      const history = afterWrite.items[0].deadlines;
+      const [updatedCase] = afterWrite.items;
+      assert(updatedCase !== undefined);
+      const history = updatedCase.deadlines;
       expect(history).toHaveLength(2);
       expect(history.filter(({ identityStatus }) => identityStatus === 'LEGACY_UNRESOLVED')).toEqual([legacyView]);
       expect(
@@ -702,16 +713,16 @@ it.live(
       // Case, retained receipts and the legacy Deadline row are unchanged; the only addition is O2's row.
       expect(storedAfterWrite.cases).toEqual(storedBefore.cases);
       expect(storedAfterWrite.deadlines).toHaveLength(2);
-      expect(storedAfterWrite.deadlines).toContainEqual(storedBefore.deadlines[0]);
-      const added = storedAfterWrite.deadlines.filter(
-        ({ deadlineId }) => deadlineId !== storedBefore.deadlines[0].deadlineId,
-      );
+      expect(storedAfterWrite.deadlines).toContainEqual(originalDeadline);
+      const added = storedAfterWrite.deadlines.filter(({ deadlineId }) => deadlineId !== originalDeadline.deadlineId);
       expect(added.map(({ record }) => JSON.parse(record).obligationRef)).toEqual([second.obligationRef]);
 
       // O1 is unaffected by the O2 write: it still has no exact Deadline, and its later exact write
       // is its own row beside the untouched legacy history and O2.
       yield* http.deadline(first.obligationRef, yield* nextId);
-      const final = (yield* http.read()).items[0].deadlines;
+      const [finalCase] = (yield* http.read()).items;
+      assert(finalCase !== undefined);
+      const final = finalCase.deadlines;
       expect(final).toHaveLength(3);
       expect(final.filter(({ identityStatus }) => identityStatus === 'LEGACY_UNRESOLVED')).toEqual([legacyView]);
       expect(
@@ -719,7 +730,7 @@ it.live(
       ).toEqual(new Set(native.receipts.map(({ obligationRef }) => obligationRef)));
       const storedFinal = yield* storedBytes();
       expect(storedFinal.cases).toEqual(storedBefore.cases);
-      expect(storedFinal.deadlines).toContainEqual(storedBefore.deadlines[0]);
+      expect(storedFinal.deadlines).toContainEqual(originalDeadline);
     }).pipe(Effect.provide(nativeServices)),
   180_000,
 );
@@ -732,6 +743,7 @@ it.live(
       const http = yield* makeDsrHttp(native);
       yield* http.create();
       const [receipt] = native.receipts;
+      assert(receipt !== undefined);
       const deniedPrincipal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
         ...native.fixture.denied,
         legalEntityId: native.fixture.legalEntityId,
@@ -745,14 +757,18 @@ it.live(
       for (const denied of [deniedPrincipal, missingLegalEntity]) {
         const failure = yield* http.deniedDeadline(denied, false).pipe(Effect.flip);
         expect(failure).toMatchObject({ status: 403 });
-        expect((yield* http.read()).items[0].deadlines).toEqual([]);
+        const [afterDenial] = (yield* http.read()).items;
+        assert(afterDenial !== undefined);
+        expect(afterDenial.deadlines).toEqual([]);
       }
       const invalid = yield* http.deniedDeadline(native.principal, true).pipe(Effect.flip);
       expect(invalid).toMatchObject({ status: 401 });
 
       const key = yield* nextId;
       const recorded = yield* http.deadline(receipt.obligationRef, key);
-      const retained = (yield* http.read()).items[0].deadlines;
+      const [recordedCase] = (yield* http.read()).items;
+      assert(recordedCase !== undefined);
+      const retained = recordedCase.deadlines;
       // The same request with its committed key answers the original deadline and writes nothing:
       // the authority is not asked again, and invocations, audits, events and outbox stay as they were.
       const beforeReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
@@ -765,7 +781,9 @@ it.live(
       expect(afterReplay.events).toEqual(beforeReplay.events);
       expect(afterReplay.outbox).toEqual(beforeReplay.outbox);
       expect(yield* Ref.get(native.deadlineAuthorityCalls)).toBe(callsBeforeReplay);
-      expect((yield* http.read()).items[0].deadlines).toEqual(retained);
+      const [afterReplayCase] = (yield* http.read()).items;
+      assert(afterReplayCase !== undefined);
+      expect(afterReplayCase.deadlines).toEqual(retained);
       const changed = yield* http.deadline('TEST.foreign', key).pipe(Effect.flip);
       expect(changed).toMatchObject({ status: 409 });
       for (const selector of [
@@ -776,7 +794,9 @@ it.live(
           .deadline(selector.obligationRef, yield* nextId, selector.controllerRef)
           .pipe(Effect.flip);
         expect(failure).toMatchObject({ status: 422 });
-        expect((yield* http.read()).items[0].deadlines).toEqual(retained);
+        const [afterForeignSelector] = (yield* http.read()).items;
+        assert(afterForeignSelector !== undefined);
+        expect(afterForeignSelector.deadlines).toEqual(retained);
       }
       for (const mode of [
         'wrong-case',
@@ -789,11 +809,15 @@ it.live(
         yield* Ref.set(native.mode, mode);
         const failure = yield* http.deadline(receipt.obligationRef, yield* nextId).pipe(Effect.flip);
         expect(failure).toMatchObject({ status: mode === 'unavailable' ? 503 : 422 });
-        expect((yield* http.read()).items[0].deadlines).toEqual(retained);
+        const [afterAuthorityFailure] = (yield* http.read()).items;
+        assert(afterAuthorityFailure !== undefined);
+        expect(afterAuthorityFailure.deadlines).toEqual(retained);
       }
       yield* Ref.set(native.mode, 'valid');
       yield* http.deadline(receipt.obligationRef, yield* nextId);
-      expect((yield* http.read()).items[0].deadlines).toHaveLength(2);
+      const [afterAppend] = (yield* http.read()).items;
+      assert(afterAppend !== undefined);
+      expect(afterAppend.deadlines).toHaveLength(2);
       // Native guard controls bypass only the handler for a failing attempt, never create success rows.
       for (const mismatch of [
         { receiptBasisRef: 'TEST.foreign' },
@@ -825,7 +849,9 @@ it.live(
           .pipe(Effect.provideContext(native.context), Effect.flip);
         expect(failure).toMatchObject({ code: 'privacy_operation_conflict' });
       }
-      expect((yield* http.read()).items[0].deadlines).toHaveLength(2);
+      const [afterGuardFailures] = (yield* http.read()).items;
+      assert(afterGuardFailures !== undefined);
+      expect(afterGuardFailures.deadlines).toHaveLength(2);
     }).pipe(Effect.provide(nativeServices)),
   120_000,
 );
@@ -833,15 +859,21 @@ it.live(
 it.live('isolates a real foreign Tenant and foreign Legal Entity without leaking deadline authority facts', () =>
   Effect.gen(function* foreignScopeControls() {
     const native = yield* makeDsrNative(false, false, 1);
+    assert(native.receipts[0] !== undefined);
     const foreign = yield* makeDsrNative(false, false, 1, native);
+    assert(foreign.receipts[0] !== undefined);
     const http = yield* makeDsrHttp(native);
     const foreignHttp = yield* makeDsrHttp(foreign);
     yield* http.create();
     yield* foreignHttp.create();
     yield* http.deadline(native.receipts[0].obligationRef, yield* nextId);
     yield* foreignHttp.deadline(foreign.receipts[0].obligationRef, yield* nextId);
-    const retained = (yield* http.read()).items[0].deadlines;
-    const foreignRetained = (yield* foreignHttp.read()).items[0].deadlines;
+    const [nativeCase] = (yield* http.read()).items;
+    assert(nativeCase !== undefined);
+    const retained = nativeCase.deadlines;
+    const [foreignCase] = (yield* foreignHttp.read()).items;
+    assert(foreignCase !== undefined);
+    const foreignRetained = foreignCase.deadlines;
     const calls = yield* Ref.get(native.deadlineAuthorityCalls);
     // This Principal has a genuine independent Tenant, LE, binding and positive native write.
     const foreignTenant = yield* http.deniedDeadline(foreign.principal, false).pipe(Effect.flip);
@@ -859,8 +891,12 @@ it.live('isolates a real foreign Tenant and foreign Legal Entity without leaking
     const absentContext = yield* http.deniedDeadline(missingTenant, false).pipe(Effect.flip);
     expect(absentContext).toMatchObject({ status: 403 });
     expect(yield* Ref.get(native.deadlineAuthorityCalls)).toBe(calls);
-    expect((yield* http.read()).items[0].deadlines).toEqual(retained);
-    expect((yield* foreignHttp.read()).items[0].deadlines).toEqual(foreignRetained);
+    const [nativeAfterDenials] = (yield* http.read()).items;
+    assert(nativeAfterDenials !== undefined);
+    expect(nativeAfterDenials.deadlines).toEqual(retained);
+    const [foreignAfterDenials] = (yield* foreignHttp.read()).items;
+    assert(foreignAfterDenials !== undefined);
+    expect(foreignAfterDenials.deadlines).toEqual(foreignRetained);
   }).pipe(Effect.provide(nativeServices)),
 );
 
@@ -869,10 +905,13 @@ it.live(
   () =>
     Effect.gen(function* inactiveModuleControl() {
       const native = yield* makeDsrNative(false, false, 1);
+      assert(native.receipts[0] !== undefined);
       const http = yield* makeDsrHttp(native);
       yield* http.create();
       yield* http.deadline(native.receipts[0].obligationRef, yield* nextId);
-      const retained = (yield* http.read()).items[0].deadlines;
+      const [activeCase] = (yield* http.read()).items;
+      assert(activeCase !== undefined);
+      const retained = activeCase.deadlines;
       const calls = yield* Ref.get(native.deadlineAuthorityCalls);
       const state = yield* native.changeModuleState('active', 'inactive');
       expect(state).toMatchObject({ newState: 'inactive', previousState: 'active' });
@@ -882,9 +921,13 @@ it.live(
       const deniedRead = yield* http.read().pipe(Effect.flip);
       expect(deniedRead).toMatchObject({ status: 403 });
       yield* native.changeModuleState('inactive', 'active');
-      expect((yield* http.read()).items[0].deadlines).toEqual(retained);
+      const [reactivatedCase] = (yield* http.read()).items;
+      assert(reactivatedCase !== undefined);
+      expect(reactivatedCase.deadlines).toEqual(retained);
       yield* http.deadline(native.receipts[0].obligationRef, yield* nextId);
-      expect((yield* http.read()).items[0].deadlines).toHaveLength(2);
+      const [afterSecondDeadline] = (yield* http.read()).items;
+      assert(afterSecondDeadline !== undefined);
+      expect(afterSecondDeadline.deadlines).toHaveLength(2);
     }).pipe(Effect.provide(nativeServices)),
 );
 
@@ -892,17 +935,22 @@ for (const fault of ['context-transport', 'permission-transport'] as const) {
   it.live(`fails closed on actual ${fault} unavailability without presenting an empty workflow`, () =>
     Effect.gen(function* indeterminateReadControl() {
       const native = yield* makeDsrNative(false, false, 1);
+      assert(native.receipts[0] !== undefined);
       const http = yield* makeDsrHttp(native);
       yield* http.create();
       yield* http.deadline(native.receipts[0].obligationRef, yield* nextId);
-      const retained = (yield* http.read()).items[0].deadlines;
+      const [beforeTransportFailure] = (yield* http.read()).items;
+      assert(beforeTransportFailure !== undefined);
+      const retained = beforeTransportFailure.deadlines;
       const calls = yield* Ref.get(native.deadlineAuthorityCalls);
       const failed = yield* makeDsrHttp(native, fault);
       const failure = yield* failed.read().pipe(Effect.flip);
       expect(failure).toMatchObject({ status: 503 });
       expect(yield* Ref.get(failed.readPermissionTransportCalls)).toBe(fault === 'permission-transport' ? 1 : 0);
       expect(yield* Ref.get(native.deadlineAuthorityCalls)).toBe(calls);
-      expect((yield* http.read()).items[0].deadlines).toEqual(retained);
+      const [afterTransportFailure] = (yield* http.read()).items;
+      assert(afterTransportFailure !== undefined);
+      expect(afterTransportFailure.deadlines).toEqual(retained);
     }).pipe(Effect.provide(nativeServices)),
   );
 }
@@ -910,10 +958,13 @@ for (const fault of ['context-transport', 'permission-transport'] as const) {
 it.live('rejects definite executor and workflow permission denials after a truthful positive context', () =>
   Effect.gen(function* definitePermissionControls() {
     const native = yield* makeDsrNative(false, false, 1);
+    assert(native.receipts[0] !== undefined);
     const http = yield* makeDsrHttp(native);
     yield* http.create();
     yield* http.deadline(native.receipts[0].obligationRef, yield* nextId);
-    const retained = (yield* http.read()).items[0].deadlines;
+    const [beforePermissionDenial] = (yield* http.read()).items;
+    assert(beforePermissionDenial !== undefined);
+    const retained = beforePermissionDenial.deadlines;
     const calls = yield* Ref.get(native.deadlineAuthorityCalls);
     // Core fixture's legalEntityOnly actor has valid Tenant/LE/module access but no manager-only executor grant.
     const executorDenied = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
@@ -929,6 +980,8 @@ it.live('rejects definite executor and workflow permission denials after a truth
     yield* native.changeReadPermission('grant');
     expect(readDenial).toMatchObject({ status: 403 });
     expect(yield* Ref.get(native.deadlineAuthorityCalls)).toBe(calls);
-    expect((yield* http.read()).items[0].deadlines).toEqual(retained);
+    const [afterPermissionDenial] = (yield* http.read()).items;
+    assert(afterPermissionDenial !== undefined);
+    expect(afterPermissionDenial.deadlines).toEqual(retained);
   }).pipe(Effect.provide(nativeServices)),
 );

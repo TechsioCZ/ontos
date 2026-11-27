@@ -35,7 +35,6 @@ import {
   Brand,
   Config,
   Context,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -48,6 +47,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
@@ -90,7 +90,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const MarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Number, type: Schema.Literal('ready') });
 
@@ -204,8 +204,8 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       address.pathname = `/${identity.databaseName}`;
       identityUrls[databaseIdentity.urlKey] = address.href;
     }
-    const issuerUrl = identityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-    const requestUrl = identityUrls.PARTY_REGISTRY_DATABASE_URL;
+    const issuerUrl = identityUrls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+    const requestUrl = identityUrls['PARTY_REGISTRY_DATABASE_URL'];
     assert.isOk(issuerUrl !== undefined && requestUrl !== undefined, 'GUEST_IDENTITIES_INCOMPLETE');
     const identitySetupRequest = yield* Schema.encodeEffect(
       Schema.fromJsonString(
@@ -479,7 +479,7 @@ const makeGuestAuthorityFixture = Effect.fn('GuestEvidenceTest.makeGuestAuthorit
       actors.set(`${actor.tenantId}:${actor.legalEntityId}`, actor);
       return { actor, fixture: other };
     });
-    const authorizationContext = yield* Effect.context<Crypto.Crypto>();
+    const authorizationContext = yield* Effect.context<SecureRandom.SecureRandom>();
     const guestFactory = Layer.succeed(PartyRegistryGuestResolverFactory, {
       make: ({ scope }) =>
         makePartyRegistryGuestResolver(

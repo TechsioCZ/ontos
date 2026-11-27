@@ -164,11 +164,7 @@ const readOwnerOperation = (_input: Parameters<CommerceEnrollmentAttemptService[
 const reconcileOutcome = (_input: ReconcileEnrollmentRequest, _resolution: ReconcileEnrollmentResolution) =>
   Effect.succeed(recordResult);
 
-const recordOutcome = (input: RecordEnrollmentOutcomeInput) =>
-  Effect.sync(() => {
-    void input;
-    return recordResult;
-  });
+const recordOutcome = (_input: RecordEnrollmentOutcomeInput) => Effect.sync(() => recordResult);
 
 const makeAttemptStore = (
   claim: AttemptClaimResult = claimResult(),

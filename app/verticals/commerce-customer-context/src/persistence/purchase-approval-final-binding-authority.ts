@@ -8,7 +8,8 @@ import { executeVerifyOrderCommitmentBindingWithAuthorization } from '@app/comme
 import { executeCommittedOrderApprovalEvidenceWithAuthorization } from '@app/commerce-order-contracts/committed-order-approval-evidence/client';
 import { VerifyOrderBindingInputSchema } from '@app/commerce-order-contracts/verify-order-commitment-binding';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Clock, Config, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, Config, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { PurchaseApprovalFinalBindingAuthority } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import type { PurchaseApprovalFinalBindingAuthorityService } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import {
@@ -130,7 +131,7 @@ export const PurchaseApprovalFinalBindingAuthorityLive = Layer.effect(
   PurchaseApprovalFinalBindingAuthority,
   Effect.gen(function* finalBindingAuthorityLayer() {
     const composition = yield* ActiveApplicationCompositionService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const verify = Effect.fn('PurchaseApprovalFinalBindingAuthority.verify')(function* verify(
       input: VerificationClaim,

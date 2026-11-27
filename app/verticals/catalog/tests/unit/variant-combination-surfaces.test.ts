@@ -17,7 +17,10 @@ import {
 import { handleGovernVariantAllowedValues } from '../../src/actions/govern-variant-allowed-values.action.ts';
 import { VariantCombinationConflict } from '../../src/actions/variant-combination-conflict.ts';
 import { readListRecordedVariants } from '../../src/api/list-recorded-variants.read.ts';
-import type { VariantAxisPersistence } from '../../src/persistence/variant-axis-persistence.ts';
+import type {
+  CurrentVariantAxisValue,
+  VariantAxisPersistence,
+} from '../../src/persistence/variant-axis-persistence.ts';
 import {
   GovernVariantAllowedValuesOutcomeSchema,
   VariantAxisBasisUnavailable,
@@ -330,7 +333,7 @@ describe('List recorded variants read surface (#438)', () => {
         sourceRevision: 5,
         sourceValueSetRef: { attributeValueSetId: valueSetId, tenantId },
       },
-    ],
+    ] satisfies [CurrentVariantAxisValue],
     variantId,
   };
 

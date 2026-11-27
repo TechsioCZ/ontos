@@ -21,7 +21,6 @@ import { eq, sql } from 'drizzle-orm';
 import {
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Deferred,
@@ -34,6 +33,7 @@ import {
   Redacted,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
@@ -73,7 +73,7 @@ import {
   ResolvePartyCommandCommitPayloadSchema,
 } from '../../shared/command-api.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 const makeFixture = Effect.gen(function* makeFixture() {
   const composition = yield* makeApplicationCompositionSnapshotFixture(
@@ -117,10 +117,10 @@ const makeFixture = Effect.gen(function* makeFixture() {
   const moduleTarget = { moduleId: 'party.registry', permission: 'module.access' };
   const moduleAccess = (actor: typeof principal, operation: 'grant' | 'revoke') =>
     contextPermissions.mutate({ operation, principal: actor, target: moduleTarget, tenantId: fixture.tenantId });
-  yield* contextPermissions.mutate({ operation: 'grant', principal, target: moduleTarget, tenantId: fixture.tenantId });
+  yield* contextPermissions.mutate({ principal, operation: 'grant', target: moduleTarget, tenantId: fixture.tenantId });
   yield* Effect.addFinalizer(() =>
     contextPermissions
-      .mutate({ operation: 'revoke', principal, target: moduleTarget, tenantId: fixture.tenantId })
+      .mutate({ principal, operation: 'revoke', target: moduleTarget, tenantId: fixture.tenantId })
       .pipe(Effect.orDie),
   );
   const gateway = yield* makePartyReconciliationGateway(native, composition);

@@ -1,5 +1,5 @@
 import { DateTime, Predicate, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
 
 import {
@@ -274,11 +274,13 @@ it('requires both route eligibility and the explicit self-approval policy', () =
   });
   expect(Predicate.isTagged(deniedSelfApproval, 'NOT_ROUTE_ELIGIBLE')).toBe(true);
 
+  const [firstLevel] = pending.route.levels;
+  assert.isDefined(firstLevel);
   const eligibleRoute = {
     ...pending,
     route: {
       ...pending.route,
-      levels: [{ ...pending.route.levels[0], candidates: [principal(buyerId)] }],
+      levels: [{ ...firstLevel, candidates: [principal(buyerId)] }],
     },
   };
   const denied = applyApprovalDecision({

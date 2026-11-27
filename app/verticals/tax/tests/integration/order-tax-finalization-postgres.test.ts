@@ -3,7 +3,6 @@ import { eq, sql } from 'drizzle-orm';
 import {
   Array as Arr,
   Context,
-  Crypto,
   Data,
   DateTime,
   Deferred,
@@ -15,6 +14,7 @@ import {
   Option,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -78,7 +78,7 @@ import {
 
 const T = '2026-06-01T10:00:00.000Z';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const invocationIdOr = (actionInvocationId: string | undefined) =>
   actionInvocationId === undefined ? nextUuid : Effect.succeed(actionInvocationId);
 
@@ -388,7 +388,7 @@ const declaredOf = (outcome: Effect.Success<ReturnType<Seller['declare']>>) => {
 // These tests wait on the live clock, so each stays a live registration and builds Node Crypto in its scope.
 // Tests that poll with `Effect.sleep` provide the built services directly so the sleep stays visibly live-owned.
 const nodeCryptoServices = Layer.build(NodeCrypto.layer);
-const nodeCrypto = nodeCryptoServices.pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+const nodeCrypto = nodeCryptoServices.pipe(Effect.map((context) => Context.get(context, SecureRandom.SecureRandom)));
 
 it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and recovered unchanged', () =>
   Effect.scoped(
@@ -445,7 +445,7 @@ it.live('#944 F8-F13 #941 F2-F9 a final Order Tax is fixed at T, stored once and
       expect(resultOf(yield* subject.finalize(subject.payload(submission)))).toMatchObject({ created: false });
       expect(created).toMatchObject({ created: false });
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocation round-trips through recovery', () =>
@@ -510,7 +510,7 @@ it.live('PO decision D3 on #907: a final Order Tax with a GROSS Shipping allocat
         result.handoff.outcome.decision.shippingAllocation,
       );
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keeps its NET basis through recovery', () =>
@@ -568,7 +568,7 @@ it.live('907-Q07 #933 #937 a final Order Tax with a NET Shipping allocation keep
       );
       expect(recovered.handoff.outcome.result.purchaseTaxTotal.amount).toBe('49.51');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#944 F12 a non-success stores nothing; the same submission finalizes once rules exist', () =>
@@ -588,7 +588,7 @@ it.live('#944 F12 a non-success stores nothing; the same submission finalizes on
       yield* subject.launchRules;
       expect(finalizedOf(yield* subject.finalize(subject.payload(submission))).created).toBe(true);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 /** A controlled crash after the final is inserted and before its owner transaction commits (#963 §3.3). */
@@ -642,7 +642,7 @@ it.live(
         expect(DateTime.formatIso(recovered.handoff.orderCommitmentTime)).toBe(T);
         expect(DateTime.formatIso(recovered.handoff.outcome.decision.taxRelevantTime)).toBe(T);
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#930 F11 F13 the final read names a later correction of a governing revision without refreshing it', () =>
@@ -699,7 +699,7 @@ it.live('#930 F11 F13 the final read names a later correction of a governing rev
         standard.initialRevisionId,
       ]);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concurrent requests', () =>
@@ -758,7 +758,7 @@ it.live('#950 F24 #944 F11 finals are scoped, immutable and converge under concu
       ).toBe(true);
       expect(Option.isSome(yield* subject.finalOrderTax(submission))).toBe(true);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluation Time', () =>
@@ -799,7 +799,7 @@ it.live('#941 F5 F10 the final selects rules at T, not at the later Tax Evaluati
       expect(yield* governingRulesAt(BOUNDARY)).toContain(fromBoundary.taxRuleId);
       expect(yield* governingRulesAt(BOUNDARY)).not.toContain(beforeBoundary.taxRuleId);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C a backdated regime revision recorded after a final leaves the recovered final unchanged', () =>
@@ -836,7 +836,7 @@ it.live('Unit 10 C a backdated regime revision recorded after a final leaves the
       expect(recovered.handoff.outcome.decision.sellerVatRegime).toBe('VAT_PAYER');
       expect(recovered.handoff.outcome.decision.declarationRevisionRef.revision).toBe(1);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('TAX907 F2 a public NON_PAYER final needs no classification and durably recovers zero tax at T', () =>
@@ -883,7 +883,7 @@ it.live('TAX907 F2 a public NON_PAYER final needs no classification and durably 
       expect(DateTime.formatIso(recovered.handoff.outcome.decision.taxRelevantTime)).toBe(T);
       expect(recovered.evidence.ruleSets).toEqual([]);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('907-Q09 #960 a final at T over imported MIGRATED source history succeeds and carries its revision ref', () =>
@@ -919,7 +919,7 @@ it.live('907-Q09 #960 a final at T over imported MIGRATED source history succeed
       );
       expect(rows).toEqual([{ origin: 'SOURCE', provenance: 'MIGRATED' }]);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
@@ -936,7 +936,7 @@ it.live('Unit 10 C a seller with nothing declared cannot finalize', () =>
       expect(notFinalized.outcome).toEqual(TaxStateIndeterminateSchema.make({}));
       expect(Option.isNone(yield* subject.finalOrderTax(submission))).toBe(true);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('Unit 10 C a declare concurrent with finalize serializes on the seller lock', () =>
@@ -1065,7 +1065,7 @@ it.live('TAX907 F1 × F2 unsupported or missing material eligibility never store
         expect(rows).toEqual([]);
       }
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('TAX907 F1 final eligibility is frozen, retry order is immaterial and changed material intent conflicts', () =>
@@ -1135,7 +1135,7 @@ it.live('TAX907 F1 final eligibility is frozen, retry order is immaterial and ch
       expect(DateTime.formatIso(recovered.handoff.orderCommitmentTime)).toBe(T);
       expect(recovered.evidence.eligibility).toBeDefined();
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('TAX907 F1 legacy persisted finals recover without invented eligibility or live recomputation', () =>
@@ -1212,7 +1212,7 @@ it.live('TAX907 F1 legacy persisted finals recover without invented eligibility 
       );
       expect(rows).toEqual([{ has_eligibility: false, intent_fingerprint: oldFingerprint }]);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#961 scenario 9: the finalize Action and final read handlers persist, recover and hand off the final', () =>
@@ -1277,5 +1277,5 @@ it.live('#961 scenario 9: the finalize Action and final read handlers persist, r
       expect(handoff.outcome.decision.decisionId).toBe(first.handoff.outcome.decision.decisionId);
       expect(handoff.outcome.result.purchaseTaxTotal).toEqual({ amount: '270.00', currency: 'CZK' });
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );

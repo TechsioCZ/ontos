@@ -71,7 +71,8 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Ref, Context, Crypto, Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Ref, Context, Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
@@ -199,7 +200,7 @@ export const commerceMarketCatalogActionRuntimeDependenciesLive: Layer.Layer<
     | typeof ActiveApplicationCompositionSourceLive
     | typeof DatabaseConfigLive
   >,
-  Layer.Services<typeof CorePersistenceLive> | Crypto.Crypto
+  Layer.Services<typeof CorePersistenceLive> | SecureRandom.SecureRandom
 > = Layer.mergeAll(
   CorePersistenceLive,
   ContextAccessLive,
@@ -247,7 +248,7 @@ interface MarketRetirementRuntimeBindingServices {
     MarketRetirementImpactAssessmentUnavailable | Layer.Error<typeof accessEnforcementLive>,
     ActionAuthorizationPreflight
   >;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly readRuntime: ReadRuntimeService;
   readonly scopeResolver: OperationalScopeResolverService;
 }
@@ -311,7 +312,7 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
           registration: marketRetirementEffectRecoveryRead,
           transport: { correlationId: source.correlationId },
         })
-        .pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.mapError(retirementUnavailable));
+        .pipe(Effect.provideService(SecureRandom.SecureRandom, crypto), Effect.mapError(retirementUnavailable));
     });
     const manage = Effect.fn('MarketRetirement.manage')(function* manage(
       source: ActionAuthorizationPreflightInput,
@@ -333,7 +334,7 @@ export const MarketRetirementActionRuntimeLive = Layer.effect(
           },
         })
         .pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
           Effect.provideService(MarketRetirementImpactAuthorityFactory, authorityFactory),
           Effect.catchTag('ActionAlreadyCommitted', () =>
             recover(source, payload).pipe(
@@ -522,7 +523,7 @@ const nativeRetirementBindingsLive = Layer.effect(
   Effect.gen(function* nativeRetirementBindings() {
     const base = yield* ActionRuntime;
     const readRuntime = yield* ReadRuntime;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const scopeResolver = yield* OperationalScopeResolver;
     const dependencies = yield* Effect.context<Layer.Success<typeof actionRuntimeDependenciesLive>>();
     return {

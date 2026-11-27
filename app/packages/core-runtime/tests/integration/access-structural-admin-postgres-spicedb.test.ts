@@ -228,9 +228,9 @@ const structuralIntent = Effect.gen(function* structuralIntentEffect() {
  */
 const scopeFor = (principalId: PrincipalId): Effect.Effect<OperationalScope> =>
   Schema.decodeEffect(TrustedPrincipalContextSchema)({
-    principalId,
     authContextRef: 'job:access-structural:run:1',
     authMethod: 'system',
+    principalId,
     tenantId: TENANT,
   }).pipe(
     Effect.map((context) => ({ ...context, correlationId: 'access-structural' })),
@@ -379,8 +379,8 @@ it.layer(nativeServices, { excludeTestServices: true })(
           ),
           check,
           {
-            now,
             actor: { actor: { _tag: 'Principal', principalId: OWNER }, tenantId: TENANT },
+            now,
             request: { capability: policy, mode: 'run' },
           },
         );

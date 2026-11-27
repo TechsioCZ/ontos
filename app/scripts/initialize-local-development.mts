@@ -2,12 +2,12 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
 import { and, eq, or } from 'drizzle-orm';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/sql/SqlError';
 
@@ -304,9 +304,9 @@ export const classifyExactLocalRecord = <Expected extends ExactRecord>(
     if (existing === undefined) {
       return 'create' as const;
     }
-    const conflictingFields = Object.entries(expected)
-      .filter(([key, value]) => existing[key] !== value)
-      .map(([key]) => key);
+    const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
+      existing[key] === value ? [] : [key],
+    );
     if (conflictingFields.length > 0) {
       return yield* failure(
         'local_conflict',
@@ -322,9 +322,9 @@ export const classifyLocalModuleState = (
   expected: ExactRecord,
 ): Effect.Effect<'create' | 'existing', LocalDevelopmentInitializationError> =>
   classifyExactLocalRecord(label, existing, {
-    moduleKey: expected.moduleKey ?? null,
-    state: expected.state ?? null,
-    tenantId: expected.tenantId ?? null,
+    moduleKey: expected['moduleKey'] ?? null,
+    state: expected['state'] ?? null,
+    tenantId: expected['tenantId'] ?? null,
   });
 
 const TopologySchema = Schema.Struct({
@@ -355,13 +355,14 @@ export const deriveActivatedModuleIds = (
       return yield* failure('local_contract_invalid', 'The authoritative topology has no MicroVerticals');
     }
     const verticals = topology.verticals.map(({ id }) => id);
-    if (new Set(verticals).size !== verticals.length) {
+    const knownVerticals = new Set(verticals);
+    if (knownVerticals.size !== verticals.length) {
       return yield* failure('local_contract_invalid', 'The authoritative topology has duplicate verticals');
     }
     if (new Set(activatedVerticals).size !== activatedVerticals.length) {
       return yield* failure('local_contract_invalid', 'Local activation contains duplicate MicroVerticals');
     }
-    const missingVerticals = activatedVerticals.filter((vertical) => !verticals.includes(vertical));
+    const missingVerticals = activatedVerticals.filter((vertical) => !knownVerticals.has(vertical));
     if (missingVerticals.length > 0) {
       return yield* failure(
         'local_contract_invalid',
@@ -660,7 +661,7 @@ export const loadRootConfiguration = () =>
 const localInstallationRuntime = (
   databaseLayers: Layer.Layer<CoreDatabase, DatabaseConnectionError>,
   spiceDb: SpiceDbConfigValue,
-): Layer.Layer<InstallationRuntime, DatabaseConnectionError, Crypto.Crypto> => {
+): Layer.Layer<InstallationRuntime, DatabaseConnectionError, SecureRandom.SecureRandom> => {
   // The engine transport belongs to this run: it is opened with the layer and closed when the run ends.
   const engine = Layer.effect(
     AccessProjectionCompiler,
@@ -684,7 +685,7 @@ const localInstallationRuntime = (
   return Layer.mergeAll(bootstrap, writer, catalog, stores, platform) satisfies Layer.Layer<
     InstallationRuntime,
     DatabaseConnectionError,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
 };
 
@@ -693,7 +694,7 @@ export const initializeLocalDevelopment = (
 ): Effect.Effect<
   LocalDevelopmentInitializationResult,
   LocalDevelopmentInitializationError,
-  NodeServices.NodeServices
+  NodeServices.NodeServices | SecureRandom.SecureRandom
 > =>
   Effect.gen(function* initialize() {
     const configuration =
@@ -815,7 +816,11 @@ const runLocalDevelopmentInitialization = Effect.matchEffect(initializeLocalDeve
 });
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const succeeded = await Effect.runPromise(runLocalDevelopmentInitialization.pipe(Effect.provide(NodeServices.layer)));
+  const succeeded = await Effect.runPromise(
+    runLocalDevelopmentInitialization.pipe(
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom)),
+    ),
+  );
   if (!succeeded) {
     process.exitCode = 1;
   }

@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -209,10 +210,10 @@ interface Tenant {
 const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* tenantScenario() {
     const connections = yield* loadDatabaseConnectionPair();
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configuration = yield* loadSpiceDbConfig();
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `access_people_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const database = `access_people_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
@@ -221,7 +222,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       maxConnections: 2,
     });
     yield* createTemplateDatabase(admin);
-    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+    const tenantId = TenantIdSchema.make(yield* crypto.uuidV4());
     yield* seedTenant(admin, tenantId);
     const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
       maxConnections: 3,
@@ -280,7 +281,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
     const createRole = (capabilityKey: string) => {
       const roleCells = cellsOf(capabilityKey);
       return Effect.gen(function* createRoleEffect() {
-        const [roleUuid, revisionUuid] = yield* Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()]);
+        const [roleUuid, revisionUuid] = yield* Effect.all([crypto.uuidV4(), crypto.uuidV4()]);
         const created = yield* writeRoleCreation({
           catalogSnapshotId: release.id,
           cells: roleCells,
@@ -300,7 +301,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
       changes: Context.get(context, AccessChangesStore),
       createRole,
       gate: Context.get(context, AccessDecisionGate),
-      newIncarnationId: crypto.randomUUIDv4().pipe(
+      newIncarnationId: crypto.uuidV4().pipe(
         Effect.map((uuid) => AssignmentIncarnationIdSchema.make(uuid)),
         Effect.orDie,
       ),
@@ -381,7 +382,9 @@ const keysOf = (entries: readonly CatalogSnapshotEntry[]) => entries.map(({ key 
 /** The next release is published after the bootstrap's, whatever the clock reads. */
 const nextReleaseAt = DateTime.toDateUtc(DateTime.makeUnsafe('2029-01-01T00:00:00Z'));
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('people commands on the real stores', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('people commands on the real stores', (suite) => {
   suite.effect('grants a newly created role through its first assignment, once the tenant is reconciled', () =>
     withTenant((tenant) =>
       Effect.gen(function* firstAssignmentGrants() {

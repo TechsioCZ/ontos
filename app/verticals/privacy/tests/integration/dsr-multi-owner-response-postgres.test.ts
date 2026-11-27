@@ -18,20 +18,9 @@ import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { createPrivacyDeniedAccess } from '../support/live-access-authority.ts';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
-import {
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Option,
-  Redacted,
-  Ref,
-  Result,
-  Schema,
-} from 'effect';
-import { expect, it } from 'effect-rstest';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Redacted, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { assert, expect, it } from 'effect-rstest';
 import { createHttpApiHandler } from '@modern-js/bff-effect/effect-edge';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
@@ -71,7 +60,7 @@ import { upsertDsrOwnerTaskAction } from '../../src/actions/upsert-dsr-owner-tas
 import { dsrCasesRead } from '../../src/api/dsr-cases.read.ts';
 import { PrivacyOperationPersistenceError } from '../../src/persistence/privacy-operation-repository.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
@@ -351,8 +340,8 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
     Layer.mergeAll(fixture.layer.pipe(Layer.provide(deniedAccess.layer)), authorities, NodeCrypto.layer),
   );
   // Deferred native factories and HTTP requests use this exported context, not setup's ambient services.
-  const exportedContextCrypto = Context.get(context, Crypto.Crypto);
-  const exportedContextId = yield* exportedContextCrypto.randomUUIDv4();
+  const exportedContextCrypto = Context.get(context, SecureRandom.SecureRandom);
+  const exportedContextId = yield* exportedContextCrypto.uuidV4();
   expect(Schema.is(Schema.String.check(Schema.isUUID()))(exportedContextId)).toBe(true);
   const permissions = yield* makeContextPermissionRelationshipMutationLive();
   const target = { moduleId: 'privacy.core', permission: 'privacy.dsr.read' };
@@ -399,13 +388,15 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
     });
   });
   const decide = Effect.fn('DsrMultiOwner.decide')(function* decide(index = 0) {
+    const obligation = request.controllerObligations[index];
+    assert(obligation !== undefined);
     return yield* runAction({
       payload: {
         request: {
           caseRef,
           controllerRef: testController,
           decisionRef: index === 0 ? `TEST.decision:${caseRef}` : `TEST.decision:${caseRef}:second`,
-          exactScopeRefs: request.controllerObligations[index].exactScopeRefs,
+          exactScopeRefs: obligation.exactScopeRefs,
           right: 'ACCESS',
         },
       },
@@ -419,12 +410,14 @@ const makeDsrNative = Effect.fn('DsrMultiOwner.makeNative')(function* makeDsrNat
     suffix = ownerModuleId,
     index = 0,
   ) {
+    const obligation = request.controllerObligations[index];
+    assert(obligation !== undefined);
     return yield* runAction({
       payload: {
         request: {
           caseRef,
           controllerRef: testController,
-          exactScopeRefs: request.controllerObligations[index].exactScopeRefs,
+          exactScopeRefs: obligation.exactScopeRefs,
           idempotencyKey: `TEST.task-key:${caseRef}:${suffix}`,
           ownerModuleId,
           right: 'ACCESS',
@@ -705,7 +698,9 @@ it.live(
         const responseKey = yield* nextId;
         const missingB = yield* native.respond(false, responseKey).pipe(Effect.flip);
         expect(missingB).toMatchObject({ code: 'privacy_operation_conflict' });
-        expect((yield* native.read()).items[0].responses).toEqual([]);
+        const [missingOwnerCase] = (yield* native.read()).items;
+        assert(missingOwnerCase !== undefined);
+        expect(missingOwnerCase.responses).toEqual([]);
         const taskB = yield* native.recordTask(testOwnerB);
         expect(taskA.taskRef).not.toBe(taskB.taskRef);
         expect(taskA.idempotencyKey).not.toBe(taskB.idempotencyKey);
@@ -713,6 +708,7 @@ it.live(
         const interim = yield* native.respond(false, responseKey);
         expect(interim.final).toBe(false);
         const workflow = yield* native.read();
+        assert(workflow.items[0] !== undefined);
         expect(workflow.items[0].tasks).toHaveLength(2);
         expect(workflow.items[0].decisions).toHaveLength(1);
         expect(workflow.items[0].responses).toEqual([interim]);
@@ -727,6 +723,7 @@ it.live(
         const finalKey = yield* nextId;
         const final = yield* native.respond(true, finalKey, native.evidenceRef);
         const retained = yield* native.read();
+        assert(retained.items[0] !== undefined);
         expect(retained.items[0].responses).toEqual([interim, final]);
         const beforeReplay = yield* native.fixture.evidence(native.coreEvidenceExecutor);
         const replay = yield* native.respond(true, finalKey, native.evidenceRef).pipe(Effect.flip);
@@ -736,11 +733,17 @@ it.live(
         expect(afterReplay.audits).toEqual(beforeReplay.audits);
         expect(afterReplay.events).toEqual(beforeReplay.events);
         expect(afterReplay.outbox).toEqual(beforeReplay.outbox);
-        expect((yield* native.read()).items[0].responses).toEqual(retained.items[0].responses);
+        const [afterReplayCase] = (yield* native.read()).items;
+        assert(afterReplayCase !== undefined);
+        expect(afterReplayCase.responses).toEqual(retained.items[0].responses);
         yield* native.close('RESPONDED');
         yield* native.close('CLOSED');
-        expect((yield* native.read()).items[0].caseRecord.status).toBe('CLOSED');
-        expect((yield* native.read()).items[0].tasks).toEqual(retained.items[0].tasks);
+        const [closedCase] = (yield* native.read()).items;
+        assert(closedCase !== undefined);
+        expect(closedCase.caseRecord.status).toBe('CLOSED');
+        const [retainedTasksCase] = (yield* native.read()).items;
+        assert(retainedTasksCase !== undefined);
+        expect(retainedTasksCase.tasks).toEqual(retained.items[0].tasks);
       }).pipe(Effect.provideContext(native.context));
     }).pipe(Effect.provide(nativeServices)),
   120_000,
@@ -762,14 +765,18 @@ it.live(
         yield* native.deliver();
         const incomplete = yield* native.respond(true, yield* nextId, native.evidenceRef).pipe(Effect.flip);
         expect(incomplete).toMatchObject({ code: 'privacy_operation_conflict' });
-        expect((yield* native.read()).items[0].responses).toEqual([interim]);
+        const [incompleteCase] = (yield* native.read()).items;
+        assert(incompleteCase !== undefined);
+        expect(incompleteCase.responses).toEqual([interim]);
         for (const mode of ['duplicate', 'foreign', 'unavailable'] as const) {
           yield* Ref.set(native.inventoryMode, mode);
           const refused = yield* native.respond(false, yield* nextId).pipe(Effect.flip);
           expect(refused).toMatchObject({
             code: mode === 'unavailable' ? 'privacy_operation_persistence_unavailable' : 'privacy_action_rejected',
           });
-          expect((yield* native.read()).items[0].responses).toEqual([interim]);
+          const [refusedInventoryCase] = (yield* native.read()).items;
+          assert(refusedInventoryCase !== undefined);
+          expect(refusedInventoryCase.responses).toEqual([interim]);
         }
         yield* Ref.set(native.inventoryMode, 'valid');
         yield* Ref.set(native.status, 'SUCCEEDED');
@@ -796,7 +803,9 @@ it.live(
           transport: yield* native.transport(),
         }).pipe(Effect.flip);
         expect(denied).toMatchObject({ code: 'action_permission_denied' });
-        expect((yield* native.read()).items[0].responses).toEqual([interim]);
+        const [deniedCase] = (yield* native.read()).items;
+        assert(deniedCase !== undefined);
+        expect(deniedCase.responses).toEqual([interim]);
       }).pipe(Effect.provideContext(native.context));
     }).pipe(Effect.provide(nativeServices)),
   120_000,
@@ -815,6 +824,7 @@ it.live(
         const http = yield* makeDsrHttp(native);
         const response = yield* http.respond(yield* nextId);
         const retained = yield* http.read();
+        assert(retained.items[0] !== undefined);
         expect(retained.items[0].responses).toEqual([response]);
         expect(retained.items[0].tasks).toHaveLength(2);
         expect(retained.items[0].decisions).toHaveLength(1);
@@ -834,12 +844,17 @@ it.live(
         yield* native.recordTask(testOwnerA);
         const firstResponse = yield* native.respond(false, yield* nextId);
         expect(firstResponse.scopeRefs).toEqual([native.obligationRef]);
-        expect((yield* native.read()).items[0].caseRecord.controllerObligations).toHaveLength(2);
-        expect((yield* native.read()).items[0].responses).toEqual([firstResponse]);
+        const [firstObligationCase] = (yield* native.read()).items;
+        assert(firstObligationCase !== undefined);
+        expect(firstObligationCase.caseRecord.controllerObligations).toHaveLength(2);
+        const [firstResponseCase] = (yield* native.read()).items;
+        assert(firstResponseCase !== undefined);
+        expect(firstResponseCase.responses).toEqual([firstResponse]);
         yield* native.decide(1);
         yield* native.recordTask(testOwnerA, 'second-obligation', 1);
         const nextResponse = yield* native.respond(false, yield* nextId);
         const retained = yield* native.read();
+        assert(retained.items[0] !== undefined);
         expect(retained.items[0].tasks).toHaveLength(2);
         expect(retained.items[0].decisions).toHaveLength(2);
         expect(retained.items[0].responses).toEqual([firstResponse, nextResponse]);

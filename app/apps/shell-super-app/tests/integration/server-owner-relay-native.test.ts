@@ -72,7 +72,7 @@ import {
   testCoreDatabase,
 } from '@app/core-runtime/testing/owner-evidence';
 import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { NodeHttpClient, NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { v1 } from '@authzed/authzed-node';
 import { getCookies } from 'better-auth/cookies';
@@ -82,7 +82,6 @@ import {
   Config,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Duration,
   Effect,
@@ -94,6 +93,7 @@ import {
   Redacted,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { Cookies, HttpBody, HttpClient } from 'effect/http';
 import type { HttpClientResponse } from 'effect/http';
@@ -112,7 +112,7 @@ import type { TestTenantRole } from '../../../../packages/core-runtime/src/testi
 import { requireExecutedAction } from '../support/executed-action.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 
-import { GatewayIssuer, GatewayIssuerError, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
+import { GatewayIssuer, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import {
   ShellInstalledModuleCatalog,
@@ -254,9 +254,9 @@ const makePackagedShellUserFixture = Effect.fn('ServerOwnerRelayNative.makePacka
       yield* roles.endHeldRoles();
       yield* (yield* roles.roleWithout(withheldCapabilityKeys)).grant();
     }
-    const crypto = yield* Crypto.Crypto;
-    const secret = Redacted.make(yield* crypto.randomUUIDv4());
-    const password = Redacted.make(yield* crypto.randomUUIDv4());
+    const crypto = yield* SecureRandom.SecureRandom;
+    const secret = Redacted.make(yield* crypto.uuidV4());
+    const password = Redacted.make(yield* crypto.uuidV4());
     const port = yield* allocateLoopbackPort();
     const origin = `http://localhost:${port}`;
     const configuration = yield* parseAuthConfig({
@@ -515,7 +515,7 @@ const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.
     readonly publicKey: Awaited<ReturnType<typeof generateKeyPair>>['publicKey'];
     readonly revision: string;
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const payload: Parameters<typeof issueApiKeyGatewayContext>[0] = {
       audience: input.audience,
       compositionRevision: input.revision,
@@ -526,7 +526,7 @@ const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.
     const issued = yield* issueApiKeyGatewayContext(payload, {
       apiKey: input.apiKey,
       baseUrl: `${input.origin}/shell-super-app-api`,
-      requestCorrelation: yield* crypto.randomUUIDv4(),
+      requestCorrelation: yield* crypto.uuidV4(),
     }).pipe(
       Effect.tapError((error) =>
         Schema.is(Schema.Struct({ code: Schema.String, status: Schema.Number }))(error)
@@ -555,7 +555,7 @@ const issueNativeApiKeyGatewayAuthorization = Effect.fn('ServerOwnerRelayNative.
     expect(claims.principal.authBindingId).toBe(input.authBindingId);
     expect(claims.principal.authMethod).toBe('api_key');
     expect(claims.principal.legalEntityId).toBe(input.legalEntityId);
-    expect(claims.principal.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+    expect(claims.principal.authContextRef).toBe(Redacted.value(input.authContextRef));
     expect(claims.compositionRevision).toBe(input.revision);
     expect(claims.targetBuildMarker).toBe(input.buildMarker);
     expect(issued.compositionRevision).toBe(input.revision);
@@ -719,7 +719,7 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
     readonly source: Effect.Success<ReturnType<typeof issueNativeApiKeyGatewayAuthorization>>;
     readonly workloadKey: Redacted.Redacted;
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const sourceToken = Redacted.value(input.source.sourceAssertion);
     const verified = yield* Effect.tryPromise({
       catch: () => new PackagedOwnerStartupError({ reason: 'Actual source proof verification failed' }),
@@ -752,9 +752,9 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
       ...claims,
       exp: now - 300,
       iat: now - 300 - (claims.exp - claims.iat),
-      jti: yield* crypto.randomUUIDv4(),
+      jti: yield* crypto.uuidV4(),
     });
-    const invalidPrincipalId = yield* crypto.randomUUIDv4();
+    const invalidPrincipalId = yield* crypto.uuidV4();
     const invalidScopes = [
       {
         category: 'changed-principal',
@@ -763,12 +763,12 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
       },
       {
         category: 'foreign-tenant',
-        principal: { ...claims.principal, tenantId: yield* crypto.randomUUIDv4() },
+        principal: { ...claims.principal, tenantId: yield* crypto.uuidV4() },
         sub: claims.sub,
       },
       {
         category: 'nonexistent-legal-entity',
-        principal: { ...claims.principal, legalEntityId: yield* crypto.randomUUIDv4() },
+        principal: { ...claims.principal, legalEntityId: yield* crypto.uuidV4() },
         sub: claims.sub,
       },
     ];
@@ -803,11 +803,11 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
         request: {
           audience: 'party-registry',
           compositionRevision: claims.compositionRevision,
-          exchangeId: yield* crypto.randomUUIDv4(),
+          exchangeId: yield* crypto.uuidV4(),
           legalEntityScope: 'subject',
           subject: { _tag: 'Assertion', sourceAssertion: negative.sourceAssertion },
         },
-        requestCorrelation: yield* crypto.randomUUIDv4(),
+        requestCorrelation: yield* crypto.uuidV4(),
       });
     }
     yield* assertNativeRelayHttpRejected({
@@ -819,11 +819,11 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
       request: {
         audience: 'party-registry',
         compositionRevision: claims.compositionRevision,
-        exchangeId: yield* crypto.randomUUIDv4(),
+        exchangeId: yield* crypto.uuidV4(),
         legalEntityScope: 'subject',
         subject: { _tag: 'Assertion', sourceAssertion: sourceToken },
       },
-      requestCorrelation: yield* crypto.randomUUIDv4(),
+      requestCorrelation: yield* crypto.uuidV4(),
     });
     const wrongAudience = yield* issueNativeApiKeyGatewayAuthorization({
       ...input.gateway,
@@ -839,20 +839,20 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
       request: {
         audience: 'party-registry',
         compositionRevision: claims.compositionRevision,
-        exchangeId: yield* crypto.randomUUIDv4(),
+        exchangeId: yield* crypto.uuidV4(),
         legalEntityScope: 'subject',
         subject: { _tag: 'Assertion', sourceAssertion: Redacted.value(wrongAudience.sourceAssertion) },
       },
-      requestCorrelation: yield* crypto.randomUUIDv4(),
+      requestCorrelation: yield* crypto.uuidV4(),
     });
     const request: Parameters<typeof issueDelegatedGatewayContext>[0] = {
       audience: 'party-registry',
       compositionRevision: claims.compositionRevision,
-      exchangeId: yield* crypto.randomUUIDv4(),
+      exchangeId: yield* crypto.uuidV4(),
       legalEntityScope: 'subject',
       subject: { _tag: 'Assertion', sourceAssertion: sourceToken },
     };
-    const requestCorrelation = yield* crypto.randomUUIDv4();
+    const requestCorrelation = yield* crypto.uuidV4();
     const accepted = yield* issueDelegatedGatewayContext(request, {
       apiKey: input.workloadKey,
       baseUrl: `${input.fixture.origin}/shell-super-app-api`,
@@ -863,8 +863,8 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
     const exchange = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
       where: { exchangeId: request.exchangeId, sourceJti: claims.jti },
     });
-    expect(exchange !== undefined).toBe(true);
-    for (const changedCorrelation of [requestCorrelation, yield* crypto.randomUUIDv4()]) {
+    expect(exchange).toBeDefined();
+    for (const changedCorrelation of [requestCorrelation, yield* crypto.uuidV4()]) {
       yield* assertNativeRelayHttpRejected({
         apiKey: input.workloadKey,
         category: changedCorrelation === requestCorrelation ? 'exact-exchange-replay' : 'same-pair-changed-correlation',
@@ -877,11 +877,11 @@ const assertNativeRelayHttpSecurity = Effect.fn('ServerOwnerRelayNative.assertNa
     }
     // A fresh exchange identity for the same source is a legitimate independent receiving attempt.
     const next = yield* issueDelegatedGatewayContext(
-      { ...request, exchangeId: yield* crypto.randomUUIDv4() },
+      { ...request, exchangeId: yield* crypto.uuidV4() },
       {
         apiKey: input.workloadKey,
         baseUrl: `${input.fixture.origin}/shell-super-app-api`,
-        requestCorrelation: yield* crypto.randomUUIDv4(),
+        requestCorrelation: yield* crypto.uuidV4(),
       },
     );
     expect(next.compositionRevision).toBe(claims.compositionRevision);
@@ -903,12 +903,12 @@ const diagnoseOutsideManufacturerTransaction = Effect.fn(
   readonly sourceAssertion: Redacted.Redacted;
   readonly sourceWorkloadApiKey: Redacted.Redacted;
 }) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const issued = yield* issueDelegatedGatewayContext(
     {
       audience: 'party-registry',
       compositionRevision: input.compositionRevision,
-      exchangeId: yield* crypto.randomUUIDv4(),
+      exchangeId: yield* crypto.uuidV4(),
       legalEntityScope: 'subject',
       subject: { _tag: 'Assertion', sourceAssertion: Redacted.value(input.sourceAssertion) },
     },
@@ -1066,7 +1066,7 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
     readonly relaySource: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: string };
     readonly savedAddress: NativeSavedAddress;
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const client = yield* HttpClient.HttpClient;
     const { core } = input.fixture;
     const before = yield* core.evidence(input.database);
@@ -1078,7 +1078,7 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
         authorization: proof.authorization,
         compositionRevision: input.compositionRevision,
         compositionUrl: input.compositionUrl,
-        correlationId: yield* crypto.randomUUIDv4(),
+        correlationId: yield* crypto.uuidV4(),
         deployment: { appId: 'commerce-customer-context', buildMarker: input.customerContext.compiled.buildMarker },
         factory,
         gateway: input.gateway,
@@ -1130,7 +1130,7 @@ const exerciseFactoryOnlyPostalRejection = Effect.fn('ServerOwnerRelayNative.exe
           body: yield* HttpBody.json(request),
           headers: {
             authorization: Redacted.value(proof.authorization),
-            'x-correlation-id': yield* crypto.randomUUIDv4(),
+            'x-correlation-id': yield* crypto.uuidV4(),
             'x-ontos-composition-revision': input.compositionRevision,
           },
         },
@@ -1173,7 +1173,7 @@ const fixtureStorefrontIssuer = Effect.fn('ServerOwnerRelayNative.fixtureStorefr
     readonly compositionUrl: string;
     readonly gateway: { readonly issuer: string; readonly privateJwk: Redacted.Redacted };
   }) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const observedTimeSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const originalProvider = yield* ConfigProvider.ConfigProvider;
     const compositionProvider = ConfigProvider.fromUnknown({
@@ -1191,16 +1191,7 @@ const fixtureStorefrontIssuer = Effect.fn('ServerOwnerRelayNative.fixtureStorefr
     const issuerContext = yield* Layer.build(
       makeGatewayIssuerLayer({
         currentTimeSeconds: Effect.succeed(observedTimeSeconds),
-        generateJti: crypto.randomUUIDv4().pipe(
-          Effect.mapError(
-            () =>
-              new GatewayIssuerError({
-                code: 'gateway_issuer_unavailable',
-                reason: 'Fixture issuer JTI acquisition failed',
-                stage: 'signing',
-              }),
-          ),
-        ),
+        generateJti: crypto.uuidV4(),
         loadAdmission: catalog.load.pipe(
           Effect.map(({ composition, contracts }) => ({
             audiences: new Map([
@@ -1238,7 +1229,7 @@ const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarket
     readonly serviceId: string;
   }) {
     const { core } = input.fixture;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const storefrontId = 'qualified-native-market-bootstrap';
     const personalAuthorization = yield* input.personalProof;
     const issuer = yield* fixtureStorefrontIssuer(input);
@@ -1258,14 +1249,14 @@ const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarket
     }).pipe(Effect.provideService(GatewayIssuer, issuer));
     expect(proof.fixtureTrust).toBe('OWNER_FIXTURE_TRUSTED_STOREFRONT_ONLY');
     expect(proof.principal.trustedStorefrontId).toBe(storefrontId);
-    expect(proof.principal.principalId === input.serviceId).toBe(false);
+    expect(proof.principal.principalId).not.toBe(input.serviceId);
     const before = yield* core.evidence(input.database);
     const previous = new Set(before.accesses.map((row) => row.dataAccessEventId));
     const existingExchanges = yield* input.fixture.persistence.executor.query.gatewayRelayExchanges.findMany({
       where: { sourceJti: proof.sourceJti },
     });
     expect(existingExchanges).toHaveLength(0);
-    const correlationId = yield* crypto.randomUUIDv4();
+    const correlationId = yield* crypto.uuidV4();
     const response = yield* executeMarketBootstrapResolutionWithAuthorization(
       {
         channel: 'B2C',
@@ -1350,9 +1341,9 @@ const exerciseMarketBootstrap = Effect.fn('ServerOwnerRelayNative.exerciseMarket
     for (const read of reads) {
       expect(read.tenantId).toBe(core.tenantId);
       expect(read.principalId).toBe(core.manager.principalId);
-      expect(read.principalId === input.serviceId).toBe(false);
+      expect(read.principalId).not.toBe(input.serviceId);
       expect(read.authBindingId).toBe(input.personalAuthBindingId);
-      expect(read.authContextRef === Redacted.value(input.personalAuthContextRef)).toBe(true);
+      expect(read.authContextRef).toBe(Redacted.value(input.personalAuthContextRef));
       expect(read.authMethod).toBe('api_key');
       expect(read.legalEntityId).toBe(core.legalEntityId);
       expect(read.outcome).toBe('allowed');
@@ -1427,7 +1418,7 @@ const assertNativeManagedIdentityActions = Effect.fn('ServerOwnerRelayNative.ass
       const invocation = invocations.find((entry) => entry.actionKey === actionKey);
       expect(invocation?.status).toBe('succeeded');
       expect(invocation?.principalId).toBe(input.principalId);
-      expect(invocation?.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+      expect(invocation?.authContextRef).toBe(Redacted.value(input.authContextRef));
     }
     return invocations.length;
   },
@@ -1465,7 +1456,7 @@ const assertNativeManufacturerMutationAudit = Effect.fn('ServerOwnerRelayNative.
     expect(invocation.targetResourceType).toBeNull();
     expect(invocation.targetResourceId).toBeNull();
     expect(invocation.principalId).toBe(input.principalId);
-    expect(invocation.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+    expect(invocation.authContextRef).toBe(Redacted.value(input.authContextRef));
     const executedAudits = evidence.audits.filter(
       (row) => row.actionInvocationId === invocation.actionInvocationId && row.eventType === 'action.executed',
     );
@@ -1475,7 +1466,7 @@ const assertNativeManufacturerMutationAudit = Effect.fn('ServerOwnerRelayNative.
       expect(audit.legalEntityId).toBeNull();
       expect(audit.principalId).toBe(input.principalId);
       expect(audit.authBindingId).toBe(input.authBindingId);
-      expect(audit.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+      expect(audit.authContextRef).toBe(Redacted.value(input.authContextRef));
       expect(audit.authMethod).toBe('api_key');
       expect(audit.outcome).toBe('succeeded');
       expect(audit.outcomeCode).toBe('action_executed');
@@ -1499,7 +1490,7 @@ const assertNativeManufacturerMutationAudit = Effect.fn('ServerOwnerRelayNative.
       expect(access.legalEntityId).toBeNull();
       expect(access.principalId).toBe(input.principalId);
       expect(access.authBindingId).toBe(input.authBindingId);
-      expect(access.authContextRef === Redacted.value(input.authContextRef)).toBe(true);
+      expect(access.authContextRef).toBe(Redacted.value(input.authContextRef));
       expect(access.authMethod).toBe('api_key');
       expect(access.outcome).toBe('allowed');
       expect(access.outcomeCode).toBe('action_read_allowed');
@@ -1539,7 +1530,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
     readonly workloadKey: Redacted.Redacted;
   }) {
     const { core } = input.fixture;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const providerPolicy = 'commerce.customer-context.api.market-subject-restrictions-current.evidence.v1';
     const cccOptions = {
       baseUrl: `${input.customerContext.origin}${input.customerContext.apiPrefix}`,
@@ -1588,7 +1579,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         }).pipe(Effect.provideService(GatewayIssuer, issuer));
         expect(originalJtis.has(proof.sourceJti)).toBe(false);
         originalJtis.add(proof.sourceJti);
-        const correlationId = yield* crypto.randomUUIDv4();
+        const correlationId = yield* crypto.uuidV4();
         const request = { channel: 'B2C' as const, storefrontRef: { appId: storefrontId, tenantId: core.tenantId } };
         const response = yield* executeMarketBootstrapResolutionWithAuthorization(
           selected === undefined ? request : { ...request, subject: selected },
@@ -1616,7 +1607,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       expect(row.principalId).toBe(core.manager.principalId);
       expect(row.authBindingId).toBe(input.personal.authBindingId);
       expect(row.authMethod).toBe('api_key');
-      expect(row.authContextRef === Redacted.value(input.personal.authContextRef)).toBe(true);
+      expect(row.authContextRef).toBe(Redacted.value(input.personal.authContextRef));
       expect(row.tenantId).toBe(core.tenantId);
       expect(row.legalEntityId).toBe(core.legalEntityId);
     }
@@ -1635,7 +1626,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         {
           apiKey: input.workloadKey,
           baseUrl: `${input.fixture.origin}/shell-super-app-api`,
-          requestCorrelation: yield* crypto.randomUUIDv4(),
+          requestCorrelation: yield* crypto.uuidV4(),
         },
       ),
     );
@@ -1674,14 +1665,14 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
         {
           audience: 'commerce-customer-context',
           compositionRevision: input.personal.revision,
-          exchangeId: yield* crypto.randomUUIDv4(),
+          exchangeId: yield* crypto.uuidV4(),
           legalEntityScope: 'subject',
           subject: { _tag: 'Assertion', sourceAssertion: Redacted.value(source.sourceAssertion) },
         },
         {
           apiKey: input.workloadKey,
           baseUrl: `${input.fixture.origin}/shell-super-app-api`,
-          requestCorrelation: yield* crypto.randomUUIDv4(),
+          requestCorrelation: yield* crypto.uuidV4(),
         },
       );
       const verified = yield* Effect.tryPromise({
@@ -1700,7 +1691,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       // A delegated context names the person as its subject and the calling module as its actor.
       const claims = yield* Schema.decodeUnknownEffect(GatewayContextV3ClaimsSchema)(verified.payload);
       expect(claims.sub).toBe(core.manager.principalId);
-      expect(claims.act.principalId === core.manager.principalId).toBe(false);
+      expect(claims.act.principalId).not.toBe(core.manager.principalId);
       expect(claims.principal.authBindingId).toBe(input.personal.authBindingId);
       expect(claims.principal.tenantId).toBe(core.tenantId);
       expect(claims.principal.legalEntityId).toBe(core.legalEntityId);
@@ -1714,7 +1705,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
         { subject },
         Redacted.value(freshTarget.authorization),
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     ).toMatchObject({ outcome: 'SUBJECT_RESTRICTIONS_CURRENT', subject });
@@ -1722,7 +1713,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       executeMarketSubjectRestrictionsCurrentWithAuthorization(
         { subject },
         Redacted.value(freshTarget.authorization),
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     );
@@ -1738,7 +1729,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
           profile: { ...input.profile, kind: 'RETAIL' },
         },
         Redacted.value(alternate.authorization),
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     );
@@ -1747,7 +1738,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       executeMarketSubjectRestrictionsCurrentWithAuthorization(
         { subject },
         Redacted.value(alternate.authorization),
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     );
@@ -1771,7 +1762,7 @@ const exerciseNativeMarketSubjectRelay = Effect.fn('ServerOwnerRelayNative.exerc
       executeMarketSubjectRestrictionsCurrentWithAuthorization(
         { subject },
         `Bearer ${expired}`,
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     );
@@ -1820,7 +1811,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     readonly workloadKey: Redacted.Redacted;
   }) {
     const { core } = input.fixture;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const pgcOptions = {
       baseUrl: `${input.priceGroupCatalog.origin}${input.priceGroupCatalog.apiPrefix}`,
       compositionRevision: input.personal.revision,
@@ -1834,8 +1825,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       classificationPurpose: string,
       expectedCatalogRevision: number,
     ) {
-      const { legalEntityId, ...tenantFields } = input.personal;
-      void legalEntityId;
+      const { legalEntityId: _legalEntityId, ...tenantFields } = input.personal;
       const tenantOnly = {
         ...tenantFields,
         audience: 'price-group-catalog' as const,
@@ -1855,8 +1845,8 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
           reason: 'Create authoritative native relay target',
         },
         Redacted.value(proof.authorization),
-        yield* crypto.randomUUIDv4(),
-        { ...pgcOptions, idempotencyKey: yield* crypto.randomUUIDv4() },
+        yield* crypto.uuidV4(),
+        { ...pgcOptions, idempotencyKey: yield* crypto.uuidV4() },
       ).pipe(
         Effect.flatMap(
           Schema.decodeUnknownEffect(
@@ -1886,8 +1876,8 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
         reason: 'Persist actual native Current assignment',
       },
       Redacted.value(assignProof.authorization),
-      yield* crypto.randomUUIDv4(),
-      { ...cccOptions, idempotencyKey: yield* crypto.randomUUIDv4() },
+      yield* crypto.uuidV4(),
+      { ...cccOptions, idempotencyKey: yield* crypto.uuidV4() },
     );
     const assigned = yield* Schema.decodeUnknownEffect(
       Schema.Struct({ assignment: Schema.Struct({ priceGroupRef: PriceGroupRefSchema }) }),
@@ -1904,7 +1894,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
             profile: input.profile,
           },
           Redacted.value(proof.authorization),
-          yield* crypto.randomUUIDv4(),
+          yield* crypto.uuidV4(),
           cccOptions,
         );
         return { proof, result };
@@ -1960,14 +1950,14 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
           {
             audience: 'price-group-catalog',
             compositionRevision: input.personal.revision,
-            exchangeId: yield* crypto.randomUUIDv4(),
+            exchangeId: yield* crypto.uuidV4(),
             legalEntityScope: 'tenant',
             subject: { _tag: 'Assertion', sourceAssertion: Redacted.value(source.sourceAssertion) },
           },
           {
             apiKey: input.workloadKey,
             baseUrl: `${input.fixture.origin}/shell-super-app-api`,
-            requestCorrelation: yield* crypto.randomUUIDv4(),
+            requestCorrelation: yield* crypto.uuidV4(),
           },
         );
         const verified = yield* Effect.tryPromise(() =>
@@ -1978,7 +1968,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
         );
         const claims = yield* Schema.decodeUnknownEffect(GatewayContextV3ClaimsSchema)(verified.payload);
         expect(claims.sub).toBe(core.manager.principalId);
-        expect(claims.act.principalId === core.manager.principalId).toBe(false);
+        expect(claims.act.principalId).not.toBe(core.manager.principalId);
         expect(claims.principal.legalEntityId).toBeUndefined();
         expect(claims.compositionRevision).toBe(input.personal.revision);
         expect(claims.exp).toBeLessThanOrEqual(source.expiresAt);
@@ -1992,7 +1982,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       executePriceGroupDefinitionWithAuthorization(
         { priceGroupRef: firstRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
         permittedFirst.authorization,
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         pgcOptions,
       ),
     );
@@ -2005,7 +1995,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
           trustedOperationAt: DateTime.formatIso(yield* DateTime.now),
         },
         permittedFirst.authorization,
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         pgcOptions,
       ),
     );
@@ -2019,14 +2009,14 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       {
         audience: 'price-group-catalog',
         compositionRevision: input.personal.revision,
-        exchangeId: yield* crypto.randomUUIDv4(),
+        exchangeId: yield* crypto.uuidV4(),
         legalEntityScope: 'subject',
         subject: { _tag: 'Assertion', sourceAssertion: Redacted.value(missingLe.sourceAssertion) },
       },
       {
         apiKey: input.workloadKey,
         baseUrl: `${input.fixture.origin}/shell-super-app-api`,
-        requestCorrelation: yield* crypto.randomUUIDv4(),
+        requestCorrelation: yield* crypto.uuidV4(),
       },
     );
     const tenantOnlyClaims = yield* Schema.decodeUnknownEffect(GatewayContextV3ClaimsSchema)(
@@ -2051,7 +2041,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       ...verifiedExpirySource.payload,
       exp: expiredAt,
       iat: expiredAt - 300,
-      jti: yield* crypto.randomUUIDv4(),
+      jti: yield* crypto.uuidV4(),
     });
     // Negative-only signed fixture: this expired assertion is never accepted as authority.
     const expiredSource = yield* Effect.tryPromise(() =>
@@ -2066,11 +2056,11 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       request: {
         audience: 'price-group-catalog',
         compositionRevision: input.personal.revision,
-        exchangeId: yield* crypto.randomUUIDv4(),
+        exchangeId: yield* crypto.uuidV4(),
         legalEntityScope: 'tenant',
         subject: { _tag: 'Assertion', sourceAssertion: expiredSource },
       },
-      requestCorrelation: yield* crypto.randomUUIDv4(),
+      requestCorrelation: yield* crypto.uuidV4(),
     });
     const expiredRead = yield* Effect.flip(
       executeCustomerPriceGroupResolutionWithAuthorization(
@@ -2080,7 +2070,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
           profile: input.profile,
         },
         `Bearer ${expiredSource}`,
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     );
@@ -2116,8 +2106,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
       ),
     ).toBe(true);
     expect(restoredResolution).toMatchObject({ priceGroupRef: firstRef });
-    const { legalEntityId, ...tenantOnlyActor } = input.personal;
-    void legalEntityId;
+    const { legalEntityId: _legalEntityId, ...tenantOnlyActor } = input.personal;
     const providerHealthyProof = yield* issueNativeApiKeyGatewayAuthorization({
       ...tenantOnlyActor,
       audience: 'price-group-catalog',
@@ -2137,7 +2126,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
           profile: input.profile,
         },
         Redacted.value(issuerDownProof.authorization),
-        yield* crypto.randomUUIDv4(),
+        yield* crypto.uuidV4(),
         cccOptions,
       ),
     );
@@ -2150,7 +2139,7 @@ const exerciseNativePriceGroupRelay = Effect.fn('ServerOwnerRelayNative.exercise
     const healthyDefinition = yield* executePriceGroupDefinitionWithAuthorization(
       { priceGroupRef: firstRef, trustedOperationAt: DateTime.formatIso(yield* DateTime.now) },
       Redacted.value(providerHealthyProof.authorization),
-      yield* crypto.randomUUIDv4(),
+      yield* crypto.uuidV4(),
       pgcOptions,
     );
     expect(healthyDefinition.identity.priceGroupRef).toEqual(firstRef);
@@ -2189,11 +2178,11 @@ const assertNativeManufacturerOutageAndOriginalKeyRevocation = Effect.fn(
   readonly relationId: string;
   readonly workloadKey: Redacted.Redacted;
 }) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const client = yield* HttpClient.HttpClient;
   expect(yield* input.party.child.isRunning).toBe(false);
   const before = yield* input.fixture.core.evidence(input.database);
-  const correlationId = yield* crypto.randomUUIDv4();
+  const correlationId = yield* crypto.uuidV4();
   const proof = yield* issueNativeApiKeyGatewayAuthorization(input.gateway);
   const response = yield* client.post(
     `${input.catalog.origin}${input.catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
@@ -2208,7 +2197,7 @@ const assertNativeManufacturerOutageAndOriginalKeyRevocation = Effect.fn(
       }),
       headers: {
         authorization: Redacted.value(proof.authorization),
-        'idempotency-key': yield* crypto.randomUUIDv4(),
+        'idempotency-key': yield* crypto.uuidV4(),
         'x-correlation-id': correlationId,
         'x-ontos-composition-revision': input.gateway.revision,
       },
@@ -2252,7 +2241,7 @@ const assertNativeManufacturerOutageAndOriginalKeyRevocation = Effect.fn(
       body: yield* HttpBody.json({ subject: input.productRef }),
       headers: {
         authorization: Redacted.value(beforeRevocation.authorization),
-        'x-correlation-id': yield* crypto.randomUUIDv4(),
+        'x-correlation-id': yield* crypto.uuidV4(),
         'x-ontos-composition-revision': input.gateway.revision,
       },
     },
@@ -2284,9 +2273,9 @@ const assertNativeManufacturerOutageAndOriginalKeyRevocation = Effect.fn(
     }),
     headers: {
       cookie: Redacted.value(input.cookie),
-      'idempotency-key': yield* crypto.randomUUIDv4(),
+      'idempotency-key': yield* crypto.uuidV4(),
       origin: input.fixture.origin,
-      'x-correlation-id': yield* crypto.randomUUIDv4(),
+      'x-correlation-id': yield* crypto.uuidV4(),
       'x-ontos-composition-revision': input.gateway.revision,
     },
   });
@@ -2305,11 +2294,11 @@ const assertNativeManufacturerOutageAndOriginalKeyRevocation = Effect.fn(
     request: {
       audience: 'party-registry',
       compositionRevision: input.gateway.revision,
-      exchangeId: yield* crypto.randomUUIDv4(),
+      exchangeId: yield* crypto.uuidV4(),
       legalEntityScope: 'subject',
       subject: { _tag: 'Assertion', sourceAssertion: Redacted.value(beforeRevocation.sourceAssertion) },
     },
-    requestCorrelation: yield* crypto.randomUUIDv4(),
+    requestCorrelation: yield* crypto.uuidV4(),
   });
 });
 
@@ -2326,7 +2315,7 @@ const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNativ
   }) {
     const { catalog, database, fixture, party } = input;
     const client = yield* HttpClient.HttpClient;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const legalEntityRef = {
       moduleId: 'core.identity',
       resourceId: fixture.core.legalEntityId,
@@ -2392,8 +2381,8 @@ const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNativ
       }),
       headers: {
         authorization: Redacted.value(createAuthorization.authorization),
-        'idempotency-key': yield* crypto.randomUUIDv4(),
-        'x-correlation-id': yield* crypto.randomUUIDv4(),
+        'idempotency-key': yield* crypto.uuidV4(),
+        'x-correlation-id': yield* crypto.uuidV4(),
         'x-ontos-composition-revision': input.gateway.revision,
       },
     });
@@ -2413,8 +2402,8 @@ const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNativ
     expect(productRef.resourceType).toBe('commerce.catalog.product');
     expect(productRef.tenantId).toBe(fixture.core.tenantId);
     yield* fixture.core.grantResourceAccess(productRef, fixture.core.manager.principalId, 'reader');
-    const relationId = yield* crypto.randomUUIDv4();
-    const correlationId = yield* crypto.randomUUIDv4();
+    const relationId = yield* crypto.uuidV4();
+    const correlationId = yield* crypto.uuidV4();
     const setAuthorization = yield* issueNativeApiKeyGatewayAuthorization(gateway);
     const set = yield* client.post(`${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`, {
       body: yield* HttpBody.json({
@@ -2427,7 +2416,7 @@ const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNativ
       }),
       headers: {
         authorization: Redacted.value(setAuthorization.authorization),
-        'idempotency-key': yield* crypto.randomUUIDv4(),
+        'idempotency-key': yield* crypto.uuidV4(),
         'x-correlation-id': correlationId,
         'x-ontos-composition-revision': input.gateway.revision,
       },
@@ -2446,7 +2435,7 @@ const assertNativeLegalEntityWithPartyStopped = Effect.fn('ServerOwnerRelayNativ
       body: yield* HttpBody.json({ subject: productRef }),
       headers: {
         authorization: Redacted.value(readAuthorization.authorization),
-        'x-correlation-id': yield* crypto.randomUUIDv4(),
+        'x-correlation-id': yield* crypto.uuidV4(),
         'x-ontos-composition-revision': input.gateway.revision,
       },
     });
@@ -2529,16 +2518,16 @@ const issueNativeOriginalHumanKey = Effect.fn('ServerOwnerRelayNative.issueOrigi
     },
   ) {
     const client = yield* HttpClient.HttpClient;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const personalIssue = yield* client.post(
       `${fixture.origin}${fixture.application.apiPrefix}/auth/identity/api-keys/self`,
       {
         body: yield* HttpBody.json({ name: 'Native original human' }),
         headers: {
           cookie: Redacted.value(input.cookie),
-          'idempotency-key': yield* crypto.randomUUIDv4(),
+          'idempotency-key': yield* crypto.uuidV4(),
           origin: fixture.origin,
-          'x-correlation-id': yield* crypto.randomUUIDv4(),
+          'x-correlation-id': yield* crypto.uuidV4(),
         },
       },
     );
@@ -2562,16 +2551,16 @@ const issueNativeOriginalHumanKey = Effect.fn('ServerOwnerRelayNative.issueOrigi
     });
     expect(personalBinding?.principalId).toBe(fixture.core.manager.principalId);
     expect(personalBinding?.subjectType).toBe('api_key');
-    expect(personalBinding?.providerSubjectId === personalProvider.providerKeyId).toBe(true);
+    expect(personalBinding?.providerSubjectId).toBe(personalProvider.providerKeyId);
     expect(personalBinding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
     const personalAuthContextRef = Redacted.make(`better-auth-api-key:${personalProvider.providerKeyId}`);
-    expect(Redacted.value(personalAuthContextRef) === Redacted.value(input.sessionAuthContextRef)).toBe(false);
+    expect(Redacted.value(personalAuthContextRef)).not.toBe(Redacted.value(input.sessionAuthContextRef));
     const personalInvocation = yield* database.query.actionInvocations.findFirst({
       where: { actionKey: 'core.identity.bind-self-api-key', tenantId: fixture.core.tenantId },
     });
     expect(personalInvocation?.status).toBe('succeeded');
     expect(personalInvocation?.principalId).toBe(fixture.core.manager.principalId);
-    expect(personalInvocation?.authContextRef === Redacted.value(input.sessionAuthContextRef)).toBe(true);
+    expect(personalInvocation?.authContextRef).toBe(Redacted.value(input.sessionAuthContextRef));
     yield* Effect.logInfo('Original human personal key independently verified', {
       actorUnchanged: true,
       bindingDistinctFromWorkload: true,
@@ -2591,6 +2580,8 @@ const observePostalAddFailure = (error: Effect.Error<ReturnType<typeof executeAd
         type: error.type,
       })
     : Effect.logInfo('Native saved-address Add failure', { declaredProblem: false });
+
+const relayNativeServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom);
 
 it.live('starts the real packaged Shell, exposes its compiled contract and API prefix, and terminates its child', () =>
   Effect.gen(function* packagedShellStartup() {
@@ -2640,7 +2631,7 @@ it.live('starts the real packaged Shell, exposes its compiled contract and API p
     }
   }).pipe(
     Effect.timeout('25 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp)),
   ),
 );
 
@@ -2706,7 +2697,7 @@ it.live('starts the real packaged Party receiver, serves its contract and refuse
     }
   }).pipe(
     Effect.timeout('25 seconds'),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+    Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp)),
   ),
 );
 
@@ -2773,7 +2764,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('25 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp)),
     ),
 );
 
@@ -2796,8 +2787,8 @@ it.live(
           const adminRoles = yield* admin`select current_user::text as role`;
           expect(runtimeRoles).toEqual([{ role: 'ontos_runtime' }]);
           expect(adminRoles).toEqual([{ role: connections.admin.user }]);
-          const crypto = yield* Crypto.Crypto;
-          const privateSecret = Redacted.make(yield* crypto.randomUUIDv4());
+          const crypto = yield* SecureRandom.SecureRandom;
+          const privateSecret = Redacted.make(yield* crypto.uuidV4());
           const auth = yield* parseAuthConfig({
             BETTER_AUTH_SECRET: Redacted.value(privateSecret),
             BETTER_AUTH_URL: 'http://localhost:3020',
@@ -2853,7 +2844,7 @@ it.live(
       );
       expect(fixtureClosed).toBe(true);
       yield* Effect.logInfo('Real Core and Spice fixture resources closed', { fixtureClosed });
-    }).pipe(Effect.timeout('45 seconds'), Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+    }).pipe(Effect.timeout('45 seconds'), Effect.provide(Layer.mergeAll(relayNativeServices, Reactivity.layer))),
   // Internal deadline plus the file's 30 s shutdown margin; without it Rstest's 30 s project default
   // would kill this scenario before its own 45 s deadline could ever report a cause.
   75_000,
@@ -2973,7 +2964,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('45 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
   // Internal deadline plus the file's 30 s shutdown margin; without it Rstest's 30 s project default
   // would kill this scenario before its own 45 s deadline could ever report a cause.
@@ -3122,7 +3113,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('60 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
   // Internal deadline plus the file's 30 s shutdown margin; without it Rstest's 30 s project default
   // would kill this scenario before its own 60 s deadline could ever report a cause.
@@ -3250,7 +3241,7 @@ it.live(
             expect(authority?.durableWorkAdmission).toBe('open');
 
             yield* grantNativeIdentityAdministration(fixture.core);
-            const crypto = yield* Crypto.Crypto;
+            const crypto = yield* SecureRandom.SecureRandom;
             const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
               body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
               headers: { origin: fixture.origin },
@@ -3273,14 +3264,14 @@ it.live(
               return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
-            expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            expect(realAuthContextRef).not.toBe(fixture.core.manager.authContextRef);
             const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
               body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
@@ -3296,9 +3287,9 @@ it.live(
               body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
@@ -3347,7 +3338,7 @@ it.live(
             });
             expect(binding?.principalId).toBe(serviceId);
             expect(binding?.subjectType).toBe('api_key');
-            expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
+            expect(binding?.providerSubjectId).toBe(provider.providerKeyId);
             expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
             const invocations = yield* database.query.actionInvocations.findMany({
               where: { tenantId: fixture.core.tenantId },
@@ -3359,7 +3350,7 @@ it.live(
               const invocation = invocations.find((entry) => entry.actionKey === actionKey);
               expect(invocation?.status).toBe('succeeded');
               expect(invocation?.principalId).toBe(fixture.core.manager.principalId);
-              expect(invocation?.authContextRef === realAuthContextRef).toBe(true);
+              expect(invocation?.authContextRef).toBe(realAuthContextRef);
             }
             yield* Effect.logInfo('Real managed service credential independently verified', {
               actionCount: invocations.length,
@@ -3380,7 +3371,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('60 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
   // Internal deadline plus the file's 30 s shutdown margin; without it Rstest's 30 s project default
   // would kill this scenario before its own 60 s deadline could ever report a cause.
@@ -3398,8 +3389,8 @@ it.live(
             const signingKeyPair = yield* Effect.tryPromise(() =>
               generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
             );
-            const signingCrypto = yield* Crypto.Crypto;
-            const signingKid = `native-${yield* signingCrypto.randomUUIDv4()}`;
+            const signingCrypto = yield* SecureRandom.SecureRandom;
+            const signingKid = `native-${yield* signingCrypto.uuidV4()}`;
             const privateJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.privateKey));
             const publicJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.publicKey));
             const gatewayMaterial = {
@@ -3630,7 +3621,7 @@ it.live(
             expect(authority?.durableWorkAdmission).toBe('open');
 
             yield* grantNativeIdentityAdministration(fixture.core);
-            const crypto = yield* Crypto.Crypto;
+            const crypto = yield* SecureRandom.SecureRandom;
             const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
               body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
               headers: { origin: fixture.origin },
@@ -3653,14 +3644,14 @@ it.live(
               return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
-            expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            expect(realAuthContextRef).not.toBe(fixture.core.manager.authContextRef);
             const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
               body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
@@ -3676,9 +3667,9 @@ it.live(
               body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
@@ -3739,7 +3730,7 @@ it.live(
               )(binding),
             ).toBe(true);
             expect(binding?.subjectType).toBe('api_key');
-            expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
+            expect(binding?.providerSubjectId).toBe(provider.providerKeyId);
             expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
             const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
               authContextRef: Redacted.make(realAuthContextRef),
@@ -3847,8 +3838,8 @@ it.live(
               {
                 baseUrl: `${party.origin}${party.apiPrefix}`,
                 compositionRevision: approved.composition.revision,
-                correlationId: yield* crypto.randomUUIDv4(),
-                idempotencyKey: yield* crypto.randomUUIDv4(),
+                correlationId: yield* crypto.uuidV4(),
+                idempotencyKey: yield* crypto.uuidV4(),
               },
             );
             expect(createdParty.outcome).toBe('CREATED');
@@ -3876,8 +3867,8 @@ it.live(
                 }),
                 headers: {
                   authorization: Redacted.value(createAuthorization.authorization),
-                  'idempotency-key': yield* crypto.randomUUIDv4(),
-                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'idempotency-key': yield* crypto.uuidV4(),
+                  'x-correlation-id': yield* crypto.uuidV4(),
                   'x-ontos-composition-revision': approved.composition.revision,
                 },
               },
@@ -3906,7 +3897,7 @@ it.live(
               where: { servingModuleKey: PARTY_MODULE_KEY, tenantId: fixture.core.tenantId },
             });
             const previousReads = new Set(readsBefore.map((row) => row.dataAccessEventId));
-            const relationId = yield* crypto.randomUUIDv4();
+            const relationId = yield* crypto.uuidV4();
             const setAuthorization = yield* issueNativeApiKeyGatewayAuthorization({
               apiKey: personalKey.secret,
               audience: 'catalog',
@@ -3918,7 +3909,7 @@ it.live(
               publicKey: signingKeyPair.publicKey,
               revision: approved.composition.revision,
             });
-            const setCorrelation = yield* crypto.randomUUIDv4();
+            const setCorrelation = yield* crypto.uuidV4();
             const setResponse = yield* client.post(
               `${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
               {
@@ -3932,7 +3923,7 @@ it.live(
                 }),
                 headers: {
                   authorization: Redacted.value(setAuthorization.authorization),
-                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  'idempotency-key': yield* crypto.uuidV4(),
                   'x-correlation-id': setCorrelation,
                   'x-ontos-composition-revision': approved.composition.revision,
                 },
@@ -4005,7 +3996,7 @@ it.live(
                 body: yield* HttpBody.json({ subject: productRef }),
                 headers: {
                   authorization: Redacted.value(readAuthorization.authorization),
-                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.uuidV4(),
                   'x-ontos-composition-revision': approved.composition.revision,
                 },
               },
@@ -4037,7 +4028,7 @@ it.live(
               productRef,
               tenantId: fixture.core.tenantId,
             });
-            expect(sourceExchange !== undefined).toBe(true);
+            expect(sourceExchange).toBeDefined();
             const readsAfter = yield* database.query.dataAccessEvents.findMany({
               where: { servingModuleKey: PARTY_MODULE_KEY, tenantId: fixture.core.tenantId },
             });
@@ -4099,7 +4090,7 @@ it.live(
                 {
                   apiKey: issued.secret,
                   baseUrl: `${fixture.origin}/shell-super-app-api`,
-                  requestCorrelation: yield* crypto.randomUUIDv4(),
+                  requestCorrelation: yield* crypto.uuidV4(),
                 },
               ),
             );
@@ -4122,7 +4113,7 @@ it.live(
                   publicKey: signingKeyPair.publicKey,
                   revision: approved.composition.revision,
                 });
-                const deniedCorrelation = yield* crypto.randomUUIDv4();
+                const deniedCorrelation = yield* crypto.uuidV4();
                 const deniedResponse = yield* client.post(
                   `${catalog.origin}${catalog.apiPrefix}/catalog/actions/set-product-manufacturer`,
                   {
@@ -4136,7 +4127,7 @@ it.live(
                     }),
                     headers: {
                       authorization: Redacted.value(deniedAuthorization.authorization),
-                      'idempotency-key': yield* crypto.randomUUIDv4(),
+                      'idempotency-key': yield* crypto.uuidV4(),
                       'x-correlation-id': deniedCorrelation,
                       'x-ontos-composition-revision': approved.composition.revision,
                     },
@@ -4160,13 +4151,13 @@ it.live(
                     row.correlationId === deniedCorrelation,
                 );
                 expect(deniedInvocation?.principalId).toBe(fixture.core.manager.principalId);
-                expect(deniedInvocation?.principalId === serviceId).toBe(false);
+                expect(deniedInvocation?.principalId).not.toBe(serviceId);
                 expect(deniedInvocation?.tenantId).toBe(fixture.core.tenantId);
                 expect(deniedInvocation?.legalEntityId).toBeNull();
                 expect(deniedInvocation?.authBindingId).toBe(personalKey.authBindingId);
-                expect(deniedInvocation?.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                expect(deniedInvocation?.authContextRef).toBe(Redacted.value(personalAuthContextRef));
                 expect(deniedInvocation?.authMethod).toBe('api_key');
-                expect(deniedInvocation?.status === 'succeeded').toBe(false);
+                expect(deniedInvocation?.status).not.toBe('succeeded');
                 expect(
                   deniedEvidence.audits.some(
                     (row) =>
@@ -4183,9 +4174,9 @@ it.live(
                 expect(providerDenials).toHaveLength(1);
                 for (const denial of providerDenials) {
                   expect(denial.principalId).toBe(fixture.core.manager.principalId);
-                  expect(denial.principalId === serviceId).toBe(false);
+                  expect(denial.principalId).not.toBe(serviceId);
                   expect(denial.authBindingId).toBe(personalKey.authBindingId);
-                  expect(denial.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(denial.authContextRef).toBe(Redacted.value(personalAuthContextRef));
                   expect(denial.authMethod).toBe('api_key');
                   expect(denial.tenantId).toBe(fixture.core.tenantId);
                   expect(denial.legalEntityId).toBeNull();
@@ -4217,7 +4208,7 @@ it.live(
                 body: yield* HttpBody.json({ subject: productRef }),
                 headers: {
                   authorization: Redacted.value(restoredAuthorization.authorization),
-                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.uuidV4(),
                   'x-ontos-composition-revision': approved.composition.revision,
                 },
               },
@@ -4298,7 +4289,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('120 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
   150_000,
 );
@@ -4314,8 +4305,8 @@ it.live(
             const signingKeyPair = yield* Effect.tryPromise(() =>
               generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
             );
-            const signingCrypto = yield* Crypto.Crypto;
-            const signingKid = `native-${yield* signingCrypto.randomUUIDv4()}`;
+            const signingCrypto = yield* SecureRandom.SecureRandom;
+            const signingKid = `native-${yield* signingCrypto.uuidV4()}`;
             const privateJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.privateKey));
             const publicJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.publicKey));
             const gatewayMaterial = {
@@ -4534,7 +4525,7 @@ it.live(
             expect(authority?.durableWorkAdmission).toBe('open');
 
             yield* grantNativeIdentityAdministration(fixture.core);
-            const crypto = yield* Crypto.Crypto;
+            const crypto = yield* SecureRandom.SecureRandom;
             const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
               body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
               headers: { origin: fixture.origin },
@@ -4557,14 +4548,14 @@ it.live(
               return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
-            expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            expect(realAuthContextRef).not.toBe(fixture.core.manager.authContextRef);
             const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
               body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
@@ -4580,9 +4571,9 @@ it.live(
               body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
@@ -4643,7 +4634,7 @@ it.live(
               )(binding),
             ).toBe(true);
             expect(binding?.subjectType).toBe('api_key');
-            expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
+            expect(binding?.providerSubjectId).toBe(provider.providerKeyId);
             expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
             const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
               authContextRef: Redacted.make(realAuthContextRef),
@@ -4713,8 +4704,8 @@ it.live(
             expect(enrolledCustomerContext.compiled).toEqual(customerContext.compiled);
 
             yield* grantNativeCatalogModuleAccess(fixture.core, 'commerce.customer-context');
-            const guestEvidenceRef = `native/guest/${yield* crypto.randomUUIDv4()}`;
-            const correlationRoot = yield* crypto.randomUUIDv4();
+            const guestEvidenceRef = `native/guest/${yield* crypto.uuidV4()}`;
+            const correlationRoot = yield* crypto.uuidV4();
             const sellingLegalEntityRef: Parameters<
               typeof executeAttributeGuestRetailCustomerWithAuthorization
             >[0]['sellingLegalEntityRef'] = {
@@ -4763,8 +4754,8 @@ it.live(
               {
                 baseUrl: `${party.origin}${party.apiPrefix}`,
                 compositionRevision: approved.composition.revision,
-                correlationId: yield* crypto.randomUUIDv4(),
-                idempotencyKey: yield* crypto.randomUUIDv4(),
+                correlationId: yield* crypto.uuidV4(),
+                idempotencyKey: yield* crypto.uuidV4(),
               },
             );
             expect(createdParty.outcome).toBe('CREATED');
@@ -4821,7 +4812,7 @@ it.live(
               }),
             ).toBe(false);
 
-            const correlationId = yield* crypto.randomUUIDv4();
+            const correlationId = yield* crypto.uuidV4();
             const issueGuestAuthorization = Effect.fn('ServerOwnerRelayNative.issueGuestAuthorization')(
               function* issueGuestAuthorization() {
                 return yield* issueNativeApiKeyGatewayAuthorization({
@@ -4853,7 +4844,7 @@ it.live(
                 {
                   baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
                   compositionRevision: approved.composition.revision,
-                  idempotencyKey: yield* crypto.randomUUIDv4(),
+                  idempotencyKey: yield* crypto.uuidV4(),
                 },
               ).pipe(
                 Effect.tapError((error) =>
@@ -4891,7 +4882,7 @@ it.live(
             expect(invocation.principalId).toBe(fixture.core.manager.principalId);
             expect(invocation.authBindingId).toBe(personalKey.authBindingId);
             expect(invocation.authMethod).toBe('api_key');
-            expect(invocation.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+            expect(invocation.authContextRef).toBe(Redacted.value(personalAuthContextRef));
             expect(invocation.legalEntityId).toBe(fixture.core.legalEntityId);
             const audits = evidence.audits.filter(
               (row) => row.actionInvocationId === invocation.actionInvocationId && row.eventType === 'action.executed',
@@ -4900,10 +4891,10 @@ it.live(
             for (const audit of audits) {
               expect(audit.outcome).toBe('succeeded');
               expect(audit.principalId).toBe(fixture.core.manager.principalId);
-              expect(audit.principalId === serviceId).toBe(false);
+              expect(audit.principalId).not.toBe(serviceId);
               expect(audit.authBindingId).toBe(personalKey.authBindingId);
               expect(audit.authMethod).toBe('api_key');
-              expect(audit.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+              expect(audit.authContextRef).toBe(Redacted.value(personalAuthContextRef));
               expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
             }
             expect(
@@ -4919,16 +4910,16 @@ it.live(
             expect(providerReads.length).toBeGreaterThan(0);
             for (const read of providerReads) {
               expect(read.principalId).toBe(fixture.core.manager.principalId);
-              expect(read.principalId === serviceId).toBe(false);
+              expect(read.principalId).not.toBe(serviceId);
               expect(read.authBindingId).toBe(personalKey.authBindingId);
               expect(read.authMethod).toBe('api_key');
-              expect(read.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+              expect(read.authContextRef).toBe(Redacted.value(personalAuthContextRef));
               expect(read.legalEntityId).toBe(fixture.core.legalEntityId);
             }
             const exchange = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
               where: { sourceJti: authorization.sourceJti },
             });
-            expect(exchange !== undefined).toBe(true);
+            expect(exchange).toBeDefined();
             const readAuthorization = yield* issueGuestAuthorization();
             const readback = yield* client.post(
               `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}/reads/guest-attribution-status`,
@@ -4936,7 +4927,7 @@ it.live(
                 body: yield* HttpBody.json({ attributionCorrelationId: correlationRoot, sellingLegalEntityRef }),
                 headers: {
                   authorization: Redacted.value(readAuthorization.authorization),
-                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.uuidV4(),
                   'x-ontos-composition-revision': approved.composition.revision,
                 },
               },
@@ -4984,7 +4975,9 @@ it.live(
                 )
                 .map(({ failureCategory, reasonCode }) => ({ failureCategory, reasonCode }));
               yield* Effect.logInfo('Safe native Guest status failure from combined captured diagnostics', {
-                missingCryptoService: diagnostic.includes('Service not found: effect/Crypto'),
+                missingCryptoService:
+                  diagnostic.includes('Service not found: effect/crypto/SecureRandom') ||
+                  diagnostic.includes('Service not found: effect/crypto/Digest'),
                 recognizedCoreFailures,
                 unexpectedGovernedReadHttpDefect: diagnostic.includes('Unexpected governed-read HTTP defect'),
               });
@@ -5022,7 +5015,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('120 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
   // This scenario bounds itself at 120 seconds above, exactly like the two packaged-Shell scenarios
   // around it, but it was the only one without the matching runner budget, so Rstest's 30 s project
@@ -5043,8 +5036,8 @@ it.live(
             const signingKeyPair = yield* Effect.tryPromise(() =>
               generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }),
             );
-            const signingCrypto = yield* Crypto.Crypto;
-            const signingKid = `native-${yield* signingCrypto.randomUUIDv4()}`;
+            const signingCrypto = yield* SecureRandom.SecureRandom;
+            const signingKid = `native-${yield* signingCrypto.uuidV4()}`;
             const privateJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.privateKey));
             const publicJwk = yield* Effect.tryPromise(() => exportJWK(signingKeyPair.publicKey));
             const gatewayMaterial = {
@@ -5324,7 +5317,7 @@ it.live(
             expect(authority?.durableWorkAdmission).toBe('open');
 
             yield* grantNativeIdentityAdministration(fixture.core);
-            const crypto = yield* Crypto.Crypto;
+            const crypto = yield* SecureRandom.SecureRandom;
             const signIn = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/sign-in`, {
               body: yield* HttpBody.json({ email: fixture.email, password: Redacted.value(fixture.password) }),
               headers: { origin: fixture.origin },
@@ -5347,14 +5340,14 @@ it.live(
               return yield* new PackagedOwnerStartupError({ reason: 'Actual manager session was not persisted' });
             }
             const realAuthContextRef = `better-auth-session:${realSession.id}`;
-            expect(realAuthContextRef === fixture.core.manager.authContextRef).toBe(false);
+            expect(realAuthContextRef).not.toBe(fixture.core.manager.authContextRef);
             const create = yield* client.post(`${fixture.origin}${shell.apiPrefix}/auth/identity/principals`, {
               body: yield* HttpBody.json({ displayName: 'Native source workload', kind: 'service' }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture principal HTTP result', { status: create.status });
@@ -5370,9 +5363,9 @@ it.live(
               body: yield* HttpBody.json({ name: 'Native source relay', principalId: serviceId }),
               headers: {
                 cookie: Redacted.value(cookie),
-                'idempotency-key': yield* crypto.randomUUIDv4(),
+                'idempotency-key': yield* crypto.uuidV4(),
                 origin: fixture.origin,
-                'x-correlation-id': yield* crypto.randomUUIDv4(),
+                'x-correlation-id': yield* crypto.uuidV4(),
               },
             });
             yield* Effect.logInfo('Real managed fixture key HTTP result', { status: issue.status });
@@ -5414,9 +5407,9 @@ it.live(
                 body: yield* HttpBody.json({ name: 'Native Market source relay', principalId: serviceId }),
                 headers: {
                   cookie: Redacted.value(cookie),
-                  'idempotency-key': yield* crypto.randomUUIDv4(),
+                  'idempotency-key': yield* crypto.uuidV4(),
                   origin: fixture.origin,
-                  'x-correlation-id': yield* crypto.randomUUIDv4(),
+                  'x-correlation-id': yield* crypto.uuidV4(),
                 },
               },
             );
@@ -5425,7 +5418,7 @@ it.live(
               Effect.flatMap(Schema.decodeUnknownEffect(Schema.toCodecJson(ApiKeyIssueResponseSchema))),
             );
             const marketProvider = yield* keys.verify(Redacted.value(marketIssued.secret));
-            expect(marketProvider.providerKeyId === provider.providerKeyId).toBe(false);
+            expect(marketProvider.providerKeyId).not.toBe(provider.providerKeyId);
             const marketService = yield* fixture.resolver.resolveBetterAuthApiKey(marketProvider.providerKeyId);
             expect(marketService.principalId).toBe(serviceId);
             expect(marketService.authBindingId).toBe(marketIssued.authBindingId);
@@ -5454,7 +5447,7 @@ it.live(
               )(binding),
             ).toBe(true);
             expect(binding?.subjectType).toBe('api_key');
-            expect(binding?.providerSubjectId === provider.providerKeyId).toBe(true);
+            expect(binding?.providerSubjectId).toBe(provider.providerKeyId);
             expect(binding?.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
             const identityActionCount = yield* assertNativeManagedIdentityActions(database, {
               authContextRef: Redacted.make(realAuthContextRef),
@@ -5543,7 +5536,7 @@ it.live(
             expect(enrolledMarket.compiled).toEqual(market.compiled);
 
             yield* grantNativeCatalogModuleAccess(fixture.core, 'commerce.customer-context');
-            const retailEvidenceRef = `native/retail/${yield* crypto.randomUUIDv4()}`;
+            const retailEvidenceRef = `native/retail/${yield* crypto.uuidV4()}`;
             const sellingLegalEntityRef: Parameters<
               typeof executeEnsureRetailCustomerProfileWithAuthorization
             >[0]['subject']['sellingLegalEntityRef'] = {
@@ -5591,8 +5584,8 @@ it.live(
               {
                 baseUrl: `${party.origin}${party.apiPrefix}`,
                 compositionRevision: approved.composition.revision,
-                correlationId: yield* crypto.randomUUIDv4(),
-                idempotencyKey: yield* crypto.randomUUIDv4(),
+                correlationId: yield* crypto.uuidV4(),
+                idempotencyKey: yield* crypto.uuidV4(),
               },
             );
             expect(createdParty.outcome).toBe('CREATED');
@@ -5668,8 +5661,8 @@ it.live(
                   publicKey: signingKeyPair.publicKey,
                   revision: approved.composition.revision,
                 });
-                const correlationId = yield* crypto.randomUUIDv4();
-                const idempotencyKey = yield* crypto.randomUUIDv4();
+                const correlationId = yield* crypto.uuidV4();
+                const idempotencyKey = yield* crypto.uuidV4();
                 const ensureResult = yield* requireExecutedAction(
                   parkedProposalRefusal,
                   executeEnsureRetailCustomerProfileWithAuthorization(
@@ -5707,9 +5700,9 @@ it.live(
             expect(repeated.result.state).toBe('ACTIVE');
             expect(repeated.result.profileRef).toEqual(created.result.profileRef);
             expect(repeated.result.revision).toBe(created.result.revision);
-            expect(created.idempotencyKey === repeated.idempotencyKey).toBe(false);
-            expect(created.correlationId === repeated.correlationId).toBe(false);
-            expect(created.authorization.sourceJti === repeated.authorization.sourceJti).toBe(false);
+            expect(created.idempotencyKey).not.toBe(repeated.idempotencyKey);
+            expect(created.correlationId).not.toBe(repeated.correlationId);
+            expect(created.authorization.sourceJti).not.toBe(repeated.authorization.sourceJti);
             const evidence = yield* fixture.core.evidence(database);
             const invocations = evidence.invocations.filter(
               (row) => row.actionKey === 'commerce.customer-context.ensure-retail-customer-profile',
@@ -5726,7 +5719,7 @@ it.live(
               expect(invocation.principalId).toBe(fixture.core.manager.principalId);
               expect(invocation.authBindingId).toBe(personalKey.authBindingId);
               expect(invocation.authMethod).toBe('api_key');
-              expect(invocation.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+              expect(invocation.authContextRef).toBe(Redacted.value(personalAuthContextRef));
               expect(invocation.legalEntityId).toBe(fixture.core.legalEntityId);
               const audits = evidence.audits.filter(
                 (row) =>
@@ -5737,10 +5730,10 @@ it.live(
                 expect(audit.outcome).toBe('succeeded');
                 expect(audit.tenantId).toBe(fixture.core.tenantId);
                 expect(audit.principalId).toBe(fixture.core.manager.principalId);
-                expect(audit.principalId === serviceId).toBe(false);
+                expect(audit.principalId).not.toBe(serviceId);
                 expect(audit.authBindingId).toBe(personalKey.authBindingId);
                 expect(audit.authMethod).toBe('api_key');
-                expect(audit.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                expect(audit.authContextRef).toBe(Redacted.value(personalAuthContextRef));
                 expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
               }
               const lookups = evidence.accesses.filter(
@@ -5766,7 +5759,7 @@ it.live(
               const exchange = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
                 where: { sourceJti: call.authorization.sourceJti },
               });
-              expect(exchange !== undefined).toBe(true);
+              expect(exchange).toBeDefined();
             }
             const events = evidence.events.filter(
               (row) =>
@@ -5784,10 +5777,10 @@ it.live(
             expect(providerReads).toHaveLength(2);
             for (const read of partyReads) {
               expect(read.principalId).toBe(fixture.core.manager.principalId);
-              expect(read.principalId === serviceId).toBe(false);
+              expect(read.principalId).not.toBe(serviceId);
               expect(read.authBindingId).toBe(personalKey.authBindingId);
               expect(read.authMethod).toBe('api_key');
-              expect(read.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+              expect(read.authContextRef).toBe(Redacted.value(personalAuthContextRef));
               expect(read.legalEntityId).toBe(fixture.core.legalEntityId);
             }
             yield* Effect.logInfo('Actual Retail Ensure persisted and independently read back by fresh Ensure', {
@@ -5822,7 +5815,7 @@ it.live(
                   });
                 }
                 const bindingEvidenceRef = `core-action-invocation:${recordedEnsure.actionInvocationId}`;
-                const bindingCorrelation = yield* crypto.randomUUIDv4();
+                const bindingCorrelation = yield* crypto.uuidV4();
                 const issueBindingProof = Effect.fn('ServerOwnerRelayNative.issueBindingProof')(
                   function* issueBindingProof() {
                     return yield* issueNativeApiKeyGatewayAuthorization(bindingActor);
@@ -5850,7 +5843,7 @@ it.live(
                   {
                     baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
                     compositionRevision: approved.composition.revision,
-                    idempotencyKey: yield* crypto.randomUUIDv4(),
+                    idempotencyKey: yield* crypto.uuidV4(),
                   },
                 ).pipe(
                   Effect.tapError((error) =>
@@ -5885,7 +5878,7 @@ it.live(
                         }),
                         headers: {
                           authorization: Redacted.value(proof.authorization),
-                          'x-correlation-id': yield* crypto.randomUUIDv4(),
+                          'x-correlation-id': yield* crypto.uuidV4(),
                           'x-ontos-composition-revision': approved.composition.revision,
                         },
                       },
@@ -5939,7 +5932,7 @@ it.live(
                     }),
                     headers: {
                       authorization: Redacted.value(accessProof.authorization),
-                      'x-correlation-id': yield* crypto.randomUUIDv4(),
+                      'x-correlation-id': yield* crypto.uuidV4(),
                       'x-ontos-composition-revision': approved.composition.revision,
                     },
                   },
@@ -5977,7 +5970,7 @@ it.live(
                 expect(bindingInvocation.principalId).toBe(bindingActor.principalId);
                 expect(bindingInvocation.authBindingId).toBe(bindingActor.authBindingId);
                 expect(bindingInvocation.authMethod).toBe('api_key');
-                expect(bindingInvocation.authContextRef === Redacted.value(bindingActor.authContextRef)).toBe(true);
+                expect(bindingInvocation.authContextRef).toBe(Redacted.value(bindingActor.authContextRef));
                 expect(bindingInvocation.legalEntityId).toBe(fixture.core.legalEntityId);
                 const bindingAudits = bindingEvidence.audits.filter(
                   (row) =>
@@ -5990,7 +5983,7 @@ it.live(
                   expect(audit.principalId).toBe(bindingActor.principalId);
                   expect(audit.authBindingId).toBe(bindingActor.authBindingId);
                   expect(audit.authMethod).toBe('api_key');
-                  expect(audit.authContextRef === Redacted.value(bindingActor.authContextRef)).toBe(true);
+                  expect(audit.authContextRef).toBe(Redacted.value(bindingActor.authContextRef));
                   expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
                 }
                 const activationTopic = 'commerce.customer-context.retail-portal-profile-binding-activated.v1';
@@ -6037,7 +6030,7 @@ it.live(
                   publicKey: signingKeyPair.publicKey,
                   revision: approved.composition.revision,
                 });
-                const requestCorrelation = yield* crypto.randomUUIDv4();
+                const requestCorrelation = yield* crypto.uuidV4();
                 const beforePriceGroupRead = yield* fixture.core.evidence(database);
                 const previousAccesses = new Set(beforePriceGroupRead.accesses.map((row) => row.dataAccessEventId));
                 const resolved = yield* executeCustomerPriceGroupResolutionWithAuthorization(
@@ -6140,17 +6133,17 @@ it.live(
                       baseUrl: `${party.origin}${party.apiPrefix}`,
                       compositionRevision: approved.composition.revision,
                       correlationId,
-                      idempotencyKey: yield* crypto.randomUUIDv4(),
+                      idempotencyKey: yield* crypto.uuidV4(),
                     });
                   },
                 );
-                const contactCorrelation = yield* crypto.randomUUIDv4();
+                const contactCorrelation = yield* crypto.uuidV4();
                 const contact = yield* addContact(contactCorrelation);
                 expect(contact.partyRef).toEqual(partyRef);
                 expect(contact.contactPointRef.tenantId).toBe(fixture.core.tenantId);
                 expect(contact.revision).toBeGreaterThan(0);
                 yield* contactPointAdd.revoke();
-                const refusedContact = yield* Effect.flip(addContact(yield* crypto.randomUUIDv4()));
+                const refusedContact = yield* Effect.flip(addContact(yield* crypto.uuidV4()));
                 expect(Schema.is(Schema.Struct({ status: Schema.Literal(403) }))(refusedContact)).toBe(true);
                 const postalBefore = yield* fixture.core.evidence(database);
                 const priorPartyReads = new Set(
@@ -6176,7 +6169,7 @@ it.live(
                       'commerce-customer-context',
                       customerContext.compiled.buildMarker,
                     );
-                    const requestCorrelation = yield* crypto.randomUUIDv4();
+                    const requestCorrelation = yield* crypto.uuidV4();
                     const addressResult = yield* requireExecutedAction(
                       parkedProposalRefusal,
                       executeAddSavedAddressWithAuthorization(
@@ -6186,7 +6179,7 @@ it.live(
                         {
                           baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
                           compositionRevision: approved.composition.revision,
-                          idempotencyKey: yield* crypto.randomUUIDv4(),
+                          idempotencyKey: yield* crypto.uuidV4(),
                         },
                       ).pipe(Effect.tapError(observePostalAddFailure)),
                     );
@@ -6207,7 +6200,7 @@ it.live(
                   'commerce-customer-context',
                   customerContext.compiled.buildMarker,
                 );
-                const updateCorrelation = yield* crypto.randomUUIDv4();
+                const updateCorrelation = yield* crypto.uuidV4();
                 const updatedAddress = yield* requireExecutedAction(
                   parkedProposalRefusal,
                   executeUpdateSavedAddressWithAuthorization(
@@ -6224,7 +6217,7 @@ it.live(
                     {
                       baseUrl: `${enrolledCustomerContext.origin}${enrolledCustomerContext.apiPrefix}`,
                       compositionRevision: approved.composition.revision,
-                      idempotencyKey: yield* crypto.randomUUIDv4(),
+                      idempotencyKey: yield* crypto.uuidV4(),
                     },
                   ).pipe(
                     Effect.tapError((error) =>
@@ -6257,7 +6250,7 @@ it.live(
                         body: yield* HttpBody.json({ profile: profileSelector }),
                         headers: {
                           authorization: Redacted.value(proof.authorization),
-                          'x-correlation-id': yield* crypto.randomUUIDv4(),
+                          'x-correlation-id': yield* crypto.uuidV4(),
                           'x-ontos-composition-revision': approved.composition.revision,
                         },
                       },
@@ -6287,17 +6280,17 @@ it.live(
                 expect(postalProviderReads).toHaveLength(2);
                 for (const postalRead of postalProviderReads) {
                   expect(postalRead.principalId).toBe(fixture.core.manager.principalId);
-                  expect(postalRead.principalId === serviceId).toBe(false);
+                  expect(postalRead.principalId).not.toBe(serviceId);
                   expect(postalRead.authBindingId).toBe(personalKey.authBindingId);
                   expect(postalRead.authMethod).toBe('api_key');
-                  expect(postalRead.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(postalRead.authContextRef).toBe(Redacted.value(personalAuthContextRef));
                   expect(postalRead.legalEntityId).toBe(fixture.core.legalEntityId);
                 }
                 for (const proof of [partyAddress.proof, updateProof]) {
                   const claimed = yield* fixture.persistence.executor.query.gatewayRelayExchanges.findFirst({
                     where: { sourceJti: proof.sourceJti },
                   });
-                  expect(claimed !== undefined).toBe(true);
+                  expect(claimed).toBeDefined();
                 }
                 yield* exerciseFactoryOnlyPostalRejection({
                   compositionRevision: approved.composition.revision,
@@ -6382,7 +6375,7 @@ it.live(
                   expect(postalInvocation.principalId).toBe(fixture.core.manager.principalId);
                   expect(postalInvocation.authBindingId).toBe(personalKey.authBindingId);
                   expect(postalInvocation.authMethod).toBe('api_key');
-                  expect(postalInvocation.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                  expect(postalInvocation.authContextRef).toBe(Redacted.value(personalAuthContextRef));
                   expect(postalInvocation.legalEntityId).toBe(fixture.core.legalEntityId);
                   const executed = postalAfter.audits.filter(
                     (row) =>
@@ -6395,7 +6388,7 @@ it.live(
                     expect(audit.principalId).toBe(fixture.core.manager.principalId);
                     expect(audit.authBindingId).toBe(personalKey.authBindingId);
                     expect(audit.authMethod).toBe('api_key');
-                    expect(audit.authContextRef === Redacted.value(personalAuthContextRef)).toBe(true);
+                    expect(audit.authContextRef).toBe(Redacted.value(personalAuthContextRef));
                     expect(audit.legalEntityId).toBe(fixture.core.legalEntityId);
                   }
                 }
@@ -6519,7 +6512,7 @@ it.live(
       }
     }).pipe(
       Effect.timeout('120 seconds'),
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
+      Effect.provide(Layer.mergeAll(relayNativeServices, NodeHttpClient.layerNodeHttp, Reactivity.layer)),
     ),
   150_000,
 );

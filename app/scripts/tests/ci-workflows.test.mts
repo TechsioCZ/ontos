@@ -101,13 +101,13 @@ const fullPlanMatrices = (lintSweep: 'all' | 'changed' = 'changed') => {
 const readGateWorkflow = (lintSweep: 'all' | 'changed' = 'changed') => {
   const record = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown));
   const workflow = record(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
-  const jobs = { ...record(workflow.jobs) };
+  const jobs = { ...record(workflow['jobs']) };
   const matrices = fullPlanMatrices(lintSweep);
   for (const [job, key] of PLANNED_MATRIX_JOBS) {
     const entry = record(jobs[job]);
-    const strategy = record(entry.strategy);
-    const matrix = record(strategy.matrix);
-    expect(matrix.include).toBe(`\${{ fromJSON(needs.ci-plan.outputs.${key}) }}`);
+    const strategy = record(entry['strategy']);
+    const matrix = record(strategy['matrix']);
+    expect(matrix['include']).toBe(`\${{ fromJSON(needs.ci-plan.outputs.${key}) }}`);
     jobs[job] = { ...entry, strategy: { ...strategy, matrix: { ...matrix, include: matrices[key] } } };
   }
   return { ...workflow, jobs };
@@ -397,12 +397,14 @@ it("records what a pull request run tested only after its final plan, under the 
   const jobs = readProofJobs();
   const steps = jobs[CI_PLAN_JOB]?.steps ?? [];
   const classify = steps.find(({ id }) => id === 'changes');
-  expect(classify?.env?.QUEUE_PROVEN).toBe(expression('needs.queue-proof.outputs.proven'));
-  expect(classify?.env?.QUEUE_PROOF_RUN).toBe(expression('needs.queue-proof.outputs.run'));
+  expect(classify?.env?.['QUEUE_PROVEN']).toBe(expression('needs.queue-proof.outputs.proven'));
+  expect(classify?.env?.['QUEUE_PROOF_RUN']).toBe(expression('needs.queue-proof.outputs.run'));
   const record = steps.findIndex(({ run }) => run?.startsWith(`bash ${PULL_REQUEST_PROOF_SCRIPT} record`) === true);
   expect(record).toBeGreaterThan(steps.findIndex(({ id }) => id === 'selection'));
   expect(steps[record]?.if).toBe(PULL_REQUEST_ONLY);
-  expect(steps[record]?.env?.PLAN_MODE).toBe(expression('steps.selection.outputs.mode || steps.changes.outputs.mode'));
+  expect(steps[record]?.env?.['PLAN_MODE']).toBe(
+    expression('steps.selection.outputs.mode || steps.changes.outputs.mode'),
+  );
   const publish = steps[record + 1];
   expect(publish?.if).toBe(PULL_REQUEST_ONLY);
   expect(publish?.uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}$/u);
@@ -412,7 +414,7 @@ it("records what a pull request run tested only after its final plan, under the 
     path: `${RUNNER_TEMP_EXPRESSION}/ci-comparison/comparison.json`,
   });
   const writers = Object.entries(jobs).flatMap(([job, { steps: jobSteps = [] }]) =>
-    jobSteps.filter(({ with: inputs }) => inputs?.name === PULL_REQUEST_RECORD).map(() => job),
+    jobSteps.filter(({ with: inputs }) => inputs?.['name'] === PULL_REQUEST_RECORD).map(() => job),
   );
   expect(writers).toEqual([CI_PLAN_JOB]);
   const script = readFileSync(new URL('../ci/pull-request-proof.sh', import.meta.url), 'utf-8');
@@ -465,7 +467,7 @@ it('cancels the runs of replaced merge queue entries from a job that runs no rep
   expect(cancel?.steps?.map(({ uses }) => uses)).toEqual([undefined]);
   for (const [job, { needs, permissions }] of Object.entries(jobs)) {
     if (job !== CANCEL_REPLACED_QUEUE_RUNS_JOB && !(job in STOPPED_CHECKS)) {
-      expect(permissions?.actions, job).not.toBe('write');
+      expect(permissions?.['actions'], job).not.toBe('write');
     }
     // A cancel never decides the verdict, and nothing waits for it.
     expect(needs ?? [], job).not.toContain(CANCEL_REPLACED_QUEUE_RUNS_JOB);
@@ -710,7 +712,7 @@ it('classifies documentation before installation and schedules full regression w
   expect(install).toBe(-1);
   // WorkflowStepSchema omits uses-only metadata, but preserves the controlling if condition.
   expect(selection?.if).toBe("steps.changes.outputs.mode != 'docs' && steps.changes.outputs.mode != 'proven'");
-  expect(selection?.env?.BOOTSTRAP_MODE).toBe(expression('steps.changes.outputs.mode'));
+  expect(selection?.env?.['BOOTSTRAP_MODE']).toBe(expression('steps.changes.outputs.mode'));
   // The planner selects from the changed paths on every run. A repository variable that has never
   // existed must not decide whether the selection applies: that silently planned the full matrix.
   const source = readFileSync(GATES_WORKFLOW_URL, 'utf-8');
@@ -739,8 +741,8 @@ it('tells the planner whether a push has a merge queue from the queue-proof job,
   // actions: read lists this workflow's push runs; nothing else is added to the read-only token.
   expect(plan.permissions).toEqual({ actions: 'read', contents: 'read' });
   const classify = plan.steps.find(({ id }) => id === 'changes');
-  expect(classify?.env?.QUEUE_PROOF).toBe(expression('needs.queue-proof.result'));
-  expect(classify?.env?.GH_TOKEN).toBe(GITHUB_TOKEN_EXPRESSION);
+  expect(classify?.env?.['QUEUE_PROOF']).toBe(expression('needs.queue-proof.result'));
+  expect(classify?.env?.['GH_TOKEN']).toBe(GITHUB_TOKEN_EXPRESSION);
   // Two commits for a pull request and a push behind the queue as before; a merge group and a push the
   // queue-proof job skipped read the whole history, without file contents.
   const checkout = plan.steps.find(({ name }) => name === 'Checkout the exact comparison history');
@@ -749,7 +751,7 @@ it('tells the planner whether a push has a merge queue from the queue-proof job,
       "github.event_name != 'merge_group' && (github.event_name != 'push' || needs.queue-proof.result != 'skipped') && 2 || 0",
     ),
   );
-  expect(checkout?.with?.filter).toBe('blob:none');
+  expect(checkout?.with?.['filter']).toBe('blob:none');
 });
 
 it('plans without app dependencies and publishes only the exact changed paths', () => {
@@ -814,7 +816,7 @@ const ComparisonBaseWorkflowSchema = Schema.Struct({
 
 it('publishes the planner comparison base only to the Lean Core row, which fetches that commit alone', () => {
   const { jobs } = Schema.decodeUnknownSync(ComparisonBaseWorkflowSchema)(readGateWorkflow());
-  expect(jobs[CI_PLAN_JOB]?.outputs?.base).toBe(expression('steps.changes.outputs.base'));
+  expect(jobs[CI_PLAN_JOB]?.outputs?.['base']).toBe(expression('steps.changes.outputs.base'));
   const readers = Object.entries(jobs).flatMap(([job, { steps = [] }]) =>
     steps
       .flatMap((step) => step.parallel ?? [step])
@@ -1204,10 +1206,10 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   const selected = Object.fromEntries(
     GATE_JOBS.map((gate) => [gate, gate === SERVICE_INTEGRATION_JOB ? 'skipped' : 'success']),
   );
-  noIntegration[CI_PLAN_JOB].outputs.expected = JSON.stringify(selected);
-  noIntegration[CI_PLAN_JOB].outputs.integrationOwners = '[]';
-  noIntegration[CI_PLAN_JOB].outputs.integrationBrowser = '[]';
-  noIntegration[CI_PLAN_JOB].outputs.integrationBrowserAfterStatic = '[]';
+  noIntegration[CI_PLAN_JOB].outputs['expected'] = JSON.stringify(selected);
+  noIntegration[CI_PLAN_JOB].outputs['integrationOwners'] = '[]';
+  noIntegration[CI_PLAN_JOB].outputs['integrationBrowser'] = '[]';
+  noIntegration[CI_PLAN_JOB].outputs['integrationBrowserAfterStatic'] = '[]';
   const integrationSkipped = {
     ...noIntegration,
     [BROWSER_INTEGRATION_JOB]: { result: 'skipped' },
@@ -1221,7 +1223,7 @@ it('requires the exact CI plan and rejects missing, failed or unplanned skipped 
   expect(passes(needs('affected', skipped))).toBe(false);
   expect(passes(needs('invented', passed))).toBe(false);
   const missing = needs('docs', skipped);
-  missing[CI_PLAN_JOB].outputs.expected = '{}';
+  missing[CI_PLAN_JOB].outputs['expected'] = '{}';
   expect(passes(missing)).toBe(false);
   const broken = needs('docs', skipped);
   broken[CI_PLAN_JOB].result = 'failure';
@@ -1347,12 +1349,14 @@ it('builds every Node release from this commit rather than restoring another rel
   expect(jobTimeout).toBeGreaterThan(10);
   expect(steps[build]?.run).toContain(`--workspace-concurrency=2 "\${filters[@]}" run build`);
   // The integration lanes' single-thread cap must not reach the compilers.
-  expect(env.RAYON_NUM_THREADS).toBeUndefined();
+  expect(env['RAYON_NUM_THREADS']).toBeUndefined();
   expect(steps[build]?.env).toMatchObject({
     NODE_OPTIONS: '--max-old-space-size=2048',
     ONTOS_CI_TYPECHECK_SEPARATE: '1',
     ULTRAMODERN_SOURCE_REVISION: CURRENT_SOURCE_REVISION,
   });
+  // The shared Modern config maps this opt-in to native output policy. No patched compiler env switch is needed.
+  expect(steps[build]?.env?.['ULTRAMODERN_SKIP_SERVER_TYPECHECK']).toBeUndefined();
   expect(steps[pack]?.run).toContain('--file "$RUNNER_TEMP/units.tar.zst"');
 });
 
@@ -1381,7 +1385,7 @@ it('names every failure-diagnostics upload per job, row and attempt', () => {
   for (const [job, { steps = [] }] of Object.entries(jobs)) {
     for (const step of steps) {
       if (step.uses?.startsWith(UPLOAD_ARTIFACT) === true && step.if?.includes('failure()') === true) {
-        names.set(`${job}: ${String(step.with?.name)}`, String(step.with?.name));
+        names.set(`${job}: ${String(step.with?.['name'])}`, String(step.with?.['name']));
       }
     }
   }
@@ -1577,7 +1581,7 @@ it('saves no toolchain under a merge group ref, which no later run can read', ()
   });
   const action = Schema.decodeUnknownSync(schema)(parse(readFileSync(INSTALL_APP_ACTION_URL, 'utf-8')));
   const mise = action.runs.steps.filter(({ uses }) => (uses ?? '').startsWith('jdx/mise-action@'));
-  expect(mise.map((step) => step.with?.cache_save)).toEqual([expression("github.event_name != 'merge_group'")]);
+  expect(mise.map((step) => step.with?.['cache_save'])).toEqual([expression("github.event_name != 'merge_group'")]);
 });
 
 const lookup = (script: string) => execFileSync('/bin/sh', ['-c', script], { encoding: 'utf-8' }).trim();
@@ -1732,7 +1736,7 @@ const gateCommands = () => {
       jobs[job].strategy.matrix.include.map(({ commands }) => commandLines(commands)),
     ),
     ...jobs[SOURCE_CONTRACTS_JOB].steps.flatMap(({ env }) =>
-      env?.COMMANDS === undefined ? [] : [commandLines(env.COMMANDS)],
+      env?.['COMMANDS'] === undefined ? [] : [commandLines(env['COMMANDS'])],
     ),
   ];
 };
@@ -1758,7 +1762,7 @@ it('keeps every check in the source, unit or format gates without repeating the 
   const typecheck = readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
     ({ name }) => name === 'Typecheck the workspace',
   );
-  expect(typecheck?.env).toEqual({ GOMEMLIMIT: '4GiB', ULTRAMODERN_TSGO_BUILDERS: '1' });
+  expect(typecheck?.env).toEqual({ GOMEMLIMIT: '4GiB', ULTRAMODERN_TYPECHECK_BUILDERS: '1' });
   const apiAndGeneration =
     readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
       ({ name }) => name === 'Check OntOS APIs and generator behavior',
@@ -1876,6 +1880,9 @@ it('runs the root unit and component tests of every workspace package in exactly
   );
   const shards = gateCommands().flatMap((commands) => {
     const [unit, component, ...rest] = commands;
+    if (unit === undefined) {
+      return [];
+    }
     const match =
       /^pnpm -r --no-sort --workspace-concurrency=(?<packages>[1-4]) --if-present (?<filters>.+) run test:unit --pool.maxWorkers (?<workers>[1-4])$/u.exec(
         unit,
@@ -1891,7 +1898,9 @@ it('runs the root unit and component tests of every workspace package in exactly
     );
     expect(rest).toEqual([]);
     return [
-      [...filters.matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter?.replaceAll("'", '') ?? ''),
+      [...filters.matchAll(/--filter (?<filter>\S+)/gu)].map(
+        ({ groups }) => groups?.['filter']?.replaceAll("'", '') ?? '',
+      ),
     ];
   });
   // Every shard names exactly the packages it runs; none negates, so no shard silently inherits a
@@ -1960,8 +1969,10 @@ const IntegrationShardsWorkflowSchema = Schema.Struct({
   }),
 });
 
+type IntegrationShard = (typeof IntegrationRunnerSchema.Type)['strategy']['matrix']['include'][number];
+
 /** The workspace packages whose integration files a row's tasks run. */
-const shardFilters = (shard: { readonly tasks?: readonly string[] | undefined }) => [
+const shardFilters = (shard: Pick<IntegrationShard, 'tasks'>) => [
   ...new Set(
     (shard.tasks ?? []).flatMap((task) => {
       const directory = taskDirectory(task);
@@ -1970,7 +1981,7 @@ const shardFilters = (shard: { readonly tasks?: readonly string[] | undefined })
   ),
 ];
 /** Whether a row runs root integration files. */
-const rootRow = (shard: { readonly tasks?: readonly string[] | undefined }) =>
+const rootRow = (shard: Pick<IntegrationShard, 'tasks'>) =>
   (shard.tasks ?? []).some((task) => task.startsWith('root:'));
 
 it('overlaps independent integration preparations and joins their failures before the first consumer', () => {
@@ -2077,7 +2088,7 @@ it('runs retained-release browser recovery separately with one worker and its pu
   const source: unknown = readGateWorkflow();
   const { steps } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(source).jobs[BROWSER_INTEGRATION_JOB];
   const normal = steps.findIndex(({ run }) => run === BROWSER_TEST_COMMAND);
-  const recovery = steps.findIndex(({ env }) => env?.ONTOS_E2E_RETAINED_PARTY_R2 !== undefined);
+  const recovery = steps.findIndex(({ env }) => env?.['ONTOS_E2E_RETAINED_PARTY_R2'] !== undefined);
   expect(normal).toBeGreaterThan(-1);
   expect(recovery).toBeGreaterThan(normal);
   expect(steps[recovery]?.if).toBe("matrix.suite == 'browser'");
@@ -2100,23 +2111,23 @@ it('publishes the verified database from its own producer and restores it only i
   const { steps } = producer;
   const migrated = steps.findIndex(({ run }) => run?.includes('pnpm db:verify') === true);
   const exported = steps.findIndex(({ run }) => run === 'bash scripts/ci/export-integration-database.sh');
-  const uploaded = steps.findIndex(({ with: inputs }) => inputs?.name === INTEGRATION_DATABASE_ARTIFACT);
+  const uploaded = steps.findIndex(({ with: inputs }) => inputs?.['name'] === INTEGRATION_DATABASE_ARTIFACT);
   expect(migrated).toBeGreaterThan(-1);
   expect(migrated < exported && exported < uploaded).toBe(true);
   for (const step of [steps[exported], steps[uploaded]]) {
     expect(step?.if).toBe("matrix.suite == 'database'");
   }
-  expect(steps[uploaded]?.with?.overwrite).toBe(true);
+  expect(steps[uploaded]?.with?.['overwrite']).toBe(true);
   // The owner rows need the producer, so the archive exists when they start. Empty clusters start first;
   // only the restore reads the archive, and the tests wait for that restore.
   expect(consumer.needs).toContain(SERVICE_INTEGRATION_JOB);
   const workers = consumer.steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   const restore = consumer.steps.findIndex(({ id }) => id === INTEGRATION_WORKERS_STEP_ID);
   const restored = consumer.steps.findIndex(({ wait }) => wait === INTEGRATION_WORKERS_STEP_ID);
-  const tests = consumer.steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const tests = consumer.steps.findIndex(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
   expect(workers).toBeGreaterThan(-1);
   expect(workers < restore && restore < restored && restored < tests).toBe(true);
-  expect(consumer.steps[workers]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBeUndefined();
+  expect(consumer.steps[workers]?.env?.['INTEGRATION_DATABASE_ARCHIVE']).toBeUndefined();
   expect(consumer.steps[restore]?.background).toBe(true);
   expect(consumer.steps[restore]?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   // Nothing tells the restore to wait: the archive exists when the row starts.
@@ -2125,7 +2136,7 @@ it('publishes the verified database from its own producer and restores it only i
     'INTEGRATION_DATABASE_ARCHIVE',
     'ONTOS_CI_ISOLATED_WORKERS',
   ]);
-  expect(consumer.steps[restore]?.env?.INTEGRATION_DATABASE_ARCHIVE).toBe(
+  expect(consumer.steps[restore]?.env?.['INTEGRATION_DATABASE_ARCHIVE']).toBe(
     `${RUNNER_TEMP_EXPRESSION}/integration-database`,
   );
   // The download names this run's id, so it reads only this workflow run's archive.
@@ -2139,7 +2150,7 @@ it('publishes the verified database from its own producer and restores it only i
   expect(
     consumer.steps.some(
       ({ uses, with: inputs }) =>
-        uses?.startsWith('actions/download-artifact@') === true && inputs?.name === INTEGRATION_DATABASE_ARTIFACT,
+        uses?.startsWith('actions/download-artifact@') === true && inputs?.['name'] === INTEGRATION_DATABASE_ARTIFACT,
     ),
   ).toBe(false);
 });
@@ -2179,7 +2190,7 @@ it('supplies same-run built Composition to selected native owner integration sha
   const download = steps.findIndex(({ name }) => name === BACKEND_ARTIFACT_DOWNLOAD_STEP);
   const unpack = steps.findIndex(({ wait }) => wait === NATIVE_ARTIFACTS_STEP_ID);
   const derive = steps.findIndex(({ run }) => run?.includes('prove-build --snapshot-output') === true);
-  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const tests = steps.findIndex(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
   const workers = steps.findIndex(({ run }) => run === START_INTEGRATION_WORKERS);
   expect(workers).toBeGreaterThan(-1);
   expect(download < workers).toBe(true);
@@ -2241,7 +2252,7 @@ it('proves the built topology of every delivery unit in one row of the integrati
     "matrix.suite == 'bootstrap' || matrix.suite == 'browser' || matrix.suite == 'database'",
   );
   // The suites never run on this row, and its steps never run on a suite row.
-  const tests = steps.find(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const tests = steps.find(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
   expect(tests?.if).toBe(BACKEND_INTEGRATION_CONDITION);
 });
 
@@ -2394,7 +2405,7 @@ const shardFamilies = (tasks: readonly string[]) => {
   for (const task of tasks) {
     const shard = /^(?<family>root|\.\/[a-z0-9/-]+)[:#](?<shard>\d+\/\d+)$/u.exec(task)?.groups;
     if (shard !== undefined) {
-      families.set(shard.family ?? '', [...(families.get(shard.family ?? '') ?? []), shard.shard ?? '']);
+      families.set(shard['family'] ?? '', [...(families.get(shard['family'] ?? '') ?? []), shard['shard'] ?? '']);
     }
   }
   return families;
@@ -2447,7 +2458,7 @@ it('covers every integration file exactly once across the owner rows', () => {
 
 it('names every package integration suite and keeps native proofs one per runner', () => {
   const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
-  const run = jobs[SERVICE_INTEGRATION_JOB].steps.find(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const run = jobs[SERVICE_INTEGRATION_JOB].steps.find(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
   expect(run?.if).toBe(BACKEND_INTEGRATION_CONDITION);
   expect(run?.env).toMatchObject({
     APP_ENV_PATH: '/dev/null',
@@ -2495,14 +2506,14 @@ it('gives the one Core Media row its object store before the suites and keeps th
   const { steps } = jobs[OWNER_INTEGRATION_JOB];
   const named = (name: string) => steps.findIndex((step) => step.name === name);
   const start = named('Start the Core Media object store');
-  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const tests = steps.findIndex(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
   const upload = named('Upload the Core Media evidence record');
   const selected = "matrix.suite == 'integration' && contains(matrix.tasks, 'whole:core-media')";
   expect(start).toBeGreaterThan(named(INSTALL_APP_STEP));
   expect(start < tests && tests < upload).toBe(true);
   expect(steps[start]?.if).toBe(selected);
   expect(steps[start]?.run).toBe('bash scripts/ci/start-core-media-object-store.sh');
-  expect(steps[tests]?.env?.CORE_MEDIA_EVIDENCE_DIR).toBe(`${RUNNER_TEMP_EXPRESSION}/core-media-evidence`);
+  expect(steps[tests]?.env?.['CORE_MEDIA_EVIDENCE_DIR']).toBe(`${RUNNER_TEMP_EXPRESSION}/core-media-evidence`);
   // Kept when a case failed too: the record then says which one. A run that never reached the suites has none.
   expect(steps[upload]?.if).toBe(
     expression(`!cancelled() && steps.integration-suites.outcome != 'skipped' && ${selected}`),
@@ -2537,7 +2548,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
   // and lost its runner.
   expect(run).not.toMatch(/pnpm lint$/mu);
-  // Effect's tsgolint emits no Effect language-service diagnostics, so the step runs them itself.
+  // The tsrs Oxlint backend does not emit Effect language-service diagnostics, so the step runs them itself.
   expect(run).toContain('mise exec --cd app -- pnpm lint:effect-diagnostics');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
   const select = run.slice(0, run.indexOf('mise exec'));
@@ -2748,11 +2759,11 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     // suites, instead of the retired service container of the build job.
     const integration = jobs[SERVICE_INTEGRATION_JOB];
     const environment = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(integration.env);
-    const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment.DATABASE_ADMIN_URL);
-    expect(admin.port).toBe(environment.POSTGRES_PORT);
-    expect(admin.username).toBe(environment.POSTGRES_USER);
-    expect(admin.password).toBe(environment.POSTGRES_PASSWORD);
-    expect(admin.pathname).toBe(`/${environment.POSTGRES_DB ?? ''}`);
+    const admin = yield* Schema.decodeUnknownEffect(Schema.URLFromString)(environment['DATABASE_ADMIN_URL']);
+    expect(admin.port).toBe(environment['POSTGRES_PORT']);
+    expect(admin.username).toBe(environment['POSTGRES_USER']);
+    expect(admin.password).toBe(environment['POSTGRES_PASSWORD']);
+    expect(admin.pathname).toBe(`/${environment['POSTGRES_DB'] ?? ''}`);
     const provision = integration.steps.findIndex(({ run }) => (run ?? '').includes('mise exec -- pnpm db:migrate'));
     const proof = integration.steps.findIndex(({ run }) => run === 'mise exec -- pnpm node:proof');
     expect(provision).toBeGreaterThanOrEqual(0);
@@ -2766,7 +2777,7 @@ it.effect('proves Node artifacts against a migrated PostgreSQL database with eve
     for (const identity of DATABASE_IDENTITIES) {
       const connection = yield* loadDatabaseConfig({ environment, envPath: '/dev/null', identity });
       expect(connection.user).toBe(identity.role);
-      expect(connection.database).toBe(environment.POSTGRES_DB);
+      expect(connection.database).toBe(environment['POSTGRES_DB']);
       expect(connection.host).toBe(admin.hostname);
       expect(connection.port).toBe(Number(admin.port));
     }
@@ -2801,7 +2812,7 @@ it('restores same-run Node artifacts for every backend integration fixture and e
   expect(steps.some(({ run }) => run?.includes('zerops:materialize --app commerce-customer-context') === true)).toBe(
     false,
   );
-  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const tests = steps.findIndex(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
   expect(download).toBeGreaterThan(-1);
   expect(download < unpack && unpack < tests).toBe(true);
   expect(steps[download]?.run).toBe(BACKEND_ARTIFACT_DOWNLOAD_COMMAND);
@@ -3025,14 +3036,14 @@ const artifactMayMatch = (uploaded: string, selector: string) => {
 const scriptDownloads = (run: string) =>
   [...run.matchAll(GH_RUN_DOWNLOAD)]
     .filter(({ groups }) =>
-      (groups?.options ?? '')
+      (groups?.['options'] ?? '')
         .trim()
         .split(/\s+/u)
         .some((token) => SAME_RUN_ID.test(token)),
     )
     .flatMap(({ groups }) => {
-      const selectors = [...(groups?.options ?? '').matchAll(DOWNLOAD_SELECTOR)].map(
-        (match) => match.groups?.selector ?? '*',
+      const selectors = [...(groups?.['options'] ?? '').matchAll(DOWNLOAD_SELECTOR)].map(
+        (match) => match.groups?.['selector'] ?? '*',
       );
       return selectors.length === 0 ? ['*'] : selectors;
     });
@@ -3047,7 +3058,7 @@ const sameRunDownloads = (step: RuleStep): readonly string[] => {
 /** The scripts a step runs, read from the repository, so a wait cannot hide behind a script name. */
 const stepScripts = (run: string) =>
   [...run.matchAll(/(?:^|\s)(?:bash|sh)\s+(?<script>(?:app\/)?scripts\/[\w./-]+\.sh)/gu)].flatMap(({ groups }) => {
-    const script = groups?.script ?? '';
+    const script = groups?.['script'] ?? '';
     const file = new URL(`../../${script.replace(/^app\//u, '')}`, import.meta.url);
     return existsSync(file) ? [{ script, source: readFileSync(file, 'utf-8') }] : [];
   });
@@ -3066,7 +3077,9 @@ const stepRunsOnSuites = (condition: string | undefined, suites: readonly (strin
   if (clauses.some((clause) => clause === undefined)) {
     return true;
   }
-  return suites.some((suite) => clauses.some((clause) => (clause?.operator === '==') === (suite === clause?.suite)));
+  return suites.some((suite) =>
+    clauses.some((clause) => (clause?.['operator'] === '==') === (suite === clause?.['suite'])),
+  );
 };
 /** The steps a job runs on at least one of its matrix rows. */
 const runningSteps = (jobs: RuleWorkflow['jobs'], job: string) => {
@@ -3254,6 +3267,6 @@ it('runs excluded whole-owner scenarios exactly once in isolated integration lan
     expect(jobs[SERVICE_INTEGRATION_JOB].steps.some(({ run }) => run?.includes(file) === true)).toBe(false);
     expect(scheduler).toContain(file);
   }
-  const run = jobs[SERVICE_INTEGRATION_JOB].steps.find(({ env }) => env?.INTEGRATION_TASKS !== undefined);
-  expect(run?.env?.INTEGRATION_TASKS).toBe(expression('toJSON(matrix.tasks)'));
+  const run = jobs[SERVICE_INTEGRATION_JOB].steps.find(({ env }) => env?.['INTEGRATION_TASKS'] !== undefined);
+  expect(run?.env?.['INTEGRATION_TASKS']).toBe(expression('toJSON(matrix.tasks)'));
 });

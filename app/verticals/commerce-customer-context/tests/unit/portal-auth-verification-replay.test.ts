@@ -1,4 +1,4 @@
-import { DateTime, Effect, Layer, Option, Redacted } from 'effect';
+import { DateTime, Effect, Fiber, Layer, Option, Redacted } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -14,6 +14,11 @@ import {
   enrollmentVerificationIssuanceRef,
   verificationReplayLayer,
 } from '../../src/portal-auth/communications/verification-replay.ts';
+import {
+  CommerceAuthSha256,
+  commerceAuthDigestUnavailable,
+  makeCommerceAuthSha256,
+} from '../../src/portal-auth/sha256.ts';
 import { handoffOverDouble, holdWithRequest } from '../support/portal-auth-communication-store.double.ts';
 
 /**
@@ -25,14 +30,17 @@ import { handoffOverDouble, holdWithRequest } from '../support/portal-auth-commu
 const INVOCATION = '22222222-2222-4222-8222-222222222222';
 const SUBJECT = 'subject-1';
 
-const replayWith = (outcome: PortalAuthSourceOutcome) => {
+const replayWith = (
+  outcome: PortalAuthSourceOutcome,
+  platformCrypto: Layer.Layer<CommerceAuthSha256> = commercePortalAuthPlatformCryptoLive,
+) => {
   const handoff = handoffOverDouble(() => Effect.succeed('CURRENT'));
   const reader = Layer.succeed(CommercePortalAuthCommunicationOutcomeReader, {
     outcomeOf: () => Effect.succeed(outcome),
   });
   return Layer.mergeAll(
     handoff,
-    verificationReplayLayer.pipe(Layer.provide(Layer.mergeAll(handoff, reader, commercePortalAuthPlatformCryptoLive))),
+    verificationReplayLayer.pipe(Layer.provide(Layer.mergeAll(handoff, reader, platformCrypto))),
   );
 };
 
@@ -61,6 +69,24 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
         expect(first).not.toContain(INVOCATION);
       }).pipe(Effect.provide(commercePortalAuthPlatformCryptoLive)),
   );
+
+  for (const [name, digest] of [
+    ['fails', () => Effect.fail(commerceAuthDigestUnavailable(new Error('Host digest unavailable')))],
+    ['stalls', () => Effect.never],
+  ] as const) {
+    it.effect(`a host digest that ${name} reports unavailability without reserving an issuance`, () =>
+      Effect.gen(function* boundedReplay() {
+        const platform = Layer.succeed(CommerceAuthSha256, makeCommerceAuthSha256(digest));
+        const fiber = yield* replayOutcome(replayWith('NOT_SUBMITTED', platform)).pipe(Effect.forkChild);
+        yield* TestClock.adjust('5 seconds');
+        const { decision, reserved } = yield* Fiber.join(fiber);
+        expect(decision).toMatchObject({
+          failure: { _tag: 'VerificationReplayUnavailable', reason: 'OUTCOME_UNAVAILABLE' },
+        });
+        expect(Option.isNone(reserved)).toBe(true);
+      }),
+    );
+  }
 
   it.effect('the first creation of an operation reserves its issuance for the provider callback', () =>
     Effect.gen(function* firstCreation() {

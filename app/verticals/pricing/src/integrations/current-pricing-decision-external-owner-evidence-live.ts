@@ -40,7 +40,8 @@ import {
   PricingSourceEvidenceVerifiedAbsentSchema,
   PricingSourceEvidenceVerifiedPresentSchema,
 } from '@app/pricing-contracts/domain/source-revision-evidence';
-import { Crypto, DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
 import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 
@@ -873,7 +874,7 @@ export const currentPricingDecisionExternalOwnerEvidencePortFromEnvironment = (
   Effect.all(
     {
       applicationComposition: Effect.serviceOption(ActiveApplicationCompositionService),
-      crypto: Crypto.Crypto,
+      crypto: SecureRandom.SecureRandom,
       validation: PricingExternalOwnerEvidenceValidation,
     },
     { concurrency: 5 },

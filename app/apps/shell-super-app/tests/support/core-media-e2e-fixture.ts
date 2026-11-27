@@ -42,8 +42,9 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '@app/core-runtime/modules/active-application-composition';
 import { createEffectBffTestHandler } from '@modern-js/bff-effect/effect-edge';
-import { Config, Context, Crypto, DateTime, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
+import { Config, Context, DateTime, Effect, Layer, Match, Option, Schema, Stream } from 'effect';
 import type { Scope } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 
 import { AuthenticationService } from '../../api/auth/service.ts';
@@ -184,14 +185,14 @@ const required = <Value>(value: Value | undefined, what: string): Effect.Effect<
 
 const rosterOf = (tenantId: string, label: string) =>
   Effect.gen(function* makeRoster() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const actors = new Map<string, E2eActor>();
     const accounts = [];
     for (const name of PEOPLE) {
       const actor = {
-        authBindingId: yield* crypto.randomUUIDv4(),
+        authBindingId: yield* crypto.uuidV4(),
         name,
-        principalId: yield* crypto.randomUUIDv4(),
+        principalId: yield* crypto.uuidV4(),
         tenantId,
       } satisfies E2eActor;
       actors.set(name, actor);
@@ -210,13 +211,13 @@ const rosterOf = (tenantId: string, label: string) =>
         defaultLocale: 'cs',
         displayName: `E2E ${label} tenant`,
         legalEntity: {
-          legalEntityId: yield* crypto.randomUUIDv4(),
+          legalEntityId: yield* crypto.uuidV4(),
           legalName: `E2E ${label} s.r.o.`,
           registrationCountry: 'CZ',
           registrationNumber: `E2E-${tenantId.slice(-8)}`,
         },
         moduleKey: 'party.registry',
-        moduleStateId: yield* crypto.randomUUIDv4(),
+        moduleStateId: yield* crypto.uuidV4(),
         slug: `e2e-${label}-${tenantId.slice(-8)}`,
         tenantId,
       },
@@ -553,8 +554,8 @@ export interface MediaE2eWorld {
 
 /** The case's own database: cloned from the committed schema, with the runtime's trust routines granted. */
 const openCaseDatabase = Effect.gen(function* openDatabase() {
-  const crypto = yield* Crypto.Crypto;
-  const suffix = (yield* crypto.randomUUIDv4()).replaceAll('-', '');
+  const crypto = yield* SecureRandom.SecureRandom;
+  const suffix = (yield* crypto.uuidV4()).replaceAll('-', '');
   const caseDatabase = `d20_media_e2e_${suffix}`;
   const adminUrl = yield* serverAdminUrl;
   yield* ensureTemplate;
@@ -625,7 +626,7 @@ const ownerAllowedOverlay = { authorize: () => Effect.succeed('allowed' as const
 
 const openRuntimes = (platform: E2ePlatform, graph: AccessGraph) =>
   Effect.gen(function* openRuntimeServices() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const boundGate = yield* bindLiveAccessGate.pipe(Effect.provideContext(graph.context));
     const actions = platform.makeActionRuntime(
       { executor: graph.executor },
@@ -672,7 +673,7 @@ const aimCell = (cell: Cell, targets: readonly [string, ...string[]]): Cell =>
 /** The real commands that give a person a narrower role, and take it away. */
 const openAccessCommands = (graph: AccessGraph, ownerScope: OperationalScope) =>
   Effect.gen(function* openCommands() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const release = Option.getOrThrow(
       yield* Context.get(graph.context, AccessPeopleStore).loadCatalogSnapshot(ownerScope).pipe(Effect.orDie),
     );
@@ -683,16 +684,18 @@ const openAccessCommands = (graph: AccessGraph, ownerScope: OperationalScope) =>
       capabilityKeys: readonly string[],
       mode?: 'propose' | 'run',
       targets?: readonly [string, ...string[]],
-    ): readonly Cell[] =>
-      cells
-        .filter((cell) => capabilityKeys.includes(cell.capabilityKey) && (mode === undefined || cell.mode === mode))
+    ): readonly Cell[] => {
+      const capabilities = new Set(capabilityKeys);
+      return cells
+        .filter((cell) => capabilities.has(cell.capabilityKey) && (mode === undefined || cell.mode === mode))
         .map((cell) => (targets === undefined ? cell : aimCell(cell, targets)));
+    };
     const grant: MediaE2eWorld['grant'] = (person, capabilityKeys, options = {}) =>
       Effect.gen(function* grantRole() {
         const [roleUuid, revisionUuid, incarnationUuid] = yield* Effect.all([
-          crypto.randomUUIDv4(),
-          crypto.randomUUIDv4(),
-          crypto.randomUUIDv4(),
+          crypto.uuidV4(),
+          crypto.uuidV4(),
+          crypto.uuidV4(),
         ]);
         const role = yield* writeRoleCreation({
           catalogSnapshotId: release.id,
@@ -726,14 +729,14 @@ const recordMembers = (
   members: readonly E2eActor[],
 ) =>
   Effect.gen(function* recordTenantMembers() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const now = yield* DateTime.now;
     const memberships = [];
     for (const actor of members) {
       memberships.push({
         createdAt: DateTime.toDateUtc(now),
         holder: { _tag: 'Principal' as const, principalId: PrincipalIdSchema.make(actor.principalId) },
-        id: AccessMembershipIdSchema.make(yield* crypto.randomUUIDv4()),
+        id: AccessMembershipIdSchema.make(yield* crypto.uuidV4()),
         kind: 'member' as const,
         recordedBy: PrincipalIdSchema.make(ownerScope.principalId),
         scopeId: AccessScopeIdSchema.make(tenantScope),
@@ -761,11 +764,11 @@ const enrolSystemWorkloadOf = (admin: PgClient.PgClient) =>
     tenantId: string,
     options: SystemWorkloadEnrolmentOptions = {},
   ) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const [principalId, bindingId, incarnation] = yield* Effect.all([
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
     ]);
     yield* admin.unsafe(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -868,7 +871,7 @@ export const withMediaE2eWorld = <Value, Failure>(
   Effect.scoped(
     Effect.gen(function* mediaE2eWorld() {
       yield* requireEnvironment(ctx, [...REQUIRED_ENVIRONMENT, ...(options.requires ?? [])]);
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const catalog = yield* loadCatalog;
       const storage = yield* openStorage;
       const faultInjection = yield* openFaultInjection(storage);
@@ -885,8 +888,8 @@ export const withMediaE2eWorld = <Value, Failure>(
         options.contracts ?? [],
       );
 
-      const tenantId = yield* crypto.randomUUIDv4();
-      const foreignTenantId = yield* crypto.randomUUIDv4();
+      const tenantId = yield* crypto.uuidV4();
+      const foreignTenantId = yield* crypto.uuidV4();
       const roster = yield* rosterOf(tenantId, 'own');
       const foreignRoster = yield* rosterOf(foreignTenantId, 'foreign');
       // The real install path: identity rows, the derived `core.media` installation row and the owner's access.
@@ -921,13 +924,13 @@ export const withMediaE2eWorld = <Value, Failure>(
             admin,
             makeSystemPrincipalContextResolver({ executor: Context.get(adminContext, CoreDatabase).executor }),
             tenantId,
-          )(workloadKey).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          )(workloadKey).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
         compositionRevision: composition.composition.revision,
         compositionSnapshot: composition,
         databases,
         enrolSystemWorkload: (workloadKey, enrolledTenantId, enrolment) =>
           enrolSystemWorkloadOf(admin)(workloadKey, enrolledTenantId, enrolment).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
           ),
         faultInjection,
         foreign: foreignRoster.actors,

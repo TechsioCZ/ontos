@@ -4,7 +4,8 @@ import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
 import { EffectLogger } from 'drizzle-orm/effect-core';
 import { DefaultServices, make } from 'drizzle-orm/effect-postgres';
-import { ConfigProvider, Crypto, DateTime, Effect, Layer, Result, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Layer, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import { OrganizationBusinessSourceStatement } from '../../shared/apis/organization-record-facts.ts';
@@ -50,10 +51,10 @@ const organization = (businessName: string, recordId: string, occurrenceId: stri
     provenance: { source: source.routeRef, method: 'CLIENT_SOURCE_ASSERTION' },
     subjectEvidence: [
       {
-        kind: 'CLIENT_SOURCE_ASSERTION',
         source,
         recordId,
         occurrenceId,
+        kind: 'CLIENT_SOURCE_ASSERTION',
         subjectKey: recordId,
         observedSubject: 'ORGANIZATION',
         statement: OrganizationBusinessSourceStatement,
@@ -68,7 +69,7 @@ it.layer(services, { excludeTestServices: true })((suite) => {
     () =>
       Effect.gen(function* organizationMatching() {
         const clients = yield* openPartyBoundaryClients();
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         let recording = false;
         let privacy: 'ALLOWED' | 'DENIED' | 'ORGANIZATION_BUSINESS_ALLOWED' = 'ORGANIZATION_BUSINESS_ALLOWED';
         const queries: { readonly query: string; readonly params: unknown[] }[] = [];
@@ -113,7 +114,7 @@ it.layer(services, { excludeTestServices: true })((suite) => {
               yield* establishPartyGatewayScope(transaction, grant);
               const create = (candidate: PartyCandidate, chosen: PartyClientSourceScope = scope) =>
                 Effect.gen(function* createSource() {
-                  const invocation = yield* crypto.randomUUIDv4();
+                  const invocation = yield* crypto.uuidV4();
                   const input = {
                     tenantId,
                     principalId: chosen.principalId,
@@ -130,7 +131,7 @@ it.layer(services, { excludeTestServices: true })((suite) => {
                 });
               const match = (candidate: PartyCandidate, chosen: PartyClientSourceScope = scope) =>
                 Effect.gen(function* matchSource() {
-                  const invocation = yield* crypto.randomUUIDv4();
+                  const invocation = yield* crypto.uuidV4();
                   const input = { tenantId, actionInvocationId: invocation, candidate, sourceScope: chosen };
                   if (chosen.legalEntityId !== undefined) {
                     Object.assign(input, { legalEntityId: chosen.legalEntityId });
@@ -243,7 +244,7 @@ it.layer(services, { excludeTestServices: true })((suite) => {
               expect(noMatch.candidateParties).toEqual([]);
               expect(noMatch.evidenceExplanation).toEqual([]);
               expect(noMatchReplay).toEqual(noMatch);
-              const malformedPartyId = yield* crypto.randomUUIDv4();
+              const malformedPartyId = yield* crypto.uuidV4();
               yield* transaction.insert(parties).values({
                 tenantId,
                 partyId: malformedPartyId,

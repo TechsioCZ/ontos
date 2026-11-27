@@ -402,11 +402,11 @@ const prepare = Effect.fn('PrivacyOrganizationIcoNativeFixture.prepare')(functio
     scopeKey: policy.scopeKey,
   });
   return {
-    holdRef: `internal:organization-ico-hold:${fixtureId}`,
-    policyRef: policy.policyKey,
     authority,
     decisionRef,
+    holdRef: `internal:organization-ico-hold:${fixtureId}`,
     organizationContexts,
+    policyRef: policy.policyKey,
     processingScopeRef,
     profileContexts,
     recordPayload,

@@ -89,9 +89,9 @@ import {
 } from '@app/shared-contracts';
 import { NodeCrypto } from '@effect/platform-node';
 import { ConfigProvider, Effect, Match, Option, Result, Schema, Struct } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   SymmyPartyCommerceOwnerReceiptSchema,
@@ -548,7 +548,7 @@ const reset = () => {
   peer.unrouted.length = 0;
 };
 /** Runs a test against the scripted owner peers without any worker delivery claim. */
-const overSymmyPeers = <Value, Failure>(program: Effect.Effect<Value, Failure, Crypto.Crypto>) =>
+const overSymmyPeers = <Value, Failure>(program: Effect.Effect<Value, Failure, SecureRandom.SecureRandom>) =>
   program.pipe(
     Effect.tap(() =>
       Effect.sync(() => {
@@ -560,7 +560,7 @@ const overSymmyPeers = <Value, Failure>(program: Effect.Effect<Value, Failure, C
     Effect.provideService(FetchHttpClient.Fetch, fetchPeer),
   );
 /** Runs a test as the Symmy job worker of `context`'s delivery against the scripted owner peers. */
-const asSymmyWorker = <Value, Failure>(program: Effect.Effect<Value, Failure, Crypto.Crypto>) =>
+const asSymmyWorker = <Value, Failure>(program: Effect.Effect<Value, Failure, SecureRandom.SecureRandom>) =>
   overSymmyPeers(program.pipe(withSymmyWorkerClaim(context)));
 
 const profile = {
@@ -1429,7 +1429,9 @@ describe('immutable canonical dependency resolution', () => {
           },
         },
       ]);
-      expect(peer.retail.bodies[0].subject.partyRef).toEqual(canonicalPartyRef);
+      const [retailRequest] = peer.retail.bodies;
+      assert.isDefined(retailRequest);
+      expect(retailRequest.subject.partyRef).toEqual(canonicalPartyRef);
     }).pipe(asSymmyWorker),
   );
   it.effect('does not resolve an undeclared parent or retry resolution after authority is revoked', () =>
@@ -1550,7 +1552,9 @@ describe('finite Saved Address owner dispatch', () => {
         purposes: ['DELIVERY'],
         source: { effectId, identity: { occurrenceId: 'occurrence-1', recordId: 'customer-1' } },
       });
-      expect(peer.address.bodies[0].source?.nativeAddressId).toBeUndefined();
+      const [addressRequest] = peer.address.bodies;
+      assert.isDefined(addressRequest);
+      expect(addressRequest.source?.nativeAddressId).toBeUndefined();
       expect(peer.order).toEqual(['pin-request']);
     }).pipe(asSymmyWorker),
   );
@@ -2275,7 +2279,9 @@ it.effect('pins the accepted company semantic witness before CAS, executor ident
         },
       },
     ]);
-    expect(peer.onboard.bodies[0].sourceOrganizationWitness?.semanticInputDigest).toMatch(/^[a-f0-9]{64}$/u);
+    const [onboardRequest] = peer.onboard.bodies;
+    assert.isDefined(onboardRequest);
+    expect(onboardRequest.sourceOrganizationWitness?.semanticInputDigest).toMatch(/^[a-f0-9]{64}$/u);
     peer.receipt.succeed(
       yield* Schema.decodeUnknownEffect(PartySourceEffectReceiptResponseSchema)({
         actionInvocationId: invocationId,

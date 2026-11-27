@@ -47,9 +47,9 @@ const filesUnder = Effect.fn('RemoteUiKit.filesUnder')(function* filesUnder(dire
   const fileSystem = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
   const entries = yield* fileSystem.readDirectory(directory, { recursive: true });
-  return entries
-    .filter((entry) => !entry.split(pathService.sep).includes('node_modules'))
-    .map((entry) => pathService.join(directory, entry));
+  return entries.flatMap((entry) =>
+    entry.split(pathService.sep).includes('node_modules') ? [] : [pathService.join(directory, entry)],
+  );
 });
 
 const shellKitRoot = Effect.fn('RemoteUiKit.shellKitRoot')(function* shellKitRoot() {
@@ -78,7 +78,7 @@ const kitClassStrings = Effect.fn('RemoteUiKit.kitClassStrings')(function* kitCl
   return new Set(
     sources.flatMap((source) =>
       [...source.matchAll(CLASS_STRING)].flatMap(({ groups }) => {
-        const literal = groups?.literal ?? '';
+        const literal = groups?.['literal'] ?? '';
         return literal.trim().split(/\s+/u).length >= 4 && !/[{}();=]/u.test(literal) ? [literal] : [];
       }),
     ),
@@ -86,18 +86,19 @@ const kitClassStrings = Effect.fn('RemoteUiKit.kitClassStrings')(function* kitCl
 });
 
 const manifestFindings = (manifest: RemoteManifest): string[] =>
-  manifest.shared
-    .filter(({ name }) => name.startsWith(`${UI_KIT_PACKAGE}/`))
-    .flatMap(({ assets, name, requiredVersion, singleton }) => {
-      const shipped =
-        assets === undefined ? [] : [...assets.js.sync, ...assets.js.async, ...assets.css.sync, ...assets.css.async];
-      return [
-        ...(singleton === true && requiredVersion !== undefined && requiredVersion !== ''
-          ? []
-          : [`${name} is not shared as a versioned singleton`]),
-        ...(shipped.length === 0 ? [] : [`${name} ships its own fallback: ${shipped.join(', ')}`]),
-      ];
-    });
+  manifest.shared.flatMap(({ assets, name, requiredVersion, singleton }) => {
+    if (!name.startsWith(`${UI_KIT_PACKAGE}/`)) {
+      return [];
+    }
+    const shipped =
+      assets === undefined ? [] : [...assets.js.sync, ...assets.js.async, ...assets.css.sync, ...assets.css.async];
+    return [
+      ...(singleton === true && requiredVersion !== undefined && requiredVersion !== ''
+        ? []
+        : [`${name} is not shared as a versioned singleton`]),
+      ...(shipped.length === 0 ? [] : [`${name} ships its own fallback: ${shipped.join(', ')}`]),
+    ];
+  });
 
 const assetFinding = (name: string, source: string, classStrings: ReadonlySet<string>): string[] => {
   const literal = [...classStrings].find((candidate) => source.includes(candidate));

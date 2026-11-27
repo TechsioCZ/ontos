@@ -386,8 +386,8 @@ const requestCancel = (ctx: EvidenceCtx, paymentId: string, targetOperationId: s
       payload: {
         operationKey,
         paymentId,
-        targetOperationId,
         reason: 'Customer abandoned the checkout',
+        targetOperationId,
       },
       principal: principalOf(ctx.scope),
       registration: requestPaymentCancellationAction,

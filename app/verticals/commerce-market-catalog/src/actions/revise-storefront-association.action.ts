@@ -4,7 +4,8 @@
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint, requireModuleOperation } from '@app/core-runtime';
 import { StorefrontApplicationIdSchema } from '@app/storefront-registry-contracts';
-import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   MarketCommandRejected,
   ReviseStorefrontAssociationPayloadSchema,
@@ -51,10 +52,10 @@ export type ReviseStorefrontAssociationServices = MarketAdministrationService & 
 
 const makeReviseStorefrontAssociationServices: ActionServiceFactory<
   ReviseStorefrontAssociationServices,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > = Effect.fn('ReviseStorefrontAssociationAction.makeServices')(
   function* makeServices(transaction, scope, compositionRevision) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const catalog = yield* marketAdministrationService(transaction, scope, compositionRevision);
     const authority = makeServerCurrentStorefrontApplicationAuthority({ compositionRevision, crypto, scope });
     return {

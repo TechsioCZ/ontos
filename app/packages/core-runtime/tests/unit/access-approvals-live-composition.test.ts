@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgTransactionConfig } from 'drizzle-orm/pg-core';
-import { Cause, Context, Crypto, DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessConfigureBasis } from '../../src/access/changes/authority.ts';
@@ -525,7 +526,10 @@ const recordsNamed = (name: string): LiveApprovalRecords => ({
 });
 
 /** The live services of one check, with a tripwire under every source it does not override. */
-const liveServices = (crypto: Crypto.Crypto, overrides: Partial<LiveApprovalServices> = {}): LiveApprovalServices => {
+const liveServices = (
+  crypto: SecureRandom.SecureRandom['Service'],
+  overrides: Partial<LiveApprovalServices> = {},
+): LiveApprovalServices => {
   const services: LiveApprovalServices = {
     crypto,
     intent: neverReadIntent,
@@ -552,7 +556,7 @@ const recordsSourceOf = (ports: ApprovalsPorts) =>
 it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
   suite.effect('binds every live read to the request scope and refuses another tenant before reading', () =>
     Effect.gen(function* scopeBinding() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const jana = yield* scopeFor(JANA);
       const ports = liveApprovalsPorts(liveServices(crypto), jana);
       const ask = (tenantId: TenantId) =>
@@ -645,7 +649,7 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
 
   suite.effect('binds a claim to the caller transaction through the owner join', () =>
     Effect.gen(function* joinedReads() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const jana = yield* scopeFor(JANA);
       // A unit check has no connection; the seam only has to hand the body the caller's own
       // transaction, which is what this identity states.
@@ -673,7 +677,7 @@ it.layer(NodeCrypto.layer)('live approvals transaction binding', (suite) => {
 
   suite.effect('offers no transaction-bound ports when the composition cannot join one', () =>
     Effect.gen(function* unjoinedComposition() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const jana = yield* scopeFor(JANA);
       // The same live services without `join`: a claim has no transaction-bound authority and says so
       // by not offering one, which `execute` reports as unavailability rather than proving elsewhere.

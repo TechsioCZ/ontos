@@ -14,7 +14,7 @@ const stockPositionInstant = Schema.toEncoded(Schema.DateTimeUtcFromString);
 const STOCK_QUANTITY_PRECISION = 38;
 const STOCK_QUANTITY_SCALE = 9;
 const STOCK_QUANTITY_INTEGER_DIGITS = STOCK_QUANTITY_PRECISION - STOCK_QUANTITY_SCALE;
-const canonicalDecimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]*[1-9])?$/u;
+const canonicalDecimalPattern = /^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/u;
 
 export const ExactStockQuantityAmountSchema = Schema.String.check(
   Schema.makeFilter((value) => {
@@ -231,7 +231,12 @@ const formatDecimal = (coefficient: bigint, scale: number): string => {
   }
   const padded = coefficient.toString().padStart(scale + 1, '0');
   const integer = padded.slice(0, -scale);
-  const fraction = padded.slice(-scale).replace(/0+$/u, '');
+  const rawFraction = padded.slice(-scale);
+  let fractionEnd = rawFraction.length;
+  while (rawFraction[fractionEnd - 1] === '0') {
+    fractionEnd -= 1;
+  }
+  const fraction = rawFraction.slice(0, fractionEnd);
   return fraction.length === 0 ? integer : `${integer}.${fraction}`;
 };
 

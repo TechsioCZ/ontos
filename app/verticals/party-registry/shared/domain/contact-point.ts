@@ -50,7 +50,7 @@ const ContactPointProvenanceHistorySchema = Schema.Struct({
 const EmailValueSchema = Schema.Trim.check(
   Schema.isMinLength(3),
   Schema.isMaxLength(320),
-  Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u),
+  Schema.isPattern(/^[^\s@]+@[^\s@][^\s@.]*\.[^\s@]+$/u),
 );
 
 export const EmailContactPointInputSchema = Schema.Struct({
@@ -71,7 +71,7 @@ const CountryCodeSchema = Schema.Trim.check(
 );
 const PhoneSharedFields = {
   extension: Schema.optionalKey(
-    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(12), Schema.isPattern(/^[0-9]+$/u)),
+    Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(12), Schema.isPattern(/^\d+$/u)),
   ),
   preferred: Schema.Boolean,
   type: Schema.Literal('PHONE'),
@@ -158,7 +158,7 @@ const PhoneContactPointValueSchema = Schema.Struct({
   countryCode: Schema.Union([CountryCodeSchema, Schema.Null]),
   displayValue: PhoneValueSchema,
   extension: Schema.Union([TrimmedTextSchema, Schema.Null]),
-  lookupValue: Schema.String.check(Schema.isPattern(/^\+[1-9][0-9]{6,14}$/u)),
+  lookupValue: Schema.String.check(Schema.isPattern(/^\+[1-9]\d{6,14}$/u)),
   preferred: Schema.Boolean,
   type: Schema.Literal('PHONE'),
 });
@@ -255,13 +255,13 @@ export const normalizeEmail = (rawValue: string): NormalizedChannel => {
   };
 };
 
-const digitsOnly = (value: string): string => value.replaceAll(/[^0-9]/gu, '');
+const digitsOnly = (value: string): string => value.replaceAll(/\D/gu, '');
 
 const assertPhoneParts = (displayValue: string, countryCode: string | undefined, extension: string | null): void => {
   if (countryCode !== undefined && !/^[A-Z]{2}$/u.test(countryCode)) {
     return invalidContactPoint('PHONE country context must be a two-letter country code');
   }
-  if (extension !== null && !/^[0-9]{1,12}$/u.test(extension)) {
+  if (extension !== null && !/^\d{1,12}$/u.test(extension)) {
     return invalidContactPoint('PHONE extension must contain 1 to 12 digits');
   }
   if (!/^\+?[()0-9 .-]+$/u.test(displayValue)) {
@@ -276,7 +276,7 @@ export const normalizePhone = (rawValue: string, rawCountryCode?: string, rawExt
   const extension = rawExtension?.trim() ?? null;
   assertPhoneParts(displayValue, countryCode, extension);
   if (displayValue.startsWith('+')) {
-    if (!/^[1-9][0-9]{6,14}$/u.test(digits)) {
+    if (!/^[1-9]\d{6,14}$/u.test(digits)) {
       return invalidContactPoint('PHONE international form must contain 7 to 15 digits and start with 1 to 9');
     }
     return {

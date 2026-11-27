@@ -33,7 +33,6 @@ import {
   Brand,
   Config,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Layer,
@@ -44,6 +43,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
@@ -88,7 +88,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const MarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ReadySchema = Schema.Struct({ marker: MarkerSchema, port: Schema.Number, type: Schema.Literal('ready') });
 
@@ -227,8 +227,8 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
     address.pathname = `/${identity.databaseName}`;
     identityUrls[databaseIdentity.urlKey] = address.href;
   }
-  const issuerUrl = identityUrls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-  const requestUrl = identityUrls.PARTY_REGISTRY_DATABASE_URL;
+  const issuerUrl = identityUrls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+  const requestUrl = identityUrls['PARTY_REGISTRY_DATABASE_URL'];
   assert.isOk(issuerUrl !== undefined && requestUrl !== undefined, 'POSTAL_IDENTITIES_INCOMPLETE');
   const identitySetupRequest = yield* Schema.encodeEffect(
     Schema.fromJsonString(
@@ -432,7 +432,7 @@ const preparePostalFutureEnd = Effect.fn('PostalFutureEnd.prepare')(function* pr
 
   // TEST issuer and transport only: each request crosses the real owner HTTP verifier,
   // native redemption, Core permission checks, registered producer and PostgreSQL commit.
-  const authorizationContext = yield* Effect.context<Crypto.Crypto>();
+  const authorizationContext = yield* Effect.context<SecureRandom.SecureRandom>();
   const client: typeof executePartyContactPointDetail = (request, correlation) =>
     authorization().pipe(
       Effect.provideContext(authorizationContext),

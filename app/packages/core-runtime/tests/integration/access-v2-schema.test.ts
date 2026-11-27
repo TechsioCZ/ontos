@@ -1,6 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -79,7 +80,7 @@ interface TupleOptions {
  */
 const makeGraph = Effect.gen(function* accessV2Graph() {
   const configuration = yield* loadSpiceDbConfig();
-  const prefix = yield* (yield* Crypto.Crypto).randomUUIDv4();
+  const prefix = yield* (yield* SecureRandom.SecureRandom).uuidV4();
   const client = yield* Effect.acquireRelease(
     Effect.sync(() => newSpiceDbGrpcClient(configuration)),
     (current) => Effect.sync(() => current.close()),
@@ -274,7 +275,9 @@ const agentUse = (graph: Graph, capabilityId: string, connection: ReadonlySet<st
     ])
     .pipe(Effect.map((witnesses) => [...witnesses, connection.has(capabilityId)]));
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('access v2 schema graph', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('access v2 schema graph', (suite) => {
   suite.effect('makes a new capability configurable by administrators and usable by nobody without a grant', () =>
     withGraph(({ capability, cell, check, touch }) =>
       Effect.gen(function* newCapability() {

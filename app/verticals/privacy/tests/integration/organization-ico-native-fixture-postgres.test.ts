@@ -2,7 +2,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { OrganizationIcoApplicabilityRequestSchema } from '../../shared/apis/organization-ico-applicability.ts';
@@ -27,14 +28,14 @@ const isolation = Effect.fn('OrganizationIcoFixtureTests.isolation')(function* i
   });
 });
 const scope = Effect.gen(function* actualScope() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return {
-    governancePrincipalId: yield* crypto.randomUUIDv4(),
-    legalEntityId: yield* crypto.randomUUIDv4(),
-    partyId: yield* crypto.randomUUIDv4(),
-    principalId: yield* crypto.randomUUIDv4(),
-    profileId: yield* crypto.randomUUIDv4(),
-    tenantId: yield* crypto.randomUUIDv4(),
+    governancePrincipalId: yield* crypto.uuidV4(),
+    legalEntityId: yield* crypto.uuidV4(),
+    partyId: yield* crypto.uuidV4(),
+    principalId: yield* crypto.uuidV4(),
+    profileId: yield* crypto.uuidV4(),
+    tenantId: yield* crypto.uuidV4(),
   };
 });
 const requestsFor = (ids: Effect.Success<typeof scope>) => ({

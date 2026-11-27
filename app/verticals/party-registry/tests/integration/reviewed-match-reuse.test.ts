@@ -26,7 +26,6 @@ import { eq } from 'drizzle-orm';
 import {
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Exit,
@@ -37,6 +36,7 @@ import {
   Result,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
@@ -88,7 +88,7 @@ import {
 } from '../support/party-reconciliation-native.fixture.ts';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 
 it.layer(

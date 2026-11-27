@@ -1,6 +1,6 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Crypto, Effect, Redacted, Schema } from 'effect';
-import type { PlatformError } from 'effect';
+import { Clock, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 import { makeGatewayScopeGrantRegistrar } from '../auth/gateway-scope-grant.ts';
@@ -62,7 +62,7 @@ export const makeSyntheticGatewayAssertion = Effect.fn('GatewayScopeGrantTesting
 /**
  * Registers a synthetic assertion through the production registrar on an issuer client (a
  * `shell_gateway_issuer` login), exactly as Shell does before the token leaves the issuer. The jti
- * comes from the ambient `Crypto` service.
+ * comes from the ambient `SecureRandom` service.
  */
 export const registerTestGatewayScopeGrant = Effect.fn('GatewayScopeGrantTesting.register')(
   function* registerTestGatewayScopeGrantEffect(
@@ -70,10 +70,10 @@ export const registerTestGatewayScopeGrant = Effect.fn('GatewayScopeGrantTesting
     input: RegisterTestGatewayScopeGrantInput,
   ): Effect.fn.Return<
     RegisteredTestGatewayScopeGrant,
-    GatewayScopeGrantUnavailableError | PlatformError.PlatformError | Schema.SchemaError,
-    Crypto.Crypto
+    GatewayScopeGrantUnavailableError | Schema.SchemaError,
+    SecureRandom.SecureRandom
   > {
-    const jti = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+    const jti = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
     const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const expiresAtEpochSeconds = nowSeconds + (input.ttlSeconds ?? DEFAULT_TTL_SECONDS);
     const tenantScopedInput: SyntheticGatewayAssertionInput = {

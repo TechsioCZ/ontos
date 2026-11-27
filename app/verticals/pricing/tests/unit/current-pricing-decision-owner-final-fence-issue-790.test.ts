@@ -6,7 +6,7 @@ import {
 } from '@app/commerce-market-catalog/api/pricing-current-market-evidence';
 import { PricingPurposeEquivalenceResponseSchema } from '@app/catalog-selection-contracts/pricing-purpose-equivalence';
 import type { PricingPurposeEquivalenceRequest } from '@app/catalog/api/pricing-purpose-equivalence';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { DateTime, Redacted, Context, Effect, Exit, Layer, Schema } from 'effect';
 import { pricingCommercialFeeCurrentSetPredicateRef } from '@app/pricing-contracts/domain/commercial-fee';
 import { ReadCurrentCommercialFeeSetPersistenceOutcomeSchema } from '../../src/services/commercial-fee-persistence.service.ts';
@@ -66,7 +66,7 @@ import { verifiedTestScope } from '../support/owner-gateway-connection.fixture.t
 
 /** The owner final-fence factories resolve their connections through the Crypto service the runtime provides. */
 const itWithCrypto = {
-  effect: (name: string, body: () => Effect.Effect<void, unknown, Crypto.Crypto>) =>
+  effect: (name: string, body: () => Effect.Effect<void, unknown, SecureRandom.SecureRandom>) =>
     it.layer(NodeCrypto.layer)(name, (suite) => {
       suite.effect(name, body);
     }),

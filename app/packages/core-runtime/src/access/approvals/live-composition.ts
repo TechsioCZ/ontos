@@ -1,5 +1,5 @@
 import { DateTime, Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import type { CoreDatabaseExecutor, CoreTransaction } from '../../db/types.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -12,7 +12,6 @@ import type { AccessTransactions } from '../intent/persistence.ts';
 import type { TenantIntentLoaderService } from '../intent/tenant-intent-loader.ts';
 import type { MandateDispatchDependencies } from './action-mandate-dispatch.ts';
 import type { ApprovalStoreService } from './drizzle-store.ts';
-import { ApprovalStorageUnavailableError } from './errors.ts';
 import type { FrozenCommandStore } from './frozen-command.ts';
 import { liveApprovalScopeAdministration } from './live-administration.ts';
 import { liveApprovalAuthorityInspector } from './live-authority.ts';
@@ -64,21 +63,13 @@ import type { ApprovalClock, ApprovalIdentifiers, ApprovalsPorts } from './servi
  *   the owner decides the snapshot its mandate is proved against (`AccessTransactions`).
  */
 
-const storageUnavailable = (reason: string) =>
-  new ApprovalStorageUnavailableError({ code: 'approval_storage_unavailable', reason });
-
 /** The approval deadline is the Effect clock's instant, never an ambient `Date.now` (O60). */
 const liveClock: ApprovalClock = Object.freeze({ now: DateTime.nowAsDate });
 
-/** A proposal identifier from Effect's crypto service; a failure is retryable unavailability. */
-const liveIdentifiers = (crypto: Crypto.Crypto): ApprovalIdentifiers =>
+/** Proposal identifiers use the native secure generator's infallible typed channel. */
+const liveIdentifiers = (crypto: SecureRandom.SecureRandom['Service']): ApprovalIdentifiers =>
   Object.freeze({
-    nextProposalId: crypto.randomUUIDv4().pipe(
-      Effect.map((identifier) => ProposalIdSchema.make(identifier)),
-      Effect.catchTag('PlatformError', () =>
-        Effect.fail(storageUnavailable('An identifier for this proposal could not be generated')),
-      ),
-    ),
+    nextProposalId: crypto.uuidV4().pipe(Effect.map((identifier) => ProposalIdSchema.make(identifier))),
   });
 
 /** The three intent reads the live composition needs, taken as ports of one request scope (O66). */
@@ -108,7 +99,7 @@ export interface LiveApprovalRecords {
  * rather than proved by a second connection.
  */
 export interface LiveApprovalServices {
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly intent: LiveApprovalIntentReads;
   /** The same services over the transaction a caller already owns; absent refuses every claim (O75). */
   readonly join?: (transaction: CoreTransaction) => LiveApprovalServices;

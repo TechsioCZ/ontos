@@ -5,7 +5,8 @@ import {
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -36,7 +37,7 @@ const ownerScope = {
 
 it.effect('fingerprints a Communications handoff exactly as its owner does, owner scope included', () =>
   Effect.gen(function* fingerprintContract() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const fixture = makeMeasureExecutionFixture('75000000-0000-4000-8000-000000000001');
     const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
       ...fixture.handoff,
@@ -64,7 +65,7 @@ it.effect('fingerprints a Communications handoff exactly as its owner does, owne
 
 it.effect('independently reads the exact Communications outcome and rejects forged and foreign-scope receipts', () =>
   Effect.gen(function* exactCommunicationsOwnerReceipt() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const tenantId = '75000000-0000-4000-8000-000000000001';
     const legalEntityId = '75000000-0000-4000-8000-000000000002';
     const principalId = '75000000-0000-4000-8000-000000000003';
@@ -169,7 +170,7 @@ it.effect(
   'computes the same fingerprint as the Communications owner for the same handoff (cross-owner contract literal)',
   () =>
     Effect.gen(function* crossOwnerFingerprint() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* Digest.Digest;
       const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
         contentScopeRefs: ['communications.core.history'],
         controllerObligationRef: null,

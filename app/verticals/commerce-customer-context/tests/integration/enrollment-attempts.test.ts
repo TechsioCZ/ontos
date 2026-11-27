@@ -12,7 +12,7 @@ import {
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { eq, sql } from 'drizzle-orm';
 import { Effect, Exit, Fiber, Option, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import {
   makeTestDatabaseFromClient,
@@ -831,15 +831,15 @@ it.live(
         });
         expect(replayed.portalEnrollmentAttemptId).toBe(created.portalEnrollmentAttemptId);
         expect(replayed.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
-        const cutoverGate = Schema.decodeSync(Schema.NonEmptyString)(
-          readFileSync(
-            new URL(
-              '../../drizzle/20261002170900_enrollment-original-composition-revision/migration.sql',
-              import.meta.url,
-            ),
-            'utf-8',
-          ).split('--> statement-breakpoint')[0],
-        );
+        const [cutoverStatement] = readFileSync(
+          new URL(
+            '../../drizzle/20261002170900_enrollment-original-composition-revision/migration.sql',
+            import.meta.url,
+          ),
+          'utf-8',
+        ).split('--> statement-breakpoint');
+        assert.isDefined(cutoverStatement);
+        const cutoverGate = Schema.decodeSync(Schema.NonEmptyString)(cutoverStatement);
         const gateStart = cutoverGate.indexOf('DO $migration$');
         const populatedJournalCutover = yield* fixture.admin
           .transaction((transaction) =>
@@ -1138,7 +1138,8 @@ it.live('closes new admission while existing child work remains covered by one s
       yield* child.unsafe('BEGIN');
       yield* Effect.addFinalizer(() => child.unsafe('ROLLBACK').pipe(Effect.orDie));
       const [childBackend] = yield* child.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
-      const childPid = Schema.decodeSync(Schema.Number)(childBackend?.pid);
+      assert.isDefined(childBackend);
+      const childPid = Schema.decodeSync(Schema.Number)(childBackend.pid);
       const racedInvocation = actionInvocationId('d69b0000-0000-4000-8000-000000000004');
       yield* child.unsafe(
         "insert into commerce_customer_context.portal_enrollment_owner_operations (tenant_id, portal_enrollment_attempt_id, transition_key, owner_module_key, owner_invocation_id, actor_principal_id, request_digest, required, status, lease_owner, lease_token, lease_expires_at) values ($1::uuid, $2::uuid, 'raced.owner.effect', $3::text, $4::uuid, $5::uuid, $6::text, false, 'IN_PROGRESS', 'raced-worker', $7::uuid, clock_timestamp() + interval '1 hour')",
@@ -1165,7 +1166,8 @@ it.live('closes new admission while existing child work remains covered by one s
       yield* Effect.addFinalizer(() => terminalSession.unsafe('ROLLBACK').pipe(Effect.orDie));
       yield* terminalSession.unsafe("select set_config('ontos.tenant_id', $1, true)", [tenantId]);
       const [terminalBackend] = yield* terminalSession.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
-      const terminalPid = Schema.decodeSync(Schema.Number)(terminalBackend?.pid);
+      assert.isDefined(terminalBackend);
+      const terminalPid = Schema.decodeSync(Schema.Number)(terminalBackend.pid);
       const terminal = yield* terminalSession
         .unsafe<{ attempt_outcome: string; composition_revision: string }>(
           'select attempt_outcome, composition_revision from commerce_customer_context.terminate_portal_enrollment($1::uuid, $2::uuid, $3::integer, $4::uuid, $5::uuid, $6::text)',

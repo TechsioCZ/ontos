@@ -19,9 +19,10 @@ import {
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
 import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -382,7 +383,7 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   const contextAccess = yield* makeContextAccessLive(undefined, () => loadSpiceDbConfig({ envPath: '/dev/null' }));
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   const moduleGateway = makeModuleEntrypointGateway(moduleStateGate);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const scopeAccess = makeTestOperationalScopeAccess();
   const scopeResolver = yield* makeOperationalScopeResolver(makeOperationalScopeRepository(database), scopeAccess);
   const ownerServices = yield* Layer.build(commerceCustomerContextOwnerAuthorizationOverlayLive);
@@ -393,7 +394,9 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   const accessEnforcementLive = AccessDecisionLive.pipe(
     Layer.provideMerge(AccessEnforcementPortsLive),
     Layer.provide(TenantIntentLoaderLive),
-    Layer.provide(Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(Crypto.Crypto, crypto))),
+    Layer.provide(
+      Layer.mergeAll(Layer.succeed(CoreDatabase, database), Layer.succeed(SecureRandom.SecureRandom, crypto)),
+    ),
   );
   const readRuntime = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess, {
     accessDecision: makeScriptedBoundAccessGate(readAccess).bound,
@@ -555,7 +558,7 @@ it.live(
             .orderBy(dataAccessEvents.occurredAt),
         ).toStrictEqual([{ outcomeCode: 'read_permission_denied' }, { outcomeCode: 'read_permission_denied' }]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom))),
   // Building the deployed composition root — every governed route, both runtimes, the Core pools
   // and the SpiceDB client — costs more than this project's default per-test budget.
   180_000,
@@ -627,6 +630,6 @@ it.live(
             .where(eq(dataAccessEvents.tenantId, subject.tenantId)),
         ).toStrictEqual([{ outcome: 'denied', outcomeCode: 'access_denied', outcomeStage: 'authz', resultCount: 0 }]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom))),
   180_000,
 );

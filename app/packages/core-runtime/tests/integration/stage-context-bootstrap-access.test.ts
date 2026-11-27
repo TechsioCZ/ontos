@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { AccessDecisionGate } from '../../src/access/enforcement/contract.ts';
@@ -232,12 +233,12 @@ interface Stage {
 
 const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* stageScenario() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const [connections, spiceDb] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
       concurrency: 2,
     }).pipe(Effect.orDie);
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `stage_bootstrap_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const database = `stage_bootstrap_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
@@ -306,11 +307,13 @@ const withStage = <Value, Failure>(run: (stage: Stage) => Effect.Effect<Value, F
           Effect.mapError(asStageFailure),
           Effect.provide(context),
         ),
-      tenantId: yield* crypto.randomUUIDv4(),
+      tenantId: yield* crypto.uuidV4(),
     });
   }).pipe(Effect.scoped);
 
-it.layer(NodeServices.layer)('stage context bootstrap', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('stage context bootstrap', (suite) => {
   suite.effect('creates the tenant for its owner, its full-access colleague and nobody else', () =>
     withStage((stage) =>
       Effect.gen(function* createsStageTenant() {

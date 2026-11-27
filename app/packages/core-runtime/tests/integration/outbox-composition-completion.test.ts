@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -48,7 +49,9 @@ const worker = (suffix: string) =>
     () => Effect.void,
   );
 const workers = [worker('primary'), worker('secondary')];
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 
 const fixture = Effect.gen(function* completionFixture() {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -61,7 +64,7 @@ const fixture = Effect.gen(function* completionFixture() {
   yield* isolated.publishInitialComposition(snapshot);
   const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
   const { executor: runtime } = yield* makeCoreDatabase(isolated.connections.runtime);
-  const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const tenantId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   yield* runtime.insert(tenants).values({
     defaultLocale: 'en',
     name: 'Outbox completion fixture',
@@ -70,7 +73,7 @@ const fixture = Effect.gen(function* completionFixture() {
     tenantId,
   });
   yield* runtime.insert(tenantModuleStates).values({ moduleKey: consumer, state: 'active', tenantId });
-  const repository = makeOutboxRepository(runtime, yield* Crypto.Crypto);
+  const repository = makeOutboxRepository(runtime, yield* SecureRandom.SecureRandom);
   const { revision } = snapshot.composition;
   const insert = Effect.fn('CompletionTest.accept')(function* insert(
     options: { readonly marked?: boolean; readonly revision?: string; readonly target?: string } = {},

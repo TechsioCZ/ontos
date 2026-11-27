@@ -2,7 +2,8 @@ import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { and, eq } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, Option } from 'effect';
+import { Context, DateTime, Effect, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
 import { privacyMeasureExecutions } from '../db/schema.ts';
@@ -21,7 +22,7 @@ export interface PrivacyMeasureExecutionService {
   readonly execute: (
     handoff: PrivacyMeasureHandoff,
     actionInvocationId: string,
-  ) => Effect.Effect<OwnerExecutionOutcome, ExecutePrivacyMeasureRejected, Crypto.Crypto>;
+  ) => Effect.Effect<OwnerExecutionOutcome, ExecutePrivacyMeasureRejected, SecureRandom.SecureRandom>;
   readonly load: (
     idempotencyKey: string,
   ) => Effect.Effect<Option.Option<PrivacyMeasureExecutionReceipt>, ExecutePrivacyMeasureRejected>;
@@ -139,8 +140,8 @@ export const privacyMeasureExecutionService = (
       }
 
       const now = yield* DateTime.nowAsDate;
-      const crypto = yield* Crypto.Crypto;
-      const outcomeId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(persistenceUnavailable));
+      const crypto = yield* SecureRandom.SecureRandom;
+      const outcomeId = yield* crypto.uuidV4();
       const outcome = makeOutcome({
         handoff,
         now,

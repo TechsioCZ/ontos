@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, FileSystem, Layer, Match, Path, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, FileSystem, Layer, Match, Path, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../access/bootstrap/bootstrap-tenant-access.ts';
 import { compileFullAccessRole } from '../access/bootstrap/full-access-role.ts';
@@ -219,10 +220,10 @@ const holderWrites = Effect.fn('TestTenantAccess.holderWrites')(function* holder
   readonly scopeIds: readonly AccessScopeId[];
   readonly tenantId: TenantId;
 }) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const holder = { _tag: 'Principal' as const, principalId: input.principalId };
   const membershipWrite = (scopeId: AccessScopeId) =>
-    crypto.randomUUIDv4().pipe(
+    crypto.uuidV4().pipe(
       Effect.map((id) => ({
         _tag: 'RecordMembership' as const,
         membership: {
@@ -239,7 +240,7 @@ const holderWrites = Effect.fn('TestTenantAccess.holderWrites')(function* holder
       })),
     );
   const assignmentWrite = (scopeId: AccessScopeId) =>
-    crypto.randomUUIDv4().pipe(
+    crypto.uuidV4().pipe(
       Effect.map((incarnationId) => ({
         _tag: 'RecordAssignment' as const,
         assignment: {
@@ -354,13 +355,13 @@ export const grantTestTenantRoleAccess = Effect.fn('TestTenantAccess.roles')(
     const scopeIds = scopes.map(({ scopeId }) => scopeId);
     const assignedScopeIds = input.assignmentScope === 'companies' ? companyScopeIdsOf(scopes) : scopeIds;
     const at = DateTime.toDateUtc(yield* DateTime.now);
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     yield* writeBootstrapScopes(installation.database, firstScope, { scopes, tenantId });
     // Each holder authors its own role and rows, so every row is attributed to the scope that wrote it.
     const grantHolder = Effect.fn('TestTenantAccess.holder')(function* grantHolder(holder: TestTenantAccessHolder) {
       const principalId = PrincipalIdSchema.make(holder.principalId);
       const [scope, roleUuid, roleRevisionUuid] = yield* Effect.all(
-        [stageScopeOf({ principalId: holder.principalId, tenantId }), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
+        [stageScopeOf({ principalId: holder.principalId, tenantId }), crypto.uuidV4(), crypto.uuidV4()],
         { concurrency: 3 },
       );
       const roleId = RoleIdSchema.make(roleUuid);

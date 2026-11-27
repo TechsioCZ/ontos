@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { RetainedOwnerHistoryEnvelopeSchema } from '../../src/actions/retained-owner-history.ts';
@@ -9,7 +10,9 @@ import { actionInvocations, domainEvents, legalEntities, tenants } from '../../s
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { makeIsolatedNativeDatabaseFixture } from '../../src/testing/isolated-native-database.ts';
 
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 const owner = 'owner.fixture';
 const profileType = 'owner.fixture.profile';
 const entitlementType = 'owner.fixture.entitlement';
@@ -22,10 +25,10 @@ const fixture = Effect.gen(function* historyFixture() {
   yield* isolated.migrateCoreSchema();
   const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
   const { executor: runtime } = yield* makeCoreDatabase(isolated.connections.runtime);
-  const crypto = yield* Crypto.Crypto;
-  const tenantId = yield* crypto.randomUUIDv4();
-  const legalEntityId = yield* crypto.randomUUIDv4();
-  const otherLegalEntityId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const tenantId = yield* crypto.uuidV4();
+  const legalEntityId = yield* crypto.uuidV4();
+  const otherLegalEntityId = yield* crypto.uuidV4();
   yield* admin.insert(tenants).values({
     defaultLocale: 'en',
     name: 'Retained Core history',

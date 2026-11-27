@@ -8,7 +8,7 @@ import { Effect, Layer, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { SymmyJobNotification, SymmyJobNotificationError } from '../../src/services/symmy-job-notification.service.ts';
 import { SymmyJobNotificationStore } from '../../src/services/symmy-job-notification-store.ts';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import { SymmyExecutionEffectStateSchema, SymmyExecutionJobSchema } from '../../shared/domain/symmy-job-execution.ts';
 import type {
@@ -21,6 +21,7 @@ import type {
 import type { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { projectSymmyExecutionJob } from '../../src/persistence/symmy-job-execution-store.ts';
 import {
+  collectSymmyWorkerDefectFrames,
   makeSymmyJobWorker,
   SymmyJobWorkerError,
   SymmyEffectAdapters,
@@ -423,6 +424,36 @@ const harness = () => {
   };
 };
 
+describe('Symmy defect diagnostics', () => {
+  it('retains only the first supported source frame per line without including the fault message', () => {
+    expect(
+      collectSymmyWorkerDefectFrames(
+        [
+          'Error: private message /not-a-frame.ts:1:2',
+          '    at run (file:///srv/app/worker.mjs:12:34)',
+          '    at /srv/app/worker.cjs:56:78',
+          '    at embedded/path/source.ts:9:10 next /ignored/file.js:11:12',
+          '    at file://a.js:1:2',
+          '    at /.js:1:2',
+          '    at /unsupported/file.jsx:1:2',
+          '    at /missing/coordinates.ts',
+        ].join('\n'),
+      ),
+    ).toEqual(['file:///srv/app/worker.mjs:12:34', '/srv/app/worker.cjs:56:78', '/path/source.ts:9:10', '//a.js:1:2']);
+  });
+
+  it('keeps the existing twelve-line diagnostic boundary and rejects path-only runs', () => {
+    expect(
+      collectSymmyWorkerDefectFrames(
+        ['Error: private message', ...Array.from({ length: 13 }, (_, line) => `at /srv/worker.ts:${line}:1`)].join(
+          '\n',
+        ),
+      ),
+    ).toHaveLength(12);
+    expect(collectSymmyWorkerDefectFrames(`Error\n${'/segment'.repeat(10_000)}`)).toEqual([]);
+  });
+});
+
 describe('Symmy durable execution and original-effect recovery', () => {
   it.effect('refuses an absent stored job before any owner effect or notification', () =>
     Effect.gen(function* absentStoredJob() {
@@ -497,7 +528,9 @@ describe('Symmy durable execution and original-effect recovery', () => {
       yield* Effect.flip(worker.execute({ jobId }, context));
       const projected = yield* projectSymmyExecutionJob(fixture.job());
       expect(projected.phase).toBe('running');
-      expect(projected.items[0].effects).toEqual([
+      const [projectedItem] = projected.items;
+      assert.isDefined(projectedItem);
+      expect(projectedItem.effects).toEqual([
         { effectId: siblingId, owner: 'integration.symmy', status: 'accepted_change' },
         { effectId, owner: 'integration.symmy', status: 'unavailable' },
       ]);
@@ -518,7 +551,9 @@ describe('Symmy durable execution and original-effect recovery', () => {
       yield* Effect.flip(worker.execute({ jobId }, context));
       const uncertain = yield* projectSymmyExecutionJob(fixture.job());
       expect(uncertain.phase).toBe('indeterminate');
-      expect(uncertain.items[0].effects[1]?.status).toBe('indeterminate');
+      const [uncertainItem] = uncertain.items;
+      assert.isDefined(uncertainItem);
+      expect(uncertainItem.effects[1]?.status).toBe('indeterminate');
     }),
   );
 

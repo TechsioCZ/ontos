@@ -6,20 +6,8 @@ import {
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
 import type { PgClient } from '@effect/sql-pg';
-import {
-  Cause,
-  Crypto,
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Match,
-  Option,
-  Predicate,
-  Schema,
-} from 'effect';
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { SqlError } from 'effect/sql/SqlError';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -351,13 +339,10 @@ const fanoutOf = (database: PaymentTestDatabase, scope: PaymentTestScope, option
 /** Distinct deterministic bytes per draw, so every return token of a scope is unique. */
 const testCryptoOf = (seed: { draws: number }) =>
   Layer.succeed(
-    Crypto.Crypto,
-    Crypto.make({
-      digest: (_algorithm, data) => Effect.succeed(data),
-      randomBytes: (size) => {
-        seed.draws += 1;
-        return new Uint8Array(size).fill(seed.draws % 256);
-      },
+    SecureRandom.SecureRandom,
+    SecureRandom.make((size) => {
+      seed.draws += 1;
+      return new Uint8Array(size).fill(seed.draws % 256);
     }),
   );
 

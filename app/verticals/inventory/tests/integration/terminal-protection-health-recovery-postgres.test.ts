@@ -13,7 +13,6 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Cause,
   Clock,
-  Crypto,
   DateTime,
   Deferred,
   Duration,
@@ -32,6 +31,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { TestClock } from 'effect/testing';
@@ -313,10 +313,10 @@ const makeScenario = Effect.fn('TerminalProtectionHealth.makeScenario')(function
       }).match(uuidPattern),
     ),
   ];
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const mappedIds = yield* Effect.forEach(
     ids,
-    (source) => crypto.randomUUIDv4().pipe(Effect.map((target) => [source, target] as const)),
+    (source) => crypto.uuidV4().pipe(Effect.map((target) => [source, target] as const)),
     { concurrency: 1 },
   );
   const identities = new Map([...mappedIds, ['11111111-1111-4111-8111-111111111111', fixture.tenantId]]);
@@ -847,7 +847,7 @@ it.live(
             key: 'wrong-source',
             sourceRef: yield* Schema.decodeUnknownEffect(StockItemSchema.fields.stockItemRef)({
               ...scenario.item.stockItemRef,
-              resourceId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+              resourceId: yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()),
             }),
           },
         ]) {
@@ -861,7 +861,7 @@ it.live(
             key: 'foreign-source',
             sourceRef: yield* Schema.decodeUnknownEffect(StockItemSchema.fields.stockItemRef)({
               ...scenario.item.stockItemRef,
-              tenantId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+              tenantId: yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()),
             }),
           })
           .pipe(Effect.exit);
@@ -993,7 +993,7 @@ it.live(
       ) as blocked`,
             'objects',
           );
-          if (state?.blocked) {
+          if (state?.blocked === true) {
             return true;
           }
           return yield* Effect.fail('native_lock_wait_unregistered' as const);

@@ -4,7 +4,8 @@ import { OperationContextUnavailable, defineScopedRoutine } from '@app/core-runt
 import type { OperationalScope, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
-import { Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ExecutePrivacyMeasureRejected } from '../../shared/actions/execute-privacy-measure.ts';
 import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
@@ -120,7 +121,7 @@ export const privacyMeasureExecutionService = Effect.fn('CommercePrivacyMeasureE
   function* makePrivacyMeasureExecution(
     transaction: ProfileScopedRoutineInvoker,
     scope: OperationalScope,
-  ): Effect.fn.Return<PrivacyMeasureExecutionService, OperationContextUnavailable, Crypto.Crypto> {
+  ): Effect.fn.Return<PrivacyMeasureExecutionService, OperationContextUnavailable, SecureRandom.SecureRandom> {
     if (scope.legalEntityId === undefined) {
       return yield* new OperationContextUnavailable({
         code: 'operation_context_unavailable',
@@ -128,7 +129,7 @@ export const privacyMeasureExecutionService = Effect.fn('CommercePrivacyMeasureE
       });
     }
     const { legalEntityId } = scope;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const load: PrivacyMeasureExecutionService['load'] = (idempotencyKey) =>
       transaction.invoke(loadReceiptRoutine, [idempotencyKey]).pipe(
         Effect.mapError(unavailable),
@@ -173,18 +174,7 @@ export const privacyMeasureExecutionService = Effect.fn('CommercePrivacyMeasureE
           );
         }
         const now = yield* DateTime.nowAsDate;
-        const outcomeId = yield* crypto
-          .randomUUIDv4()
-          .pipe(
-            Effect.mapError((cause) =>
-              rejected(
-                'PRIVACY_MEASURE_PERSISTENCE_UNAVAILABLE',
-                'Commerce Customer Context could not allocate a Privacy Measure outcome identity',
-                true,
-                cause,
-              ),
-            ),
-          );
+        const outcomeId = yield* crypto.uuidV4();
         const outcome = makeOutcome({
           handoff,
           now,

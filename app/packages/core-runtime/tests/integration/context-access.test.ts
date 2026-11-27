@@ -5,7 +5,8 @@ import {
 } from '../support/historical-owner-targets.ts';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
@@ -65,7 +66,7 @@ const requireBusinessPermissions = (access: ReturnType<typeof makeContextAccess>
 
 const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   const configuration = yield* loadSpiceDbConfig();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const [
     tenantId,
     otherTenantId,
@@ -80,17 +81,17 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     crossTenantPriceGroupId,
   ] = yield* Effect.all(
     [
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
-      crypto.randomUUIDv4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
+      crypto.uuidV4(),
     ],
     { concurrency: 'unbounded' },
   );
@@ -469,7 +470,9 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   );
 });
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('context-access', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('context-access', (suite) => {
   suite.effect(
     'isolates live scope batches and owner grants by Tenant, Principal, and exact revocation',
     () => contextAccessProgram,

@@ -24,7 +24,8 @@ import { EnsureRetailCustomerProfileRejected } from '../shared/actions/ensure-re
 import { CreateCounterpartyPurchasingProfileRejected } from '../shared/actions/create-counterparty-purchasing-profile.ts';
 import { accessPortalWritesForTransaction } from '@app/core-runtime/access/portal';
 import type { AccessPortalTransaction, AccessPortalWrites } from '@app/core-runtime/access/portal';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { CommerceSourceProcessingEligibility } from './integrations/source-processing-eligibility.ts';
 import type {
   CommerceSourceProcessingRejected,
@@ -82,7 +83,7 @@ const profileServicesFor = (
 ): Effect.Effect<
   ProfilePersistenceServices,
   OperationContextUnavailable,
-  | Crypto.Crypto
+  | SecureRandom.SecureRandom
   | ProfileCounterpartyRoleEligibilityResolverFactory
   | ProfileReactivationEligibilityEvaluatorFactory
   | PartyRegistryGuestResolverFactory
@@ -112,7 +113,7 @@ const profileServicesFor = (
     const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
     const reactivationEvaluatorFactory = yield* ProfileReactivationEligibilityEvaluatorFactory;
     const guestResolverFactory = yield* PartyRegistryGuestResolverFactory;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const sourcePrivacy = yield* Effect.serviceOption(CommerceSourceProcessingEligibility);
     const sourceProof = yield* Effect.serviceOption(CommerceSourceProfileOwnerProof);
     const organizationBusiness = yield* Effect.serviceOption(CommerceOrganizationBusinessEligibility);

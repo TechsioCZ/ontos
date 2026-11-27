@@ -1,4 +1,4 @@
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { buildAccessCatalogRelease } from '@app/core-runtime/access/catalog';
 import { makeScriptedBoundAccessGate } from '@app/core-runtime/testing/access-gate';
@@ -6,7 +6,6 @@ import { sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
   Context,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -18,6 +17,7 @@ import {
   Schedule,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -469,9 +469,9 @@ const seedAccess = (admin: PgClient.PgClient) =>
 const disposableDatabase = Effect.gen(function* disposableDatabaseEffect() {
   // This disposable-database suite uses explicit process configuration, never the workspace .env.
   const connections = yield* loadDatabaseConnectionPair({ envPath: `${import.meta.filename}.no-environment-file` });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-  const name = `access_owner_runner_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `access_owner_runner_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -519,7 +519,7 @@ interface LiveMandateStores {
 const liveApprovals = Effect.fn('OwnerRunnerFixture.liveApprovals')(function* liveApprovalsEffect(
   executor: LiveDatabase,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const frozenCommands = makeDrizzleFrozenCommandStore({ executor });
   const changes = makeAccessChangesDrizzleStore({ executor });
   const records = Context.get(
@@ -654,7 +654,7 @@ interface RuntimeSeams {
 
 const makeRuntime = (
   executor: LiveDatabase,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   dispatch: ActionMandateDispatch,
   accessDecision: BoundAccessGate = makeScriptedBoundAccessGate('allowed').bound,
   seams: RuntimeSeams = {},
@@ -990,7 +990,9 @@ it('publishes the real registration of each Action, never a fabricated declarati
   });
 });
 
-it.layer(NodeServices.layer)('access approvals owner runner over a real catalog Action', (suite) => {
+const approvalNativeServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom);
+
+it.layer(approvalNativeServices)('access approvals owner runner over a real catalog Action', (suite) => {
   suite.effect('runs the real owner Action once and answers a committed retry with its receipt', () =>
     onLiveClock(
       Effect.gen(function* ownerRunsOnce() {
@@ -1003,7 +1005,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const mandateId = yield* mandateIdOf(admin, proposed.id);
         expect(mandateId.length).toBeGreaterThan(0);
 
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch);
 
@@ -1036,7 +1038,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const { proposed } = yield* proposeAndApprove(live, jana, eva);
         const mandateId = yield* mandateIdOf(admin, proposed.id);
 
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const failNextCommit = yield* Ref.make(true);
         const runtime = makeRuntime(executor, crypto, faultyCommitDispatch(dispatch, failNextCommit));
@@ -1077,7 +1079,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const { proposed } = yield* proposeAndApprove(live, jana, eva);
         const mandateId = yield* mandateIdOf(admin, proposed.id);
 
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch);
 
@@ -1142,7 +1144,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const mandateId = yield* mandateIdOf(admin, proposed.id);
         const writerOperation = uid(997);
 
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const ownerClaimed = yield* Deferred.make<number>();
         const writerStarted = yield* Deferred.make<number>();
@@ -1225,7 +1227,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const mandateId = yield* mandateIdOf(admin, proposed.id);
         const writerOperation = uid(997);
 
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const writerHolding = yield* Deferred.make<number>();
         const runnerAtFence = yield* Deferred.make<number>();
@@ -1308,7 +1310,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const { admin, executor } = yield* disposableDatabase;
         const live = yield* liveApprovals(executor);
         const jana = yield* scopeFor(JANA);
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch, gateAnswering('NEEDS_APPROVAL', [requesterEvidence]));
 
@@ -1357,7 +1359,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const { admin, executor } = yield* disposableDatabase;
         const live = yield* liveApprovals(executor);
         const jana = yield* scopeFor(JANA);
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch, gateAnswering('NEEDS_APPROVAL', [requesterEvidence]));
 
@@ -1392,7 +1394,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const { admin, executor } = yield* disposableDatabase;
         const live = yield* liveApprovals(executor);
         const jana = yield* scopeFor(JANA);
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const failNextPark = yield* Ref.make(true);
         const parksReached = yield* Ref.make(0);
@@ -1436,7 +1438,7 @@ it.layer(NodeServices.layer)('access approvals owner runner over a real catalog 
         const { admin, executor } = yield* disposableDatabase;
         const live = yield* liveApprovals(executor);
         const jana = yield* scopeFor(JANA);
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const dispatch = yield* mandateDispatchFor(live, executor);
         const runtime = makeRuntime(executor, crypto, dispatch, gateAnswering('NEEDS_APPROVAL', [requesterEvidence]));
 

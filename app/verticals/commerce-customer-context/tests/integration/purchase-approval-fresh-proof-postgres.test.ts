@@ -1,3 +1,4 @@
+import { commerceAuthSha256Live } from '../../src/portal-auth/sha256.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
 import { orderCommitmentApprovalEvidenceRead } from '../../src/api/order-commitment-approval-evidence.read.ts';
 import { OrderCommitmentApprovalEvidenceRequestSchema } from '../../shared/apis/order-commitment-approval-evidence.ts';
@@ -399,6 +400,7 @@ const applyApprovalFreshProfileCurrentMigrations = Effect.fn('ApprovalFreshProof
 const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
+  Layer.provideMerge(commerceAuthSha256Live),
 );
 
 const authorityUnavailable = (cause: unknown): PurchasingApprovalRejected => {
@@ -485,7 +487,11 @@ const scenario = Effect.fn('ApprovalFreshProofTests.scenario')(function* scenari
     finalProofTest: true,
     snapshot,
   });
-  const chain = yield* owner.createRequest({ hierarchyTtlMilliseconds, ttlMilliseconds: requestTtlMilliseconds });
+  const requestOptions =
+    hierarchyTtlMilliseconds === undefined
+      ? { ttlMilliseconds: requestTtlMilliseconds }
+      : { hierarchyTtlMilliseconds, ttlMilliseconds: requestTtlMilliseconds };
+  const chain = yield* owner.createRequest(requestOptions);
   const approved = yield* chain.decide();
   expect(approved.request.status).toBe('APPROVED');
   const binding = yield* Schema.decodeUnknownEffect(PurchaseApprovalFinalBindingSchema)({
@@ -1068,7 +1074,7 @@ it.live.concurrent(
           original[0],
         );
         for (const record of records) {
-          expect(record.evidence.requestRevision).toBe(test.approved.request.requestRevision);
+          expect(record.evidence['requestRevision']).toBe(test.approved.request.requestRevision);
         }
       }),
     ).pipe(Effect.provide(services)),

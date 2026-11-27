@@ -1,7 +1,8 @@
 import { asc } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { Cause, Crypto, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Cause, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { AuthorizationError, isSqlError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { expect, it } from 'effect-rstest';
 
@@ -88,7 +89,9 @@ const worker = defineOutboxWorker(
   },
   () => Effect.void,
 );
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 
 const fixture = Effect.gen(function* admissionRollbackFixture() {
   const isolated = yield* makeIsolatedNativeDatabaseFixture({
@@ -104,7 +107,7 @@ const fixture = Effect.gen(function* admissionRollbackFixture() {
   yield* admin
     .update(applicationCompositionAuthority)
     .set({ subscriptionsJson: extractOutboxWorkerSubscriptions([worker]) });
-  const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const tenantId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   yield* runtime.insert(tenants).values({
     defaultLocale: 'en',
     name: 'Outbox admission rollback fixture',

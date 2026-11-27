@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -56,7 +57,9 @@ const worker = (suffix: string) =>
   );
 const workers = [worker('primary'), worker('secondary')];
 const secondaryWorkerKey = `${consumer}.secondary`;
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 const OPERATOR = 'operator@example.test';
 const REASON = 'Order reconciled with the buyer by hand after the approval was revised';
 
@@ -77,7 +80,7 @@ const fixture = Effect.gen(function* resolutionFixture() {
   yield* isolated.publishInitialComposition(snapshot);
   const { executor: admin } = yield* makeCoreDatabase(isolated.connections.admin);
   const { executor: runtime } = yield* makeCoreDatabase(isolated.connections.runtime);
-  const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const tenantId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   yield* runtime.insert(tenants).values({
     defaultLocale: 'en',
     name: 'Outbox dead-delivery fixture',
@@ -86,7 +89,7 @@ const fixture = Effect.gen(function* resolutionFixture() {
     tenantId,
   });
   yield* runtime.insert(tenantModuleStates).values({ moduleKey: consumer, state: 'active', tenantId });
-  const repository = makeOutboxRepository(runtime, yield* Crypto.Crypto);
+  const repository = makeOutboxRepository(runtime, yield* SecureRandom.SecureRandom);
   const { revision } = snapshot.composition;
   const insert = Effect.fn('DeadDeliveryTest.accept')(function* insert(marked: boolean) {
     return yield* runtime.transaction(
@@ -275,7 +278,7 @@ it.layer(nativeServices, { excludeTestServices: true })('operator resolution of 
       );
       const second = yield* f.claim(1);
       yield* f.repository.fail(second, 'Owner temporarily refused', yield* DateTime.nowAsDate);
-      const otherTenant = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const otherTenant = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
       for (const overrides of [
         { tenantId: otherTenant },
         { workerKey: `${consumer}.missing` },
@@ -318,7 +321,7 @@ it.layer(nativeServices, { excludeTestServices: true })('operator resolution of 
       expect(yield* fails(setStatus(f.admin, 'released'))).toBe(true);
       // The ledger refuses a record that does not name the exact dead delivery.
       for (const mismatch of [
-        { tenantId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()) },
+        { tenantId: yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()) },
         { workerKey: `${consumer}.primary` },
         { reason: '   ' },
       ]) {

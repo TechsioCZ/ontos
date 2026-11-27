@@ -44,7 +44,6 @@ import { NodeHttpServer, NodeSocketServer } from '@effect/platform-node';
 import {
   Config,
   Context,
-  Crypto,
   Deferred,
   Effect,
   FileSystem,
@@ -58,6 +57,7 @@ import {
   Ref,
   Result,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 import { Socket } from 'effect/socket';
@@ -260,8 +260,8 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
     address.pathname = `/${capability.databaseName}`;
     urls[identity.urlKey] = address.href;
   }
-  const issuerUrl = urls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-  const requestUrl = urls.PARTY_REGISTRY_DATABASE_URL;
+  const issuerUrl = urls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+  const requestUrl = urls['PARTY_REGISTRY_DATABASE_URL'];
   if (issuerUrl === undefined || requestUrl === undefined) {
     return yield* failure('Canonical native fixture identities were incomplete');
   }
@@ -464,7 +464,7 @@ const receivePrivateShellResponse = (
   ) => Effect.Effect<
     { readonly handoff: LiveOperationFixtureRuntimeHandoff; readonly type: 'fixture-prepared' },
     Effect.Error<ReturnType<typeof makeLiveOperationFixture>>,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >,
 ) =>
   Effect.gen(function* privateShellResponse() {
@@ -606,7 +606,7 @@ const bootstrapOwnerCapabilities = Effect.fn('PrivacyPublicSession.bootstrapOwne
           sql`select pg_get_userbyid(c.relowner)=current_user as owned,(c.relrowsecurity and c.relforcerowsecurity) as rls from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname=${item.schema} and c.relname=${table} and c.relkind='r'`,
           'objects',
         );
-        if (!relation?.owned || (item.rls && !relation.rls)) {
+        if (relation === undefined || !relation.owned || (item.rls && !relation.rls)) {
           return yield* failure('Owner relation capability was refused');
         }
         // Replace copied deployment grants with this owned fixture's exact
@@ -719,8 +719,8 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
     ) {
       return yield* failure('Public supervisor physical creator capability was refused');
     }
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const suffix = yield* crypto.uuidV4();
     const fs = yield* FileSystem.FileSystem;
     const directories = {
       party: yield* fs.makeTempDirectoryScoped({
@@ -789,7 +789,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           appId: marker.appId,
           buildMarker: marker.buildMarker,
           moduleId,
-          originatorActions: isParty ? party.originatorActions : undefined,
+          originatorActions: isParty ? party.originatorActions : [],
           outboxSubscriptions: ownerRuntime.outboxSubscriptions,
         });
         const manifest = {
@@ -1004,9 +1004,7 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           preconditionRefs: ['TEST:decision'],
           requestedAt: '2026-01-01T00:00:00.000Z',
           requestedResult: 'RESTRICTED',
-          resourceRefs: [
-            `party.registry|party.registry.counterparty|${shell.legalEntityId}|${yield* crypto.randomUUIDv4()}`,
-          ],
+          resourceRefs: [`party.registry|party.registry.counterparty|${shell.legalEntityId}|${yield* crypto.uuidV4()}`],
           right: null,
           sourceDecisionRef: `decision:${suffix}`,
           sourceDecisionRevision: 1,
@@ -1089,14 +1087,14 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
           .select()
           .from(applicationCompositionDurableWork)
           .where(eq(applicationCompositionDurableWork.workId, debtId));
-        const expectedWorkerKeys = party.runtime.outboxSubscriptions
-          .filter(
-            ({ consumerModuleKey, producerModuleKey, topic }) =>
-              consumerModuleKey === partyModuleKey &&
-              producerModuleKey === message.producerModuleKey &&
-              topic === message.topic,
-          )
-          .map(({ workerKey }) => workerKey);
+        const expectedWorkerKeys = party.runtime.outboxSubscriptions.flatMap(
+          ({ consumerModuleKey, producerModuleKey, topic, workerKey }) =>
+            consumerModuleKey === partyModuleKey &&
+            producerModuleKey === message.producerModuleKey &&
+            topic === message.topic
+              ? [workerKey]
+              : [],
+        );
         const partyDeliveries = deliveries.filter(({ consumerModuleKey }) => consumerModuleKey === partyModuleKey);
         const partyAcknowledgement = exactConsumerAcknowledgement(expectedWorkerKeys, partyDeliveries);
         if (Option.isNone(partyAcknowledgement) || remaining.length !== 0) {
@@ -1134,14 +1132,14 @@ const openPrivacyPublicCompletionSession = Effect.fn('PrivacyPublicSession.open'
               eq(outboxDeliveries.consumerModuleKey, privacyModuleKey),
             ),
           );
-        const expectedPrivacyWorkerKeys = privacyDescription.runtime.outboxSubscriptions
-          .filter(
-            ({ consumerModuleKey, producerModuleKey, topic }) =>
-              consumerModuleKey === privacyModuleKey &&
-              producerModuleKey === message.producerModuleKey &&
-              topic === message.topic,
-          )
-          .map(({ workerKey }) => workerKey);
+        const expectedPrivacyWorkerKeys = privacyDescription.runtime.outboxSubscriptions.flatMap(
+          ({ consumerModuleKey, producerModuleKey, topic, workerKey }) =>
+            consumerModuleKey === privacyModuleKey &&
+            producerModuleKey === message.producerModuleKey &&
+            topic === message.topic
+              ? [workerKey]
+              : [],
+        );
         const privacyAcknowledgement = exactConsumerAcknowledgement(expectedPrivacyWorkerKeys, privacyDeliveries);
         if (Option.isNone(privacyAcknowledgement)) {
           return yield* failure('The actual Privacy watchdog did not ACK its exact intended delivery');

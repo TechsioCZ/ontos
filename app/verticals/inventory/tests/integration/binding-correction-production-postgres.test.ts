@@ -5,7 +5,8 @@ import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import type { PgInsertValue } from 'drizzle-orm/pg-core';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -425,7 +426,7 @@ it.live(
         });
         const actionRuntime = makeActionRuntime(
           { executor: runtimeDatabase },
-          makeActionRepository(yield* Crypto.Crypto),
+          makeActionRepository(yield* SecureRandom.SecureRandom),
           allowedPermission,
           testOperationalScopeResolver,
           {

@@ -22,7 +22,8 @@ import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -81,7 +82,7 @@ import {
   importSourceAssertionOwnerAuthorizationOverlayLive,
 } from '../../src/persistence/import-source-assertion-owner-authorization.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 const observedAt = '2026-09-24T10:00:00.000Z';
 const selectedAt = '2026-09-24T09:00:00.000Z';
@@ -152,7 +153,7 @@ it.live(
         resourceType: 'commerce.catalog.product-unit',
         tenantId,
       };
-      const positionRef = {
+      const positionRef: typeof InventorySourceAssertionProposalSchema.Type.positionRef = {
         moduleId: 'commerce.inventory',
         resourceId: positionId,
         resourceType: 'commerce.inventory.stock-position',

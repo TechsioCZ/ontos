@@ -142,8 +142,8 @@ export interface DeploymentImpactPlan {
   readonly any: boolean;
   readonly changedPaths: readonly string[];
   readonly comparison: {
-    readonly baseRevision?: string;
-    readonly headRevision?: string;
+    readonly baseRevision?: string | undefined;
+    readonly headRevision?: string | undefined;
     readonly mode: 'diff' | 'full';
   };
   /** Observed owner work is independent of the artifact build selection. */
@@ -169,9 +169,9 @@ export interface DeploymentImpactPlan {
 }
 
 export interface PlanDeploymentImpactOptions {
-  readonly baseRevision?: string;
-  readonly changedPaths?: readonly string[];
-  readonly headRevision?: string;
+  readonly baseRevision?: string | undefined;
+  readonly changedPaths?: readonly string[] | undefined;
+  readonly headRevision?: string | undefined;
   /** Supplied by native migration planning; source-path impact alone is only a conservative trigger. */
   readonly migrationPlan?: ApplicationMigrationPlan;
   /** Dedicated per-owner worker services or the one Outbox Worker host. Defaults to `dedicated`. */
@@ -180,7 +180,7 @@ export interface PlanDeploymentImpactOptions {
    * The last successful edge deployment, for retirement checks. Defaults to `baseRevision`; a full
    * plan passes it on its own so removals are still reconciled.
    */
-  readonly placementBaseRevision?: string;
+  readonly placementBaseRevision?: string | undefined;
   /**
    * The workers do not match the Outbox Worker mode, so the mode changed since its workers last deployed.
    * The plan deploys every worker of this mode, whatever the diff impacts, and stops the other mode's.
@@ -273,7 +273,7 @@ const requireString = (value: string | undefined, area: string): string => {
 const toEnvironmentSegment = (value: string): string =>
   value
     .replaceAll(/[^A-Za-z0-9]+/gu, '_')
-    .replaceAll(/^_+|_+$/gu, '')
+    .replaceAll(/^_|_$/gu, '')
     .toUpperCase();
 
 const normalizeChangedPath = (changedPath: string): string => {
@@ -286,8 +286,8 @@ const isWithin = (changedPath: string, ownerPath: string): boolean =>
 
 const parseStageSetups = (zeropsSource: string): ReadonlySet<string> => {
   const setups = new Set<string>();
-  for (const match of zeropsSource.matchAll(/^\s*-\s+setup:\s*['"]?(?<setup>[^'"\s]+)['"]?\s*$/gmu)) {
-    const setup = match.groups?.setup;
+  for (const match of zeropsSource.matchAll(/^[ \t]*-\s+setup:\s*['"]?(?<setup>[^'"\s]+)['"]?[ \t]*$/gmu)) {
+    const setup = match.groups?.['setup'];
     if (setup !== undefined && setup.length > 0) {
       setups.add(setup);
     }
@@ -702,7 +702,7 @@ const listWorkspaceProjects = (rootDirectory: string, globs: readonly string[]) 
     const pathService = yield* Path.Path;
     const projects: string[] = [];
     for (const glob of globs) {
-      const directory = WORKSPACE_GLOB_PATTERN.exec(glob)?.groups?.directory;
+      const directory = WORKSPACE_GLOB_PATTERN.exec(glob)?.groups?.['directory'];
       if (directory === undefined) {
         return fail(
           `pnpm-workspace.yaml glob "${glob}" is unsupported; declare workspace projects with "<directory>/*" globs`,
@@ -799,6 +799,7 @@ const readSharedPackageConsumers = (
     }
     const dependencies = new Map<string, readonly string[]>();
     const contractProducers = new Map<string, string>();
+    const firstUnitById = new Map(units.toReversed().map((unit) => [unit.id, unit]));
     for (const [index, manifest] of packages.entries()) {
       const owner = ownersByPackage.get(manifest.name);
       if (owner?.path !== workspaceProjects[index]) {
@@ -807,7 +808,7 @@ const readSharedPackageConsumers = (
       dependencies.set(manifest.name, workspacePackageDependencies(manifest, new Set(packagesByName.keys())));
       const producer = manifest.ontosContractOwner;
       if (producer !== undefined) {
-        const unit = units.find((candidate) => candidate.id === producer.appId);
+        const unit = firstUnitById.get(producer.appId);
         if (unit?.packageName !== producer.packageName) {
           return fail(`workspace contract package "${manifest.name}" references unknown or inconsistent producer`);
         }
@@ -832,7 +833,7 @@ const readSharedPackageConsumers = (
       );
       consumersByOwner.set(
         requireString(owner.id, 'workspace owner.id'),
-        units.filter((unit) => affected.has(unit.packageName)).map((unit) => unit.id),
+        units.flatMap((unit) => (affected.has(unit.packageName) ? [unit.id] : [])),
       );
     }
     return consumersByOwner;
@@ -1135,7 +1136,7 @@ const applyOwnedPathImpact = (
   );
   if (owner === undefined) {
     const [area] = changedPath.split('/');
-    fail(`unknown changed path "${changedPath}" in application area "${area}"`);
+    return fail(`unknown changed path "${changedPath}" in application area "${area}"`);
   }
   const ownerId = requireString(owner.id, `owner for changed path ${changedPath}`);
   const topologyUnit = unitsById.get(ownerId);
@@ -1428,9 +1429,9 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       phases.push(INFRASTRUCTURE_PHASES.spicedb);
     }
     phases.push(
-      ...selectedUnits.filter((unit) => unit.kind === 'provider').map(toPhase),
+      ...selectedUnits.flatMap((unit) => (unit.kind === 'provider' ? [toPhase(unit)] : [])),
       ...workerPhases,
-      ...selectedUnits.filter((unit) => unit.kind === 'shell').map(toPhase),
+      ...selectedUnits.flatMap((unit) => (unit.kind === 'shell' ? [toPhase(unit)] : [])),
     );
 
     const stoppedWorkers = planStoppedWorkers(
@@ -1461,13 +1462,11 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
           shell.packageName,
         ),
         migrator,
-        providers: phases
-          .filter((phase) => phase.kind === 'provider' || phase.kind === 'worker')
-          .map((phase) => phase.id),
+        providers: phases.flatMap((phase) => (phase.kind === 'provider' || phase.kind === 'worker' ? [phase.id] : [])),
         shell: impacted.has(shell.id),
         spicedb,
         stoppedWorkers,
-        workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
+        workers: phases.flatMap((phase) => (phase.kind === 'worker' ? [phase.id] : [])),
       },
     };
     return migrationPlan === undefined ? plan : { ...plan, migrationPlan };

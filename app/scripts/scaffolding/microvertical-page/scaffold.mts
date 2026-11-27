@@ -258,10 +258,7 @@ const discoverPageVertical = (
       return yield* pageScaffoldFailure(`vertical ${vertical.slug} locale directory is missing`);
     }
     const localeEntries = yield* readDirectoryEntries(localeRoot);
-    const locales = localeEntries
-      .filter((entry) => entry.isDirectory)
-      .map((entry) => entry.name)
-      .toSorted();
+    const locales = localeEntries.flatMap((entry) => (entry.isDirectory ? [entry.name] : [])).toSorted();
     if (locales.length === 0 || locales.some((locale) => !localePattern.test(locale))) {
       return yield* pageScaffoldFailure(
         `vertical ${vertical.slug} must have one or more valid generated locale directories`,
@@ -344,7 +341,7 @@ interface ${componentName}Props {
   const content = route.isDynamic
     ? `<${contentComponentName} routeParams={routeParams} />`
     : `<${contentComponentName} />`;
-  return `import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+  return `import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime/consumer';
 ${schemaImport}import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
 import { ${resourcesName} } from '${relativeFromRoute(route, 'i18n/resources', 2)}';
 
@@ -631,7 +628,7 @@ const ownedPageRoutes = (
     const verticalRoot = resolveContainedPath(workspaceRoot, 'verticals');
     const verticals = yield* readDirectoryEntries(verticalRoot);
     const ownedRoutes = yield* Effect.all(
-      verticals.filter((entry) => entry.isDirectory).map((entry) => readOwnerRoutes(verticalRoot, entry.name)),
+      verticals.flatMap((entry) => (entry.isDirectory ? [readOwnerRoutes(verticalRoot, entry.name)] : [])),
       { concurrency: 'unbounded' },
     );
     return ownedRoutes.flat();
@@ -662,20 +659,22 @@ const nativeShellRouteHasSuffix = (
     }
     const entries = yield* readDirectoryEntries(directory);
     const matches = yield* Effect.all(
-      entries
-        .filter(
-          (entry) =>
-            entry.isDirectory &&
-            (entry.name === segment || isDynamicShellRouteSegment(segment) || isDynamicShellRouteSegment(entry.name)),
-        )
-        .map((entry) => {
-          const isCatchAll = entry.name === '$' || entry.name.startsWith('*') || entry.name.startsWith('[...');
-          return nativeShellRouteHasSuffix(
+      entries.flatMap((entry) => {
+        if (
+          !entry.isDirectory ||
+          !(entry.name === segment || isDynamicShellRouteSegment(segment) || isDynamicShellRouteSegment(entry.name))
+        ) {
+          return [];
+        }
+        const isCatchAll = entry.name === '$' || entry.name.startsWith('*') || entry.name.startsWith('[...');
+        return [
+          nativeShellRouteHasSuffix(
             resolveContainedPath(directory, entry.name),
             isCatchAll ? route.filesystemSegments.length : index + 1,
             route,
-          );
-        }),
+          ),
+        ];
+      }),
       { concurrency: 'unbounded' },
     );
     return matches.some(Boolean);
@@ -699,13 +698,15 @@ const assertShellRouteSiblingsAreAvailable = (
     const suffixCollisions =
       siblingCollision === undefined && desiredSegmentIsDynamic && registeredDynamicPrefix
         ? yield* Effect.all(
-            entries
-              .filter((entry) => entry.isDirectory)
-              .map((entry) =>
-                nativeShellRouteHasSuffix(resolveContainedPath(parent, entry.name), index + 1, route).pipe(
-                  Effect.map((matches) => (matches ? entry : undefined)),
-                ),
-              ),
+            entries.flatMap((entry) =>
+              entry.isDirectory
+                ? [
+                    nativeShellRouteHasSuffix(resolveContainedPath(parent, entry.name), index + 1, route).pipe(
+                      Effect.map((matches) => (matches ? entry : undefined)),
+                    ),
+                  ]
+                : [],
+            ),
             { concurrency: 'unbounded' },
           )
         : [];

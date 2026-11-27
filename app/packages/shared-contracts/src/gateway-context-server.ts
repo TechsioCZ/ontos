@@ -16,7 +16,7 @@ import {
   readVerifiedGatewayOrganizationGovernanceRead,
   readVerifiedGatewayOrganizationProcessingRead,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Config, Effect, Match, Redacted, Schema } from 'effect';
 
 import {
@@ -624,7 +624,7 @@ const subjectWireOf = (
 /** Requests a fresh module-to-module context authenticated by this deployment's own module credential. */
 export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acquire')(function* acquire(
   request: GatewayDelegationRequest,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const configuration = yield* Config.all({
     apiKey: Config.Redacted('ONTOS_GATEWAY_MODULE_API_KEY'),
@@ -743,14 +743,7 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     Match.orElse(() => Effect.void),
   );
   const source = yield* subjectWireOf(request.subject);
-  const exchangeId = yield* crypto
-    .randomUUIDv4()
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new GatewayDelegationSourceError({ cause, reason: 'Gateway delegation attempt identity is unavailable' }),
-      ),
-    );
+  const exchangeId = yield* crypto.uuidV4();
   const payload = {
     audience: request.audience,
     compositionRevision: source.compositionRevision,

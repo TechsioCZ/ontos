@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from 'node:util';
 
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { SetComponentCurrentProof } from '../../shared/domain/set-component-validation.ts';
 import { validateSetComponents } from '../../shared/domain/set-component-validation.ts';
@@ -234,10 +235,10 @@ const readComponent = Effect.fn('SetCompositionComponentCurrentBasis.readCompone
   if (closure.reason !== null) {
     return { code: 'COMPONENT_TYPE_VALUE_AXIS_UNVERIFIABLE', componentId, status: closure.status };
   }
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const proof: SetComponentCurrentProof = {
     assessedAt,
-    attestationId: yield* crypto.randomUUIDv4(),
+    attestationId: yield* crypto.uuidV4(),
     componentId,
     divisible: current.unit.divisible,
     productKind: 'ATOMIC',

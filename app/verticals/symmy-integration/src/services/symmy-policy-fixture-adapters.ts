@@ -5,7 +5,8 @@ import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-co
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { executeImportSellerVatRegimeDeclarationsWithAuthorization } from '@app/tax/api/import-seller-vat-regime-declarations-action-client';
 import { ImportSellerVatRegimeDeclarationsPayloadSchema } from '@app/tax/actions/import-seller-vat-regime-declarations';
-import { Context, Crypto, Effect, Layer, Match, Option, Result, Schema } from 'effect';
+import { Context, Effect, Layer, Match, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { symmyAssortmentRuleOperation } from '../../shared/domain/symmy-assortment-rule-mapping.ts';
 import { symmySellerVatDeclarationOperation } from '../../shared/domain/symmy-seller-vat-declaration-mapping.ts';
@@ -49,7 +50,7 @@ const policyFixtureOwners = [
 
 const makePolicyFixtureAdapter = (
   contract: (typeof policyFixtureOwners)[number],
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): SymmyEffectAdapter => {
   const { audience, declarationKey, operation } = contract;
   const requireCommittedInvocation = Effect.fn('SymmyPolicyFixture.requireCommittedInvocation')(
@@ -99,7 +100,7 @@ const makePolicyFixtureAdapter = (
       Match.exhaustive,
       Effect.mapError(symmyJobWorkerInvalid),
     );
-    const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
+    const requestCorrelation = yield* crypto.uuidV4();
     const baseSubject = {
       _tag: 'RegisteredWorkload',
       context,
@@ -217,7 +218,7 @@ const makePolicyFixtureAdapter = (
 };
 
 const makeSymmyPolicyFixtureAdapters = Effect.gen(function* makeFixtureAdapters() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return { adapters: policyFixtureOwners.map((contract) => makePolicyFixtureAdapter(contract, crypto)) };
 });
 

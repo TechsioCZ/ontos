@@ -7,7 +7,8 @@ import type {
 import { ValidatePriceGroupCompatibilityRequestSchema } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
 import { executeValidatePriceGroupCompatibilityWithAuthorization } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
-import { Effect, Redacted, Schema, Crypto } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PriceGroupInterpretationDependencyFailure } from '../services/price-group-interpretation.service.ts';
 import type { PriceGroupCompatibilityPort } from '../services/price-group-interpretation.service.ts';
@@ -135,8 +136,8 @@ export const priceGroupCompatibilityPortFromEnvironment = Effect.fn('priceGroupC
       readonly tenantId: string;
     },
     execute: CompatibilityExecutor = executeAuthorizedCompatibility,
-  ): Effect.fn.Return<PriceGroupCompatibilityPort, never, Crypto.Crypto> {
-    const crypto = yield* Crypto.Crypto;
+  ): Effect.fn.Return<PriceGroupCompatibilityPort, never, SecureRandom.SecureRandom> {
+    const crypto = yield* SecureRandom.SecureRandom;
     return makePriceGroupCompatibilityPort({
       acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
       context,

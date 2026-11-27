@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { inArray, like } from 'drizzle-orm';
 import { DateTime, Effect, Option, Redacted } from 'effect';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import { verification } from '@app/commerce-customer-context/testing/portal-auth-communications';
 import {
@@ -77,7 +77,7 @@ const onlyIntent = (world: AuthWorld, index = 0) => {
     onSome: (found) => Effect.succeed(found),
   });
 };
-const codeIn = (text: string) => /\b(?<code>\d{6})\b/u.exec(text)?.groups?.code ?? '';
+const codeIn = (text: string) => /\b(?<code>\d{6})\b/u.exec(text)?.groups?.['code'] ?? '';
 
 describe('One-time code e-mail: real Auth source -> public Action -> durable decision/intent -> authorized Read (#1406)', () => {
   it.live(
@@ -86,7 +86,9 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
       Effect.gen(function* happyPath() {
         const { challenge, realm, world } = yield* setup();
         yield* sendCode(world, realm, challenge.headers);
-        const [{ request, submission }] = world.submissions;
+        const [entry] = world.submissions;
+        assert(entry !== undefined);
+        const { request, submission } = entry;
         expect(submission).toMatchObject({
           decision: { kind: 'MESSAGE_INTENTS' },
           outcome: 'DECIDED',
@@ -302,7 +304,9 @@ describe('One-time code e-mail: real Auth source -> public Action -> durable dec
         const { challenge, realm, world } = yield* setup();
         world.providerAnswer.current = () => ({ kind: 'INDETERMINATE', reason: 'timeout' });
         yield* sendCode(world, realm, challenge.headers);
-        const [{ request, submission }] = world.submissions;
+        const [entry] = world.submissions;
+        assert(entry !== undefined);
+        const { request, submission } = entry;
         const replayed = yield* world.submitter.submit(request);
         expect(replayed).toMatchObject({
           decisionId: decisionIdOf(submission),

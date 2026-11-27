@@ -3,7 +3,8 @@ import { eq, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeSystemPrincipalContextResolver } from '../../src/auth/system-principal-context.ts';
@@ -38,7 +39,7 @@ const readDatabaseClients = Effect.gen(function* acquireReadDatabaseClients() {
   return { admin, runtime };
 });
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 it('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);

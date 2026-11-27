@@ -1,4 +1,4 @@
-import type { Effect as EffectType, Option as OptionType, PlatformError } from 'effect';
+import type { Effect as EffectType, Option as OptionType } from 'effect';
 import { Context, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import type { InventoryObligation, ProvisionalInventoryReservation } from '../../shared/domain/inventory-obligation.ts';
@@ -297,10 +297,7 @@ const issuerMatchesOriginalAuthority = (
 export const makeInventoryReservationReleaseService = (dependencies: {
   readonly effects: ReservationReleaseEffectPersistence;
   readonly ledger: InventoryEffectLedgerService;
-  readonly makeMutationId: EffectType.Effect<
-    typeof ReservationReleaseMutationIdSchema.Type,
-    PlatformError.PlatformError
-  >;
+  readonly makeMutationId: EffectType.Effect<typeof ReservationReleaseMutationIdSchema.Type>;
   readonly obligations: ReservationReleaseObligationReader;
 }): InventoryReservationReleaseService => ({
   request: Effect.fn('InventoryReservationReleaseService.request')(function* requestRelease(payload, context) {
@@ -347,11 +344,7 @@ export const makeInventoryReservationReleaseService = (dependencies: {
     const request: ReservationReleaseRequest = {
       effectId: payload.releaseEffectId,
       legalEntityId: context.legalEntityId,
-      mutationId: yield* dependencies.makeMutationId.pipe(
-        Effect.mapError((cause) =>
-          reservationReleaseUnavailable(payload.releaseEffectId, 'Release mutation identity is unavailable', cause),
-        ),
-      ),
+      mutationId: yield* dependencies.makeMutationId,
       requestedAt: context.requestedAt,
       reservation: obligation,
       sourceActionInvocationId: context.actionInvocationId,

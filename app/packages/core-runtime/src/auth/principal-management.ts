@@ -201,41 +201,43 @@ const principalManagementPersistenceFromTransaction = (
         Effect.mapError(persistenceFailure),
         Effect.map(([record]) => Option.fromNullishOr(record)),
       ),
-  loadSupportBindings: (input) =>
-    authenticationNamespaceId === undefined
-      ? Effect.fail(persistenceFailure())
-      : transaction
-          .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
-          .from(principalAuthBindings)
-          .innerJoin(
-            principals,
-            and(
-              eq(principals.tenantId, principalAuthBindings.tenantId),
-              eq(principals.principalId, principalAuthBindings.principalId),
-            ),
-          )
-          .where(
-            and(
-              eq(principalAuthBindings.tenantId, input.tenantId),
-              eq(principalAuthBindings.principalId, input.principalId),
-              eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
-              eq(principalAuthBindings.provider, 'better_auth'),
-              eq(principalAuthBindings.subjectType, 'user'),
-              eq(principals.kind, 'human'),
-              ...(input.activeOnly
-                ? [
-                    eq(principalAuthBindings.status, 'active'),
-                    isNull(principalAuthBindings.revokedAt),
-                    eq(principals.status, 'active'),
-                  ]
-                : []),
-              ...(input.authBindingId === undefined
-                ? []
-                : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
-            ),
-          )
-          .limit(2)
-          .pipe(Effect.mapError(persistenceFailure)),
+  loadSupportBindings: (input) => {
+    if (authenticationNamespaceId === undefined) {
+      return Effect.fail(persistenceFailure());
+    }
+    return transaction
+      .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId),
+          eq(principalAuthBindings.provider, 'better_auth'),
+          eq(principalAuthBindings.subjectType, 'user'),
+          eq(principals.kind, 'human'),
+          ...(input.activeOnly
+            ? [
+                eq(principalAuthBindings.status, 'active'),
+                isNull(principalAuthBindings.revokedAt),
+                eq(principals.status, 'active'),
+              ]
+            : []),
+          ...(input.authBindingId === undefined
+            ? []
+            : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
+        ),
+      )
+      .limit(2)
+      .pipe(Effect.mapError(persistenceFailure));
+  },
   updateApiKeyBindingStatus: (input) => {
     if (authenticationNamespaceId === undefined) {
       return Effect.fail(persistenceFailure());

@@ -3,7 +3,7 @@
 // @ontos-action-slug retire-market
 import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 import {
   MarketCommandRejected,
@@ -65,7 +65,7 @@ export type RetireMarketServices = MarketAdministrationService &
       MarketRetirementImpactAssessmentUnavailable
     >;
   };
-const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices, Crypto.Crypto> = Effect.fn(
+const makeRetireMarketServices: ActionServiceFactory<RetireMarketServices, SecureRandom.SecureRandom> = Effect.fn(
   'RetireMarketAction.makeServices',
 )(function* makeServices(transaction, scope, compositionRevision) {
   const prepared = yield* Effect.serviceOption(PreparedMarketRetirementImpact);

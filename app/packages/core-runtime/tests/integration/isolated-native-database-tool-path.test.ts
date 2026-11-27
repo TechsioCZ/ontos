@@ -1,5 +1,6 @@
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Crypto, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it, rs } from 'effect-rstest';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
@@ -24,20 +25,28 @@ const cloneNameFrom = (args: readonly string[]) =>
   Schema.decodeUnknownSync(cloneNameSchema)(args[args.indexOf('--dbname') + 1]);
 
 // Observe native entropy without replacing it with a predetermined test identity.
-const observeCloneNames = (crypto: Crypto.Crypto, names: string[]) => ({
-  ...crypto,
-  randomUUIDv4: () =>
-    crypto.randomUUIDv4().pipe(
+const observeCloneNames = (crypto: SecureRandom.SecureRandom['Service'], names: string[]) => {
+  function uuidV4(options?: { readonly format?: 'string' }): Effect.Effect<string>;
+  function uuidV4<Format extends 'string' | 'bytes'>(options: {
+    readonly format: Format;
+  }): Effect.Effect<Format extends 'bytes' ? Uint8Array : string>;
+  function uuidV4(options?: { readonly format?: 'string' | 'bytes' }): Effect.Effect<string | Uint8Array> {
+    if (options?.format === 'bytes') {
+      return crypto.uuidV4({ format: 'bytes' });
+    }
+    return crypto.uuidV4().pipe(
       Effect.tap((uuid) =>
         Effect.sync(() => {
           names.push(`ontos_test_party_gateway_${uuid.replaceAll('-', '')}`);
         }),
       ),
-    ),
-});
+    );
+  }
+  return { ...crypto, uuidV4 };
+};
 
 it.live('passes only explicit PATH and PGPASSWORD to both real clone helper children', () =>
-  Layer.build(NodeServices.layer).pipe(
+  Layer.build(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)).pipe(
     Effect.flatMap((services) =>
       Effect.gen(function* cloneHelperPath() {
         const fs = yield* FileSystem.FileSystem;
@@ -104,7 +113,7 @@ if (program === 'pg_dump') {
             )
             .pipe(Effect.map(([row]) => row?.exists === true));
         const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(['privacy'], 'TEST-PATH');
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const generatedCloneNames: string[] = [];
         const attempt = makeIsolatedNativeDatabaseFixture({
           compositionSnapshot,
@@ -112,7 +121,7 @@ if (program === 'pg_dump') {
           purpose: 'stabilization-1257-approval-fresh-proof',
           sourceConnections,
         }).pipe(
-          Effect.provideService(Crypto.Crypto, observeCloneNames(crypto, generatedCloneNames)),
+          Effect.provideService(SecureRandom.SecureRandom, observeCloneNames(crypto, generatedCloneNames)),
           Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromUnknown({ PATH: directory })),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, guardedSpawner),
           Effect.scoped,

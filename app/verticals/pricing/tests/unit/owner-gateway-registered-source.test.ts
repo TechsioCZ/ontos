@@ -53,12 +53,12 @@ const recovery = Schema.decodeSync(RegisteredGatewayRecoverySchema)({
 const sourceScope = (recovering: boolean) =>
   Effect.gen(function* makeSourceScope() {
     const baseWorkload = {
-      legalEntityId,
       admissionInvocationId: 'e1400000-0000-4000-8000-000000000007',
       bindingIncarnation: 'e1400000-0000-4000-8000-000000000008',
       declarationKey: 'commerce.pricing.price.define',
       entrypointKey: 'commerce.pricing.define-price',
       jobKey: 'internal-c14-pricing',
+      legalEntityId,
       legalEntityScope: 'required',
       originalOwnerBindingIncarnation: 'e1400000-0000-4000-8000-000000000009',
       originalPrincipalId: principalId,

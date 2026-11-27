@@ -26,7 +26,7 @@ import {
   Schema,
   Struct,
 } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { assert, describe, expect, it } from 'effect-rstest';
 
@@ -945,7 +945,7 @@ const harness = (
       return found === undefined ? Effect.die('Missing internal adapter') : Effect.succeed(found);
     }),
   );
-  const provide = <A, E>(program: Effect.Effect<A, E, Crypto.Crypto>) =>
+  const provide = <A, E>(program: Effect.Effect<A, E, SecureRandom.SecureRandom>) =>
     program.pipe(
       Effect.provide(NodeCrypto.layer),
       Effect.provideService(ConfigProvider.ConfigProvider, configuration),
@@ -2276,7 +2276,11 @@ const resolutionOf = (
   return h.provide(
     Effect.gen(function* resolution() {
       const adapter = yield* h.adapter;
-      const exit = yield* Effect.exit(adapter.execute({ ...h.input, dependencies, legalEntityId: legalEntity }));
+      let input: SymmyEffectAdapterInput = { ...h.input, dependencies };
+      if (legalEntity !== undefined) {
+        input = { ...input, legalEntityId: legalEntity };
+      }
+      const exit = yield* Effect.exit(adapter.execute(input));
       return { exit, h };
     }),
   );

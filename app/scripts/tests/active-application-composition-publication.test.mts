@@ -293,7 +293,7 @@ const provider = (
   };
   const client = HttpClient.make((request, destination) => {
     const recorded = {
-      authorization: request.headers.authorization,
+      authorization: request.headers['authorization'],
       body: Match.value(request.body).pipe(
         Match.tag('Uint8Array', (bytes) => new TextDecoder().decode(bytes.body)),
         Match.orElse(() => ''),

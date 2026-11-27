@@ -493,7 +493,7 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
     const configuration = yield* verifier.configuration;
     const now = yield* (
       options.currentTimeSeconds ??
-        Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
+      Clock.currentTimeMillis.pipe(Effect.map((milliseconds) => Math.floor(milliseconds / 1000)))
     );
     if (!Number.isSafeInteger(now) || now < 0) {
       return yield* Effect.fail(configurationError());

@@ -139,7 +139,7 @@ const positionRefFor = (row: StockPositionRow) => ({
   tenantId: row.tenantId,
 });
 
-const storedNumericPattern = /^(?<integer>[0-9]+)(?:\.(?<fraction>[0-9]+))?$/u;
+const storedNumericPattern = /^(?<integer>\d+)(?:\.(?<fraction>\d+))?$/u;
 
 /** PostgreSQL numeric(scale) text is exact but padded; domain decimals are exact and canonical. */
 const canonicalAmount = (amount: string | null): string => {
@@ -151,7 +151,12 @@ const canonicalAmount = (amount: string | null): string => {
     return amount;
   }
   const integer = BigInt(groups['integer']).toString();
-  const fraction = (groups['fraction'] ?? '').replace(/0+$/u, '');
+  const rawFraction = groups['fraction'] ?? '';
+  let fractionEnd = rawFraction.length;
+  while (rawFraction[fractionEnd - 1] === '0') {
+    fractionEnd -= 1;
+  }
+  const fraction = rawFraction.slice(0, fractionEnd);
   return fraction.length === 0 ? integer : `${integer}.${fraction}`;
 };
 

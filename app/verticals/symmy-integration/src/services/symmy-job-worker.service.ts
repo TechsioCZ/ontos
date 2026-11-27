@@ -4,7 +4,9 @@ import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { OutboxWorkerDeferred, OutboxWorkerTenantScope } from '@app/core-runtime/outbox/worker';
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { Clock, Config, Context, Crypto, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
+import { Clock, Config, Context, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
+import type { Digest } from 'effect/crypto';
+import { SecureRandom } from 'effect/crypto';
 import type { HttpClient, FetchHttpClient } from 'effect/http';
 
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -51,6 +53,7 @@ const sameOperation = (left: SymmyEffectAdapter['operation'], right: SymmyEffect
   left.schemaVersion === right.schemaVersion;
 
 type WorkerRequirements =
+  | Digest.Digest
   | SymmyWorkerIdentity
   | SymmyEffectAdapters
   | SymmyJobExecutionPersistence
@@ -59,7 +62,7 @@ type WorkerRequirements =
   | SymmyJobNotificationStore
   | HttpClient.HttpClient
   | FetchHttpClient.RequestInit
-  | Crypto.Crypto;
+  | SecureRandom.SecureRandom;
 export interface SymmyJobWorkerService {
   readonly execute: (
     payload: { readonly jobId: string },
@@ -487,9 +490,9 @@ const processEffect = Effect.fn('SymmyJobWorker.processEffect')(function* proces
   if (!dependencyRejected) {
     yield* adapterFor(saved.effect);
   }
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const persistence = yield* SymmyJobExecutionPersistence;
-  const claimToken = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  const claimToken = yield* crypto.uuidV4();
   const claim = yield* inScope(context, (scope) =>
     persistence.storeFor(scope.routineInvoker).claim(job.jobId, saved.effect.ref.effectId, claimToken),
   );
@@ -702,6 +705,30 @@ const WorkerDefectDiagnosticSchema = Schema.Struct({
   name: Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9]{0,79}$/u)),
   stack: Schema.optionalKey(Schema.String),
 });
+
+export const collectSymmyWorkerDefectFrames = (stack: string): readonly string[] =>
+  stack
+    .split('\n')
+    .slice(1, 13)
+    .flatMap((line) => {
+      for (const run of line.matchAll(/[\w./%+~-]+/gu)) {
+        const slash = run[0].indexOf('/');
+        const dot = run[0].lastIndexOf('.');
+        if (slash === -1 || dot <= slash + 1 || !/^(?:[cm]?js|ts)$/u.test(run[0].slice(dot + 1))) {
+          continue;
+        }
+        const coordinates = /^:\d+:\d+/u.exec(line.slice(run.index + run[0].length));
+        if (coordinates !== null) {
+          const filePrefix =
+            slash === 0 && run[0].startsWith('///') && line.slice(run.index - 5, run.index) === 'file:';
+          return [
+            line.slice(run.index + slash - (filePrefix ? 5 : 0), run.index + run[0].length + coordinates[0].length),
+          ];
+        }
+      }
+      return [];
+    });
+
 const traceWorkerDefect = Effect.fn('SymmyJobWorker.traceDefect')(function* trace(
   parsed: typeof WorkerDefectDiagnosticSchema.Type,
 ) {
@@ -712,13 +739,7 @@ const traceWorkerDefect = Effect.fn('SymmyJobWorker.traceDefect')(function* trac
   if (!enabled) {
     return yield* Effect.void;
   }
-  const frames = (parsed.stack ?? '')
-    .split('\n')
-    .slice(1, 13)
-    .flatMap((line) => {
-      const match = /(?:file:\/\/)?\/[A-Za-z0-9_./%+~-]+\.(?:[cm]?js|ts):[0-9]+:[0-9]+/u.exec(line);
-      return match === null ? [] : [match[0]];
-    });
+  const frames = collectSymmyWorkerDefectFrames(parsed.stack ?? '');
   return yield* Effect.logWarning({ boundary: 'symmy-job-worker', faultClass: parsed.name, frames });
 });
 

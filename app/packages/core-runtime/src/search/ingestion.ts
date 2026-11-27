@@ -54,7 +54,7 @@ export type CoreSearchPartyProjectorWorkerKey = (typeof CORE_SEARCH_PARTY_PROJEC
 
 const topicSchema = Schema.Literals(CORE_SEARCH_PARTY_LIFECYCLE_TOPICS);
 const workerKeySchema = Schema.Literals(CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS);
-const versionSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
+const versionSchema = Schema.String.check(Schema.isPattern(/^[1-9]\d*$/u));
 
 export const CoreSearchIngestionObservationSchema = Schema.Struct({
   consumerModuleKey: Schema.Literal(PARTY_REGISTRY_MODULE_KEY),

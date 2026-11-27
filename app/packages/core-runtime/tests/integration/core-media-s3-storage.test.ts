@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { Hex } from 'effect/encoding';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
@@ -50,7 +51,7 @@ const MIB = 1024 * 1024;
 const encoder = new TextEncoder();
 const digestOf = (bytes: Uint8Array) => Hex.encode(sha256(bytes));
 const jsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const freshKey = Effect.gen(function* freshKeyEffect() {
   const identity = yield* Schema.decodeUnknownEffect(TenantMediaAssetKeySchema)({
@@ -285,7 +286,7 @@ for (const provider of s3Providers) {
           const opened = yield* storage.get(key);
           expect(yield* tallyOf(opened.body)).toStrictEqual(expected);
           // A multipart ETag (the hash of the part hashes, with its part count) is one pin for the read and the stat.
-          expect(statted.versionRef).toMatch(/^etag:"[0-9a-f]{32}-[0-9]+"$/u);
+          expect(statted.versionRef).toMatch(/^etag:"[0-9a-f]{32}-\d+"$/u);
           expect(opened.stat.versionRef).toBe(statted.versionRef);
         }),
       );

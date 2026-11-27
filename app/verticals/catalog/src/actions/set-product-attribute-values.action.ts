@@ -5,7 +5,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema, Option } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import {
   SetProductAttributeValuesPayloadSchema,
@@ -39,7 +39,7 @@ const domainEvents = { [SELECTION_SOURCE_CHANGED_EVENT_TYPE]: SelectionSourceCha
 type ProductAttributeServices = AttributeValuesPersistence & {
   readonly assessOpenSelectionImpact: (
     productRef: SetProductAttributeValuesPayload['productRef'],
-  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<void, CatalogOpenSelectionImpactUnavailable, SecureRandom.SecureRandom>;
 };
 export const handleSetProductAttributeValues = Effect.fn('SetProductAttributeValuesAction.handle')(
   function* handleSetProductAttributeValues(

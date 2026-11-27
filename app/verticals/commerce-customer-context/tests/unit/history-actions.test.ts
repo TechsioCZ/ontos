@@ -77,9 +77,9 @@ const historicalLine = (productId: string, value: string, sourceLineRef: string)
   sourceLineRef,
 });
 const cartLines = [
-  { cartLineRef: 'new-cart-1:line-1', outcome: 'ADDED' as const, sourceLineRef: 'line-1' },
-  { outcome: 'SKIPPED' as const, reason: 'PRODUCT_NOT_SELLABLE', sourceLineRef: 'line-2' },
-];
+  { cartLineRef: 'new-cart-1:line-1', outcome: 'ADDED', sourceLineRef: 'line-1' },
+  { outcome: 'SKIPPED', reason: 'PRODUCT_NOT_SELLABLE', sourceLineRef: 'line-2' },
+] satisfies readonly [RepeatOrderCartLineResult, RepeatOrderCartLineResult];
 const scope = {
   authMethod: 'system' as const,
   correlationId: 'history-action-test',
@@ -217,6 +217,18 @@ const collectors = <A extends typeof repeatRetailOrderAction | typeof repeatCoun
     action.descriptor.auditEvidenceSchema,
   );
 
+it('keeps native history collectors event-free and omits event emission from the consumed handler context', () => {
+  const collector = collectors(repeatRetailOrderAction);
+  const collectorIsEventFree: [Parameters<typeof collector.addDomainEvent>[0]] extends [never] ? true : false = true;
+  const handlerHasNoEmitter: 'addDomainEvent' extends keyof Parameters<typeof handleRepeatRetailOrder>[1]
+    ? false
+    : true = true;
+  expect([collectorIsEventFree, handlerHasNoEmitter]).toEqual([true, true]);
+  for (const action of [repeatRetailOrderAction, repeatCounterpartyOrderAction]) {
+    expect(action.descriptor.domainEvents).toEqual({});
+  }
+});
+
 it('declares one scope-wide v2 capability and names the owner record instead of a permission target', () => {
   const retailPayload: RepeatRetailOrderPayload = {
     profileRef: retailProfileRef,
@@ -274,9 +286,6 @@ it.effect('creates a new Cart from only current repeatable intent and preserves 
     };
     const result = yield* handleRepeatRetailOrder(payload, {
       actionInvocationId: 'repeat-invocation-1',
-      addDomainEvent: collector.addDomainEvent,
-      addOutboxMessage: collector.addOutboxMessage,
-      compositionRevision: originalCompositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -326,9 +335,6 @@ it.effect('reuses one repeat-purchase intent for retries and separates a later d
       const collector = collectors(repeatRetailOrderAction);
       return handleRepeatRetailOrder(payload, {
         actionInvocationId,
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -369,9 +375,6 @@ it.effect('rejects a Cart result bound to another repeat-purchase intent', () =>
       { profileRef: retailProfileRef, sourceOrderRef: orderRef },
       {
         actionInvocationId: 'expected-repeat-intent',
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -405,9 +408,6 @@ const runMisboundCartResult = (binding: 'ORDER' | 'SUBJECT') => {
     { profileRef: retailProfileRef, sourceOrderRef: orderRef },
     {
       actionInvocationId: 'source-binding-intent',
-      addDomainEvent: collector.addDomainEvent,
-      addOutboxMessage: collector.addOutboxMessage,
-      compositionRevision: originalCompositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -456,9 +456,6 @@ it.effect('rejects Cart outcomes that add a non-repeatable line or hide a change
       const collector = collectors(repeatRetailOrderAction);
       return handleRepeatRetailOrder(payload, {
         actionInvocationId: 'line-outcome-intent',
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -526,9 +523,6 @@ it.effect('fails closed for cross-tenant and wrong-type Cart ResourceRefs', () =
       const collector = collectors(repeatRetailOrderAction);
       const failure = yield* handleRepeatRetailOrder(payload, {
         actionInvocationId: `misbound-cart-${index}`,
-        addDomainEvent: collector.addDomainEvent,
-        addOutboxMessage: collector.addOutboxMessage,
-        compositionRevision: originalCompositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,

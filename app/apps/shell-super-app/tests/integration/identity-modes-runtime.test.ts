@@ -13,7 +13,8 @@ import { AccessDecisionGate } from '@app/core-runtime/access/enforcement';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -144,7 +145,7 @@ it.live.each([
     );
     const actionRuntime = makeActionRuntime(
       { executor: coreDatabase },
-      makeActionRepository(yield* Crypto.Crypto),
+      makeActionRepository(yield* SecureRandom.SecureRandom),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
       { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
@@ -512,7 +513,7 @@ it.live.each([
       .from(session)
       .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
       .limit(1);
-    expect(impersonationSession).not.toBe(undefined);
+    expect(impersonationSession).toBeDefined();
     if (impersonationSession === undefined) {
       throw new TypeError('The support impersonation session was not persisted');
     }
@@ -581,7 +582,7 @@ it.live.each([
       ),
     );
     expect(stopped.checkpointPending).toBe(false);
-    expect(stopped.setCookieHeaders.length > 0).toBe(true);
+    expect(stopped.setCookieHeaders.length).toBeGreaterThan(0);
     const checkpoints = yield* coreDatabase
       .select({ evidence: auditEvents.evidenceJson })
       .from(auditEvents)
@@ -626,6 +627,6 @@ it.live.each([
       ),
     ).toBe(true);
     const recovery = yield* authDatabase.select().from(supportImpersonationRecovery);
-    expect(recovery.length).toBe(0);
+    expect(recovery).toHaveLength(0);
   }, Effect.provide(NodeCrypto.layer)),
 );

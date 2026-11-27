@@ -5,7 +5,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
@@ -157,7 +158,7 @@ export const compensateInventoryPreCommitAction = defineAction(
     Effect.all(
       {
         cleanup: InventoryPreCommitCleanup,
-        crypto: Crypto.Crypto,
+        crypto: SecureRandom.SecureRandom,
         orderTruth: InventoryPreCommitOrderTruth,
       },
       { concurrency: 3 },
@@ -179,7 +180,7 @@ export const compensateInventoryPreCommitAction = defineAction(
             effects: reservationReleaseEffectPersistenceForScope(transaction, scope),
             ledger,
             makeMutationId: crypto
-              .randomUUIDv4()
+              .uuidV4()
               .pipe(Effect.map((mutationId) => ReservationReleaseMutationIdSchema.make(mutationId))),
             obligations: {
               read: (ref) =>

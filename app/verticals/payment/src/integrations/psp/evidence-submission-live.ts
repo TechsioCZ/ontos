@@ -1,7 +1,8 @@
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime/outbox/worker';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Context, Crypto, DateTime, Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { AcceptPaymentObservationPayloadSchema } from '../../../shared/actions/accept-payment-observation.ts';
 import type { AcceptPaymentObservationPayload } from '../../../shared/actions/accept-payment-observation.ts';
@@ -213,7 +214,7 @@ const requirePinnedExecutor = (
     );
 };
 
-const submitWith = (crypto: Crypto.Crypto, store: ProviderEvidenceStoreContract) =>
+const submitWith = (crypto: SecureRandom.SecureRandom['Service'], store: ProviderEvidenceStoreContract) =>
   Effect.fn('ProviderEvidenceSubmitter.submit')(function* submit(submission: ProviderEvidenceSubmission) {
     const { scope, workerContext } = submission;
     const transport = yield* ProviderEvidenceSubmissionTransport;
@@ -296,7 +297,7 @@ const submitWith = (crypto: Crypto.Crypto, store: ProviderEvidenceStoreContract)
   });
 
 const makeProviderEvidenceSubmitter = Effect.fn('ProviderEvidenceSubmitter.make')(function* makeSubmitter() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const store = yield* ProviderEvidenceStore;
   return { submit: submitWith(crypto, store) } satisfies ProviderEvidenceSubmitterContract;
 });

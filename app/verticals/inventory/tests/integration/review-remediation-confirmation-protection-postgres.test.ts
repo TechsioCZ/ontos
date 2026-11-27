@@ -20,7 +20,8 @@ import { defineOutboxWorkerEntry, OutboxWorkerLegalEntityScopeFanout } from '@ap
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { PgInsertValue } from 'drizzle-orm/pg-core';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Config, Crypto, DateTime, Deferred, Effect, FileSystem, Layer, Option, Ref, Schema, Semaphore } from 'effect';
+import { Config, DateTime, Deferred, Effect, FileSystem, Layer, Option, Ref, Schema, Semaphore } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -727,7 +728,7 @@ const makeActionScenario = Effect.fn('ReviewRemediationPostgres.makeActionScenar
   yield* seedCore(coreAdmin);
   yield* seedInventory(admin);
 
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const actionRuntime = makeActionRuntime(
     { executor: runtimeDatabase },
     makeActionRepository(crypto),

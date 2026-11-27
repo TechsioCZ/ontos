@@ -4,9 +4,10 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { PgInsertValue } from 'drizzle-orm/pg-core';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -469,7 +470,7 @@ it.live(
         });
         const actionRuntime = makeActionRuntime(
           { executor: runtimeDatabase },
-          makeActionRepository(yield* Crypto.Crypto),
+          makeActionRepository(yield* SecureRandom.SecureRandom),
           allowedPermission,
           testOperationalScopeResolver,
           {
@@ -497,16 +498,12 @@ it.live(
           .where(and(eq(outboxMessages.tenantId, tenantId), eq(outboxMessages.topic, requestedTopic)));
         expect(requestedMessages).toHaveLength(1);
         const [requestedMessage] = requestedMessages;
-        if (requestedMessage === undefined) {
-          yield* Effect.die('Action did not commit its Protection establishment request');
-        }
+        assert.isDefined(requestedMessage, 'Action did not commit its Protection establishment request');
         const [requestedLedger] = yield* admin
           .select()
           .from(inventoryEffectLedger)
           .where(and(eq(inventoryEffectLedger.tenantId, tenantId), eq(inventoryEffectLedger.effectId, effectId)));
-        if (requestedLedger === undefined) {
-          yield* Effect.die('Action did not commit its Protection effect ledger');
-        }
+        assert.isDefined(requestedLedger, 'Action did not commit its Protection effect ledger');
         const workerPayload = Schema.decodeUnknownSync(OutboxPayloadSchema)(requestedMessage.payloadJson);
         const authoritySucceededAt = workerPayload.request.requestedAt;
         expect(workerPayload.request.protectionRef.resourceId).toBe(protectionId);

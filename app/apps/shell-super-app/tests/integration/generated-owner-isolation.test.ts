@@ -36,19 +36,8 @@ import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-ed
 import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import type { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
-import {
-  Clock,
-  Config,
-  ConfigProvider,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Logger,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Clock, Config, ConfigProvider, DateTime, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/http-api';
@@ -1373,7 +1362,7 @@ it.live(
     );
     const actionRuntime = makeActionRuntime(
       runtimeDatabase,
-      makeActionRepository(yield* Crypto.Crypto),
+      makeActionRepository(yield* SecureRandom.SecureRandom),
       makeActionPermissionService(permissionClient),
       scopeResolver,
       {
@@ -1514,13 +1503,13 @@ it.live(
       `select evidence_policy_key, outcome, query_hash from core.data_access_events where tenant_id in ($1, $2) and outcome = 'allowed' order by evidence_policy_key`,
       [tenantA, tenantB],
     );
-    expect(allowedEvidence.length >= 10).toBe(true);
+    expect(allowedEvidence.length).toBeGreaterThanOrEqual(10);
     expect(allowedEvidence.every(({ outcome }) => outcome === 'allowed')).toBe(true);
     expect(allowedEvidence.every(({ query_hash }) => query_hash === null)).toBe(true);
     const unscopedEntityRows = yield* runtimeClient.unsafe(`select * from ${schemaName}.entity_records`);
     expect(unscopedEntityRows.length, 'a reused pooled connection must not retain transaction-local scope').toBe(0);
     const unscopedTenantRows = yield* runtimeClient.unsafe(`select * from ${schemaName}.tenant_records`);
-    expect(unscopedTenantRows.length).toBe(0);
+    expect(unscopedTenantRows).toHaveLength(0);
     expect(capturedLogs.length > 0, 'the generated-owner path must capture runtime logs').toBe(true);
     const capturedLogText = capturedLogs.join('\n');
     expect(capturedLogText).toMatch(/Unexpected Action execution defect/u);
