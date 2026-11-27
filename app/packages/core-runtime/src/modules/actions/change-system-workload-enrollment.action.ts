@@ -6,18 +6,11 @@ import { Crypto, Effect, Match, Option, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import {
-  archiveSystemWorkloadPrincipal,
-  bindSystemWorkloadPrincipal,
   declaresSystemWorkload,
   enrolledWorkloadCalls,
   enrollmentUnavailable,
-  insertSystemWorkloadPrincipal,
-  lockActiveTenantForEnrollment,
-  readActiveTenantModuleKeys,
-  readSystemWorkloadEnrollmentHolders,
-  readSystemWorkloadPrincipalBindings,
-  revokeSystemWorkloadPrincipalBindings,
   soleSystemWorkloadHolder,
+  systemWorkloadEnrollmentRepositoryFromTransaction,
   systemWorkloadIdentity,
 } from '../../access/workloads/system-workload-enrollment.ts';
 import type {
@@ -30,7 +23,6 @@ import { PrincipalIdSchema } from '../../access/ids.ts';
 import { WorkloadKeySchema } from '../../authorization/access-declaration.ts';
 import { IdentityTargetInvalidError, PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { systemWorkloadKeyIssue } from '../../auth/system-workload-registration.ts';
-import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { InstalledModuleCatalogService } from '../catalog.ts';
 import { coreSystemWorkloadTargetOf, isCoreSystemModule } from '../core-system-workloads.ts';
 import { OntosModuleIdSchema } from '../manifest.ts';
@@ -121,7 +113,7 @@ const ChangeSystemWorkloadEnrollmentAuditEvidenceSchema = Schema.Struct({
 });
 
 interface ChangeSystemWorkloadEnrollmentServices {
-  readonly transaction: ScopedTransactionExecutor;
+  readonly repository: ReturnType<typeof systemWorkloadEnrollmentRepositoryFromTransaction>;
 }
 type ChangeContext = ActionHandlerContext<Readonly<Record<never, never>>, ChangeSystemWorkloadEnrollmentServices>;
 
@@ -179,7 +171,7 @@ const enrollableIdentity = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enrol
   if (!declaresSystemWorkload(contract, payload.workloadKey)) {
     return yield* refusedUndeclared();
   }
-  const activeModuleKeys = yield* readActiveTenantModuleKeys(context.services.transaction);
+  const activeModuleKeys = yield* context.services.repository.readActiveModuleKeys();
   if (!activeModuleKeys.has(payload.moduleKey)) {
     return yield* targetInvalid('The module is not active for this tenant');
   }
@@ -196,17 +188,17 @@ const enroll = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enroll')(function
   context: ChangeContext,
   holder: Option.Option<SystemWorkloadEnrollmentHolder>,
 ) {
-  const { transaction } = context.services;
+  const { repository } = context.services;
   const identity = yield* enrollableIdentity(payload, context);
   const principalId = yield* Option.match(holder, {
-    onNone: () => insertSystemWorkloadPrincipal(transaction, payload.workloadKey),
+    onNone: () => repository.insertPrincipal(payload.workloadKey),
     onSome: (kept) => Effect.succeed(kept.principalId),
   });
-  const before = Option.isSome(holder) ? yield* readSystemWorkloadPrincipalBindings(transaction, principalId) : [];
+  const before = Option.isSome(holder) ? yield* repository.readPrincipalBindings(principalId) : [];
   const unheld = [...(Option.isSome(holder) ? [] : [payload.workloadKey]), ...identity.bindable].filter(
     (key) => !before.some((held) => held.workloadKey === key),
   );
-  const added = yield* bindSystemWorkloadPrincipal(transaction, principalId, yield* freshBindings(unheld));
+  const added = yield* repository.bindPrincipal(principalId, yield* freshBindings(unheld));
   const held = [...before, ...added].toSorted((left, right) => left.workloadKey.localeCompare(right.workloadKey));
   const own = held.find((bound) => bound.workloadKey === payload.workloadKey);
   if (own === undefined) {
@@ -227,10 +219,20 @@ const enroll = Effect.fn('ChangeSystemWorkloadEnrollmentAction.enroll')(function
     bindingIncarnation: own.incarnation,
     held: bindingsOf(held),
     moduleKey: payload.moduleKey,
-    pending: identity.pending.map((pending) => ({
-      calls: pending.calls.map((call) => ({ ...call, entrypointKey: EntrypointKeySchema.make(call.entrypointKey) })),
-      workloadKey: WorkloadKeySchema.make(pending.workloadKey),
-    })),
+    // A workload bound before stays held when its receivers stop serving it, so it is never named as pending too.
+    pending: identity.pending.flatMap((pending) =>
+      held.some((bound) => bound.workloadKey === pending.workloadKey)
+        ? []
+        : [
+            {
+              calls: pending.calls.map((call) => ({
+                ...call,
+                entrypointKey: EntrypointKeySchema.make(call.entrypointKey),
+              })),
+              workloadKey: WorkloadKeySchema.make(pending.workloadKey),
+            },
+          ],
+    ),
     principalId: PrincipalIdSchema.make(principalId),
     principalStatus: Option.match(holder, { onNone: () => 'active' as const, onSome: (kept) => kept.status }),
     workloadKey: payload.workloadKey,
@@ -245,10 +247,10 @@ const end = Effect.fn('ChangeSystemWorkloadEnrollmentAction.end')(function* endS
   context: ChangeContext,
   holder: SystemWorkloadEnrollmentHolder,
 ) {
-  const { transaction } = context.services;
+  const { repository } = context.services;
   const principalId = PrincipalIdSchema.make(holder.principalId);
-  const revoked = yield* revokeSystemWorkloadPrincipalBindings(transaction, holder.principalId);
-  yield* archiveSystemWorkloadPrincipal(transaction, holder.principalId);
+  const revoked = yield* repository.revokePrincipalBindings(holder.principalId);
+  yield* repository.archivePrincipal(holder.principalId);
   // The module may since have been removed or renamed: the end never needs it, only lists what it still declares. A core
   // module declares no calls and is never read from the catalog.
   const contract = isCoreSystemModule(payload.moduleKey)
@@ -304,10 +306,10 @@ const handle = Effect.fn('ChangeSystemWorkloadEnrollmentAction.handle')(function
   payload: ChangeSystemWorkloadEnrollmentPayload,
   context: ChangeContext,
 ) {
-  const { transaction } = context.services;
+  const { repository } = context.services;
   // The Tenant row lock orders every enrollment change of this Tenant, so the holders read next are current.
-  yield* lockActiveTenantForEnrollment(transaction);
-  const holders = yield* readSystemWorkloadEnrollmentHolders(transaction, payload.workloadKey);
+  yield* repository.lockActiveTenant();
+  const holders = yield* repository.readHolders(payload.workloadKey);
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: `system-workload-enrollment-prior:${payload.workloadKey}`,
@@ -381,5 +383,5 @@ export const changeSystemWorkloadEnrollmentAction = defineAction(
     schemaVersion: '1',
   },
   handle,
-  (transaction) => Effect.succeed({ transaction }),
+  (transaction) => Effect.succeed({ repository: systemWorkloadEnrollmentRepositoryFromTransaction(transaction) }),
 );

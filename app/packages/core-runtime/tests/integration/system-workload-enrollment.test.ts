@@ -618,6 +618,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('system workload enrol
       expect(yield* principalBindings(leftEnrollment.principalId)).toEqual(
         [dormantWrite, ...identityKeys].map((workloadKey) => ({ status: 'active', workloadKey })),
       );
+      // A held workload is never named as pending too, though its receiver is inactive again.
+      yield* setModuleState(enrollmentDormantModule, 'quarantined');
+      const stillHeld = yield* enrollmentOf(yield* change(yield* sessionOf(administrator), enroll));
+      expect(stillHeld).toMatchObject({ added: [], held: grown.held, pending: [pendingAbsent] });
 
       // Once the module is removed from the composition, an enrollment is refused and the end still ends it, without
       // a declared call to list.
