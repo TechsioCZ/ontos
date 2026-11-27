@@ -569,8 +569,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.66.2
-        version: 0.66.2(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        specifier: 0.67.0
+        version: 0.67.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       better-auth:
         specifier: 1.7.23
         version: 1.7.23(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7))(pg@8.22.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)
@@ -2961,8 +2961,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       '@techsio/ui-kit':
-        specifier: 0.66.2
-        version: 0.66.2(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
+        specifier: 0.67.0
+        version: 0.67.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=e45ede0f1f3d556023c6376fd8a36cea87b4f9971d260b092f868cc10cfe0466)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.7(effect@4.0.7))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.7)(pg@8.22.0)(zod@4.6.7)
@@ -7407,8 +7407,8 @@ packages:
   '@tanstack/virtual-core@3.19.13':
     resolution: {integrity: sha512-CyCvMm7m5JuvPW6eMPZkZBZk6diySrlUQNNRpQPiEnh2vakyghx82Hw3wW2THFUsl6xJ6uM4lSUaiA2T0oYW8w==}
 
-  '@techsio/ui-kit@0.66.2':
-    resolution: {integrity: sha512-gyUNGVGefg5WlP31q7v3fa4gwXQ+dCPXWfM78EmRmbFl6Vs0bI5xIRkqVzuarlb+p9nrMcrE/5snoCRiU4EpWQ==}
+  '@techsio/ui-kit@0.67.0':
+    resolution: {integrity: sha512-8A5ZOn43KoR+qOIp6E6WGtsURTBmI2K0qvhKmuDtw7P7KUOCurMiNvQQKAt8T1v2VMC3HZ7awzkchoN0Dap69w==}
     peerDependencies:
       '@types/react': '>=19.2.0'
       '@types/react-dom': '>=19.2.0'
@@ -18193,7 +18193,7 @@ snapshots:
 
   '@tanstack/virtual-core@3.19.13': {}
 
-  '@techsio/ui-kit@0.66.2(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)':
+  '@techsio/ui-kit@0.67.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(solid-js@2.0.0-rc.15)(tailwindcss@4.3.3)':
     dependencies:
       '@dnd-kit/abstract': 0.5.3
       '@dnd-kit/collision': 0.5.3
