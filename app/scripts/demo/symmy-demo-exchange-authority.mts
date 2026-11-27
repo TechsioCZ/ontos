@@ -66,6 +66,8 @@ export const symmyDemoExchangeOperations = {
     workloadKey: SYMMY_DEMO_CATALOG_IMPORT_WORKLOAD,
   },
 } as const;
+/** The demo store copy reads the current base Price and on-hand of its company's Catalog variants under adminProducts. */
+export const SYMMY_DEMO_CATALOG_COPY_WORKLOAD = 'commerce.symmy-demo-catalog-copy';
 const reason = 'Standing-approved AKROS stage demo Symmy catalog import and order export enrollment';
 const attribution = 'ontos:stage:symmy-demo-exchange-authority:v1';
 const enrollment = defineDatabaseIdentityEnrollment([]);
@@ -110,7 +112,26 @@ export const symmyDemoExchangeRouteOperations = (routeKey: RouteKey) =>
           },
         },
       ]
-    : [symmyDemoExchangeOperations.adminProducts];
+    : [
+        symmyDemoExchangeOperations.adminProducts,
+        // The demo store copy reads the current base Price and on-hand of the Catalog variants it copies.
+        {
+          effectKey: 'demo-catalog-page-prices-v1',
+          operation: {
+            entrypointKey: 'commerce.pricing.api.catalog-page-prices',
+            moduleId: 'commerce.pricing',
+            schemaVersion: '1',
+          },
+        },
+        {
+          effectKey: 'demo-catalog-variant-on-hand-v1',
+          operation: {
+            entrypointKey: 'commerce.inventory.api.catalog-variant-on-hand-page',
+            moduleId: 'commerce.inventory',
+            schemaVersion: '1',
+          },
+        },
+      ];
 
 export class SymmyDemoExchangeAuthorityError extends Schema.TaggedError<SymmyDemoExchangeAuthorityError>()(
   'SymmyDemoExchangeAuthorityError',
@@ -327,7 +348,7 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
       yield* sql`set local role ontos_runtime`;
       yield* installOperationalScope(executor, scope, enrollment);
       const grantWorkload = Effect.fn('SymmyDemoExchange.grant')(function* grant(
-        addition: (typeof symmyDemoExchangeOperations)[keyof typeof symmyDemoExchangeOperations],
+        addition: { readonly workloadKey: string },
       ) {
         const workloadKey = yield* Schema.decodeUnknownEffect(WorkloadKeySchema)(addition.workloadKey);
         const current = yield* sql`select binding_id as "bindingId", status from core.access_workload_bindings
@@ -411,7 +432,11 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
         return { bindingId, legalEntityId, workloadKey };
       });
       const grants = [];
-      for (const addition of [symmyDemoExchangeOperations.productsBatch, symmyDemoExchangeOperations.adminProducts]) {
+      for (const addition of [
+        symmyDemoExchangeOperations.productsBatch,
+        symmyDemoExchangeOperations.adminProducts,
+        { workloadKey: SYMMY_DEMO_CATALOG_COPY_WORKLOAD },
+      ]) {
         grants.push(yield* grantWorkload(addition));
       }
       yield* sql`reset role`;
