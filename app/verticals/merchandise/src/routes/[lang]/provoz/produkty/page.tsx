@@ -10,7 +10,7 @@ import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
-import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
+import { BulkTagDialog, TagFilter, useTagCatalog } from '@app/tagging/components/tag-controls';
 import { Effect, Schema } from 'effect';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
@@ -184,9 +184,16 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const productTags = useSubjectTags('product', canWrite ? products.map((product) => product.id) : []);
   const revision = ready?.revision ?? 0;
   const labelItems = labelOptions(choices);
-  // The filters beside the search depend on the category choices (tree or labels) and the first page (write rights,
-  // Symmy products). They appear together once both answered, so none of them shifts another one later.
-  const filtersSettled = choicesSettled && state.status !== 'loading';
+  const productTagCatalog = useTagCatalog('product', true);
+  // The filters beside the search depend on the category choices (tree or labels), the first page (write rights,
+  // Symmy products) and the tag catalogue (the tag filter). They appear together once all answered, so none of them
+  // shifts another one later, and once shown they stay.
+  const [filtersShown, setFiltersShown] = useState(false);
+  const filtersAnswered = choicesSettled && state.status !== 'loading' && productTagCatalog.status !== 'loading';
+  if (filtersAnswered && !filtersShown) {
+    setFiltersShown(true);
+  }
+  const filtersSettled = filtersShown || filtersAnswered;
 
   const selectedIds = Object.keys(selection).filter(isProductId);
   const filtersActive = [
@@ -316,6 +323,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     openDialog,
     pagination,
     products,
+    productTagCatalog,
     productTags,
     ready,
     reload,
@@ -368,6 +376,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     openDialog,
     pagination,
     products,
+    productTagCatalog,
     productTags,
     ready,
     reload,
@@ -501,6 +510,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               </div>
               {canWrite && (
                 <TagFilter
+                  catalog={productTagCatalog}
                   kind="product"
                   onChange={(tagId) => {
                     tagFilter.setTagId(tagId);
