@@ -1362,6 +1362,23 @@ const organizationMatchResult = (tenantId: string, decision: OrganizationSourceD
   }).pipe(Effect.mapError(unavailable));
 };
 
+/**
+ * Once a tenant's ICO authority moved to Commerce, a source ICO is outside the organization source contract for good:
+ * a final rejection, never an "unavailable" its source would retry forever.
+ */
+const requireSourceIcoAuthority = (
+  transaction: Pick<PartyTransaction, 'select'>,
+  tenantId: string,
+  candidate: { readonly officialIdentifiers: readonly { readonly identifierType: string }[] },
+) =>
+  candidate.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO')
+    ? requireLegacyIcoAuthority(transaction, tenantId).pipe(
+        Effect.catchTag('LegacyIcoAuthorityConflict', () =>
+          Effect.fail(organizationReviewRequired(organizationSourceContractViolation)),
+        ),
+      )
+    : Effect.void;
+
 const createOrganizationSourceParty = Effect.fn('PartyMatchingPersistenceService.createOrganizationSourceParty')(
   function* createOrganization(
     transaction: Parameters<CreateOrMatchPartyOperation>[0],
@@ -1402,6 +1419,7 @@ const createOrganizationSourceParty = Effect.fn('PartyMatchingPersistenceService
       }
       return { ...(yield* organizationCreateResult(input.tenantId, previous)), replayed: true as const };
     }
+    yield* requireSourceIcoAuthority(transaction, input.tenantId, candidate);
     const correlation = yield* findPartySourceTargetMetadata(transaction, input.tenantId, assertion, false);
     let partyId = correlation?.partyId ?? undefined;
     if (partyId === undefined) {
