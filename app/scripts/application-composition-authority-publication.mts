@@ -490,6 +490,13 @@ const reportDeadDrainDeliveries = Effect.fn('ApplicationCompositionAuthority.rep
 
 /** How every refusal to start a drain begins, so an operator and a test can tell it from a drain that ran. */
 const DRAIN_NOT_STARTED = 'The Application Composition drain was not started';
+
+/**
+ * A publication refused before its drain started: durable admission is open again and the authority stays active, so
+ * the running release keeps serving and the same publication may simply be tried again later.
+ */
+export const isDrainNotStartedRefusal = (failure: unknown): boolean =>
+  Schema.is(ApplicationCompositionAuthorityError)(failure) && failure.reason.startsWith(DRAIN_NOT_STARTED);
 /** How a drain that met work it could never finish ends, so the restore runs at once rather than at its deadline. */
 const DRAIN_STOPPED =
   'The Application Composition drain was stopped: Outbox work arrived during it that it could never finish';

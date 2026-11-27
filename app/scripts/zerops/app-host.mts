@@ -163,6 +163,7 @@ import {
 import type { ObservedArtifact, ObservedModuleDeployment } from '../active-application-composition.mts';
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
+  isDrainNotStartedRefusal,
   publishApplicationCompositionAuthoritySnapshot,
   renewApplicationCompositionAuthoritySnapshot,
 } from '../application-composition-authority-publication.mts';
@@ -226,6 +227,14 @@ export const customerDiscoveryHostError = flow(
   Option.getOrElse(() => CUSTOMER_DISCOVERY_FAILED),
   failure,
 );
+
+/** How long apart a publication refused before its drain is tried again in the same boot. */
+const PUBLICATION_RETRY_SPACING = Duration.seconds(20);
+/**
+ * How long one boot keeps retrying a refused publication: well inside the 15 minute readiness limit (app/zerops.yaml)
+ * after a two-minute boot, so a refusal that never clears still fails this boot before Zerops gives up on it.
+ */
+const PUBLICATION_RETRY_WINDOW_MS = 9 * 60_000;
 
 /** Dynamic host reasons can include configuration names or downstream details; only these literals may be logged. */
 const SAFE_HOST_STOP_REASONS: ReadonlySet<string> = new Set([
@@ -2634,7 +2643,48 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
     );
     yield* reconcileErpEditorGrants.pipe(timedBootStageJudged('host.erp-editor-grants', (granted: boolean) => granted));
-    const revision = yield* publishSnapshot(releaseSnapshot).pipe(timedBootStage('host.publish'));
+    // A refusal before the drain started leaves the running release serving with nothing changed, so this boot tries
+    // the same publication again in place, from a fresh observation, until the retiring release's work can drain.
+    // Exiting instead re-ran the whole two-minute boot (migrator and access-release activation against the live
+    // database included) on every refusal until the readiness limit failed the deploy (stage 2026-11-27: a Symmy
+    // delivery backed off past the drain budget refused four boots in a row).
+    const publishedAtFirst = yield* Clock.currentTimeMillis;
+    const publishAgain = observeOwners(units, publicOrigin).pipe(
+      Effect.flatMap((snapshot) =>
+        snapshot.composition.revision === releaseSnapshot.composition.revision
+          ? publishSnapshot(snapshot)
+          : Effect.fail(failure('the observed composition changed while its publication waited for the drain')),
+      ),
+    );
+    const revision = yield* publishSnapshot(releaseSnapshot).pipe(
+      Effect.catchIf(isDrainNotStartedRefusal, (refusal) =>
+        Console.error('[app-host] composition publication refused before its drain; retrying in place').pipe(
+          Effect.andThen(Effect.sleep(PUBLICATION_RETRY_SPACING)),
+          Effect.andThen(
+            publishAgain.pipe(
+              Effect.retry({
+                schedule: Schedule.spaced(PUBLICATION_RETRY_SPACING),
+                while: (problem) => isDrainNotStartedRefusal(problem),
+              }),
+              Effect.timeoutOrElse({
+                duration: Duration.millis(Math.max(1, PUBLICATION_RETRY_WINDOW_MS)),
+                orElse: () => Effect.fail(refusal),
+              }),
+            ),
+          ),
+        ),
+      ),
+      Effect.tap(() =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) =>
+            Console.log(
+              `[app-host] composition published ${String(now - publishedAtFirst)} ms after its first attempt`,
+            ),
+          ),
+        ),
+      ),
+      timedBootStage('host.publish'),
+    );
     // From this commit on Core refuses the old release's governed requests, and the old host relays its public
     // traffic here until the balancer moved (supersede-drain.mts); this one serves at once and reports ready.
     yield* openPublicPort.pipe(timedBootStage('host.open-public-port'));
