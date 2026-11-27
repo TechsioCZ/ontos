@@ -72,6 +72,36 @@ Never write plain CSS. Use the installed version of Tailwind CSS.
 
 Keep domain-specific presentation inside its feature.
 
+### Tenant themes
+
+A theme is runtime data: a kit `BrandDefinition` (`key`, `label`, `modes`, `tokens`, optional `defaults`). Core owns each tenant's themes (`core.tenant_themes`) and the one it uses (`core.tenant_theme_attachments`). A tenant without an attachment uses the kit's Business brand. Adding or switching a theme needs no kit release, Shell rebuild or deploy.
+
+A tenant administrator saves a theme, then attaches it. Both are Shell Actions with an `Idempotency-Key` header, for the signed-in tenant:
+
+```http
+POST /core/actions/save-tenant-theme
+{ "key": "acme", "label": "Acme", "modes": ["light", "dark"],
+  "tokens": { "--color-primary": "var(--color-primary-700)" } }
+
+POST /core/actions/attach-tenant-theme
+{ "themeKey": "acme" }
+```
+
+Saving runs the kit's brand validator in Core. A theme with an unknown token, an unsafe value or a failed WCAG AA pair is refused with `422` and every issue. Saving a theme under the same key replaces it. `{ "themeKey": null }` detaches the theme, so the tenant returns to Business. An unknown key is `404`.
+
+The Shell loads the tenant's theme with the session (`POST /core/reads/tenant-theme` answers `{ revision, theme }`) and its root layout renders it through the kit's `AppThemeProvider`. An open Shell reads the theme again on focus, on visibility, every 15 seconds and right after a save or attach made in that browser. A new revision applies without a reload. The light/dark switch in the dashboard header is shown only for a theme that ships both modes.
+
+A module needs nothing to use the tenant theme: it renders inside the provider. A module that wants its own look wraps its screens in the kit's `BrandScope` with a brand it brings, or one derived from the tenant's:
+
+```tsx
+const { brand } = useAppTheme();
+<BrandScope brand={extendBrand(brand, { key: 'projects', tokens: { '--color-primary': 'var(--color-primary-900)' } })}>
+  {screens}
+</BrandScope>;
+```
+
+There is no manifest field or Shell setting for this. A federated module has to share the kit as a singleton with the Shell so that it sees the same theme context.
+
 ## Internationalization
 
 Always use the application internationalization (i18n) runtime for user-facing text. Never hardcode user-facing strings in TypeScript, TSX, route metadata, or configuration.

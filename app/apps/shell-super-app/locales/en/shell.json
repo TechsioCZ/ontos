@@ -502,6 +502,12 @@
       "account": {
         "label": "Account menu"
       },
+      "appearance": {
+        "dark": "Dark",
+        "label": "Appearance",
+        "light": "Light",
+        "system": "System"
+      },
       "brand": "OntOS",
       "header": {
         "label": "Dashboard header"
