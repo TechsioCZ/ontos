@@ -248,7 +248,7 @@ const LoginPage = () => {
     <>
       <UltramodernRouteHead />
       <main className="flex min-h-dvh items-center justify-center bg-surface px-200 py-400 text-fg-primary">
-        <section className="rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 flex w-full max-w-md flex-col gap-200 p-300 md:p-400">
+        <section className="surface-card flex w-full max-w-md flex-col gap-200 p-300 md:p-400">
           <div className="flex items-center gap-150">
             <span className="flex size-icon-control-lg items-center justify-center rounded-md bg-primary">
               <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
@@ -261,7 +261,7 @@ const LoginPage = () => {
           <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
           {oauthError === undefined ? null : (
             <div
-              className="rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-100 p-200 text-sm"
+              className="surface-tile flex flex-col gap-100 p-200 text-sm"
               data-testid="oauth-login-error"
               role="alert"
             >
@@ -271,10 +271,7 @@ const LoginPage = () => {
             </div>
           )}
           {oauthBanner === undefined || oauthError !== undefined ? null : (
-            <output
-              className="block rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm"
-              data-testid="oauth-login-banner"
-            >
+            <output className="block surface-tile p-200 text-sm" data-testid="oauth-login-banner">
               <span className="block">
                 <strong>{oauthBanner.client}</strong> {oauthBanner.description}
               </span>
@@ -326,13 +323,13 @@ const LoginPage = () => {
                 />
               </div>
               {reason === undefined || submissionError !== undefined ? null : (
-                <output className="block rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm">
+                <output className="block surface-tile p-200 text-sm">
                   <span className="block font-semibold">{t(`shell.login.notice.${reason}.title`)}</span>
                   <span className="block">{t(`shell.login.notice.${reason}.body`)}</span>
                 </output>
               )}
               {submissionError === undefined ? null : (
-                <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="alert">
+                <div className="surface-tile p-200 text-sm" role="alert">
                   <p className="font-semibold">{t(errorTitleKey)}</p>
                   <p>{t(submissionError)}</p>
                 </div>

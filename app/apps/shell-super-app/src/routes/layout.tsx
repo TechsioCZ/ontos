@@ -9,7 +9,6 @@ import { installStaleBuildRecovery, useStaleBuildErrorRecovery } from './stale-b
 import { neutralStaffTheme } from './staff-brand.ts';
 
 import './ui-kit.css';
-import './index.css';
 
 // Before any remote loads, so every remote's module requests share one cache for this document.
 if ('document' in globalThis) {

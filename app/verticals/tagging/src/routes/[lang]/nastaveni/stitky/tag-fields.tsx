@@ -13,7 +13,7 @@ import { Effect, Schema } from 'effect';
 import type { Option } from 'effect';
 import type { Atom } from 'effect/reactivity';
 import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { tagColorValue } from '../../../../tags/tag-colors.ts';
+import { tagColorClass } from '../../../../tags/tag-colors.ts';
 import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectKind, TagColor } from '../../../../../shared/apis/records.ts';
 import { TagKindsFieldSchema, TagNameFieldSchema } from './tag-draft.ts';
@@ -101,11 +101,7 @@ const TagFields = ({ tagForm }: { readonly tagForm: BuiltTagForm }) => {
     displayValue: t(`tagging.colors.${color}`),
     label: (
       <span className="flex items-center gap-100">
-        <span
-          aria-hidden
-          className="size-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: tagColorValue[color] }}
-        />
+        <span aria-hidden className={`size-2.5 shrink-0 rounded-full ${tagColorClass[color]}`} />
         {t(`tagging.colors.${color}`)}
       </span>
     ),

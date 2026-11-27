@@ -62,7 +62,7 @@ import { useTagCatalog, useTagCatalogSnapshot } from '../tags/tag-catalog.ts';
 import type { TagCatalog } from '../tags/tag-catalog.ts';
 
 export { useTagCatalog };
-import { tagColorValue } from '../tags/tag-colors.ts';
+import { tagColorClass } from '../tags/tag-colors.ts';
 import { TagI18n } from '../tags/tag-i18n.tsx';
 
 export type { TagCallFailure, TagsStatus } from '../tags/tag-access.ts';
@@ -77,7 +77,7 @@ export interface TagChipProps {
 }
 
 /** One tag as a chip in its stored colour. */
-export const TagChip = ({ tag }: TagChipProps) => <TagBadge color={tagColorValue[tag.color]} name={tag.name} />;
+export const TagChip = ({ tag }: TagChipProps) => <TagBadge colorClass={tagColorClass[tag.color]} name={tag.name} />;
 
 export interface TagCellProps {
   readonly loading?: boolean;

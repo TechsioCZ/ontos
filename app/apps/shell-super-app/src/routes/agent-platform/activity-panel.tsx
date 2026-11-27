@@ -2,6 +2,7 @@ import { ChoiceField, FormBuilder, FormReact, FormRoot, useAtomValue } from '@ap
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import {
@@ -79,9 +80,9 @@ export const ActivityText = ({
   path === undefined ? (
     children
   ) : (
-    <LocalizedLink className="agent-activity-link" to={path}>
+    <Link as={LocalizedLink} className="text-current wrap-anywhere hover:text-primary" size="current" to={path}>
       {children}
-    </LocalizedLink>
+    </Link>
   );
 
 const activityDetail = (entry: AgentActivityEntry) => {
@@ -166,12 +167,12 @@ export const ActivityPanel = () => {
   };
 
   return (
-    <div className="ai-review">
+    <div className="flex min-w-0 flex-col gap-5">
       <p className="text-fg-secondary text-sm">
         Každé čtení, zápis, odmítnutí i návrh AI agentů v modulech, ve kterých schvalujete jejich změny.
       </p>
       <FormRoot
-        className="agent-filters"
+        className="flex flex-wrap items-end gap-3"
         defaultValues={noFilter}
         form={activityFilterForm}
         translateMessage={(message) => t(message)}
@@ -212,21 +213,49 @@ export const ActivityPanel = () => {
           <StatusText status="default">Žádná aktivita pro zvolený filtr.</StatusText>
         ) : (
           <>
-            <table aria-label={t('shell.agentPlatform.activity.table')} className="agent-activity-table">
-              <thead>
-                <tr className="agent-activity-head">
-                  <th scope="col">Čas</th>
-                  <th scope="col">Agent</th>
-                  <th scope="col">Modul</th>
-                  <th scope="col">Akce</th>
-                  <th scope="col">Výsledek</th>
+            <table aria-label={t('shell.agentPlatform.activity.table')} className="grid w-full min-w-0">
+              <thead className="contents">
+                <tr className="flex min-w-0 flex-col gap-1 border-border-primary/60 border-b py-3 sm:flex-row sm:items-start sm:gap-3 sm:py-2 hidden sm:flex">
+                  <th
+                    className="min-w-0 text-left font-semibold text-fg-secondary text-xs wrap-anywhere sm:w-36 sm:shrink-0"
+                    scope="col"
+                  >
+                    Čas
+                  </th>
+                  <th
+                    className="min-w-0 text-left font-semibold text-fg-secondary text-xs wrap-anywhere sm:flex-1"
+                    scope="col"
+                  >
+                    Agent
+                  </th>
+                  <th
+                    className="min-w-0 text-left font-semibold text-fg-secondary text-xs wrap-anywhere sm:flex-1"
+                    scope="col"
+                  >
+                    Modul
+                  </th>
+                  <th
+                    className="min-w-0 text-left font-semibold text-fg-secondary text-xs wrap-anywhere sm:flex-1"
+                    scope="col"
+                  >
+                    Akce
+                  </th>
+                  <th
+                    className="min-w-0 text-left font-semibold text-fg-secondary text-xs wrap-anywhere sm:w-36 sm:shrink-0"
+                    scope="col"
+                  >
+                    Výsledek
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="contents">
                 {state.value.entries.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>{formatAgentTime(entry.occurredAt)}</td>
-                    <td>
+                  <tr
+                    className="flex min-w-0 flex-col gap-1 border-border-primary/60 border-b py-3 sm:flex-row sm:items-start sm:gap-3 sm:py-2"
+                    key={entry.id}
+                  >
+                    <td className="min-w-0 wrap-anywhere sm:w-36 sm:shrink-0">{formatAgentTime(entry.occurredAt)}</td>
+                    <td className="min-w-0 wrap-anywhere sm:flex-1">
                       <ActivityText path={entry.agentPath}>{entry.agentName}</ActivityText>
                       {entry.grants?.map((grant) => (
                         <small className="block text-xs" key={grant.path}>
@@ -234,14 +263,14 @@ export const ActivityPanel = () => {
                         </small>
                       ))}
                     </td>
-                    <td>
+                    <td className="min-w-0 wrap-anywhere sm:flex-1">
                       <ActivityText path={entry.modulePath}>{entry.moduleLabel}</ActivityText>
                     </td>
-                    <td>
+                    <td className="min-w-0 wrap-anywhere sm:flex-1">
                       <ActivityText path={entry.actionPath}>{entry.actionLabel}</ActivityText>
                       {activityDetail(entry)}
                     </td>
-                    <td>
+                    <td className="min-w-0 wrap-anywhere sm:w-36 sm:shrink-0">
                       <Badge severity={kindBadgeVariant[entry.kind]} size="sm">
                         {agentActivityKindLabel[entry.kind]}
                       </Badge>

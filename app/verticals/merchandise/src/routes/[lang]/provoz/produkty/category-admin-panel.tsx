@@ -108,18 +108,20 @@ const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => voi
           {refs.map((ref) => {
             const src = `/obrazky/${encodeURIComponent(state.product.id)}/${ref.slice('media:'.length)}`;
             return (
-              <button
+              <Button
                 aria-label="Použít tuto fotku"
                 className="h-20 w-20 overflow-hidden rounded border border-border-secondary"
+                composition
                 key={ref}
                 onClick={() => {
                   onPick(src);
                   setOpen(false);
                 }}
-                type="button"
+                size="current"
+                unstyled
               >
                 <PickerThumbnail image={ref} productId={state.product.id} />
-              </button>
+              </Button>
             );
           })}
         </div>

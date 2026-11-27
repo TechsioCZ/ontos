@@ -18,14 +18,13 @@ const ProductThumbnail = ({ image, productId }: { readonly image: string; readon
   return source.status === 'ready' ? (
     <img
       alt=""
-      className="shrink-0 rounded-sm border border-border-primary object-cover"
+      className="size-8 shrink-0 rounded-sm border border-border-primary object-cover"
       height={32}
       loading="lazy"
       onError={(event) => {
         event.currentTarget.style.visibility = 'hidden';
       }}
       src={source.src}
-      style={{ height: 32, objectFit: 'cover', width: 32 }}
       width={32}
     />
   ) : (
@@ -42,7 +41,11 @@ const variantNoun = (count: number) => {
 };
 
 /** The stock flag of a tracked product: its tint and why; null when stock is untracked or not running out. */
-type StockFlag = { readonly empty: boolean; readonly reason: string; readonly severity: 'danger' | 'warning' };
+interface StockFlag {
+  readonly empty: boolean;
+  readonly reason: string;
+  readonly severity: 'danger' | 'warning';
+}
 
 const stockFlagOf = (product: ProductRecord, label: (path: string) => string): StockFlag | null => {
   if (product.availability === undefined || product.availability === 'UNKNOWN') {
@@ -115,7 +118,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       );
     },
     header: label('columns.name'),
-    meta: { type: 'string', minWidth: 120 },
+    meta: { minWidth: 120, type: 'string' },
   },
   // Always present: a Symmy mark shows here even for a role that may not read tags (`tagsOf` is `null`).
   {
@@ -136,7 +139,9 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
   },
   {
     accessorFn: (product) => {
-      if (product.storefrontVisibility === undefined) return '';
+      if (product.storefrontVisibility === undefined) {
+        return '';
+      }
       return product.storefrontVisibility.published ? 'ano' : 'ne';
     },
     cell: (info) => <StorefrontStatusCell product={info.row.original} />,

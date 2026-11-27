@@ -5,6 +5,9 @@
 :root {
   --radius-checkbox: 0.25rem;
   --radius-checkbox-indeterminate: 0.25rem;
+  /* The kit Sidebar sits below the Shell's 700-step top bar; the kit derives its viewport height from this offset. */
+  --spacing-sidebar-offset: var(--spacing-700);
+  --height-sidebar-viewport: calc(100dvh - var(--spacing-700));
 }
 
 /* Calm admin controls, shared by the shell and federated pages; keep validation and focus tokens intact. */

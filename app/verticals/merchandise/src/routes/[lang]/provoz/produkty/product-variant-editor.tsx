@@ -76,13 +76,15 @@ const ImageChoice = ({
   readonly selected: boolean;
 }) => (
   <li className="min-w-0">
-    <button
+    <Button
       aria-pressed={selected}
-      className={`flex w-full flex-col gap-50 rounded-lg p-50 text-left text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed ${selected ? 'ring-2 ring-primary' : 'enabled:hover:bg-fill-hover'}`}
+      className={`flex w-full flex-col items-stretch justify-start gap-50 rounded-lg p-50 text-left text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed ${selected ? 'ring-2 ring-primary' : 'enabled:hover:bg-fill-hover'}`}
+      composition
       data-testid="variant-image-choice"
       disabled={disabled}
       onClick={onPick}
-      type="button"
+      size="current"
+      unstyled
     >
       <span
         className={`${surfaceTileClassName} relative flex aspect-square w-full items-center justify-center overflow-hidden`}
@@ -92,7 +94,7 @@ const ImageChoice = ({
       <span className="line-clamp-2 break-all" data-testid="variant-image-caption">
         {caption}
       </span>
-    </button>
+    </Button>
   </li>
 );
 

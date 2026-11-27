@@ -15,6 +15,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { Effect, Equal, Option, Schema } from 'effect';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
@@ -408,9 +409,8 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   return (
     <aside
       aria-label={t(guideTitleKey)}
-      className="fixed inset-e-0 bottom-0 z-5 flex w-full flex-col border-border-primary border-s bg-base shadow-accordion-content-md lg:w-(--demo-guide-width)"
+      className="fixed inset-e-0 top-700 bottom-0 z-5 flex w-full flex-col border-border-primary border-s bg-base shadow-accordion-content-md lg:w-(--demo-guide-width)"
       id={demoGuidePanelId}
-      style={{ top: 'var(--spacing-700)' }}
     >
       <ResizeHandle />
       <header className="flex items-start gap-150 border-border-primary border-b p-250 lg:ps-300">
@@ -459,10 +459,11 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               Začít znovu
             </Button>
           </div>
-          <progress
+          <Meter
             aria-label={t('shell.demoGuide.progress')}
-            className="h-100 w-full overflow-hidden rounded-full bg-surface accent-primary [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-surface [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
+            className="h-100"
             max={Math.max(1, summary.total)}
+            severity="primary"
             value={summary.done}
           />
           {guide.boundaries === undefined ? null : (

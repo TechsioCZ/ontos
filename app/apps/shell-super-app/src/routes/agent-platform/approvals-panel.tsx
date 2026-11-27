@@ -5,6 +5,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import {
   AgentBatchKeySchema,
   AgentItemKeySchema,
@@ -102,38 +103,61 @@ const CommandDetails = ({
   readonly command: NonNullable<AgentQueueItem['command']>;
   readonly open: boolean;
 }) => (
-  <details className="ai-review-command" open={open}>
-    <summary>Přesný příkaz pro modul</summary>
-    <dl>
-      {Object.entries(command)
-        .toSorted(([left], [right]) => Number(right === '_tag') - Number(left === '_tag'))
-        .map(([field, value]) => (
-          <div key={field}>
-            <dt>{field === '_tag' ? 'Příkaz' : field}</dt>
-            <dd>{commandValue(value)}</dd>
-          </div>
-        ))}
-    </dl>
-  </details>
+  <Accordion appearance="ghost" className="text-xs" collapsible defaultValue={open ? ['command'] : []} size="sm">
+    <Accordion.Item value="command">
+      <Accordion.Header aria-level={4}>
+        <Accordion.Title className="text-fg-secondary">Přesný příkaz pro modul</Accordion.Title>
+        <Accordion.Indicator />
+      </Accordion.Header>
+      <Accordion.Content>
+        <dl className="mt-2 grid gap-1 text-xs">
+          {Object.entries(command)
+            .toSorted(([left], [right]) => Number(right === '_tag') - Number(left === '_tag'))
+            .map(([field, value]) => (
+              <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]" key={field}>
+                <dt className="text-fg-secondary">{field === '_tag' ? 'Příkaz' : field}</dt>
+                <dd className="font-mono wrap-anywhere">{commandValue(value)}</dd>
+              </div>
+            ))}
+        </dl>
+      </Accordion.Content>
+    </Accordion.Item>
+  </Accordion>
 );
 
 const ChangeDiff = ({ item }: { readonly item: AgentQueueItem }) => (
-  <table aria-label={`Porovnání: ${item.summary}`} className="ai-review-diff block w-full">
+  <table aria-label={`Porovnání: ${item.summary}`} className="block w-full overflow-hidden rounded-md bg-base">
     <thead className="block">
-      <tr className="ai-review-diff-head">
-        <th scope="col">Údaj</th>
-        <th scope="col">Před změnou</th>
-        <th scope="col">Po schválení</th>
+      <tr className="grid grid-cols-[minmax(4.5rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] bg-fill-base font-medium text-fg-secondary text-xs leading-normal">
+        <th className="min-w-0 px-1.5 py-2 text-start wrap-anywhere sm:px-3 sm:py-2.5" scope="col">
+          Údaj
+        </th>
+        <th className="min-w-0 px-1.5 py-2 text-start wrap-anywhere sm:px-3 sm:py-2.5" scope="col">
+          Před změnou
+        </th>
+        <th className="min-w-0 px-1.5 py-2 text-start wrap-anywhere sm:px-3 sm:py-2.5" scope="col">
+          Po schválení
+        </th>
       </tr>
     </thead>
     <tbody className="block">
       {item.diff.map((line) => (
-        <tr className="ai-review-diff-row" key={line.field}>
-          <th className="font-medium" scope="row">
+        <tr
+          className="grid grid-cols-[minmax(4.5rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(0,1fr)_minmax(0,1fr)] border-border-primary/60 border-t text-xs leading-normal sm:text-sm"
+          key={line.field}
+        >
+          <th
+            className="min-w-0 px-1.5 py-2 text-start wrap-anywhere sm:px-3 sm:py-2.5 font-medium text-fg-primary"
+            scope="row"
+          >
             {line.label}
           </th>
-          <td className="ai-review-before">{line.before ?? '—'}</td>
-          <td className="ai-review-after">{line.after ?? 'Vymazáno'}</td>
+          <td className="min-w-0 px-1.5 py-2 text-start wrap-anywhere sm:px-3 sm:py-2.5 bg-danger-light text-danger-fg">
+            {line.before ?? '—'}
+          </td>
+          <td className="min-w-0 px-1.5 py-2 text-start wrap-anywhere sm:px-3 sm:py-2.5 bg-success-light text-success-fg">
+            {line.after ?? 'Vymazáno'}
+          </td>
         </tr>
       ))}
     </tbody>
@@ -200,22 +224,22 @@ const ChangeCard = ({
 }) => (
   <article
     aria-current={highlighted ? 'true' : undefined}
-    className="ai-review-change"
+    className={`flex min-w-0 flex-col gap-3.5 rounded-lg bg-surface p-3 sm:p-4 ${highlighted ? 'scroll-mt-20 outline-2 outline-primary' : ''}`}
     data-item-key={item.key}
     tabIndex={highlighted ? -1 : undefined}
   >
-    <div className="ai-review-heading">
-      <div>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 grow basis-64">
         <h3 className="font-semibold text-sm">{item.summary}</h3>
         {item.targetLabel !== item.summary && <p className="text-fg-secondary text-sm">{item.targetLabel}</p>}
       </div>
-      <div className="ai-review-actions">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge severity={itemBadgeVariants[item.status]}>{agentItemStatusLabel[item.status]}</Badge>
         <span className="text-fg-secondary text-xs">{agentRiskLabel[item.risk]}</span>
         <span className="text-fg-secondary text-xs">{item.moduleLabel}</span>
       </div>
     </div>
-    <p className="ai-review-reason">
+    <p className="max-w-[80ch] text-sm leading-normal wrap-anywhere">
       <span className="font-medium">Důvod návrhu: </span>
       {item.reason}
     </p>
@@ -224,7 +248,7 @@ const ChangeCard = ({
     {item.command !== undefined && <CommandDetails command={item.command} open={item.diffSource === 'agent'} />}
     <ChangeHistory item={item} />
     {item.status === 'pending' && item.canDecide && (
-      <div className="ai-review-actions ai-review-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
         <Button
           appearance="outline"
           disabled={busy}
@@ -298,15 +322,17 @@ const BatchCard = ({
   return (
     <section
       aria-current={highlighted ? 'true' : undefined}
-      className={highlighted ? 'ai-review-batch ai-review-batch-target' : 'ai-review-batch'}
+      className={`min-w-0 scroll-mt-20 overflow-hidden rounded-lg border ${highlighted ? 'border-primary ring-2 ring-primary-light' : 'border-border-primary/60'}`}
       data-batch-key={batch.key}
     >
-      <header className="ai-review-batch-header">
-        <div className="ai-review-heading">
-          <div>
+      <header className="flex flex-col gap-4 p-3 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 grow basis-64">
             <p className="text-fg-secondary text-xs">{`${formatAgentTime(batch.createdAt)} · ${batch.agentLabel}`}</p>
-            <h2 className="ai-review-instruction">{batch.instruction}</h2>
-            <div className="ai-review-actions">
+            <h2 className="mt-1.5 max-w-[75ch] font-semibold text-[1rem] leading-normal wrap-anywhere sm:text-[1.1rem]">
+              {batch.instruction}
+            </h2>
+            <div className="flex flex-wrap items-center gap-2">
               {batch.moduleLabels.map((label) => (
                 <Badge appearance="outline" key={label} severity="neutral" size="sm">
                   {label}
@@ -336,7 +362,7 @@ const BatchCard = ({
                 size="sm"
               />
             </FormRoot>
-            <div className="ai-review-actions">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 disabled={busy}
                 onClick={() =>
@@ -367,7 +393,7 @@ const BatchCard = ({
           </>
         )}
         {batch.canRevertAll && (
-          <div className="ai-review-revert">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               appearance="outline"
               disabled={busy}
@@ -381,9 +407,9 @@ const BatchCard = ({
               Obnoví původní údaje provedených změn dávky. Změny, které nejde vrátit automaticky, jsou označené.
             </span>
             {confirmRevert && (
-              <div className="ai-review-confirm" role="alert">
+              <div className="flex basis-full flex-col gap-3 border-warning border-l-3 p-4 text-sm" role="alert">
                 <p>Vrátit všechny provedené změny této dávky? Historie zůstane zachována.</p>
-                <div className="ai-review-actions">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     disabled={busy}
                     onClick={() => {
@@ -408,7 +434,7 @@ const BatchCard = ({
           </p>
         )}
       </header>
-      <div className="ai-review-changes">
+      <div className="flex flex-col gap-4 px-3 pb-3 sm:px-5 sm:pb-5">
         {batch.items.map((item) => (
           <ChangeCard busy={busy} decide={decide} highlighted={item.key === targetItemKey} item={item} key={item.key} />
         ))}
@@ -644,7 +670,7 @@ const QueueFilters = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <fieldset aria-label={t('shell.agentPlatform.approvals.filters')} className="ai-review-actions agent-filters">
+    <fieldset aria-label={t('shell.agentPlatform.approvals.filters')} className="flex flex-wrap items-end gap-3">
       <Button
         appearance={filter === 'pending' ? 'solid' : 'outline'}
         aria-pressed={filter === 'pending'}
@@ -722,7 +748,7 @@ const ApprovalsQueue = ({
   }
   if (queue.state === 'failed') {
     return (
-      <div className="ai-review">
+      <div className="flex min-w-0 flex-col gap-5">
         <ReviewStatus actions={actions} />
         <StatusText aria-live="polite" showIcon status="error">
           {queueFailureText(queue.error.httpStatus)}
@@ -745,15 +771,15 @@ const ApprovalsQueue = ({
       (targetItemKey !== undefined && !targetBatch.items.some((item) => item.key === targetItemKey)));
 
   return (
-    <div className="ai-review">
-      <div className="ai-review-heading">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-fg-secondary text-sm">
           Návrhy změn od AI agentů ze všech modulů. Bez souhlasu člověka se nic nezmění.
         </p>
       </div>
-      <div className="ai-review-safety">
-        <span aria-hidden className="icon-[mdi--shield-check-outline] size-250" />
-        <p>
+      <div className="flex items-start gap-3 rounded-lg border-info border-l-3 bg-surface p-4 text-sm leading-[1.6]">
+        <span aria-hidden className="icon-[mdi--shield-check-outline] size-250 shrink-0" />
+        <p className="max-w-[80ch]">
           <strong>Pod kontrolou člověka.</strong> Agent smí změny jen navrhnout. Schválením je provedete svým jménem a s
           vlastními oprávněními; každé rozhodnutí má autora, čas a výsledek.
         </p>

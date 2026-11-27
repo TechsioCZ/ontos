@@ -31,7 +31,7 @@ import {
   tagCatalogStatusOf,
   useTagCatalogSnapshot,
 } from '../../../../tags/tag-catalog.ts';
-import { tagColorValue } from '../../../../tags/tag-colors.ts';
+import { tagColorClass } from '../../../../tags/tag-colors.ts';
 import { TagI18n } from '../../../../tags/tag-i18n.tsx';
 import { subjectKindValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
@@ -296,7 +296,7 @@ const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagW
 const tagColumns = (t: Translate): ColumnDef<TagWithCounts>[] => [
   {
     accessorKey: 'name',
-    cell: (info) => <TagBadge color={tagColorValue[info.row.original.color]} name={info.row.original.name} />,
+    cell: (info) => <TagBadge colorClass={tagColorClass[info.row.original.color]} name={info.row.original.name} />,
     header: t('tagging.tags.table.name'),
     meta: { width: 240 },
   },

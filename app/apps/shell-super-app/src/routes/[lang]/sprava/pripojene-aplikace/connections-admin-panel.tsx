@@ -23,6 +23,7 @@ import { Url } from 'effect/http';
 import { AsyncResult } from 'effect/reactivity';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import type {
@@ -363,9 +364,9 @@ export const ConnectionsAdminPanel = () => {
       <p className="text-fg-secondary">
         Všechna připojení ChatGPT, Claude a dalších aplikací ve firmě {company.legalName.replace(/\.$/u, '')}. Odpojená
         aplikace ztratí přístup hned při dalším požadavku.{' '}
-        <a className="font-medium text-fg-primary underline" href="/cs/sprava/aktivita-agentu">
+        <Link className="font-medium text-fg-primary" href="/cs/sprava/aktivita-agentu" size="current">
           Zobrazit aktivitu agentů
-        </a>
+        </Link>
       </p>
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">

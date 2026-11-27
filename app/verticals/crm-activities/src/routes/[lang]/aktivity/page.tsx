@@ -604,15 +604,12 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
             </div>
             <div className="grid items-start gap-6 lg:grid-cols-2">
               {card !== undefined && (
-                <article
-                  aria-label={t(`${key}.contact`)}
-                  className="rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5"
-                >
+                <article aria-label={t(`${key}.contact`)} className="surface-card min-w-0 space-y-5 p-5">
                   <div className="space-y-1">
                     <p className="text-sm text-fg-secondary">{t(`${key}.contact`)}</p>
                     <h2 className="text-xl font-semibold">{card.party.displayName ?? t(`${key}.unnamed`)}</h2>
                   </div>
-                  <dl className="rounded-lg bg-surface [&_.ontos-tile]:bg-base grid gap-4 p-4 text-sm">
+                  <dl className="surface-tile grid gap-4 p-4 text-sm">
                     <div className="space-y-1">
                       <dt className="text-fg-secondary">{t(`${key}.partyType`)}</dt>
                       <dd>{t(`${key}.partyTypes.${card.party.partyType}`)}</dd>
@@ -632,14 +629,14 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
               )}
               {records.canWrite && (
                 <FormRoot
-                  className={`rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5 ${card === undefined ? 'lg:col-span-2' : ''}`}
+                  className={`surface-card min-w-0 space-y-5 p-5 ${card === undefined ? 'lg:col-span-2' : ''}`}
                   defaultValues={blankValues}
                   form={activityForm}
                   translateMessage={(text) => t(text, { defaultValue: text })}
                 >
                   <h2 className="text-xl font-semibold">{t(`${key}.record`)}</h2>
                   <div className="grid items-start gap-4 md:grid-cols-2">
-                    <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base space-y-4 p-4">
+                    <div className="surface-tile space-y-4 p-4">
                       <div className="flex flex-wrap items-end gap-3">
                         <div className="min-w-0 flex-1">
                           <activityForm.query id="counterparty-query" label={t(`${key}.query`)} />
@@ -663,7 +660,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                         warning={searchFailure}
                       />
                     </div>
-                    <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base space-y-4 p-4">
+                    <div className="surface-tile space-y-4 p-4">
                       <activityForm.taskId
                         items={taskItems}
                         label={t(`${key}.followUp`)}

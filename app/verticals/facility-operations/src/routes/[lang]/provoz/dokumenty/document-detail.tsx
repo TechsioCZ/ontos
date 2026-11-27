@@ -283,12 +283,19 @@ export const VersionUpload = ({
         </StatusText>
       )}
       <div className="flex flex-wrap items-center gap-150">
-        <label className="cursor-pointer">
-          <versionForm.file data-testid="version-file-input" />
-          <span className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight">
-            ⇪ {file === undefined ? `${newVersionLabel}…` : t(`${k}.create.replace`)}
-          </span>
-        </label>
+        <versionForm.file data-testid="version-file-input">
+          {(pick) => (
+            <Button
+              className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight"
+              composition
+              onClick={pick}
+              size="current"
+              unstyled
+            >
+              ⇪ {file === undefined ? `${newVersionLabel}…` : t(`${k}.create.replace`)}
+            </Button>
+          )}
+        </versionForm.file>
         {file !== undefined && (
           <span className="text-sm">
             {file.name} <span className="text-fg-secondary">· {formatBytes(file.size)}</span>

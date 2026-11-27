@@ -7,6 +7,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { NavigationProgress } from '@techsio/ui-kit/atoms/navigation-progress';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
@@ -15,8 +16,8 @@ import { useDocumentTitle } from '@app/admin-ui';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
-import type { ComponentProps, CSSProperties, ReactNode } from 'react';
+import { useContext, useEffect, useEffectEvent, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { Effect, Schema } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import type { Atom } from 'effect/reactivity';
@@ -1047,18 +1048,26 @@ const handleSidebarExpandedChange = ({ expanded }: SidebarExpandedChangeDetails)
   writeSidebarCollapsed(!expanded.includes('start'));
 };
 
-type SidebarOffsetStyle = CSSProperties & {
-  '--demo-guide-width'?: string;
-  '--height-sidebar-viewport'?: string;
-  '--spacing-sidebar-offset'?: string;
-};
 /**
- * The kit derives `--height-sidebar-viewport` from the offset at `:root`, so an offset set on the root element alone
- * leaves the panel a full viewport tall below the top bar and clips its footer. Re-derive both on the frame.
+ * The docked guide's width on the document root while the frame is mounted: `--demo-guide-width` sizes the guide
+ * and the page's room beside it. The Sidebar's offset below the top bar is static and lives in ui-kit.css, so the
+ * server-rendered page already places the panel correctly.
  */
-const topBarOffsetStyle: SidebarOffsetStyle = {
-  '--height-sidebar-viewport': 'calc(100dvh - var(--spacing-700))',
-  '--spacing-sidebar-offset': 'var(--spacing-700)',
+const useFrameLayoutVariables = (demoGuideWidth: string) => {
+  useLayoutEffect(() => {
+    const variables = {
+      '--demo-guide-width': demoGuideWidth,
+    };
+    const root = document.documentElement.style;
+    for (const [name, value] of Object.entries(variables)) {
+      root.setProperty(name, value);
+    }
+    return () => {
+      for (const name of Object.keys(variables)) {
+        root.removeProperty(name);
+      }
+    };
+  }, [demoGuideWidth]);
 };
 
 const usePendingNavigationHref = (language: string): string | undefined => {
@@ -1144,13 +1153,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const hydrated = useHydratedMarker();
   const guideVisible = guide !== undefined && guideOpen && !props.logoutPending;
   // The saved width is re-fitted to the current screen by CSS, next to the expanded or icon-only sidebar.
-  const sidebarStyle: SidebarOffsetStyle = {
-    ...topBarOffsetStyle,
-    '--demo-guide-width': guideWidthCss(
-      guideWidth,
-      collapsed ? 'var(--width-sidebar-icon)' : 'var(--width-sidebar-expanded)',
-    ),
-  };
+  useFrameLayoutVariables(
+    guideWidthCss(guideWidth, collapsed ? 'var(--width-sidebar-icon)' : 'var(--width-sidebar-expanded)'),
+  );
 
   return (
     <StaffRoutePreloadContext value={preload}>
@@ -1168,7 +1173,6 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         collapsible={{ start: 'icon' }}
         expanded={expandedSides}
         onExpandedChange={handleSidebarExpandedChange}
-        style={sidebarStyle}
       >
         <DrawerRouteSync />
         <Header
@@ -1266,9 +1270,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             {/* The router keeps the previous page visible until the next one is prepared (code and data); a thin bar
                 shows a navigation that takes longer than a moment. */}
             {pendingHref === undefined ? null : (
-              <div className="shell-navigation-progress">
-                <progress aria-label={t('shell.dashboard.navigation.pending')} className="sr-only" />
-              </div>
+              <NavigationProgress aria-label={t('shell.dashboard.navigation.pending')} />
             )}
             <div aria-busy={pendingHref !== undefined} className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
               {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}

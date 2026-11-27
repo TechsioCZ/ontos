@@ -7,7 +7,6 @@ import { useShellControls } from '../use-shell-controls.ts';
 import type { AgentPlatformPageModel } from './agent-platform-page-model.ts';
 import { ActivityPanel } from './activity-panel.tsx';
 import { ApprovalsPanel } from './approvals-panel.tsx';
-import './agent-platform.css';
 
 export const AgentPlatformView = ({ model }: { readonly model: AgentPlatformPageModel }) => {
   const { t } = useModernI18n();

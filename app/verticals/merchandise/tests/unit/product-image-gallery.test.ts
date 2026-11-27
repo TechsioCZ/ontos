@@ -220,7 +220,7 @@ it.live('shows progress while uploading and a Czech error with retry when an upl
     expect(uploadingText).toContain('Nahrávám…');
     expect(uploadingText).toContain('Čeká…');
     expect(uploadingText).toContain('Nahrávám 2 obrázky…');
-    expect(yield* render([first], uploading)).toContain('<progress');
+    expect(yield* render([first], uploading)).toContain('role="meter"');
 
     const failed = galleryReducer(uploading, {
       key: 'u1',

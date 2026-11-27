@@ -20,6 +20,7 @@ import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Effect, Option, Schema, Struct } from 'effect';
@@ -269,9 +270,9 @@ const IntegrationCard = ({
       {partner !== null && (
         <p className="text-fg-secondary text-xs vertical-navigation-control">
           {t(`${copyKey}.usage`, { header: partner.apiKeyHeader, url: `${origin}${partner.ingressPrefix}` })}{' '}
-          <a className="underline" href={partner.docsPath} rel="noreferrer" target="_blank">
+          <Link className="text-current" href={partner.docsPath} rel="noreferrer" size="current" target="_blank">
             {t(`${copyKey}.docs`)}
-          </a>
+          </Link>
         </p>
       )}
       {entry.principalStatus === 'active' && (
