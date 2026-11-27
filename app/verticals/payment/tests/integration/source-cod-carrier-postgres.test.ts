@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect } from 'effect';
+import { Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -32,7 +33,7 @@ import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
  * Delivery Offer (carried in the COD execution binding) may confirm the COLLECT.
  */
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const dpdCarrier = {
@@ -69,7 +70,7 @@ const openDatabase = Effect.gen(function* openDatabase() {
 const actionRuntime = Effect.fn('CodCarrierTest.actionRuntime')(function* actionRuntime(
   database: EvidenceNativeDatabase,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeActionRuntime(
     { executor: database.database },
     makeActionRepository(crypto),

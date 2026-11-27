@@ -214,8 +214,8 @@ const migrateOwner = Effect.fn('ApprovalExpiry.migrateOwner')(function* migrateO
   );
   if (Number(status) !== 0) {
     const text = diagnostics.join('');
-    const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.sqlState;
-    const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.position;
+    const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.['sqlState'];
+    const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.['position'];
     yield* Effect.logError({
       failureClass: 'MIGRATION_CHILD_FAILURE',
       knownLeasedBoundary: '20261019181146_approval_post_lock_expiry',
@@ -283,7 +283,7 @@ const scenario = Effect.fn('ApprovalExpiry.nativeScenario')(function* nativeScen
           sql`select clock_timestamp() >= ${expiresAtText}::timestamptz as expired, pg_sleep(0.01)`,
           'objects',
         );
-        if (row?.expired) {
+        if (row?.expired === true) {
           return;
         }
         yield* Effect.yieldNow;
@@ -567,7 +567,7 @@ it.live(
             sql`select clock_timestamp() >= ${other.expiresAtText}::timestamptz as expired, pg_sleep(0.01)`,
             'objects',
           );
-          if (clock?.expired) {
+          if (clock?.expired === true) {
             break;
           }
           if (attempt === 999) {

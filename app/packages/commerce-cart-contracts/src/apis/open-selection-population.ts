@@ -15,7 +15,7 @@ import {
 } from '../resources/cart.ts';
 
 const revision = Schema.Int.check(Schema.isBetween({ maximum: 2_147_483_647, minimum: 1 }));
-const generation = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)$/u));
+const generation = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)$/u));
 const digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 export const OpenSelectionPopulationRequestSchema = Schema.Struct({ tenantId: CartTenantIdSchema });
 export type OpenSelectionPopulationRequest = typeof OpenSelectionPopulationRequestSchema.Type;

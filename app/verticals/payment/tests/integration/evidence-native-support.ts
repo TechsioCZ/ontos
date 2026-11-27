@@ -97,7 +97,7 @@ export const evidenceContextAccess: ContextAccessService = {
 export interface EvidenceNativeDatabase {
   readonly coreAdmin: TestDatabaseFromClient<typeof coreRelations>;
   readonly database: TestDatabaseFromClient<typeof coreRelations>;
-  readonly runtimeClient: PgClient.PgClient;
+  readonly runtimeClient: (typeof PgClient.PgClient)['Service'];
 }
 
 /** Trusted session principal of a scope, as the gateway would present it. */

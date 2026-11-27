@@ -3,7 +3,8 @@ import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog
 import type { CatalogSelection } from '@app/catalog-selection-contracts/catalog-selection';
 import type { CatalogSelectionOwnerAssessmentResult } from '@app/catalog/domain/catalog-selection-owner-contract';
 import type { OperationalScope } from '@app/core-runtime';
-import { Context, Crypto, Effect, Redacted, Schema } from 'effect';
+import { Context, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
@@ -145,8 +146,8 @@ export const catalogSelectionAssessmentPortFromEnvironment = Effect.fn('catalogS
   function* catalogSelectionAssessmentPortFromEnvironment(
     context: CatalogSelectionAssessmentContext,
     execute: SelectionEvidenceExecutor = executeSelectionEvidence,
-  ): Effect.fn.Return<CatalogSelectionAssessmentPort, never, Crypto.Crypto> {
-    const crypto = yield* Crypto.Crypto;
+  ): Effect.fn.Return<CatalogSelectionAssessmentPort, never, SecureRandom.SecureRandom> {
+    const crypto = yield* SecureRandom.SecureRandom;
     return makeCatalogSelectionAssessmentPort({
       acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
       context,

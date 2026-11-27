@@ -9,7 +9,8 @@ import type { OwnedNativeDatabaseFixture } from '@app/core-runtime/testing/isola
 import { NodeCrypto } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -224,9 +225,9 @@ const storeReadiness = Effect.fn('InternalC14CatalogPricingReadiness.store')(fun
   ) {
     return yield* failureAt('verify-unit-rule')();
   }
-  const crypto = yield* Crypto.Crypto;
-  const actionInvocationId = yield* crypto.randomUUIDv4();
-  const categoryId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const actionInvocationId = yield* crypto.uuidV4();
+  const categoryId = yield* crypto.uuidV4();
   const at = DateTime.toDateUtc(yield* DateTime.now);
   const evidence = {
     actingPrincipalId,
@@ -342,7 +343,7 @@ const storeReadiness = Effect.fn('InternalC14CatalogPricingReadiness.store')(fun
   );
   const assignedCategory = yield* categories
     .addAssignment({
-      actionInvocationId: yield* crypto.randomUUIDv4(),
+      actionInvocationId: yield* crypto.uuidV4(),
       categoryId,
       principalId: actingPrincipalId,
       productId,

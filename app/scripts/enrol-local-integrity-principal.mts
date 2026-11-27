@@ -2,9 +2,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Console, Crypto, Effect, Layer, Ref, Schema } from 'effect';
+import { Console, Effect, Layer, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Redacted } from 'effect';
-import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
+import type { Cookies } from 'effect/http';
+import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/http';
 import { HttpApiClient } from 'effect/http-api';
 
 import {
@@ -35,7 +37,7 @@ export interface LocalIntegrityEnrollmentInput {
 
 export const enrolLocalIntegrityPrincipal = Effect.fn('LocalDevelopment.enrolIntegrityPrincipal')(
   function* enrolIntegrityPrincipal(input: LocalIntegrityEnrollmentInput) {
-    const session = yield* Ref.make(Cookies.empty);
+    const session = yield* Ref.make<readonly Cookies.Cookie[]>([]);
     const client = yield* HttpApiClient.make(ShellAuthenticationApi, {
       baseUrl: `${input.baseUrl}${shellAuthenticationApiContract.apiPrefix}`,
       transformClient: (http) =>
@@ -59,9 +61,9 @@ export const enrolLocalIntegrityPrincipal = Effect.fn('LocalDevelopment.enrolInt
       workloadKey: 'core.media.integrity',
     });
     // A fresh key each run: a saved reply must not stand for an enrollment that was ended since.
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return yield* client.identity.changeSystemWorkloadEnrollment({
-      headers: { 'idempotency-key': yield* crypto.randomUUIDv4() },
+      headers: { 'idempotency-key': yield* crypto.uuidV4() },
       payload,
     });
   },
@@ -91,6 +93,7 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.reso
       Effect.provide(
         Layer.mergeAll(
           NodeServices.layer,
+          SecureRandom.layerWebCrypto,
           FetchHttpClient.layer,
           // A redirect could carry the password off the loopback origin the configuration accepted.
           Layer.succeed(FetchHttpClient.RequestInit, { redirect: 'error' }),

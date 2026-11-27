@@ -2,7 +2,8 @@
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { isVerifiedGatewayPrincipalContext, ReadHandlerUnavailable, readVerifiedGatewayActor } from '@app/core-runtime';
 import { executePurchaseProposalBasisWithAuthorization } from '@app/commerce-customer-context/api/purchase-proposal-basis/client';
-import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { pricingQuotationMatchesCurrentDecision } from '@app/pricing-contracts/quotation-verification';
 import {
   currentPricingDecisionCandidateRef,
@@ -128,7 +129,7 @@ export const preapprovalQuotationVerificationService = (
         readonly sourceRevision: '1';
       }) =>
         Effect.gen(function* verifyPreapprovalQuote() {
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const actor = readVerifiedGatewayActor(scope);
           if (
             !isVerifiedGatewayPrincipalContext(scope) ||

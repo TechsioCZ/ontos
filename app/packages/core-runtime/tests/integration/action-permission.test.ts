@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Crypto, Deferred, Effect, Fiber, Function, Layer, Exit, Option, Schema, Predicate } from 'effect';
+import { Context, Deferred, Effect, Fiber, Function, Layer, Exit, Option, Schema, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { SqlError, UnknownError } from 'effect/sql/SqlError';
 
@@ -485,7 +486,7 @@ const runWithLivePermission = <Value, Error>(
   onStage: NonNullable<ActionRuntimeOptions['onStage']> = Function.constVoid,
 ) =>
   Effect.gen(function* runWithLivePermissionProgram() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const config = yield* configuration === undefined ? loadSpiceDbConfig() : Effect.succeed(configuration);
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => createPermissionCheckClient(config, SPICEDB_CHECK_TIMEOUT_MS)),

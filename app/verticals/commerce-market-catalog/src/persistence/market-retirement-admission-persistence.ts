@@ -1,7 +1,8 @@
 import type { ActionServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { marketRetirementAdmissions } from '../database/schema.ts';
@@ -87,10 +88,10 @@ export const marketRetirementAdmissionPersistence: ActionServiceFactory<
       MarketRetirementImpactAssessmentUnavailable
     >;
   },
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > = Effect.fn('MarketRetirementAdmission.services')(
   function* admissionServices(transaction, scope, compositionRevision) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     if (scope.legalEntityId === undefined) {
       return yield* new OperationContextUnavailable({
         code: 'operation_context_unavailable',
@@ -156,7 +157,7 @@ export const marketRetirementAdmissionPersistence: ActionServiceFactory<
             const existing = yield* lock(input);
             return yield* projectMarketRetirementAdmission(existing);
           }
-          const proof = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+          const proof = yield* crypto.uuidV4();
           yield* transaction
             .insert(marketRetirementAdmissions)
             .values({

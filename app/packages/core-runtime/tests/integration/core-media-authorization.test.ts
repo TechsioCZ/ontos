@@ -1,21 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { sha256 } from '@noble/hashes/sha2.js';
-import {
-  Cause,
-  Context,
-  Crypto,
-  Deferred,
-  DateTime,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Option,
-  Ref,
-  Schema,
-  Stream,
-} from 'effect';
+import { Cause, Context, Deferred, DateTime, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
@@ -209,9 +196,8 @@ const refusalOf = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
     }),
   );
 /** The gate's reason codes of an Action refusal; empty when the effect did not end in a denial. */
-const reasonsOfAction = (
-  refusal: ActionPermissionDenied | ActionPermissionCheckError | undefined,
-): readonly string[] => (Schema.is(ActionPermissionDenied)(refusal) ? (refusal.reasons ?? []) : []);
+const reasonsOfAction = (refusal: ActionPermissionDenied | ActionPermissionCheckError | undefined): readonly string[] =>
+  Schema.is(ActionPermissionDenied)(refusal) ? (refusal.reasons ?? []) : [];
 
 const readRefusalOf = <Value, Failure>(effect: Effect.Effect<Value, Failure>) =>
   Effect.exit(effect).pipe(
@@ -271,9 +257,9 @@ type Engine =
 const buildRuntime = (input: {
   readonly engine: Engine;
   readonly executor: CoreDatabaseExecutor;
-}): Effect.Effect<ComposedRuntime, never, Crypto.Crypto | Scope.Scope> =>
+}): Effect.Effect<ComposedRuntime, never, SecureRandom.SecureRandom | Scope.Scope> =>
   Effect.gen(function* buildRuntimeEffect() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configuration = yield* loadSpiceDbConfig().pipe(Effect.orDie);
     const compiler = makeAccessProjectionCompiler(makeAccessProjectionTransport(configuration));
     const ownerOverlayFacts = yield* Ref.make<readonly (OwnerAccessFacts | undefined)[]>([]);
@@ -366,8 +352,8 @@ const bootstrapTenant = (
 
 const buildScenarioTemplate = Effect.gen(function* buildScenarioTemplateEffect() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
-  const database = `d20_media_template_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const database = `d20_media_template_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const admin = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
   yield* admin.unsafe(`create database "${database}"`);
   yield* Effect.addFinalizer(() => dropDatabase(admin, database));
@@ -382,16 +368,17 @@ const buildScenarioTemplate = Effect.gen(function* buildScenarioTemplateEffect()
   return { database };
 }).pipe(Effect.orDie);
 
+const nodeServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
 const suiteLayer = Layer.mergeAll(
-  NodeServices.layer,
-  Layer.effect(ScenarioTemplate, buildScenarioTemplate).pipe(Layer.provide(NodeServices.layer)),
+  nodeServices,
+  Layer.effect(ScenarioTemplate, buildScenarioTemplate).pipe(Layer.provide(nodeServices)),
 );
 
 const acquireDatabase = Effect.gen(function* acquireDatabaseEffect() {
   const { database: template } = yield* ScenarioTemplate;
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
-  const database = `d20_media_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const database = `d20_media_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const admin = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
   yield* cloneDatabase(admin, template, database);
   yield* Effect.addFinalizer(() => dropDatabase(admin, database));
@@ -417,7 +404,9 @@ interface MediaWorld {
   readonly storage: InMemoryObjectStorage;
 }
 
-const withMediaWorld = <Value, Failure>(run: (world: MediaWorld) => Effect.Effect<Value, Failure, Crypto.Crypto>) =>
+const withMediaWorld = <Value, Failure>(
+  run: (world: MediaWorld) => Effect.Effect<Value, Failure, SecureRandom.SecureRandom>,
+) =>
   Effect.scoped(
     Effect.gen(function* mediaWorld() {
       const configuration = yield* loadSpiceDbConfig().pipe(Effect.orDie);
@@ -434,8 +423,8 @@ const withMediaWorld = <Value, Failure>(run: (world: MediaWorld) => Effect.Effec
       const live = yield* buildRuntime({ engine: { kind: 'live' }, executor });
       const dead = yield* buildRuntime({ engine: { kind: 'unreachable', rpcEndpoint: '127.0.0.1:1' }, executor });
       const storage = yield* makeInMemoryObjectStorage();
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = TenantIdSchema.make(yield* crypto.uuidV4());
       const scenario = scenarioOf({
         admin,
         bootstrap: (input) => bootstrapTenant(live, tenantId, input),
@@ -741,8 +730,8 @@ const seedAsset = Effect.fn('CoreMediaAuthorizationTest.seedAsset')(function* se
   world: MediaWorld,
   options: { readonly ingestedBy?: string; readonly legalEntityId?: string; readonly tenantId?: string } = {},
 ) {
-  const crypto = yield* Crypto.Crypto;
-  const mediaAssetId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const mediaAssetId = yield* crypto.uuidV4();
   const tenantId = options.tenantId ?? world.scenario.tenantId;
   yield* world.scenario.admin.unsafe(
     `insert into core.media_assets (media_asset_id, tenant_id, legal_entity_id, ingestion_source, ingested_by_principal_id, storage_provider,

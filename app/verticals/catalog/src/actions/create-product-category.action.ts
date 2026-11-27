@@ -3,14 +3,14 @@
 // @ontos-action-slug create-product-category
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   CreateProductCategoryPayloadSchema,
   CreateProductCategoryResultSchema,
 } from '../../shared/actions/create-product-category.ts';
 import type { CreateProductCategoryPayload } from '../../shared/actions/create-product-category.ts';
-import { CategoryPersistenceUnavailable } from '../persistence/category-persistence.ts';
 import type { CategoryPersistence } from '../persistence/category-persistence.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import {
@@ -27,15 +27,6 @@ import {
 export { CreateProductCategoryPayloadSchema } from '../../shared/actions/create-product-category.ts';
 export type { CreateProductCategoryPayload } from '../../shared/actions/create-product-category.ts';
 
-const categoryIdentityUnavailable = (cause: unknown): CategoryPersistenceUnavailable => {
-  const failure = new CategoryPersistenceUnavailable({
-    code: 'category_persistence_unavailable',
-    reason: 'Category identity generation is temporarily unavailable',
-  });
-  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  return failure;
-};
-
 const domainEvents = { 'commerce.catalog.product-category-created.v1': CreateProductCategoryResultSchema } as const;
 
 export const handleCreateProductCategory = Effect.fn('CreateProductCategoryAction.handle')(
@@ -46,8 +37,8 @@ export const handleCreateProductCategory = Effect.fn('CreateProductCategoryActio
     if (payload.parentRef !== undefined && payload.parentRef.tenantId !== context.scope.tenantId) {
       return yield* crossTenantFailure();
     }
-    const crypto = yield* Crypto.Crypto;
-    const categoryId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(categoryIdentityUnavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const categoryId = yield* crypto.uuidV4();
     const input = {
       actionInvocationId: context.actionInvocationId,
       categoryId,

@@ -1,5 +1,6 @@
 import { DateTime, Schema } from 'effect';
-import type { Crypto, Effect } from 'effect';
+import type { Effect } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import {
   AssortmentCandidateSchema,
@@ -170,5 +171,5 @@ export interface AssortmentCommitmentConfirmationIssuer {
   readonly issue: (
     payload: AssortmentCommitmentConfirmationPayload,
     metadata: Readonly<{ readonly actionInvocationId: string; readonly actorPrincipalId: string }>,
-  ) => Effect.Effect<AssortmentCommitmentConfirmationResult, CommitmentConfirmationError, Crypto.Crypto>;
+  ) => Effect.Effect<AssortmentCommitmentConfirmationResult, CommitmentConfirmationError, SecureRandom.SecureRandom>;
 }

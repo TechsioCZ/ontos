@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { DateTime, Effect, Option, Redacted } from 'effect';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   COMMERCE_PORTAL_AUTH_POLICY,
@@ -93,7 +93,9 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
 
         // one request, one stored decision, one intent pinned to the original subject and the issuance (never the e-mail)
         expect(world.submissions).toHaveLength(1);
-        const [{ request, submission }] = world.submissions;
+        const [entry] = world.submissions;
+        assert(entry !== undefined);
+        const { request, submission } = entry;
         expect(submission).toMatchObject({
           decision: { kind: 'MESSAGE_INTENTS' },
           outcome: 'DECIDED',
@@ -343,7 +345,9 @@ describe('Password reset: real Auth source -> public Action -> durable decision/
       Effect.gen(function* idempotency() {
         const { realm, world } = yield* setup();
         yield* requestReset(realm);
-        const [{ request, submission }] = world.submissions;
+        const [entry] = world.submissions;
+        assert(entry !== undefined);
+        const { request, submission } = entry;
         const replayed = yield* world.submitter.submit(request);
         expect(replayed).toMatchObject({
           decisionId: decisionIdOf(submission),

@@ -806,10 +806,9 @@ const assembleAuthenticationService = (
           ? { scope: requestScope }
           : { savedLegalEntityId: resolved.savedLegalEntityId, scope: requestScope },
       ).pipe(
-        Effect.mapError((selectionFailure) => {
-          void selectionFailure;
-          return unavailable('legal_entity_selection_unavailable');
-        }),
+        Effect.catchTag('LegalEntitySelectionUnavailableError', () =>
+          Effect.fail(unavailable('legal_entity_selection_unavailable')),
+        ),
         observeAuthenticationPhase('session.legal-entities', requestHeaders),
       );
       const clearInvalidSavedSelection = Effect.gen(function* clearInvalidSavedSelectionEffect() {

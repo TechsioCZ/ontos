@@ -308,8 +308,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               const renameCode = yield* failureCodeOf(
                 world.withStorage(
                   world.actions.runAction({
-                    principal,
                     payload: { displayFilename: 'renamed-by-workload.pdf', mediaAssetRef: ref },
+                    principal,
                     registration: renameDisplayFilenameAction,
                     transport: { correlationId: 'e2e-workload-rename', idempotencyKey: 'workload-rename' },
                   }),
@@ -320,8 +320,8 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
                 yield* failureTagOf(
                   world.withStorage(
                     world.reads.runRead({
-                      principal,
                       input: { mediaAssetRefs: [ref] },
+                      principal,
                       registration: assetCurrentRead,
                       transport: { correlationId: 'e2e-workload-current' },
                     }),

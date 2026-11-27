@@ -1,4 +1,5 @@
-import { Context, Crypto, DateTime, Effect, FileSystem, Layer, Match, Path, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, FileSystem, Layer, Match, Path, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { bootstrapScopesOf } from '../access/bootstrap/persistence.ts';
 import { compileFullAccessRole } from '../access/bootstrap/full-access-role.ts';
@@ -46,7 +47,7 @@ const readCatalogModules = Effect.fn('TestTenantAccessRoles.catalogModules')(fun
 
 /** One active assignment of the role in each scope, held by the principal. */
 const assignmentWrites = (
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   input: {
     readonly at: Date;
     readonly principalId: PrincipalId;
@@ -59,7 +60,7 @@ const assignmentWrites = (
   Effect.forEach(
     input.scopeIds,
     (scopeId) =>
-      crypto.randomUUIDv4().pipe(
+      crypto.uuidV4().pipe(
         Effect.map((incarnationId) => ({
           _tag: 'RecordAssignment' as const,
           assignment: {
@@ -145,12 +146,12 @@ export const makeTestTenantRoleAccess = Effect.fn('TestTenantAccessRoles.make')(
     tenantId,
     input.legalEntityIds.map((legalEntityId) => LegalEntityIdSchema.make(legalEntityId)),
   ).map(({ scopeId }) => scopeId);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const scope = yield* stageScopeOf({ principalId, tenantId });
   const reconcile = writer.reconcileTenant({ scope });
 
   const roleOf = Effect.fn('TestTenantAccessRoles.role')(function* roleOf(cells: typeof releaseCells) {
-    const [roleUuid, roleRevisionUuid] = yield* Effect.all([crypto.randomUUIDv4(), crypto.randomUUIDv4()], {
+    const [roleUuid, roleRevisionUuid] = yield* Effect.all([crypto.uuidV4(), crypto.uuidV4()], {
       concurrency: 2,
     });
     const roleId = RoleIdSchema.make(roleUuid);
@@ -194,10 +195,14 @@ export const makeTestTenantRoleAccess = Effect.fn('TestTenantAccessRoles.make')(
     return { grant: () => grant, revoke: () => revoke };
   }, Effect.orDie);
 
-  const capabilityRole = (capabilityKeys: readonly [string, ...string[]]) =>
-    roleOf(releaseCells.filter(({ capabilityKey }) => capabilityKeys.includes(capabilityKey)));
-  const roleWithout = (capabilityKeys: readonly string[]) =>
-    roleOf(releaseCells.filter(({ capabilityKey }) => !capabilityKeys.includes(capabilityKey)));
+  const capabilityRole = (capabilityKeys: readonly [string, ...string[]]) => {
+    const capabilities = new Set(capabilityKeys);
+    return roleOf(releaseCells.filter(({ capabilityKey }) => capabilities.has(capabilityKey)));
+  };
+  const roleWithout = (capabilityKeys: readonly string[]) => {
+    const capabilities = new Set(capabilityKeys);
+    return roleOf(releaseCells.filter(({ capabilityKey }) => !capabilities.has(capabilityKey)));
+  };
   const endHeldRoles = Effect.fn('TestTenantAccessRoles.endHeldRoles')(function* endHeldRoles() {
     const { assignments } = yield* people.loadTenantPeople(scope);
     const writes = assignments

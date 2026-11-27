@@ -78,9 +78,7 @@ export const withCiTopologyDependencies = (
       dependencies: [
         ...new Set([
           ...entry.dependencies,
-          ...references.flatMap((id) =>
-            units.filter((candidate) => candidate.id === id).map((candidate) => candidate.package),
-          ),
+          ...references.flatMap((id) => units.flatMap((candidate) => (candidate.id === id ? [candidate.package] : []))),
         ]),
       ],
       uncertain:
@@ -106,16 +104,16 @@ export interface WorkspaceGlob {
   readonly glob: string;
 }
 
-const WORKSPACE_ENTRY = /^\s*-\s+(?<pattern>\S+)\s*(?:#.*)?$/u;
+const WORKSPACE_ENTRY = /^\s*-\s+(?<pattern>\S+)(?:\s+#.*|\s*)$/u;
 const EXPANDABLE_GLOB = /^[A-Za-z0-9@_*?-][A-Za-z0-9@._*?-]*(?:\/[A-Za-z0-9@_*?-][A-Za-z0-9@._*?-]*)*$/u;
 
 /** One block-list line read as a glob, or why ci-plan cannot expand it exactly. */
 const workspaceGlob = (line: string): WorkspaceGlob | { readonly refused: string } => {
-  const pattern = WORKSPACE_ENTRY.exec(line)?.groups?.pattern;
+  const pattern = WORKSPACE_ENTRY.exec(line)?.groups?.['pattern'];
   if (pattern === undefined) {
     return { refused: `ci-plan cannot read this packages: entry of app/pnpm-workspace.yaml: ${line}` };
   }
-  const entry = /^(?<quote>['"])(?<inner>.*)\k<quote>$/u.exec(pattern)?.groups?.inner ?? pattern;
+  const entry = /^(?<quote>['"])(?<inner>.*)\k<quote>$/u.exec(pattern)?.groups?.['inner'] ?? pattern;
   const glob = entry.replace(/^!/u, '');
   return EXPANDABLE_GLOB.test(glob) && !glob.includes('**')
     ? { exclude: entry.startsWith('!'), glob }
@@ -137,9 +135,9 @@ export const workspacePackageGlobs = (
   const start = lines.findIndex((line) => /^packages:\s*(?:#.*)?$/u.test(line));
   const following = start === -1 ? [] : lines.slice(start + 1);
   const end = following.findIndex((line) => /^[^\s#-]/u.test(line));
-  const read = (end === -1 ? following : following.slice(0, end))
-    .filter((line) => !/^\s*(?:#.*)?$/u.test(line))
-    .map(workspaceGlob);
+  const read = (end === -1 ? following : following.slice(0, end)).flatMap((line) =>
+    /^\s*(?:#.*)?$/u.test(line) ? [] : [workspaceGlob(line)],
+  );
   const [refused] = read.flatMap((glob) => ('refused' in glob ? [glob.refused] : []));
   if (refused !== undefined) {
     return { unreadable: refused };
@@ -169,7 +167,7 @@ export const workspaceGlobChildren = (parent: string, segment: string, entries: 
       .replaceAll('?', '[^/]')}$`,
     'u',
   );
-  return entries.filter((entry) => !entry.startsWith('.') && matcher.test(entry)).map((entry) => `${prefix}${entry}`);
+  return entries.flatMap((entry) => (!entry.startsWith('.') && matcher.test(entry) ? [`${prefix}${entry}`] : []));
 };
 
 /**
@@ -180,8 +178,8 @@ export const workspaceGlobChildren = (parent: string, segment: string, entries: 
 export const workspaceDirectories = (
   expanded: readonly { readonly directories: readonly string[]; readonly exclude: boolean }[],
 ): readonly string[] => {
-  const excluded = new Set(expanded.filter(({ exclude }) => exclude).flatMap(({ directories }) => directories));
-  return [...new Set(expanded.filter(({ exclude }) => !exclude).flatMap(({ directories }) => directories))].filter(
+  const excluded = new Set(expanded.flatMap(({ directories, exclude }) => (exclude ? directories : [])));
+  return [...new Set(expanded.flatMap(({ directories, exclude }) => (exclude ? [] : directories)))].filter(
     (directory) => !excluded.has(directory) && !`/${directory}/`.includes('/node_modules/'),
   );
 };
@@ -234,12 +232,11 @@ export const ciWorkspacePackages = (input: {
     const entry = {
       dependencies: [
         ...new Set(
-          groups(manifest)
-            .flatMap((group) => Object.entries(group ?? {}))
-            .filter(
-              ([name, version]) => names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:'),
-            )
-            .map(([name]) => name),
+          groups(manifest).flatMap((group) =>
+            Object.entries(group ?? {}).flatMap(([name, version]) =>
+              names.has(name) || name.startsWith('@app/') || version.startsWith('workspace:') ? [name] : [],
+            ),
+          ),
         ),
       ],
       directory,
@@ -287,15 +284,15 @@ const broadPath = (changedPath: string) =>
 /** Every literal workspace selector a `--filter` list names, with its exclusion sense. */
 export const filterPaths = (filters: string) =>
   [...filters.matchAll(/--filter\s+['"]?(?<exclude>!)?(?<path>\.\/[a-z0-9/-]+|\.)['"]?/gu)].map(({ groups }) => ({
-    exclude: groups?.exclude === '!',
-    path: groups?.path?.replace(/^\.\//u, ''),
+    exclude: groups?.['exclude'] === '!',
+    path: groups?.['path']?.replace(/^\.\//u, ''),
   }));
 
 /** True when a command carries a package selector this planner cannot resolve to a workspace directory. */
 export const unknownFilters = (command: string) =>
   command.includes('--filter=') ||
   [...command.matchAll(/--filter\s+(?<selector>\S+)/gu)].some(
-    ({ groups }) => !/^['"]?!?(?:\.\/[a-z0-9/-]+|\.)['"]?$/u.test(groups?.selector ?? ''),
+    ({ groups }) => !/^['"]?!?(?:\.\/[a-z0-9/-]+|\.)['"]?$/u.test(groups?.['selector'] ?? ''),
   );
 
 /** The workspace packages a `--filter` list selects, excluding the repository root. */
@@ -313,7 +310,7 @@ export const matchingPackages = (filters: string, packages: readonly CiWorkspace
 
 /** The workspace directory a package task such as `./verticals/privacy#2/8` runs in; undefined for root and whole proofs. */
 export const taskDirectory = (task: string) =>
-  /^\.\/(?<directory>[a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.directory;
+  /^\.\/(?<directory>[a-z0-9-]+(?:\/[a-z0-9-]+)*)(?:#\d+\/\d+)?$/u.exec(task)?.groups?.['directory'];
 
 /** Every task form run-integration-suites.sh executes; anything else widens the plan instead of vanishing. */
 export const knownTask = (task: string) =>
@@ -331,9 +328,9 @@ export const planCiChecks = (input: {
 }) => {
   const { packages, templates } = input;
   const seeds = input.changedPaths.flatMap((changedPath) =>
-    packages
-      .filter(({ directory }) => directory !== '.' && changedPath.startsWith(`app/${directory}/`))
-      .map(({ name }) => name),
+    packages.flatMap(({ directory, name }) =>
+      directory !== '.' && changedPath.startsWith(`app/${directory}/`) ? [name] : [],
+    ),
   );
   const affectedNames = workspaceConsumerClosure(packages, seeds);
   const affected = packages.filter(({ name }) => affectedNames.has(name));

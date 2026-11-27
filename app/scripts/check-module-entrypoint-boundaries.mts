@@ -15,7 +15,7 @@ import type {
 import { parseSync } from 'oxc-parser';
 import type { Expression } from 'oxc-parser';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
+import { LanguageVariant, SyntaxKind, createScanner } from 'tsrs/ast';
 import {
   Config,
   Console,
@@ -132,15 +132,16 @@ const sortStrings = (values: readonly string[]): readonly string[] => {
 };
 
 const isGeneratedInfrastructureReadinessApi = (file: string, source: string): boolean => {
-  const stem = /(?<stem>[^/]+)\/[^/]+\/[^/]+$/u.exec(file)?.groups?.stem;
-  if (stem === undefined) {
+  const segments = file.split('/');
+  const [stem, ...descendants] = segments.length < 3 ? [] : segments.slice(-3);
+  if (stem === undefined || stem === '' || descendants.includes('')) {
     return false;
   }
   const endpoints = [
     ...source.matchAll(/HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<path>[^']+)'/gu),
   ].map((match) => {
     const { groups } = match;
-    return `${groups?.method}:${groups?.name}:${groups?.path}`;
+    return `${groups?.['method']}:${groups?.['name']}:${groups?.['path']}`;
   });
   return (
     endpoints.length === 1 &&
@@ -192,11 +193,11 @@ const requireDefined = <Value,>(
   value === undefined ? fail(file, message) : Effect.succeed(value);
 
 interface ParsedEntrypoint {
-  readonly access?: string;
-  readonly authorization?: InventoryAuthorization;
-  readonly entrypointKey?: string;
-  readonly moduleKey?: string;
-  readonly role?: string;
+  readonly access: string | undefined;
+  readonly authorization: InventoryAuthorization | undefined;
+  readonly entrypointKey: string | undefined;
+  readonly moduleKey: string | undefined;
+  readonly role: string | undefined;
   readonly scope: 'System' | 'Tenant';
 }
 
@@ -298,7 +299,7 @@ const resolveTopLevelStringConstant = (source: string, identifier: string): stri
       new RegExp(`^const\\s+${identifier}\\s*=\\s*(['"])(?<value>[^'"]+)\\1(?:\\s+as\\s+const)?;\\s*$`, 'gmu'),
     ),
   ];
-  return matches.length === 1 ? matches[0]?.groups?.value : undefined;
+  return matches.length === 1 ? matches[0]?.groups?.['value'] : undefined;
 };
 
 const readCapabilityIssuance = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
@@ -507,11 +508,14 @@ const readImportedModuleSpecifiers = (source: string): readonly string[] => {
   return specifiers;
 };
 
-const authorizationEquals = (left: InventoryAuthorization | undefined, right: InventoryAuthorization): boolean => {
-  if (left?.kind !== right.kind) {
+const authorizationEquals = (
+  left: InventoryAuthorization | undefined,
+  right: InventoryAuthorization | undefined,
+): boolean => {
+  if (left?.kind !== right?.kind) {
     return false;
   }
-  return right.kind === 'capability_issuance' && left.kind === 'capability_issuance'
+  return right?.kind === 'capability_issuance' && left?.kind === 'capability_issuance'
     ? left.credential === right.credential
     : true;
 };
@@ -732,20 +736,20 @@ const readActionConstantImports = (source: string, identifier: string): readonly
       /^import\s+(?:(?<typeOnly>type)\s+)?\{(?<members>[^}]*)\}\s+from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;$/u.exec(
         commented.slice(token.start, tokens[end]?.end).trim(),
       );
-    const candidates = (statement?.groups?.members ?? '').split(',').flatMap((member) => {
+    const candidates = (statement?.groups?.['members'] ?? '').split(',').flatMap((member) => {
       const binding =
         /^(?:(?<typeOnly>type)\s+)?(?<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?<local>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
           member.trim(),
         );
-      const imported = binding?.groups?.imported;
+      const imported = binding?.groups?.['imported'];
       return imported !== undefined &&
-        (binding?.groups?.local ?? imported) === identifier &&
-        statement?.groups?.modulePath !== undefined
+        (binding?.groups?.['local'] ?? imported) === identifier &&
+        statement?.groups?.['modulePath'] !== undefined
         ? [
             {
               imported,
-              modulePath: statement.groups.modulePath,
-              typeOnly: statement.groups.typeOnly !== undefined || binding?.groups?.typeOnly !== undefined,
+              modulePath: statement.groups['modulePath'],
+              typeOnly: statement.groups['typeOnly'] !== undefined || binding?.groups?.['typeOnly'] !== undefined,
             },
           ]
         : [];
@@ -821,7 +825,7 @@ const readActionEntrypoints = (
   const action =
     /^verticals\/party-registry\/src\/actions\/(?<action>(?:archive|unarchive)-(?:organization|person)-engagement)\.action\.ts$/u.exec(
       file,
-    )?.groups?.action;
+    )?.groups?.['action'];
   if (action === undefined && !containsIdentifier(source, new Set(['engagementLifecycleRegistration']))) {
     return inline;
   }
@@ -878,8 +882,8 @@ const requireGeneratedActionEntrypoint = (sourceMap: ReadonlyMap<string, string>
     if (!hasGeneratedSourceHeader(source, `${ACTION_HEADER}\n`)) {
       yield* fail(file, 'Actions must be created and maintained with scaffold:action');
     }
-    const owner = /^\/\/ @ontos-action-owner (?<owner>.+)$/mu.exec(source)?.groups?.owner;
-    const action = /^\/\/ @ontos-action-slug (?<action>.+)$/mu.exec(source)?.groups?.action;
+    const owner = /^\/\/ @ontos-action-owner (?<owner>.+)$/mu.exec(source)?.groups?.['owner'];
+    const action = /^\/\/ @ontos-action-slug (?<action>.+)$/mu.exec(source)?.groups?.['action'];
     const descriptorMessage =
       'regenerate this Action with scaffold:action so it has its governed action/write entrypoint';
     const definedOwner = yield* requireDefined(owner, file, descriptorMessage);
@@ -910,8 +914,8 @@ const requireGeneratedWorkerEntrypoint = (file: string, source: string) =>
     if (!hasGeneratedSourceHeader(source, `${WORKER_HEADER}\n`)) {
       yield* fail(file, 'Outbox Workers must be created and maintained with scaffold:outbox-worker');
     }
-    const owner = /^\/\/ @ontos-outbox-worker-owner (?<owner>.+)$/mu.exec(source)?.groups?.owner;
-    const workerKey = /^\/\/ @ontos-outbox-worker-key (?<workerKey>.+)$/mu.exec(source)?.groups?.workerKey;
+    const owner = /^\/\/ @ontos-outbox-worker-owner (?<owner>.+)$/mu.exec(source)?.groups?.['owner'];
+    const workerKey = /^\/\/ @ontos-outbox-worker-key (?<workerKey>.+)$/mu.exec(source)?.groups?.['workerKey'];
     const descriptorMessage =
       'regenerate this Worker with scaffold:outbox-worker so it has its governed worker/background entrypoint';
     const definedOwner = yield* requireDefined(owner, file, descriptorMessage);
@@ -2144,6 +2148,7 @@ const hasSchemaFieldsProjectionCall = (
         (isSchemaParameterProjection(field.value, parameter.name) ||
           hasOnlyNativeContractLeaves(state, module, field.value)),
     ) &&
+    node.arguments[0] !== undefined &&
     hasNativeSchemaProjectionArgument(state, module, node.arguments[0], checkSource, node)
   );
 };
@@ -4098,6 +4103,7 @@ const validateRouteSource = (state: BoundaryCheckState, file: string, source: st
     const moduleOwner = expectedScope === 'tenant' ? [...moduleIds][0] : owner;
     if (moduleOwner === undefined || (expectedScope === 'tenant' && moduleIds.size !== 1)) {
       yield* fail(file, 'MicroVertical route metadata must declare exactly one manifest moduleId');
+      return;
     }
     state.routeEntrypoints.push({
       deployment: owner,
@@ -4108,7 +4114,7 @@ const validateRouteSource = (state: BoundaryCheckState, file: string, source: st
 
 const validateGovernedSource = (file: string, source: string) =>
   Effect.gen(function* validateGovernedSourceEffect() {
-    const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups?.category;
+    const category = /\/src\/(?<category>components|search|reports)\//u.exec(`/${file}`)?.groups?.['category'];
     const expectedHeader = governedSourceHeader(category);
     const invalidGovernedSource =
       /\/src\/public-components\//u.test(`/${file}`) ||
@@ -4148,11 +4154,11 @@ const generatedProviderLocation = (file: string, source: string): GeneratedProvi
   ];
   for (const pattern of locations) {
     const provider = pattern.exec(file)?.groups;
-    if (provider?.name !== undefined && provider.vertical !== undefined) {
+    if (provider?.['name'] !== undefined && provider['vertical'] !== undefined) {
       return {
-        kind: provider.kind === 'search' ? 'search' : 'report',
-        name: provider.name,
-        vertical: provider.vertical,
+        kind: provider['kind'] === 'search' ? 'search' : 'report',
+        name: provider['name'],
+        vertical: provider['vertical'],
       };
     }
   }
@@ -4160,7 +4166,7 @@ const generatedProviderLocation = (file: string, source: string): GeneratedProvi
 };
 
 const providerModuleId = (manifest: string): string =>
-  /@ontos-module-id (?<moduleId>[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?![a-z0-9-])/u.exec(manifest)?.groups?.moduleId ?? '';
+  /@ontos-module-id (?<moduleId>[a-z0-9-]+(?:\.[a-z0-9-]+)*)(?![a-z0-9-])/u.exec(manifest)?.groups?.['moduleId'] ?? '';
 
 const providerObjectProperty = (object: Expression | undefined, key: string): Expression | undefined => {
   if (object?.type !== 'ObjectExpression') {
@@ -4324,9 +4330,7 @@ const validateGeneratedProviderClient = (
       ),
       serverHeader: hasGeneratedSourceHeader(serverSource, generatedHeader),
     };
-    const failedChecks = Object.entries(providerChecks)
-      .filter(([, valid]) => !valid)
-      .map(([checkName]) => checkName);
+    const failedChecks = Object.entries(providerChecks).flatMap(([checkName, valid]) => (valid ? [] : [checkName]));
     if (failedChecks.length > 0) {
       yield* fail(
         file,
@@ -4377,8 +4381,8 @@ const isGeneratedActionHttpContract = (
   const contract = /^(?<vertical>verticals\/[a-z][a-z0-9-]*)\/shared\/apis\/(?<slug>[a-z][a-z0-9-]*)-action\.ts$/u.exec(
     file,
   );
-  const vertical = contract?.groups?.vertical;
-  const slug = contract?.groups?.slug;
+  const vertical = contract?.groups?.['vertical'];
+  const slug = contract?.groups?.['slug'];
   const moduleId =
     vertical === undefined ? undefined : providerModuleId(sourceOrEmpty(sourceMap, `${vertical}/vertical.manifest.ts`));
   return (
@@ -4717,8 +4721,8 @@ const appendBusinessPermissionInventoryEntry = (state: BoundaryCheckState, file:
     if (!source.startsWith(`${BUSINESS_PERMISSION_HEADER}\n`)) {
       return;
     }
-    const owner = /^\/\/ @ontos-permission-owner (?<owner>.+)$/mu.exec(source)?.groups?.owner;
-    const key = /^\/\/ @ontos-permission-code (?<key>.+)$/mu.exec(source)?.groups?.key;
+    const owner = /^\/\/ @ontos-permission-owner (?<owner>.+)$/mu.exec(source)?.groups?.['owner'];
+    const key = /^\/\/ @ontos-permission-code (?<key>.+)$/mu.exec(source)?.groups?.['key'];
     state.businessPermissionEntries.push({
       key: yield* requireDefined(key, file, 'regenerate this business permission with scaffold:permission'),
       owner: yield* requireDefined(owner, file, 'regenerate this business permission with scaffold:permission'),
@@ -4783,12 +4787,13 @@ const validateManifestImports = (
   Effect.gen(function* validateManifestImportsEffect() {
     const manifestDirectory = path.dirname(normalizedFile);
     const manifestImports = new Set(
-      readImportedModuleSpecifiers(sourceOrEmpty(state.sourceMap, normalizedFile))
-        .filter((specifier) => specifier.startsWith('./'))
-        .map((specifier) => {
-          const importedFile = path.join(manifestDirectory, specifier).replaceAll('\\', '/');
-          return importedFile.endsWith('.ts') ? importedFile : `${importedFile}.ts`;
-        }),
+      readImportedModuleSpecifiers(sourceOrEmpty(state.sourceMap, normalizedFile)).flatMap((specifier) => {
+        if (!specifier.startsWith('./')) {
+          return [];
+        }
+        const importedFile = path.join(manifestDirectory, specifier).replaceAll('\\', '/');
+        return [importedFile.endsWith('.ts') ? importedFile : `${importedFile}.ts`];
+      }),
     );
     const missing = [...sourceFiles].filter((file) => !manifestImports.has(file));
     const stale = [...manifestImports].filter((file) => !sourceFiles.has(file));

@@ -14,7 +14,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Effect, Match, Option, Schema } from 'effect';
 
 import {
@@ -228,7 +228,7 @@ export const makeCurrentPricingDecisionReadServiceFactory = (
   } = {},
 ): ReadServiceFactory<
   CurrentPricingDecisionReadServices,
-  Crypto.Crypto | CurrentPricingDecisionEvaluationFactory | PricingExternalOwnerEvidenceValidation
+  SecureRandom.SecureRandom | CurrentPricingDecisionEvaluationFactory | PricingExternalOwnerEvidenceValidation
 > =>
   Effect.fn('CurrentPricingDecisionRead.serviceFactory')(function* currentPricingDecisionServiceFactory(
     transaction: ScopedTransactionExecutor,

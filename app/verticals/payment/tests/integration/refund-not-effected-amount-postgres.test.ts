@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Predicate, Result } from 'effect';
+import { Effect, Predicate, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -46,7 +47,7 @@ const nativeRuntime = Effect.gen(function* acquireRefundEvidenceRuntime() {
   const coreAdmin = yield* makeTestDatabaseFromClient(admin, paymentTestRelations);
   const actionRuntime = makeActionRuntime(
     { executor: database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     refundRuntimePermission,
     testOperationalScopeResolver,
     {

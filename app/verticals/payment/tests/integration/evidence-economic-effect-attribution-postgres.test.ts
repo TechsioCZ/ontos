@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { and, asc, eq, like, sql } from 'drizzle-orm';
-import { Array as Arr, Crypto, Deferred, Effect, Fiber, Option, Order, Predicate, Result } from 'effect';
+import { Array as Arr, Deferred, Effect, Fiber, Option, Order, Predicate, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/access/enforcement/owner-overlay.ts';
@@ -50,7 +51,7 @@ const nativeRuntime = Effect.gen(function* acquireAttributionNativeRuntime() {
   const coreAdmin = yield* makeTestDatabaseFromClient(admin, paymentTestRelations);
   const actionRuntime = makeActionRuntime(
     { executor: database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     refundRuntimePermission,
     testOperationalScopeResolver,
     {

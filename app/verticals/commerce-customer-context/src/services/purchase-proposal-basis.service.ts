@@ -18,7 +18,8 @@ import {
 import { pricingQuotationMatchesCurrentDecision } from '@app/pricing-contracts/quotation-verification';
 import { CatalogSelectionSchema } from '@app/catalog-selection-contracts';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { BigDecimal, Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { BigDecimal, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Context } from 'effect';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -228,7 +229,7 @@ export const proposalMatchesPreapprovalCart = (
         line.lineId !== entry.selectionId ||
         !sameRef(line.productRef, entry.selection.productRef) ||
         !Number.isSafeInteger(line.quantity) ||
-        !/^(?:0|[1-9][0-9]*)(?:\.0+)?$/u.test(entry.quantity.amount) ||
+        !/^(?:0|[1-9]\d*)(?:\.0+)?$/u.test(entry.quantity.amount) ||
         BigInt(line.quantity) !== BigInt(entry.quantity.amount.split('.')[0] ?? '0')
       ) {
         return false;
@@ -252,9 +253,9 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
         return yield* unavailable();
       }
       const { legalEntityId } = scope;
-      const gatewayCrypto = yield* Crypto.Crypto;
+      const gatewayCrypto = yield* SecureRandom.SecureRandom;
       const services = yield* Effect.context<
-        Effect.Services<ReturnType<typeof resolvePurchasePricingContextObservation>> | Crypto.Crypto
+        Effect.Services<ReturnType<typeof resolvePurchasePricingContextObservation>> | SecureRandom.SecureRandom
       >();
       // The Pricing issuer is the only module that completes a basis; it acts for the basis buyer (DESIGN D6).
       const issuerAdmission =
@@ -478,8 +479,8 @@ export const purchaseProposalBasisService = Effect.fn('PurchaseProposalBasis.pur
                 'Basis preparation requires its actual buyer and trusted Storefront',
               );
             }
-            const crypto = yield* Crypto.Crypto;
-            const basisId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+            const crypto = yield* SecureRandom.SecureRandom;
+            const basisId = yield* crypto.uuidV4();
             const now = yield* DateTime.now;
             const revisionRef = yield* Schema.decodeUnknownEffect(
               PurchaseProposalRevisionSchema.fields.proposalRevisionRef,

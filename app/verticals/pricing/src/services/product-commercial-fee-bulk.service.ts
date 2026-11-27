@@ -14,7 +14,7 @@ import type {
   PricingCommercialFeeScheduleAcknowledgement,
 } from '@app/pricing-contracts/domain/commercial-fee';
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { Effect, Match, Schema } from 'effect';
 
 import type {
@@ -570,7 +570,7 @@ export const makeProductCommercialFeeBulkCommandPort = (
 
 export const productCommercialFeeBulkServiceForScope: ActionServiceFactory<
   ProductCommercialFeeBulkActionServices,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > = Effect.fn('ProductCommercialFeeBulkService.forScope')(
   function* makeProductCommercialFeeBulkActionServices(transaction, scope, compositionRevision) {
     const { legalEntityId } = scope;

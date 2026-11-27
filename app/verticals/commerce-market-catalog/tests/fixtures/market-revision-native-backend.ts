@@ -40,7 +40,6 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Duration,
   Effect,
@@ -54,6 +53,7 @@ import {
   Scope,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import {
   makeApiKeyGatewayNativeFixture,
@@ -489,11 +489,11 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       type: 'EVIDENCE',
     });
   });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const [marketId, secondMarketId, associationId] = yield* Effect.all([
-    crypto.randomUUIDv4(),
-    crypto.randomUUIDv4(),
-    crypto.randomUUIDv4(),
+    crypto.uuidV4(),
+    crypto.uuidV4(),
+    crypto.uuidV4(),
   ]);
   const marketRef = {
     moduleId: moduleKey,
@@ -703,7 +703,7 @@ export const marketRevisionNativeBackend = Effect.fn('MarketRevisionNative.backe
       ),
       ReadRuntime,
     );
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const actionContext = yield* Layer.build(
       MarketRetirementActionRuntimeLive.pipe(
         Layer.provide(

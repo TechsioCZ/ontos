@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -20,7 +21,7 @@ import { taxRelations, taxSellerVatRegimeDeclarations } from '../../src/database
 import { TAX_ACTIVATION_ITEMS, assessTaxActivationReadiness } from '../../src/domain/tax-activation-readiness.ts';
 import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-vat-regime-declaration.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const ACTIVATION_AT = DateTime.makeUnsafe('2026-06-01T00:00:00.000Z');
 
 interface FixtureIdentity {
@@ -129,7 +130,9 @@ const seller = Effect.fnUntraced(function* makeSeller(runtime: CoreTestDatabase,
 });
 
 // Each test stays a live registration against real PostgreSQL and builds Node Crypto in its scope.
-const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+const nodeCrypto = Layer.build(NodeCrypto.layer).pipe(
+  Effect.map((context) => Context.get(context, SecureRandom.SecureRandom)),
+);
 
 it.live('#964 patched F25 the activation gate reads each seller’s persisted declaration timeline', () =>
   Effect.scoped(
@@ -186,7 +189,7 @@ it.live('#964 patched F25 the activation gate reads each seller’s persisted de
       expect(readiness.activationClaim).toBe('NONE');
       expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(
@@ -258,5 +261,5 @@ it.live(
         expect(readiness.activationClaim).toBe('NONE');
         expect(readiness.evidenceLabel).toBe('NON_PRODUCTION');
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );

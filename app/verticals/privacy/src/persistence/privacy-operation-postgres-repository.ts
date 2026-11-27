@@ -5,7 +5,8 @@ import type { PrivacyOperationRepositoryService } from './privacy-operation-repo
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   AntiResurrectionProtectionSchema,
@@ -580,16 +581,12 @@ const materializeAndValidateDsrOwnerTask = (
 const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   trustedScope: OperationalScope,
-): Effect.fn.Return<PrivacyOperationRepositoryService, never, Crypto.Crypto> {
+): Effect.fn.Return<PrivacyOperationRepositoryService, never, SecureRandom.SecureRandom> {
   const partyOwner = Option.getOrElse(
     yield* Effect.serviceOption(PrivacySubjectPartyOwner),
     () => privacySubjectPartyOwnerUnavailable,
   );
-  const crypto = yield* Crypto.Crypto;
-  const nextIdentifier = (reason: string) =>
-    crypto
-      .randomUUIDv4()
-      .pipe(Effect.mapError((cause) => failure('privacy_operation_persistence_unavailable', reason, cause)));
+  const crypto = yield* SecureRandom.SecureRandom;
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void
@@ -635,12 +632,11 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
       .where(and(eq(privacySubjects.tenantId, tenantId), eq(privacySubjects.legalEntityId, legalEntityId)))
       .orderBy(asc(privacySubjects.createdAt))
       .pipe(Effect.mapError((cause) => persistenceFailure('Privacy Subjects could not be listed', cause)));
-    const subjects = yield* decodeAll(
+    return yield* decodeAll(
       PrivacySubjectRecordSchema,
       rows.map(({ record }) => record),
       'Privacy Subject',
     );
-    return subjects;
   });
 
   const listResponsibilities: PrivacyOperationRepositoryService['listResponsibilities'] = Effect.fn(
@@ -2054,7 +2050,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
             return yield* conflict('Notice Version effective time must follow the latest retained version');
           }
         }
-        const versionId = yield* nextIdentifier('Notice Version identifier could not be generated');
+        const versionId = yield* crypto.uuidV4();
         const version: PrivacyNoticeVersion = {
           applicableScope: input.applicableScope,
           contentIdentity: input.contentIdentity,
@@ -2346,10 +2342,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         enforcementReceipt,
       ) {
         const [handoff, protectionId] = yield* Effect.all(
-          [
-            resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority),
-            nextIdentifier('Anti-resurrection protection identifier could not be generated'),
-          ],
+          [resolveValidatedOwnerExecutionHandoff(tenantId, legalEntityId, request, authority), crypto.uuidV4()],
           { concurrency: 1 },
         );
         const protection = yield* createAntiResurrectionProtection({
@@ -3645,7 +3638,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         if (rule.ruleVersion !== latest + 1) {
           return yield* conflict('Retention Rule version must advance exactly once');
         }
-        const retentionRuleId = yield* nextIdentifier('Retention Rule identifier could not be generated');
+        const retentionRuleId = yield* crypto.uuidV4();
         yield* transaction
           .insert(retentionRules)
           .values({
@@ -3745,7 +3738,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
 export const privacyOperationRepositoryForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-): Effect.Effect<PrivacyOperationRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+): Effect.Effect<PrivacyOperationRepositoryService, OperationContextUnavailable, SecureRandom.SecureRandom> => {
   const { legalEntityId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())

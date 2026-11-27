@@ -13,7 +13,8 @@ import {
 import type { FinalCartCandidateRequest } from '@app/commerce-cart-finalization-contracts/final-cart-candidate';
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import type { FinalizeCartCandidatePayload } from '../../shared/actions/finalize-cart-candidate.ts';
 import { CartDraftRejected, CartDraftSchema } from '@app/commerce-cart-contracts/domain/cart-draft';
 import type { CartDraft } from '@app/commerce-cart-contracts/domain/cart-draft';
@@ -247,7 +248,7 @@ export const finalCartCandidateService = (transaction: ScopedTransactionExecutor
           !sameSelection(configured.value, entry.selection) ||
           proposed.lineId !== entry.selectionId ||
           !Number.isSafeInteger(proposed.quantity) ||
-          !/^[1-9][0-9]*(?:\.0+)?$/u.test(catalog.quantity.resulting) ||
+          !/^[1-9]\d*(?:\.0+)?$/u.test(catalog.quantity.resulting) ||
           BigInt(catalog.quantity.resulting.split('.')[0] ?? '0') !== BigInt(proposed.quantity) ||
           proposed.productRef.moduleId !== entry.selection.productRef.moduleId ||
           proposed.productRef.resourceType !== entry.selection.productRef.resourceType ||
@@ -287,8 +288,9 @@ export const finalCartCandidateService = (transaction: ScopedTransactionExecutor
     // The ordinary close path advances the actual owner head and complete population atomically.
     const population = yield* cartPopulationService(transaction, scope);
     const closed = yield* population.close(payload, actionInvocationId);
-    const crypto = yield* Crypto.Crypto;
-    const candidateId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const messageDigest = yield* Digest.Digest;
+    const candidateId = yield* crypto.uuidV4();
     const material = yield* Schema.decodeUnknownEffect(Schema.toType(FinalCartCandidateMaterialSchema))({
       approval: {
         proposalHash: approved.proposalHash,
@@ -320,9 +322,7 @@ export const finalCartCandidateService = (transaction: ScopedTransactionExecutor
       version: 'FINAL_CART_CANDIDATE.v1',
     }).pipe(Effect.mapError(unavailable));
     const materialJson = yield* Schema.encodeEffect(materialJsonSchema)(material).pipe(Effect.mapError(unavailable));
-    const digest = yield* crypto
-      .digest('SHA-256', new TextEncoder().encode(materialJson))
-      .pipe(Effect.mapError(unavailable));
+    const digest = yield* messageDigest.digest(Digest.sha256, new TextEncoder().encode(materialJson));
     const candidateHash = Array.from(digest, (value) => value.toString(16).padStart(2, '0')).join('');
     const candidate = yield* Schema.decodeUnknownEffect(Schema.toType(FinalCartCandidateSchema))({
       ...material,

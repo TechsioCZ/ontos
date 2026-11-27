@@ -1,5 +1,7 @@
+import { commerceAuthSha256Live } from '../../src/portal-auth/sha256.ts';
 import { expect, it } from 'effect-rstest';
-import { Crypto, Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { AccessPortalProjection } from '@app/core-runtime/access/portal';
@@ -71,10 +73,7 @@ const scope = { kind: 'counterparty' } as const;
 const grantedAt = '2026-09-09T10:00:00.000Z';
 const expiresAt = '2026-09-10T10:00:00.000Z';
 const actionInvocationId = '50000000-0000-4000-8000-000000000005';
-const testCrypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array(32)),
-  randomBytes: (size) => new Uint8Array(size),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size));
 const unusedAccessDependencies = Layer.mergeAll(
   Layer.succeed(ContextAccess, {
     legalEntities: () => Effect.succeed([]),
@@ -96,7 +95,8 @@ const unusedAccessDependencies = Layer.mergeAll(
     CounterpartyInvitationProofLifecycle,
     unavailableCounterpartyInvitationProofLifecycle('not used by the injected test service'),
   ),
-  Layer.succeed(Crypto.Crypto, testCrypto),
+  Layer.succeed(SecureRandom.SecureRandom, testCrypto),
+  commerceAuthSha256Live,
   Layer.succeed(AccessPortalProjection, { project: () => Effect.die('A handler never reconciles the engine') }),
 );
 const provideUnusedAccessPort = Effect.provide(unusedAccessDependencies);

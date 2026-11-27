@@ -41,7 +41,7 @@ export const ONTOS_SHELL_CONTRIBUTION_ABI = Object.freeze({
 export const ONTOS_SHELL_RUNTIME_CONTRACT_PATH = '/.well-known/ontos-shell-runtime.json' as const;
 
 const sha256 = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
-const version = Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u));
+const version = Schema.String.check(Schema.isPattern(/^\d+(?:\.\d+){0,2}$/u));
 const artifactUrl = Schema.String.check(
   Schema.makeFilter((value) => {
     const url = URL.parse(value);

@@ -1,9 +1,10 @@
 import { fileURLToPath } from 'node:url';
 
 import { v1 } from '@authzed/authzed-node';
-import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Context, Crypto, Effect, Layer, Result, Schema, Stream } from 'effect';
+import { Context, Effect, Layer, Result, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
 
@@ -222,7 +223,7 @@ it.live('#1153 staff REFUND authorizes the exact Payment in a same-entity target
       const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService({ executor: coreAdmin }));
       const actionRuntime = makeActionRuntime(
         { executor: database },
-        makeActionRepository(yield* Crypto.Crypto),
+        makeActionRepository(yield* SecureRandom.SecureRandom),
         { checkActionPermission: () => Effect.die('Staff REFUND must use the real Core access gate') },
         testOperationalScopeResolver,
         {
@@ -297,5 +298,12 @@ it.live('#1153 staff REFUND authorizes the exact Payment in a same-entity target
         ]),
       );
     }),
-  ).pipe(Effect.provide(NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  ).pipe(
+    Effect.provide(
+      NodeChildProcessSpawner.layer.pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(NodeCrypto.layerSecureRandom),
+      ),
+    ),
+  ),
 );

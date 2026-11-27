@@ -5,7 +5,8 @@ import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
 } from '@app/storefront-registry-contracts';
-import { ConfigProvider, Crypto, Effect, Predicate, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -36,12 +37,9 @@ const scope = trustVerifiedGatewayPrincipalContext(sourceScope, compositionRevis
   audience: 'commerce-market-catalog',
 });
 let randomSequence = 0;
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => {
-    randomSequence += 1;
-    return new Uint8Array(size).fill(randomSequence);
-  },
+const crypto = SecureRandom.make((size) => {
+  randomSequence += 1;
+  return new Uint8Array(size).fill(randomSequence);
 });
 const storefrontRequest = Schema.decodeUnknownSync(CurrentStorefrontApplicationRequestSchema)({
   effectiveAt: '2026-10-01T00:00:00.000Z',

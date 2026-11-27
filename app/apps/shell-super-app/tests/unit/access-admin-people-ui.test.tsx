@@ -199,8 +199,7 @@ afterEach(() => {
 
 it.effect('tenant-only administration reads data without a selected company', () =>
   Effect.gen(function* tenantOnly() {
-    const { selectedLegalEntityId: ignored, ...shell } = authenticatedShellFixture();
-    void ignored;
+    const { selectedLegalEntityId: _ignored, ...shell } = authenticatedShellFixture();
     const list = rstest.fn<PeopleReadPort['list']>(readPort().list);
     const result = yield* loadPeopleData({ ...shell, contextState: 'selection_required' }, {}, undefined, {
       ...readPort(),

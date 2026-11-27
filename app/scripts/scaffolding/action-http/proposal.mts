@@ -24,7 +24,7 @@
  * Edits are located through the TypeScript scanner rather than by re-rendering the file, and every
  * unsupported or ambiguous source shape fails closed before a mutation exists.
  */
-import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
+import { LanguageVariant, SyntaxKind, createScanner } from 'tsrs/ast';
 import { Effect, FileSystem, Schema } from 'effect';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
@@ -968,8 +968,7 @@ export const formatActionHttpProposalMutations = Effect.fn('ActionHttpProposalSc
   function* formatActionHttpProposalMutationsEffect(
     mutations: readonly Mutation[],
   ): Effect.fn.Return<readonly Mutation[], ScaffoldFailure> {
-    const formatted = yield* Effect.all(mutations.map((mutation) => formatProposalMutation(mutation)));
-    return formatted;
+    return yield* Effect.all(mutations.map((mutation) => formatProposalMutation(mutation)));
   },
 );
 

@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -59,7 +60,7 @@ import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
  * The ERP bank statement and the POS statement are public-contract fixtures of external sources.
  */
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const erpBank = {
@@ -106,7 +107,7 @@ const runtimesFor = Effect.fn('SourceCoreRuntime.runtimes')(function* runtimesFo
   database: EvidenceNativeDatabase,
   compositionRevision: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeActionRuntime(
     { executor: database.database },
     makeActionRepository(crypto),

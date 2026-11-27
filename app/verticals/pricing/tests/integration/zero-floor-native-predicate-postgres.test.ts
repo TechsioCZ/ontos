@@ -27,7 +27,8 @@ import { PriceSourceAssertionInputSchema } from '@app/pricing-contracts/domain/p
 import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
 import { zeroFloorSetHeads } from '../../src/database/schema.ts';
-import { Clock, Context, Crypto, DateTime, Duration, Effect, Layer, Logger, Option, Schema } from 'effect';
+import { Clock, Context, DateTime, Duration, Effect, Layer, Logger, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeCurrentPricingDecisionZeroFloorSetReader } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
@@ -64,7 +65,7 @@ const FixtureValueSchema = Schema.Union([
   Schema.Undefined,
 ]);
 type FixtureValue = typeof FixtureValueSchema.Type;
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const mapFixtureChildren = (
   value: FixtureValue,
@@ -87,7 +88,7 @@ const mapFixtureChildren = (
 };
 
 const withNativeCrypto = <Value, Failure, Requirements>(
-  program: Effect.Effect<Value, Failure, Requirements | Crypto.Crypto>,
+  program: Effect.Effect<Value, Failure, Requirements | SecureRandom.SecureRandom>,
 ) =>
   Effect.scoped(
     Effect.gen(function* nativeCryptoBoundary() {

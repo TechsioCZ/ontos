@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { eq, inArray } from 'drizzle-orm';
-import { ConfigProvider, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { ConfigProvider, DateTime, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabaseLive, makeCoreDatabase } from '../../src/db/client.ts';
@@ -29,7 +30,7 @@ import {
   outboxWorkerCompositionLayer,
 } from '../support/outbox-worker-composition.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const PRODUCER_MODULE = 'producer.host';
 const TOPIC = 'producer.host.message-created';
 const MESSAGES_PER_TOPIC = 6;

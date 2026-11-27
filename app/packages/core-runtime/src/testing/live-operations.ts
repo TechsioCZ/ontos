@@ -3,7 +3,6 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import {
   Config,
   Context,
-  Crypto,
   Data,
   DateTime,
   Effect,
@@ -17,6 +16,7 @@ import {
   Schema,
   Scope,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
 import { AccessPortalProjection } from '../access/portal/portal-projection.ts';
@@ -726,7 +726,10 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
   },
 );
 
-const makeFaultActionRepository = (state: FixtureFaultState, crypto: Crypto.Crypto): ActionRepositoryService => {
+const makeFaultActionRepository = (
+  state: FixtureFaultState,
+  crypto: SecureRandom.SecureRandom['Service'],
+): ActionRepositoryService => {
   const repository = makeActionRepository(crypto);
   const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn('LiveOperations.flushSuccess')(
     function* flushSuccessEffect(transaction, input) {
@@ -1166,7 +1169,7 @@ const makeLiveOperationRuntime = Effect.fn('LiveOperations.makeRuntime')(functio
   const { closeResources, executor, runtimeHandoff, spice, spiceDb } = input;
   const { configuration, denied, legalEntityId, legalEntityOnly, manager, reader, secondaryLegalEntityId, tenantId } =
     runtimeHandoff;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const setConfiguredModuleState: FixtureConfiguredModuleStateSetter =
     input.setConfiguredModuleState ??
     (() => Effect.fail(fixtureFailure('Configured module state mutation requires the fixture creator')));

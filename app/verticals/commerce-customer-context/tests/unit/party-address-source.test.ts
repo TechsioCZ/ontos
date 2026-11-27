@@ -12,7 +12,8 @@ import {
   PartyContactPointDetailResponseSchema,
   PartyContactPointDetailUnavailableProblemSchema,
 } from '@app/party-registry/api/client';
-import { Crypto, DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { AddressBookUnavailable, SavedAddressInvalidSchema } from '../../shared/domain/address-errors.ts';
@@ -507,7 +508,7 @@ const unverifiedScope = {
 
 it.effect('keeps the actual COMMERCE_ONLY adapter independent of Party relay credentials', () =>
   Effect.gen(function* localAddress() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const localOrigin = {
       kind: 'COMMERCE_ONLY',
       postalAddress: { addressLine1: '1 Main Street', city: 'Prague', countryCode: 'CZ', postalCode: '11000' },
@@ -531,7 +532,7 @@ it.effect('keeps the actual COMMERCE_ONLY adapter independent of Party relay cre
 
 it.effect('fails closed at the actual Party-backed adapter without trusted source admission', () =>
   Effect.gen(function* unverifiedPartySource() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const failure = yield* Effect.flip(partyBackedAddressSourceValidatorForScope(unverifiedScope, crypto)(payload));
     expect(Schema.is(AddressBookUnavailable)(failure)).toBe(true);
     const readFailure = yield* Effect.flip(
@@ -543,7 +544,7 @@ it.effect('fails closed at the actual Party-backed adapter without trusted sourc
 
 it.effect('does not invoke a configured Party transport without a genuine operation lease', () =>
   Effect.gen(function* missingOperationLease() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     let calls = 0;
     const execute: typeof executePartyContactPointDetail = () => {
       calls += 1;

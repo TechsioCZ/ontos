@@ -30,7 +30,6 @@ import {
   Clock,
   Config,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Exit,
@@ -45,6 +44,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { SqlError, UniqueViolation } from 'effect/sql/SqlError';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
@@ -85,7 +85,7 @@ import {
 } from '../support/catalog-media-ordering-receiver.fixture.ts';
 
 const appRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const services = NodeServices.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
@@ -924,7 +924,7 @@ const verifyIdentityDispatch = Effect.fn('MediaOrderingNative.verifyIdentityDisp
           expect(original).toBeDefined();
           const updated = yield* control.valid;
           expect(updated).toHaveLength(1);
-          expect(updated[0]?.current_revision).toBe(Number(original?.current_revision) + 1);
+          expect(updated[0]?.['current_revision']).toBe(Number(original?.['current_revision']) + 1);
           const retained = yield* control.current;
           for (const mutation of control.invalid) {
             const rejected = yield* client.withTransaction(mutation).pipe(Effect.exit);
@@ -1039,10 +1039,10 @@ it.layer(mediaOrderingSuiteServices, { excludeTestServices: true })((suite) => {
         expect((yield* read()).ordered.map(({ assignment }) => assignment.assignmentId)).toEqual([secondId, firstId]);
         const afterReorder = yield* observeMedia(native);
         expect(afterReorder.revisions).toHaveLength(before.revisions.length + 2);
-        expect(afterReorder.revisions.filter((row) => row.state === 'REMOVED')).toEqual([]);
+        expect(afterReorder.revisions.filter((row) => row['state'] === 'REMOVED')).toEqual([]);
         for (const assignmentId of [firstId, secondId]) {
           expect(
-            afterReorder.revisions.filter((row) => row.assignment_id === assignmentId).map((row) => row.revision),
+            afterReorder.revisions.filter((row) => row['assignment_id'] === assignmentId).map((row) => row['revision']),
           ).toEqual([1, 2]);
         }
         const insertion = yield* Schema.decodeUnknownEffect(AssignCatalogMediaPayloadSchema)({
@@ -1100,10 +1100,10 @@ it.layer(mediaOrderingSuiteServices, { excludeTestServices: true })((suite) => {
         expect(afterNoOp.revisions).toEqual(beforeNoOp.revisions);
         expect(afterNoOp.setRevisions).toHaveLength(beforeNoOp.setRevisions.length + 1);
         const originalResult = afterReorder.results.find(
-          (row) => row.action_key === 'commerce.catalog.reorder-catalog-media',
+          (row) => row['action_key'] === 'commerce.catalog.reorder-catalog-media',
         );
         const invocationId = yield* Schema.decodeUnknownEffect(ProductActionInvocationIdSchema)(
-          originalResult?.action_invocation_id,
+          originalResult?.['action_invocation_id'],
         );
         expect(
           yield* executeReorderCatalogMediaRecoveryWithAuthorization(
@@ -1396,24 +1396,24 @@ it.layer(mediaOrderingSuiteServices, { excludeTestServices: true })((suite) => {
               [thirdId, [1, 2, 3]],
               [insertedId, [1, 2]],
             ] as const) {
-              const history = final.revisions.filter((row) => row.assignment_id === assignmentId);
-              expect(history.map((row) => row.revision)).toEqual(expectedRevisions);
-              expect(history.slice(0, -1).every((row) => row.state === 'ACTIVE')).toBe(true);
-              expect(history.at(-1)?.state).toBe('REMOVED');
+              const history = final.revisions.filter((row) => row['assignment_id'] === assignmentId);
+              expect(history.map((row) => row['revision'])).toEqual(expectedRevisions);
+              expect(history.slice(0, -1).every((row) => row['state'] === 'ACTIVE')).toBe(true);
+              expect(history.at(-1)?.['state']).toBe('REMOVED');
               for (const revision of history) {
-                expect(revision.acting_principal_id).toBe(native.fixture.manager.principalId);
-                expect(revision.reason).toBe(reason);
-                expect(revision.evidence_refs).toEqual(evidenceRefs);
-                expect(Schema.is(ProductActionInvocationIdSchema)(revision.action_invocation_id)).toBe(true);
+                expect(revision['acting_principal_id']).toBe(native.fixture.manager.principalId);
+                expect(revision['reason']).toBe(reason);
+                expect(revision['evidence_refs']).toEqual(evidenceRefs);
+                expect(Schema.is(ProductActionInvocationIdSchema)(revision['action_invocation_id'])).toBe(true);
               }
-              const head = final.assignments.find((row) => row.assignment_id === assignmentId);
-              expect(head?.current_revision).toBe(expectedRevisions.at(-1));
-              expect(head?.position).toBe(history.at(-1)?.position);
-              expect(head?.state).toBe('REMOVED');
+              const head = final.assignments.find((row) => row['assignment_id'] === assignmentId);
+              expect(head?.['current_revision']).toBe(expectedRevisions.at(-1));
+              expect(head?.['position']).toBe(history.at(-1)?.['position']);
+              expect(head?.['state']).toBe('REMOVED');
             }
             if (resourceKind === 'DOCUMENT') {
-              expect(final.revisions.filter((row) => row.assignment_id === otherKindId)).toHaveLength(1);
-              expect(final.assignments.find((row) => row.assignment_id === otherKindId)).toMatchObject({
+              expect(final.revisions.filter((row) => row['assignment_id'] === otherKindId)).toHaveLength(1);
+              expect(final.assignments.find((row) => row['assignment_id'] === otherKindId)).toMatchObject({
                 current_revision: 1,
                 position: 1,
                 state: 'ACTIVE',

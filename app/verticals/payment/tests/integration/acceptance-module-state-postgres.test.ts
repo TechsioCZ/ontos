@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { count, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Predicate, Result } from 'effect';
+import { DateTime, Effect, Predicate, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -107,7 +108,7 @@ const ISSUE_1153_MATRIX = {
 } as const satisfies Readonly<Record<StateSetup, Readonly<Record<AccessClass, Decision>>>>;
 const STATE_SETUPS: readonly StateSetup[] = [...TENANT_MODULE_STATES, 'missing'];
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const nativeDatabase = Effect.gen(function* acceptanceNativeDatabase() {
@@ -122,7 +123,7 @@ const makeGatedRuntimes = Effect.fn('AcceptanceModuleState.makeGatedRuntimes')(f
   database: EvidenceNativeDatabase,
   stages: string[],
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const gate = makeModuleStateGate(makeTenantModuleStateService({ executor: database.coreAdmin }));
   const gateway = makeModuleEntrypointGateway(gate);

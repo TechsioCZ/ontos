@@ -9,7 +9,9 @@ import type {
 } from '@app/core-runtime';
 import { accessPortalWritesForTransaction } from '@app/core-runtime/access/portal';
 import type { AccessPortalError, AccessPortalTransaction, AccessPortalWrites } from '@app/core-runtime/access/portal';
-import { Crypto, Effect, Option, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { CommerceAuthSha256 } from '../portal-auth/sha256.ts';
 
 import type {
   CounterpartyAccessGrant,
@@ -1480,13 +1482,15 @@ export const counterpartyAccessPortForOwnerTransaction = Effect.fn(
   scope: OperationalScope & { readonly legalEntityId: string },
   portalAccess: AccessPortalWrites,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const digest = yield* CommerceAuthSha256;
   const eligibility = yield* PrincipalEligibility;
   const proofDelivery = yield* CounterpartyInvitationProofDelivery;
   const currentOwnerAccess = lockingCurrentOwnerAccessForTransaction(transaction, scope);
   const { claimAuthority, proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
     transaction,
     crypto,
+    digest,
     proofDelivery,
     currentOwnerAccess,
   );

@@ -14,7 +14,8 @@ import {
   makePublishedApplicationCompositionSnapshotFixture,
 } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Array as EffectArray, Crypto, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, FileSystem, Layer, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { HttpApi } from 'effect/http-api';
 import {
@@ -38,8 +39,8 @@ const unavailable = () =>
     reason: 'The actual Party source declaration or Shell public metadata is unavailable',
   });
 const digest = Effect.fn('PartySourceComposition.digest')(function* digest(document: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+  const crypto = yield* Digest.Digest;
+  return Hex.encode(new Uint8Array(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))));
 });
 const compareKeys = (left: string, right: string): -1 | 0 | 1 => {
   const compared = left.localeCompare(right);
@@ -250,7 +251,7 @@ const sourceComposition = Effect.scoped(
             remoteName: federation.name,
           },
           moduleId: contract.manifest.module.id,
-          publicContract: { id: contract.manifest.module.id, sha256, version: contract.schemaVersion },
+          publicContract: { sha256, id: contract.manifest.module.id, version: contract.schemaVersion },
           requiredCoreCapabilities: owner.requirements?.coreCapabilities ?? [],
           requiredShellAbi: shell.contributionAbi,
         })),

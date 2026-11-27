@@ -95,12 +95,16 @@ export const controlledAuthConnection = (batches: DelegationUnitRows, unavailabl
 
 /** Retain the real Effect SQL/Drizzle path; unused PostgreSQL operations fail closed. */
 export const controlledPgClient = (client: SqlClient.SqlClient): PgClient.PgClient => {
-  const extension: Pick<PgClient.PgClient, typeof PgClient.TypeId | 'config' | 'json' | 'listen' | 'notify'> = {
+  const extension: Pick<
+    PgClient.PgClient,
+    typeof PgClient.TypeId | 'config' | 'json' | 'listen' | 'notify' | 'poolStats'
+  > = {
     config: {},
     json: () => Statement.fragment([Statement.literal('null')]),
     listen: () => Effect.die('LISTEN is not part of this fixture'),
     notify: () => Effect.die('NOTIFY is not part of this fixture'),
     [PgClient.TypeId]: PgClient.TypeId,
+    poolStats: Effect.die('Pool stats are not part of this fixture'),
   };
   return Object.assign(client, extension);
 };

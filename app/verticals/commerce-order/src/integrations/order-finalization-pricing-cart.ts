@@ -27,7 +27,8 @@ import { executeCommitmentConfirmationVerificationWithAuthorization } from '@app
 import { executeQuotationVerificationWithAuthorization } from '@app/pricing-contracts/quotation-verification/client';
 import { CoreSearchResourceRefSchema } from '@app/core-runtime';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { Clock, Config, Context, DateTime, Effect, Layer, Option, Schema, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 
 type FinalizationScope = OrderFinalizationCall;
@@ -200,7 +201,7 @@ export const OrderFinalizationPricingCartLive = Layer.effect(
   OrderFinalizationPricingCart,
   Effect.gen(function* orderFinalizationPricingCartLayer() {
     const composition = yield* ActiveApplicationCompositionService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const credential = Effect.fn('OrderFinalizationPricingCart.credential')(function* credential(
       audience: 'commerce-cart' | 'pricing',

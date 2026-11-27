@@ -1,5 +1,6 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { Array as EffectArray, Crypto, DateTime, Effect, Option, Order, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Option, Order, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { TemplatePinSchema, TemplateUseAuditSchema, templateScopeKey } from '../../shared/template-revision.ts';
 import type {
@@ -96,7 +97,7 @@ interface DigestedContent {
 export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')(function* contentDigest(
   content: DigestedContent,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   // each field is length-prefixed and a placeholder name never holds a comma, so no two contents share one encoding
   const canonical = [
     content.subject,
@@ -106,7 +107,7 @@ export const templateContentDigest = Effect.fn('TemplateRevision.contentDigest')
   ]
     .map((field) => `${field.length}:${field}`)
     .join('');
-  const digest = yield* crypto.digest('SHA-256', new TextEncoder().encode(canonical)).pipe(Effect.orDie);
+  const digest = yield* crypto.digest(Digest.sha256, new TextEncoder().encode(canonical)).pipe(Effect.orDie);
   return Hex.encode(digest);
 });
 

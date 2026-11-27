@@ -2,7 +2,8 @@ import type { PaymentTermDefinitionSnapshot } from '@app/payment-term-catalog-co
 import { NodeCrypto } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Deferred, Duration, Effect, Fiber, Option, Predicate, Result, Schema } from 'effect';
+import { DateTime, Deferred, Duration, Effect, Fiber, Option, Predicate, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -208,7 +209,7 @@ const makeHarness = Effect.fn('AuthorizationNativeTests.makeHarness')(function* 
   const evidence = yield* makeAuthorizationOwnerEvidenceFixture;
   const gate = makeModuleStateGate(makeTenantModuleStateService({ executor: admin }));
   const gateway = moduleState === 'OPEN' ? openModuleEntrypointGateway : makeModuleEntrypointGateway(gate);
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate(options.access ?? 'allowed').bound;
   const actionRuntimeAt = (compositionRevision: string) =>
     makeActionRuntime(
@@ -529,7 +530,7 @@ const failureCode = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
   );
 
 /** Native PostgreSQL runs use the live runner Clock: proof times and lock waits are real. */
-const nativeRun = <A, E>(body: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const nativeRun = <A, E>(body: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(body).pipe(Effect.provide(NodeCrypto.layer));
 
 // ---------------------------------------------------------------------------------------------

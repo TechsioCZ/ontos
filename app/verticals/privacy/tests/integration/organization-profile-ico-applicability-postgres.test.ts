@@ -1,5 +1,6 @@
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { Clock, ConfigProvider, Crypto, DateTime, Effect, Option } from 'effect';
+import { Clock, ConfigProvider, DateTime, Effect, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { organizationProfileIcoApplicabilityRead } from '../../src/api/organization-profile-ico-applicability.read.ts';
@@ -21,14 +22,14 @@ it.live(
       const effectiveFrom = DateTime.formatIso(DateTime.subtract(now, { days: 6 }));
       yield* TestClock.setTime(nativeTime);
       const native = yield* privacyIcoNativeContext('privacy.core.organization-profile-ico-applicability.read');
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const { principalId, tenantId } = native.principal;
       const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
       const fixture = yield* native
         .prepareOwner((transaction, scope) =>
           Effect.gen(function* currentNativeGovernance() {
             const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
-            const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), {
+            const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.uuidV4(), {
               businessCode: 'INTERNAL_PROFILE_ICO',
               effectiveFrom,
               governanceOwnerId: principalId,
@@ -49,19 +50,14 @@ it.live(
             yield* repository.assignResponsibility(
               tenantId,
               legalEntityId,
-              yield* crypto.randomUUIDv4(),
+              yield* crypto.uuidV4(),
               facts.responsibility,
             );
-            yield* repository.recordApplicabilityPolicy(
-              tenantId,
-              legalEntityId,
-              yield* crypto.randomUUIDv4(),
-              facts.policy,
-            );
+            yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* crypto.uuidV4(), facts.policy);
             yield* repository.recordApplicability(
               tenantId,
               legalEntityId,
-              yield* crypto.randomUUIDv4(),
+              yield* crypto.uuidV4(),
               facts.context.decisionRef,
               facts.decision,
             );
@@ -129,7 +125,7 @@ it.live(
               reviewRef: 'internal:profile-hold-review',
             };
             yield* transaction.insert(legalHolds).values({
-              actionInvocationId: yield* crypto.randomUUIDv4(),
+              actionInvocationId: yield* crypto.uuidV4(),
               effectiveFrom: DateTime.toDateUtc(DateTime.makeUnsafe(hold.effectiveFrom)),
               effectiveTo: DateTime.toDateUtc(DateTime.makeUnsafe(hold.effectiveTo)),
               holdRecord: hold,

@@ -8,7 +8,8 @@ import { CatalogSelectionSchema } from '@app/catalog-selection-contracts/catalog
 import { priceDecimalValuesEqual } from '@app/pricing-contracts/domain/price-definition';
 import { PricingCatalogQuantityBasisDecisionSchema } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
 import type { PricingCatalogQuantityBasisDecision } from '@app/pricing-contracts/domain/quantity-unit-package-basis';
-import { Context, Crypto, DateTime, Effect, Redacted, Schema } from 'effect';
+import { Context, DateTime, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
@@ -198,8 +199,8 @@ export const catalogQuantityBasisCompatibilityPortFromEnvironment = Effect.fn(
     readonly tenantId: string;
   },
   execute: QuantityBasisCompatibilityExecutor = executeAuthorizedCompatibility,
-): Effect.fn.Return<CatalogQuantityBasisCompatibilityPort, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<CatalogQuantityBasisCompatibilityPort, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeCatalogQuantityBasisCompatibilityPort({
     acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
     context,

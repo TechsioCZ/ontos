@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import { applicationCompositionContentRevision } from '@app/core-runtime';
-import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { CoreDatabase, makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -43,7 +44,10 @@ import {
 } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { runApplicationCompositionMigration } from '../application-composition-authority-publication.mts';
 
-const services = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const services = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
+);
 const producer = 'producer.fixture';
 const consumer = 'consumer.fixture';
 const topic = 'producer.fixture.accepted';
@@ -165,7 +169,7 @@ const fixture = Effect.gen(function* deadDeliveryDrainFixture() {
     runtimeTarget,
     runtimeUser: runtimeTarget.user,
   });
-  const tenantId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const tenantId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   yield* runtime.insert(tenants).values({
     defaultLocale: 'en',
     name: 'Dead delivery drain fixture',
@@ -204,7 +208,7 @@ const fixture = Effect.gen(function* deadDeliveryDrainFixture() {
       return Option.getOrThrow(Option.fromNullishOr(message)).id;
     }),
   );
-  const repository = makeOutboxRepository(runtime, yield* Crypto.Crypto);
+  const repository = makeOutboxRepository(runtime, yield* SecureRandom.SecureRandom);
   const completed = yield* Deferred.make<true, DeadDeliveryFixtureFailure>();
   const entry = defineOutboxWorkerEntry({
     claimOwnerPrefix: FIXTURE_NAME,

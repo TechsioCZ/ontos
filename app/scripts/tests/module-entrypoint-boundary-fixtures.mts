@@ -186,8 +186,8 @@ const fileExists = async (file: string) => {
 
 /** Every static specifier a source names, by a plain scan: `from '…'`, `import '…'`, `import('…')`, `require('…')`. */
 const specifiersOf = (source: string): readonly string[] =>
-  [...source.matchAll(/(?:\bfrom|\bimport|\brequire)\s*\(?\s*['"](?<specifier>[^'"\n]+)['"]/gu)].flatMap((match) =>
-    match.groups?.specifier === undefined ? [] : [match.groups.specifier],
+  [...source.matchAll(/(?:\bfrom|\bimport|\brequire)\s*(?:\(\s*)?['"](?<specifier>[^'"\n]+)['"]/gu)].flatMap((match) =>
+    match.groups?.['specifier'] === undefined ? [] : [match.groups['specifier']],
   );
 
 /** What TypeScript's `Bundler` resolution substitutes for a JavaScript extension, in its order (the specification's table). */
@@ -1417,7 +1417,7 @@ export const makeSelectedInventoryFixture = Effect.fn(function* selectedInventor
     );
     yield* write(root, file, source);
     for (const match of source.matchAll(/\bfrom\s*['"](?<specifier>\.[^'"]+)['"]/gu)) {
-      const specifier = match.groups?.specifier;
+      const specifier = match.groups?.['specifier'];
       if (specifier !== undefined) {
         pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
       }
@@ -1543,7 +1543,7 @@ export const makeActualCatalogSelectionFixture = Effect.fn(function* actualCatal
     const source = yield* Effect.promise(async () => await readFile(path.join(workspace, file), 'utf-8'));
     yield* write(root, file, source);
     for (const match of source.matchAll(/\bfrom\s*['"](?<specifier>\.[^'"]+)['"]/gu)) {
-      const specifier = match.groups?.specifier;
+      const specifier = match.groups?.['specifier'];
       if (specifier !== undefined) {
         pending.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
       }

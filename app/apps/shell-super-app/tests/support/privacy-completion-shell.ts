@@ -27,7 +27,8 @@ import {
 import { NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices, NodeSocket } from '@effect/platform-node';
 import { resolveEffectBffModuleHandler } from '@modern-js/bff-effect/effect';
 import { dispatchEffectBffRequest } from '@modern-js/bff-effect/effect-edge';
-import { Config, ConfigProvider, Context, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { PgClient } from '@effect/sql-pg';
 import { Socket } from 'effect/socket';
@@ -217,8 +218,8 @@ const serve = Effect.scoped(
     if (additionalLegalEntity === 'same-tenant') {
       Object.assign(additionalLegalEntityConfiguration, { additionalLegalEntity });
     }
-    const crypto = yield* Crypto.Crypto;
-    const suffix = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const suffix = yield* crypto.uuidV4();
     const compositionUrl = yield* Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL');
     const expectedRevision = yield* Config.String('ONTOS_1258_TEST_REVISION');
     const composition = yield* Effect.gen(function* loadFixtureComposition() {
@@ -360,7 +361,7 @@ const serve = Effect.scoped(
     );
     const pending = yield* keys.issue(headers, {
       issuerPrincipalId: resolved.principal.principalId,
-      lifecycleOperationId: yield* crypto.randomUUIDv4(),
+      lifecycleOperationId: yield* crypto.uuidV4(),
       name: 'Privacy completion test',
       tenantId: fixture.tenantId,
     });
@@ -407,8 +408,8 @@ const serve = Effect.scoped(
           principal: resolved.principal,
           registration: changeTenantModuleStateAction,
           transport: {
-            correlationId: yield* crypto.randomUUIDv4(),
-            idempotencyKey: yield* crypto.randomUUIDv4(),
+            correlationId: yield* crypto.uuidV4(),
+            idempotencyKey: yield* crypto.uuidV4(),
             targetModuleKey: 'core.modules',
           },
         }).pipe(

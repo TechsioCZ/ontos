@@ -160,7 +160,7 @@ export const observation = {
       stockUnitTenantId: tenantId,
       tenantId,
     },
-  ],
+  ] satisfies [RelevantStockPositionSetObservation['bindings'][number]],
   items: [
     {
       createdAt: time,
@@ -176,7 +176,7 @@ export const observation = {
       stockUnitTenantId: tenantId,
       tenantId,
     },
-  ],
+  ] satisfies [RelevantStockPositionSetObservation['items'][number]],
   locations: [
     {
       addressEvidence: null,

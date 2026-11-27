@@ -3,7 +3,8 @@ import { OutboxWorkerDeferred, OutboxWorkerLegalEntityScopeFanout } from '@app/c
 import type { OutboxWorkerHandlerContext, OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import { OutboxPayloadSchema } from '@app/payment/outbox/payment-core-operation-requested-v1';
 import type { OutboxPayload } from '@app/payment/outbox/payment-core-operation-requested-v1';
-import { Cause, Crypto, DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Layer, Option, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -644,11 +645,8 @@ const evidenceStoreOf = (world: World) =>
   });
 
 const testCrypto = Layer.succeed(
-  Crypto.Crypto,
-  Crypto.make({
-    digest: (_algorithm, data) => Effect.succeed(data),
-    randomBytes: (size) => new Uint8Array(size).fill(251),
-  }),
+  SecureRandom.SecureRandom,
+  SecureRandom.make((size) => new Uint8Array(size).fill(251)),
 );
 
 /** Runs one delivery of `spec` against the world; returns its exit. */

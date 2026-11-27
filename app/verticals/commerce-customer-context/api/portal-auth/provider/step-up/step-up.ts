@@ -1,7 +1,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
-import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 
 import { auditedLayer, commercePortalAuthAuditEmitter } from '../../../../src/portal-auth/audit/audit.ts';
@@ -121,17 +122,15 @@ const challengeExpiresAt = (record: CommercePortalAuthAuthoritativeSession, now:
 
 const hashChallengeId = (challengeId: string): string => Base64Url.encode(sha256(utf8ToBytes(challengeId)));
 
-const newChallengeId = (crypto: Crypto.Crypto): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
-  crypto.randomBytes(32).pipe(
-    Effect.map(Base64Url.encode),
-    Effect.mapError((cause) => unavailable('challenge-id', cause)),
-  );
+const newChallengeId = (
+  crypto: SecureRandom.SecureRandom['Service'],
+): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
+  crypto.randomBytes(32).pipe(Effect.map(Base64Url.encode));
 
-const newAttemptReservationId = (crypto: Crypto.Crypto): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
-  crypto.randomBytes(16).pipe(
-    Effect.map(Base64Url.encode),
-    Effect.mapError((cause) => unavailable('attempt-reservation-id', cause)),
-  );
+const newAttemptReservationId = (
+  crypto: SecureRandom.SecureRandom['Service'],
+): Effect.Effect<string, CommercePortalAuthStepUpUnavailable> =>
+  crypto.randomBytes(16).pipe(Effect.map(Base64Url.encode));
 
 const sessionRecord = Effect.fn('CommercePortalAuthStepUp.sessionRecord')(function* sessionRecordEffect(
   sessionReader: CommercePortalAuthSessionReader,
@@ -161,13 +160,13 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
     | CommercePortalAuthStepUpCodeVerifierService
     | CommercePortalAuthSessionLifecycle
     | CommercePortalAuthSessionReaderService
-    | Crypto.Crypto
+    | SecureRandom.SecureRandom
   > {
     const challengeStore = yield* CommercePortalAuthStepUpChallengeStoreService;
     const codeVerifier = yield* CommercePortalAuthStepUpCodeVerifierService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
     const sessionReader = yield* CommercePortalAuthSessionReaderService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const emitAudit = commercePortalAuthAuditEmitter(audit);
 
     const issue = Effect.fn('CommercePortalAuthStepUp.issue')(function* issueEffect(
@@ -214,10 +213,9 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         expiresAt,
         outcome: 'STEP_UP_REQUIRED' as const,
       } satisfies CommercePortalAuthStepUpRequired;
-      const issued = yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema, { onExcessProperty: 'error' })(
+      return yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema, { onExcessProperty: 'error' })(
         result,
       ).pipe(Effect.mapError((cause) => unavailable('challenge-result', cause)));
-      return issued;
     });
 
     const verify = Effect.fn('CommercePortalAuthStepUp.verify')(function* verifyEffect(

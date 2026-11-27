@@ -31,7 +31,8 @@ import type {
   PromotionContributionApplied,
 } from '@app/pricing-contracts/domain/promotion-contribution';
 import { NodeCrypto, NodeServices, NodeChildProcessSpawner } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { makeCurrentPricingDecisionZeroFloorSetReader } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
@@ -66,7 +67,7 @@ const FixtureValueSchema = Schema.Union([
   Schema.Undefined,
 ]);
 type FixtureValue = typeof FixtureValueSchema.Type;
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const mapFixtureChildren = (
   value: FixtureValue,

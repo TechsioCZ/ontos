@@ -174,8 +174,8 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core system workload 
         ) {
           return yield* actionRuntime
             .runAction({
-              principal,
               payload: { ...payload, reason },
+              principal,
               registration: changeSystemWorkloadEnrollmentAction,
               savedReply: 'answer',
               transport: { correlationId: yield* nextUuid, idempotencyKey: idempotencyKey ?? (yield* nextUuid) },

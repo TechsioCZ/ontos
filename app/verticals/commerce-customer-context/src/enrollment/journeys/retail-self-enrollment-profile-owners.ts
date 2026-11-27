@@ -1,6 +1,6 @@
 import type { PartyRef } from '@app/party-registry/resources/party';
 import { DateTime, Effect, Redacted, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { BindRetailPortalProfilePayloadSchema } from '../../../shared/actions/bind-retail-portal-profile.ts';
 import type { RetailPortalBindingResult } from '../../../shared/actions/bind-retail-portal-profile.ts';
@@ -83,7 +83,7 @@ export type CommerceActionCommitResolution<Result> = (
 
 export interface RetailCustomerProfileOwnerInput {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   /** Stable for the Attempt, so an equivalent retry produces an identical Action payload. */
   readonly effectiveAt: DateTime.Utc;
   readonly originator: RetailEnrollmentOriginator;
@@ -103,7 +103,7 @@ export interface RetailCustomerProfileOwnerExecutors {
 
 export interface RetailPortalBindingOwnerInput {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly effectiveAt: DateTime.Utc;
   /** Opaque, non-secret reference to the Attempt evidence the binding Action re-verifies. */
   readonly enrollmentEvidenceRef: string;
@@ -379,7 +379,7 @@ export const retailPortalBindingOwnerEffect = (
 
 interface RetailOwnerInvocationAuthority {
   readonly compositionRevision: string;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: SecureRandom.SecureRandom['Service'];
   readonly legalEntityId: string;
   readonly originator: RetailEnrollmentOriginator;
   readonly requestCorrelation: string;

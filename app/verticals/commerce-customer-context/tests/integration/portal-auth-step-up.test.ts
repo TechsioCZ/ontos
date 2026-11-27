@@ -141,7 +141,7 @@ it.live('serializes concurrent reservations before any verifier could run', () =
         .where(eq(stepUpChallengeAttempt.challengeIdHash, fixture.challengeHash));
       expect(reservationRows).toHaveLength(1);
 
-      const winnerIndex = results[0] ? 0 : 1;
+      const winnerIndex = results[0] === true ? 0 : 1;
       const winner = inputs[winnerIndex];
       if (winner === undefined) {
         return yield* Effect.fail(new Error('Reservation result did not identify a winner'));

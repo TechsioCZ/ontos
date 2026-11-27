@@ -3,7 +3,8 @@ import type { ProcessingPurposeRepositoryService } from './processing-purpose-re
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, asc, eq } from 'drizzle-orm';
-import { flow, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { flow, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type {
   CreatePurposeVersionInput,
@@ -120,10 +121,8 @@ export const loadPurposeVersions = Effect.fn('ProcessingPurposePostgresRepositor
 const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   trustedScope: Readonly<{ legalEntityId: string; tenantId: string }>,
-): Effect.fn.Return<ProcessingPurposeRepositoryService, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
-  const nextIdentifier = (reason: string) =>
-    crypto.randomUUIDv4().pipe(Effect.mapError((cause) => unavailable(reason, cause)));
+): Effect.fn.Return<ProcessingPurposeRepositoryService, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void
@@ -170,7 +169,7 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
     current: ProcessingPurpose,
     input: CreatePurposeVersionInput,
   ) {
-    const versionId = yield* nextIdentifier('Purpose Version identifier could not be generated');
+    const versionId = yield* crypto.uuidV4();
     const materiality = deriveMaterialVersionEvidence(current, input, versionId);
     if ('conflictReason' in materiality) {
       return yield* new PurposeVersionConflict({
@@ -316,13 +315,9 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
       yield* assertScope(tenantId, legalEntityId);
       const nowDateTime = yield* DateTime.now;
       const now = DateTime.toDateUtc(nowDateTime);
-      const [processingPurposeId, versionId] = yield* Effect.all(
-        [
-          nextIdentifier('Processing Purpose identifier could not be generated'),
-          nextIdentifier('Purpose Version identifier could not be generated'),
-        ],
-        { concurrency: 2 },
-      );
+      const [processingPurposeId, versionId] = yield* Effect.all([crypto.uuidV4(), crypto.uuidV4()], {
+        concurrency: 2,
+      });
       const version: PurposeVersion = {
         effectiveFrom: input.effectiveFrom,
         effectiveTo: null,
@@ -397,7 +392,7 @@ const makeRepository = Effect.fn('ProcessingPurposePostgresRepository.make')(fun
 export const processingPurposeRepositoryForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-): Effect.Effect<ProcessingPurposeRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+): Effect.Effect<ProcessingPurposeRepositoryService, OperationContextUnavailable, SecureRandom.SecureRandom> => {
   const { legalEntityId, tenantId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())

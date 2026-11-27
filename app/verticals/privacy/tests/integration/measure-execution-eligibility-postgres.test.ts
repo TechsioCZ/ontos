@@ -1,6 +1,7 @@
 import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { eq } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
@@ -30,7 +31,7 @@ it.live('rechecks a real stored exact measure against current native rule, prote
     const { tenantId } = native.principal;
     const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
     const fixture = makeMeasureExecutionFixture(tenantId);
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     yield* native
       .prepareOwner((transaction) =>
         Effect.gen(function* setupExactApprovedNativeRecords() {
@@ -55,7 +56,7 @@ it.live('rechecks a real stored exact measure against current native rule, prote
             ruleVersionId: fixture.decision.ruleVersionId,
           };
           yield* transaction.insert(retentionRules).values({
-            actionInvocationId: yield* crypto.randomUUIDv4(),
+            actionInvocationId: yield* crypto.uuidV4(),
             contentScopeRef: fixture.content,
             effectiveFrom: asDate(rule.effectiveFrom),
             legalEntityId,
@@ -85,7 +86,7 @@ it.live('rechecks a real stored exact measure against current native rule, prote
             status: 'READY',
             workerEvaluation: {
               ...fixture.evaluationWire,
-              messageId: yield* crypto.randomUUIDv4(),
+              messageId: yield* crypto.uuidV4(),
               ownerOutcomeRef: null,
             },
             workRef: fixture.evaluation.evaluationRef,
@@ -234,7 +235,7 @@ it.live('rechecks a real stored exact measure against current native rule, prote
             reviewRef: 'fixture:hold-review',
           };
           yield* transaction.insert(legalHolds).values({
-            actionInvocationId: yield* crypto.randomUUIDv4(),
+            actionInvocationId: yield* crypto.uuidV4(),
             effectiveFrom: asDate(hold.effectiveFrom),
             effectiveTo: asDate(hold.effectiveTo),
             holdRecord: hold,

@@ -2,7 +2,8 @@
  * Frozen Symmy behaviour of the finite Privacy dispatch authority. Every literal below was recorded from base 6adcc096f
  * BEFORE the authority became per-consumer; the per-consumer registry must keep reproducing them exactly.
  */
-import { ConfigProvider, Crypto, Effect, Option, Result, Schema } from 'effect';
+import { ConfigProvider, Effect, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -25,10 +26,7 @@ const configuration = ConfigProvider.fromEnvRecord({
   ONTOS_GATEWAY_MODULE_API_KEY: 'k',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 const fetchOk: typeof globalThis.fetch = () =>
   Promise.resolve(Response.json({ apiBaseUrl: '/x', compositionRevision, expiresAt: 1_700_000_300, token: 't' }));
 

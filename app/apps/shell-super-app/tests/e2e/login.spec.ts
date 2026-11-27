@@ -113,7 +113,7 @@ const reportBrowserError = (event: ConsoleMessage | Error) => {
   }
 };
 
-const test = base.extend<Record<never, never>, { authentication: AuthenticationFixture }>({
+const test = base.extend<object, { authentication: AuthenticationFixture }>({
   authentication: [
     async ({ browserName: _browserName }, use) => {
       await Effect.runPromise(
@@ -369,21 +369,24 @@ const installContactsRenderInitializationFault = (page: Page) =>
     const restore = () => {
       Object.defineProperty(Element.prototype, 'setAttribute', setAttributeDescriptor);
     };
-    Element.prototype.setAttribute = function setAttribute(this: Element, name: string, value: string): void {
-      originalSetAttribute.call(this, name, value);
-      if (
-        !fired &&
-        !this.isConnected &&
-        this.localName === 'section' &&
-        name === 'aria-labelledby' &&
-        value === 'contacts-heading'
-      ) {
-        fired = true;
-        restore();
-        document.documentElement.dataset['e2eContactsRenderInitializationFault'] = 'fired';
-        throw new Error(marker);
-      }
-    };
+    Object.defineProperty(Element.prototype, 'setAttribute', {
+      ...setAttributeDescriptor,
+      value(this: Element, name: string, value: string): void {
+        originalSetAttribute.call(this, name, value);
+        if (
+          !fired &&
+          !this.isConnected &&
+          this.localName === 'section' &&
+          name === 'aria-labelledby' &&
+          value === 'contacts-heading'
+        ) {
+          fired = true;
+          restore();
+          document.documentElement.dataset['e2eContactsRenderInitializationFault'] = 'fired';
+          throw new Error(marker);
+        }
+      },
+    });
     return restore;
   }, contactsRenderInitializationFault);
 

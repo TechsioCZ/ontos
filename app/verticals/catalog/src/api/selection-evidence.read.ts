@@ -2,7 +2,7 @@
 import type { ReadLoadContext, ScopedTransactionExecutor, OperationalScope } from '@app/core-runtime';
 import { ReadHandlerUnavailable, defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Context, Effect } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import {
   SelectionEvidenceRequestSchema,
@@ -30,7 +30,7 @@ export interface SelectionEvidenceServices {
   readonly assess: (
     request: SelectionEvidenceRequest,
     ownerEvidence?: CatalogSelectionInjectedOwnerEvidence,
-  ) => Effect.Effect<SelectionEvidenceResponse, never, Crypto.Crypto>;
+  ) => Effect.Effect<SelectionEvidenceResponse, never, SecureRandom.SecureRandom>;
   readonly readCartEvidence: CatalogSelectionOwnerEvidencePort['readCartEvidence'];
 }
 
@@ -68,7 +68,7 @@ export const readSelectionEvidence = Effect.fn('SelectionEvidenceRead.read')(fun
   input: SelectionEvidenceRequest,
   tenantId: string,
   services: SelectionEvidenceServices,
-): Effect.fn.Return<SelectionEvidenceResponse, ReadHandlerUnavailable, Crypto.Crypto> {
+): Effect.fn.Return<SelectionEvidenceResponse, ReadHandlerUnavailable, SecureRandom.SecureRandom> {
   if (input.selection.productRef.tenantId !== tenantId) {
     return yield* unavailable('Cross-Tenant selection');
   }

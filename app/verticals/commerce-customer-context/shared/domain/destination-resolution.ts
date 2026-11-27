@@ -32,7 +32,7 @@ import { SavedAddressRefSchema } from '../resources/saved-address.ts';
 
 const StableTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PositiveRevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
-const PositiveQuantitySchema = Schema.String.check(Schema.isPattern(/^(?:0*[1-9][0-9]*)(?:\.[0-9]+)?$/u));
+const PositiveQuantitySchema = Schema.String.check(Schema.isPattern(/^(?:0*[1-9]\d*)(?:\.\d+)?$/u));
 
 const OwnerResourceRefSchema = Schema.Struct({
   moduleId: ResolutionModuleIdSchema,
@@ -403,15 +403,17 @@ const postalFailure = (
 
 type PostalSavedAddressPlan = Readonly<{ kind: 'RESOLVE'; savedAddress: SavedAddress }> | PostalCandidateFailure;
 
-const planPostalSavedAddress = (savedAddress: SavedAddress, source: 'EXPLICIT' | 'DEFAULT'): PostalSavedAddressPlan =>
-  isAddressEligibleFor(savedAddress, 'DELIVERY')
-    ? { kind: 'RESOLVE', savedAddress }
-    : postalFailure(
-        source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_DESTINATION_INVALID',
-        source === 'EXPLICIT'
-          ? 'The explicit saved address is missing, inactive, or not delivery eligible.'
-          : 'The configured delivery default is inactive or ineligible.',
-      );
+const planPostalSavedAddress = (savedAddress: SavedAddress, source: 'EXPLICIT' | 'DEFAULT'): PostalSavedAddressPlan => {
+  if (isAddressEligibleFor(savedAddress, 'DELIVERY')) {
+    return { kind: 'RESOLVE', savedAddress };
+  }
+  return postalFailure(
+    source === 'EXPLICIT' ? 'EXPLICIT_CHOICE_INVALID' : 'DEFAULT_DESTINATION_INVALID',
+    source === 'EXPLICIT'
+      ? 'The explicit saved address is missing, inactive, or not delivery eligible.'
+      : 'The configured delivery default is inactive or ineligible.',
+  );
+};
 
 const planExplicitPostalSavedAddress = (saved: AddressLookup<SavedAddress>): PostalSavedAddressPlan =>
   saved.kind === 'FOUND'

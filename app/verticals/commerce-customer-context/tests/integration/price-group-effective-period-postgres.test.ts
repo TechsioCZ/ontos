@@ -56,7 +56,6 @@ import {
   Clock,
   Config,
   Context,
-  Crypto,
   DateTime,
   Duration,
   Effect,
@@ -72,6 +71,7 @@ import {
   SchemaIssue,
   Stream,
 } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
@@ -448,7 +448,7 @@ it.effect('rejects changed prepared artifact owner build path and hash observati
   }),
 );
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const services = NodeServices.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
   Layer.provideMerge(FetchHttpClient.layer),
@@ -499,8 +499,8 @@ const PublicKeysSchema = Schema.Struct({
 });
 
 const digest = Effect.fn('TemporalNative.digest')(function* digest(document: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Buffer.from(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))).toString('hex');
+  const crypto = yield* Digest.Digest;
+  return Buffer.from(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))).toString('hex');
 });
 
 const captureOwnedCertificate = Effect.fn('TemporalNative.captureOwnedCertificate')(function* captureOwnedCertificate(
@@ -798,7 +798,7 @@ const prepareDedicatedIdentities = Effect.fn('TemporalNative.prepareDedicatedIde
         'dedicated-identity-receipt',
       );
     }
-    return physical?.ready ? ('existing' as const) : ('fresh' as const);
+    return physical?.ready === true ? ('existing' as const) : ('fresh' as const);
   },
 );
 
@@ -838,11 +838,13 @@ const startReceiver = Effect.fn('TemporalNative.startReceiver')(function* startR
     channel.next,
     child.exitCode.pipe(Effect.flatMap(() => Effect.fail(fail('receiver-exited')))),
   ).pipe(
-    Effect.flatMap((response) =>
-      response.type === 'FAILED'
-        ? Effect.fail(fail(response.code === undefined ? response.stage : `${response.stage}:${response.code}`))
-        : Effect.succeed(response),
-    ),
+    Effect.flatMap((response) => {
+      if (response.type === 'FAILED') {
+        const stage = response.code === undefined ? response.stage : `${response.stage}:${response.code}`;
+        return Effect.fail(fail(stage));
+      }
+      return Effect.succeed(response);
+    }),
   );
 
   const send = (command: Schema.Json) =>
@@ -1075,8 +1077,7 @@ const provisionPublicSubjects = Effect.fn('TemporalNative.publicSubjects')(funct
     if (response.type !== 'CREATED_G1' && response.type !== 'CREATED_G2' && response.type !== 'CREATED_INCOMPATIBLE') {
       return yield* fail('catalog-create-order');
     }
-    const result = yield* Schema.decodeUnknownEffect(PriceGroupCreatedResultSchema)(response.result);
-    return result;
+    return yield* Schema.decodeUnknownEffect(PriceGroupCreatedResultSchema)(response.result);
   });
   const first = yield* createGroup('CREATE_G1');
   const second = yield* createGroup('CREATE_G2');
@@ -1409,7 +1410,7 @@ const resolverReceipt = Effect.fn('TemporalNative.resolverReceipt')(function* re
     'resolver-source-identity',
   );
   const match = /AS \$\$(?<body>[\s\S]*?)\$\$/u.exec(sql.slice(offset));
-  const expected = match?.groups?.body;
+  const expected = match?.groups?.['body'];
   if (expected === undefined) {
     return yield* fail('resolver-source-body');
   }

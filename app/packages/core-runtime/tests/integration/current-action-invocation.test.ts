@@ -1,5 +1,6 @@
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
 import { Context, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
@@ -21,7 +22,9 @@ const noDomainEvents = {};
 interface Services {
   readonly fact: ScopedCurrentActionInvocationFact;
 }
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 
 it.layer(nativeServices, { excludeTestServices: true })('native current Action facts', (suite) => {
   suite.effect(

@@ -35,10 +35,11 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { GatewayDelegatedContextRequestSchema } from '@app/shared-contracts';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Crypto, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair } from 'jose';
@@ -259,7 +260,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* paymentSelfRegisteredWorkload() {
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const shellDeployment = { appId: 'shell-super-app', buildMarker: ultramodernDeliveryUnit.buildMarker } as const;
         const shellRuntime = {
           document: JSON.stringify({
@@ -316,23 +317,23 @@ it.live(
           false,
         );
 
-        const tenantId = yield* crypto.randomUUIDv4();
-        const legalEntityId = yield* crypto.randomUUIDv4();
-        const siblingLegalEntityId = yield* crypto.randomUUIDv4();
-        const suspendedLegalEntityId = yield* crypto.randomUUIDv4();
-        const notificationPrincipal = yield* crypto.randomUUIDv4();
-        const reconciliationPrincipal = yield* crypto.randomUUIDv4();
-        const humanPrincipal = yield* crypto.randomUUIDv4();
-        const receiverPrincipal = yield* crypto.randomUUIDv4();
-        const modulePrincipal = yield* crypto.randomUUIDv4();
-        const receiverIncarnation = yield* crypto.randomUUIDv4();
+        const tenantId = yield* crypto.uuidV4();
+        const legalEntityId = yield* crypto.uuidV4();
+        const siblingLegalEntityId = yield* crypto.uuidV4();
+        const suspendedLegalEntityId = yield* crypto.uuidV4();
+        const notificationPrincipal = yield* crypto.uuidV4();
+        const reconciliationPrincipal = yield* crypto.uuidV4();
+        const humanPrincipal = yield* crypto.uuidV4();
+        const receiverPrincipal = yield* crypto.uuidV4();
+        const modulePrincipal = yield* crypto.uuidV4();
+        const receiverIncarnation = yield* crypto.uuidV4();
         const insert = (statement: Parameters<typeof admin.executor.execute>[0]) =>
           admin.executor.execute(statement, 'objects');
         const bind = (principalId: string, workloadKey: string, incarnation?: string) =>
           Effect.gen(function* bindWorkload() {
-            const bindingId = yield* crypto.randomUUIDv4();
+            const bindingId = yield* crypto.uuidV4();
             yield* insert(
-              sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${bindingId}::uuid,${tenantId}::uuid,${principalId}::uuid,${workloadKey},${incarnation ?? (yield* crypto.randomUUIDv4())}::uuid,'active')`,
+              sql`insert into core.access_workload_bindings(binding_id,tenant_id,principal_id,workload_key,incarnation,status) values(${bindingId}::uuid,${tenantId}::uuid,${principalId}::uuid,${workloadKey},${incarnation ?? (yield* crypto.uuidV4())}::uuid,'active')`,
             );
             return bindingId;
           });
@@ -383,12 +384,12 @@ it.live(
           readonly workerKey: string;
         }) =>
           Effect.gen(function* deliverOriginal() {
-            const invocationId = yield* crypto.randomUUIDv4();
-            const eventId = yield* crypto.randomUUIDv4();
-            const messageId = yield* crypto.randomUUIDv4();
-            const deliveryId = yield* crypto.randomUUIDv4();
+            const invocationId = yield* crypto.uuidV4();
+            const eventId = yield* crypto.uuidV4();
+            const messageId = yield* crypto.uuidV4();
+            const deliveryId = yield* crypto.uuidV4();
             const claimId = `claim-${deliveryId}`;
-            const resourceId = yield* crypto.randomUUIDv4();
+            const resourceId = yield* crypto.uuidV4();
             const company = input.company === undefined ? legalEntityId : input.company;
             yield* insert(
               sql`insert into core.action_invocations(action_invocation_id,tenant_id,legal_entity_id,principal_id,auth_method,action_key,status,request_hash,started_at,completed_at) values(${invocationId}::uuid,${tenantId}::uuid,${company}::uuid,${input.principalId}::uuid,${input.authMethod},${input.actionKey},'succeeded',${'a'.repeat(64)},now(),now())`,
@@ -434,7 +435,7 @@ it.live(
         });
         const signer = makeGatewayIssuerLayer({
           currentTimeSeconds: Effect.succeed(Math.floor(DateTime.toEpochMillis(snapshot.observedAt) / 1000)),
-          generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+          generateJti: crypto.uuidV4().pipe(Effect.orDie),
           loadAdmission: Effect.succeed({
             audiences: new Map([[paymentApp, paymentBuild]]),
             revision: snapshot.composition.revision,
@@ -475,7 +476,7 @@ it.live(
             const payload = yield* Schema.decodeUnknownEffect(GatewayDelegatedContextRequestSchema)({
               audience: paymentApp,
               compositionRevision,
-              exchangeId: yield* crypto.randomUUIDv4(),
+              exchangeId: yield* crypto.uuidV4(),
               legalEntityScope: 'subject',
               subject,
             });
@@ -595,7 +596,7 @@ it.live(
         // No company although the A8 rule requires one.
         expect(yield* deniedIssue(unscoped)).toBe(true);
         // Another Tenant, or another claim of the same delivery.
-        expect(yield* deniedIssue({ ...unscoped, legalEntityId, tenantId: yield* crypto.randomUUIDv4() })).toBe(true);
+        expect(yield* deniedIssue({ ...unscoped, legalEntityId, tenantId: yield* crypto.uuidV4() })).toBe(true);
         expect(yield* deniedIssue({ ...unscoped, claimId: `${captured.claimId}-other`, legalEntityId })).toBe(true);
         // An original that ran in the tenant context cannot be given a company afterwards.
         const tenantContextCapture = yield* deliver({
@@ -687,12 +688,12 @@ it.live(
         }).pipe(Effect.provide(SystemPrincipalContextResolverLive), Effect.provideService(CoreDatabase, runtime));
         expect(resolved.principalId).toBe(receiverPrincipal);
         // A second receiving system principal makes the receiver ambiguous: issuance fails closed.
-        const secondReceiver = yield* crypto.randomUUIDv4();
+        const secondReceiver = yield* crypto.uuidV4();
         yield* insert(
           sql`insert into core.principals(principal_id,tenant_id,kind,display_name,status) values(${secondReceiver}::uuid,${tenantId}::uuid,'system','Second receiver','active')`,
         );
         yield* bind(secondReceiver, sourceIngress);
         expect(yield* deniedIssue(workerSubject(workloadRecovery, recoverWorker, recoveryRequirement))).toBe(true);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom))),
 );

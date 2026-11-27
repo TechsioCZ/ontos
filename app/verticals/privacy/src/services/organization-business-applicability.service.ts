@@ -33,7 +33,8 @@ import type { SymmySourceOrganizationFactsRequest } from '@app/symmy-integration
 import { executeSymmySourceOrganizationFactsWithAuthorization } from '@app/symmy-integration/api/symmy-source-organization-facts/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { and, eq, sql } from 'drizzle-orm';
-import { Config, Context, Crypto, Effect, Match, Option, Schema } from 'effect';
+import { Config, Context, Effect, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   OrganizationBusinessApplicabilityContextSchema,
   OrganizationBusinessApplicabilityIntentSchema,
@@ -131,7 +132,7 @@ export interface OrganizationBusinessSourceSnapshot {
 export interface OrganizationBusinessSourceAuthority {
   readonly read: (
     reference: SourceReference,
-  ) => Effect.Effect<OrganizationBusinessSourceSnapshot, ReadHandlerUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<OrganizationBusinessSourceSnapshot, ReadHandlerUnavailable, SecureRandom.SecureRandom>;
 }
 
 /** Native owner-local query port. Neither an executor nor an external authority crosses this boundary. */
@@ -385,7 +386,7 @@ const providerContext = Effect.fn('Privacy.organizationBusinessProviderContext')
       requestCorrelation: scope.correlationId,
       subject,
     },
-    yield* Crypto.Crypto,
+    yield* SecureRandom.SecureRandom,
   ).pipe(Effect.mapError(unavailable));
 });
 
@@ -664,19 +665,20 @@ const partyQuery = Effect.fn('Privacy.organizationBusinessPartyQuery')(function*
         target: 'SOURCE_COUNTERPARTY_CUSTOMER' as const,
       }),
     ),
-    Match.when({ kind: 'COUNTERPARTY_PROFILE' }, () =>
-      profile === undefined
-        ? Effect.fail(missing())
-        : Effect.succeed(
-            sourceRecord === undefined
-              ? { counterpartyRef: profile.counterpartyRef, target: 'COUNTERPARTY_CUSTOMER' as const }
-              : {
-                  counterpartyRef: profile.counterpartyRef,
-                  sourceRecord,
-                  target: 'SOURCE_COUNTERPARTY_CUSTOMER' as const,
-                },
-          ),
-    ),
+    Match.when({ kind: 'COUNTERPARTY_PROFILE' }, () => {
+      if (profile === undefined) {
+        return Effect.fail(missing());
+      }
+      return Effect.succeed(
+        sourceRecord === undefined
+          ? { counterpartyRef: profile.counterpartyRef, target: 'COUNTERPARTY_CUSTOMER' as const }
+          : {
+              counterpartyRef: profile.counterpartyRef,
+              sourceRecord,
+              target: 'SOURCE_COUNTERPARTY_CUSTOMER' as const,
+            },
+      );
+    }),
     Match.exhaustive,
   );
 });
@@ -805,7 +807,11 @@ const resolvedSourceProof = Effect.fn('Privacy.organizationBusinessResolvedSourc
   source: LiveProof,
   scope: OperationalScope,
   asOf: string,
-): Effect.fn.Return<LiveProof, ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError, Crypto.Crypto> {
+): Effect.fn.Return<
+  LiveProof,
+  ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError,
+  SecureRandom.SecureRandom
+> {
   if (
     request.kind !== 'SOURCE_ASSERTED' ||
     source.kind !== 'SOURCE_ASSERTED' ||
@@ -851,7 +857,11 @@ const publicOwnerFacts = Effect.fn('Privacy.organizationBusinessPublicOwnerFacts
   sourceAuthority?: OrganizationBusinessSourceAuthority,
   runtimeRequest?: OrganizationBusinessApplicabilityRequest,
   asOf: string = context.effectiveFrom,
-): Effect.fn.Return<LiveProof, ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError, Crypto.Crypto> {
+): Effect.fn.Return<
+  LiveProof,
+  ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError,
+  SecureRandom.SecureRandom
+> {
   const intent = context.request;
   const snapshot = yield* sourceSnapshotForIntent(intent, scope, sourceAuthority);
   if (intent.kind === 'SOURCE_ASSERTED') {
@@ -972,7 +982,11 @@ export const organizationBusinessFacts = Effect.fn('Privacy.organizationBusiness
   context: OrganizationBusinessApplicabilityContext,
   proof: LiveProof,
   asOf: string,
-): Effect.fn.Return<TrustedPrivacyApplicabilityBusinessFactAuthorityResult, ReadHandlerUnavailable, Crypto.Crypto> {
+): Effect.fn.Return<
+  TrustedPrivacyApplicabilityBusinessFactAuthorityResult,
+  ReadHandlerUnavailable,
+  SecureRandom.SecureRandom
+> {
   const intent = yield* Schema.encodeEffect(OrganizationBusinessApplicabilityIntentSchema)(context.request).pipe(
     Effect.mapError(unavailable),
   );
@@ -1023,7 +1037,7 @@ export const resolveOrganizationBusinessFacts = Effect.fn('Privacy.resolveOrgani
 ): Effect.fn.Return<
   TrustedPrivacyApplicabilityBusinessFactAuthorityResult,
   PrivacyApplicabilityBusinessFactAuthorityError,
-  Crypto.Crypto
+  SecureRandom.SecureRandom
 > {
   if (scope === undefined || scope.tenantId !== request.tenantId || scope.legalEntityId !== request.legalEntityId) {
     return yield* authorityUnavailable();
@@ -1070,7 +1084,11 @@ export interface OrganizationBusinessApplicabilityServices extends Pick<
     request: OrganizationBusinessApplicabilityRequest,
     context: OrganizationBusinessApplicabilityContext,
     asOf: string,
-  ) => Effect.Effect<LiveProof, ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError, Crypto.Crypto>;
+  ) => Effect.Effect<
+    LiveProof,
+    ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError,
+    SecureRandom.SecureRandom
+  >;
   readonly sourceAuthority: OrganizationBusinessSourceAuthority;
 }
 
@@ -1187,7 +1205,7 @@ export const evaluateOrganizationBusinessApplicability = Effect.fn('Privacy.eval
   ): Effect.fn.Return<
     OrganizationBusinessApplicabilityResponse,
     ReadHandlerUnavailable | PrivacyApplicabilityBusinessFactAuthorityError,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   > {
     const denied = (
       reason: Extract<OrganizationBusinessApplicabilityResponse, { outcome: 'DENIED' | 'INDETERMINATE' }>['reason'],

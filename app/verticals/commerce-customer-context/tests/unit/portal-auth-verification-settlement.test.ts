@@ -1,8 +1,11 @@
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Fiber, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { CommerceAuthSha256, makeCommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, isSqlError, SqlError } from 'effect/sql/SqlError';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
@@ -42,6 +45,7 @@ const rowsFor = (statement: string) => {
 const makeFixture = (
   execute: (statement: string, parameters: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
   release: Effect.Effect<void> = Effect.void,
+  platformCrypto: Layer.Layer<CommerceAuthSha256 | SecureRandom.SecureRandom> = commercePortalAuthPlatformCryptoLive,
 ) =>
   Effect.gen(function* makeSettlementFixture() {
     const context = yield* Layer.build(
@@ -50,10 +54,10 @@ const makeFixture = (
       ),
     );
     const executor = yield* makeWithDefaults({ relations: commercePortalAuthRelations }).pipe(Effect.provide(context));
-    return yield* makeCommercePortalAuthRecoveryStore(executor).pipe(
-      Effect.provide(commercePortalAuthPlatformCryptoLive),
-    );
+    return yield* makeCommercePortalAuthRecoveryStore(executor).pipe(Effect.provide(platformCrypto));
   });
+const digestPlatform = (digest: CommerceAuthSha256['Service']) =>
+  Layer.mergeAll(SecureRandom.layerWebCrypto, Layer.succeed(CommerceAuthSha256, digest));
 
 const diagnosticKey = Context.Service<
   Redacted.Redacted<{
@@ -65,6 +69,60 @@ const diagnosticKey = Context.Service<
   '@app/commerce-customer-context/portal-auth/persistence/portal-auth-recovery-store/VerificationSettlementDiagnostics',
 );
 const priorAnnotation = Context.Service<string>('verification-settlement-fixture-prior-annotation');
+
+it.effect('looks up the verification ledger by the unchanged SHA-256 of the presented token', () =>
+  Effect.scoped(
+    Effect.gen(function* tokenDigestParity() {
+      const parameters: unknown[] = [];
+      const store = yield* makeFixture((statement, values) => {
+        parameters.push(...values);
+        return Effect.succeed(rowsFor(statement));
+      });
+      expect(yield* store.consumeEmailVerificationWithAudit(input)).toEqual(Option.some('subject'));
+      expect(parameters).toContain(
+        'commerce-email-verification:1d852b64528afe4b43bbf68bb7185b6e62e6248bd2e0aab1002d0e0465f4577c',
+      );
+    }),
+  ),
+);
+
+it.effect('reports a stalled host digest after five seconds as the typed token-hash outage', () =>
+  Effect.scoped(
+    Effect.gen(function* stalledDigest() {
+      const statements: string[] = [];
+      const store = yield* makeFixture(
+        (statement) => {
+          statements.push(statement);
+          return Effect.succeed(rowsFor(statement));
+        },
+        Effect.void,
+        digestPlatform(makeCommerceAuthSha256(() => Effect.never)),
+      );
+      const fiber = yield* store.consumeEmailVerificationWithAudit(input).pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('5 seconds');
+      const outage = yield* Fiber.join(fiber);
+      expect(outage).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+      expect(outage.operation).toBe('verification-token-hash');
+      expect(statements).toEqual([]);
+    }),
+  ),
+);
+
+it.effect('keeps a broken native digest primitive a defect instead of a recovery outage', () =>
+  Effect.scoped(
+    Effect.gen(function* brokenDigest() {
+      const broken = new Error('Fixture SHA-256 primitive is broken');
+      const store = yield* makeFixture(
+        (statement) => Effect.succeed(rowsFor(statement)),
+        Effect.void,
+        digestPlatform(CommerceAuthSha256.of({ hash: () => Effect.die(broken) })),
+      );
+      const exit = yield* store.consumeEmailVerificationWithAudit(input).pipe(Effect.exit);
+      expect(Exit.hasDies(exit)).toBe(true);
+      expect(Exit.hasFails(exit)).toBe(false);
+    }),
+  ),
+);
 
 it.effect('maps native COMMIT SqlError defects to the declared verification unavailable failure', () =>
   Effect.scoped(

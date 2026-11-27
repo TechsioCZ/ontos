@@ -26,7 +26,8 @@ import {
 } from '@app/commerce-customer-context/api/consume-order-purchase-approval-action';
 import { executeConsumeOrderPurchaseApprovalWithAuthorization } from '@app/commerce-customer-context/api/consume-order-purchase-approval-action/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Clock, Config, Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, Config, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { OrderCommitmentRejected } from '../../shared/domain/order-commitment.ts';
 import type { OrderCommitmentState, PrepareOrderCommitmentInput } from '../../shared/domain/order-commitment.ts';
 
@@ -274,7 +275,7 @@ export const ApprovalOwnerGatewayLive = Layer.effect(
   ApprovalOwnerGateway,
   Effect.gen(function* approvalOwnerGatewayLayer() {
     const composition = yield* ActiveApplicationCompositionService;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configured = yield* configuration.pipe(Effect.match({ onFailure: Option.none, onSuccess: Option.some }));
     const credential = Effect.fn('ApprovalOwnerGateway.credential')(function* credential(scope: ApprovalGatewayScope) {
       if (Option.isNone(configured)) {

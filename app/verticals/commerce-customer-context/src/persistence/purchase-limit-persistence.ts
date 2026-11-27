@@ -180,7 +180,14 @@ const canonicalDecimal = (value: string): string => {
   if (!value.includes('.')) {
     return value;
   }
-  const canonical = value.replace(/0+$/u, '').replace(/\.$/u, '');
+  let end = value.length;
+  while (value[end - 1] === '0') {
+    end -= 1;
+  }
+  if (value[end - 1] === '.') {
+    end -= 1;
+  }
+  const canonical = value.slice(0, end);
   return canonical.length === 0 ? '0' : canonical;
 };
 

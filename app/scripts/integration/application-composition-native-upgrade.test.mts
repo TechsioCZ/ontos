@@ -1,4 +1,4 @@
-import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { migrate } from 'drizzle-orm/effect-postgres/migrator';
 import { sql } from 'drizzle-orm';
 import { DateTime, Effect, FileSystem, Layer, Path, Schema } from 'effect';
@@ -18,7 +18,10 @@ import { makeIsolatedNativeDatabaseFixture } from '../../packages/core-runtime/s
 import { makeApplicationCompositionSnapshotFixture } from '../../packages/core-runtime/src/testing/module-contract.ts';
 import { runApplicationCompositionMigration } from '../application-composition-authority-publication.mts';
 
-const services = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const services = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layer),
+);
 const completionMigration = '20261019161320_outbox-composition-completion';
 const resolutionMigration = '20261029194254_outbox-delivery-resolution';
 const migrationRoot = new URL('../../packages/core-runtime/drizzle/', import.meta.url).pathname;

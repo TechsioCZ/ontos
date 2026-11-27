@@ -847,9 +847,7 @@ const bindingMatchesRetailAccessScope = (
 ): boolean => payload.profileId === input.profileRef.resourceId && payload.principalId === principalId;
 const principalPayloadFromRow = (row: RoutineRow): PrincipalPayload | undefined =>
   row.payload !== null && Schema.is(PrincipalPayloadSchema)(row.payload) ? row.payload : undefined;
-const retailPrincipalResolutionTag = (
-  outcome: string,
-): 'RETAIL_PRINCIPAL_BOUND' | 'RETAIL_PRINCIPAL_BINDING_REVOKED' =>
+const retailPrincipalResolutionTag = (outcome: string): 'RETAIL_PRINCIPAL_BOUND' | 'RETAIL_PRINCIPAL_BINDING_REVOKED' =>
   outcome === 'RETAIL_PRINCIPAL_BOUND' ? 'RETAIL_PRINCIPAL_BOUND' : 'RETAIL_PRINCIPAL_BINDING_REVOKED';
 const reconciliationRef = (tenantId: string, resourceId: string) => ({
   moduleId: 'commerce.customer-context' as const,

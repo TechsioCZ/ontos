@@ -20,7 +20,7 @@ import {
   CurrentStorefrontApplicationApi,
   CurrentStorefrontApplicationRequestSchema,
 } from '@app/storefront-registry-contracts/current-storefront-application';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 import { DateTime, Effect, Redacted, Schema } from 'effect';
 import type { HttpApi, HttpApiGroup } from 'effect/http-api';
 import type { HttpClient } from 'effect/http';
@@ -74,7 +74,7 @@ const ownerClient = <ApiId extends string, Groups extends HttpApiGroup.Constrain
   api: HttpApi.HttpApi<ApiId, Groups>,
   owner: (typeof ownerReads)[keyof typeof ownerReads],
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) =>
   acquireDelegatedGatewayContext(
     {
@@ -110,7 +110,7 @@ const ownerClient = <ApiId extends string, Groups extends HttpApiGroup.Constrain
   );
 
 export const checkAssortmentFixtureOwnerCurrentness = (
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   scope: OperationalScope,
   at: DateTime.Utc,
   commandFingerprint: string,

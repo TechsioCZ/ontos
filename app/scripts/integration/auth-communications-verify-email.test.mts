@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { Array as EffectArray, DateTime, Effect, Exit, Order, Option, Redacted, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import {
   COMMERCE_PORTAL_AUTH_POLICY,
@@ -104,7 +104,9 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
         const { create, realm, world } = yield* setup();
         const created = yield* create();
         expect(world.submissions).toHaveLength(1);
-        const [{ request, submission }] = world.submissions;
+        const [entry] = world.submissions;
+        assert(entry !== undefined);
+        const { request, submission } = entry;
         expect(submission).toMatchObject({
           decision: { kind: 'MESSAGE_INTENTS' },
           outcome: 'DECIDED',
@@ -469,7 +471,9 @@ describe('Verification e-mail: real Auth source -> public Action -> durable deci
       Effect.gen(function* idempotency() {
         const { create, world } = yield* setup();
         yield* create();
-        const [{ request, submission }] = world.submissions;
+        const [entry] = world.submissions;
+        assert(entry !== undefined);
+        const { request, submission } = entry;
         const replayed = yield* world.submitter.submit(request);
         expect(replayed).toMatchObject({
           decisionId: decisionIdOf(submission),

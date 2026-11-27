@@ -490,7 +490,7 @@ const preservedFixtureValue = 'preserve-me';
 const topologyFile = 'topology/reference-topology.json';
 const inventoryPackageName = `@app/${inventorySlug}`;
 const workspaceVersion = 'workspace:*';
-const effectReleaseVersion = '4.0.7';
+const effectReleaseVersion = '4.1.4';
 const fixtureGatewayJti = '60000000-0000-4000-8000-000000000001';
 const actionInvokeUrl = 'https://inventory.example.test/actions/invoke';
 const generatedOutboxContractPath = './shared/outbox/orders-created.ts';
@@ -668,7 +668,7 @@ const esbuildPath = require.resolve('esbuild/bin/esbuild', {
   paths: [path.dirname(createEntry)],
 });
 const oxfmtPath = path.join(appRoot, 'node_modules', '.bin', 'oxfmt');
-const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
+const effectCompilerPath = path.join(appRoot, 'node_modules', '.bin', 'effect-tsgo');
 const modernAppEnvironmentTypes = require.resolve('@modern-js/app-tools/types');
 
 const makeGatewayKey = (
@@ -2140,10 +2140,7 @@ console.log(
         );
         for (const invalidRegistration of [
           wrongCategoryRegistration,
-          wrongCategoryRegistration.replace(
-            /^\s*'resource-detail': \(\) => import\('\.\/src\/api\/resource-detail-client\.ts'\),\n/mu,
-            '',
-          ),
+          wrongCategoryRegistration.replace(resourceDetailRegistration, ''),
         ]) {
           yield* Effect.promise(() => writeFile(registrationPath, invalidRegistration, 'utf-8'));
           yield* assertScaffoldRefused(
@@ -2806,7 +2803,7 @@ it.live(
         const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
         const stale = generated
           .replace(/^import \{ staffAuthenticationNamespaceRegistryLayer \}.*\n/mu, '')
-          .replaceAll(/\s*\| ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>/gu, '')
+          .replaceAll(/(?<!\s)\s*\| ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>/gu, '')
           .replace(/staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\)/u, 'Layer.empty');
         expect(stale).not.toMatch(/AuthenticationNamespaceRegistry/u);
         yield* write(fixture.root, inventoryActionPrincipalFile, stale);
@@ -4876,7 +4873,8 @@ it.live(
           fixture.root,
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
         );
-        expect(page).toBe(`import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+        expect(page)
+          .toBe(`import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime/consumer';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { inventoryStockI18nResources } from '../../../../i18n/resources';
 
@@ -5042,7 +5040,7 @@ it.live(
           fixture.root,
           'node_modules/@modern-js/plugin-i18n/package.json',
           json({
-            exports: { './runtime': './runtime.tsx' },
+            exports: { './runtime': './runtime.tsx', './runtime/consumer': './runtime.tsx' },
             name: '@modern-js/plugin-i18n',
             type: 'module',
           }),
@@ -6351,7 +6349,7 @@ const typecheckGeneratedWorkspace = (fixture: Fixture): Effect.Effect<void, unkn
       ),
     );
 
-    const result = spawnSync(tscPath, ['-p', fixtureTsconfig], {
+    const result = spawnSync(effectCompilerPath, ['tsrs@7.1.0-beta.tsrs3', '-p', fixtureTsconfig], {
       cwd: fixture.root,
       encoding: 'utf-8',
     });

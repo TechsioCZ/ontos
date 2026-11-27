@@ -51,7 +51,8 @@ import type {
   ReservePrincipalBindingRequestSchema,
 } from '@app/shared-contracts/external-identity';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Context, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { Context, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ShellAuthenticationApi } from '../../../shared/api.ts';
 import { issueGatewayContextAssertion } from '../gateway-issuer.ts';
@@ -456,11 +457,7 @@ interface AuthenticationAdmissionInput {
   readonly tenantId: string;
 }
 
-const mapAdmissionNonceError = (cause: unknown): ExternalIdentityFailure =>
-  externalIdentityFailure('identity_unavailable', 'Admission nonce generation is unavailable', cause);
-
-const nextAdmissionUuid = (crypto: Crypto.Crypto) =>
-  crypto.randomUUIDv4().pipe(Effect.mapError(mapAdmissionNonceError));
+const nextAdmissionUuid = (crypto: SecureRandom.SecureRandom['Service']) => crypto.uuidV4();
 
 const makeSubjectAdmission = Effect.fn('ExternalIdentityHttp.makeSubjectAdmission')(function* makeSubjectAdmission(
   input: SubjectAdmissionInput,
@@ -470,7 +467,7 @@ const makeSubjectAdmission = Effect.fn('ExternalIdentityHttp.makeSubjectAdmissio
       externalIdentityFailure('identity_invalid', 'The workload tenant identifier is malformed', error),
     ),
   );
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const match = {
     audience: input.audience,
     authContextRef: input.authenticationRef,
@@ -493,7 +490,7 @@ const makeAuthenticationAdmission = Effect.fn('ExternalIdentityHttp.makeAuthenti
         externalIdentityFailure('identity_invalid', 'The workload tenant identifier is malformed', error),
       ),
     );
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const expected = {
       audience: input.audience,
       authBindingId: input.binding.authBindingId,

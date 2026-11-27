@@ -156,9 +156,9 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     const endpoints = [
       ...content.matchAll(/HttpApiEndpoint\.(?<method>get|post)\(\s*'(?<name>[^']+)'\s*,\s*'(?<route>[^']+)'/gu),
     ].map((match) => {
-      const method = match.groups?.method ?? '';
-      const name = match.groups?.name ?? '';
-      const route = match.groups?.route ?? '';
+      const method = match.groups?.['method'] ?? '';
+      const name = match.groups?.['name'] ?? '';
+      const route = match.groups?.['route'] ?? '';
       return `${method}:${name}:${route}`;
     });
     return (
@@ -172,9 +172,9 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   };
 
   const assertPrivateOwnerImports = (file: string, content: string): void => {
-    const imports = content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu);
+    const imports = content.matchAll(/(?:from\s|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu);
     for (const match of imports) {
-      const specifier = match.groups?.specifier;
+      const specifier = match.groups?.['specifier'];
       if (specifier !== undefined) {
         const violation = privateOwnerImportViolation(workspaceRoot, file, specifier);
         if (violation !== undefined) {
@@ -203,7 +203,7 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       assertNotContains(
         file,
         content,
-        /(?:from\s+|import\s*\(|require\s*\()\s*['"]@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
+        /(?:from\s|import\s*\(|require\s*\()\s*['"]@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
         'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
       );
     }

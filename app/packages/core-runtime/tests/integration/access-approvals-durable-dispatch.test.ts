@@ -1,7 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Deferred, Effect, Exit, FileSystem, Layer, Option, Result, Schema } from 'effect';
+import { Context, DateTime, Deferred, Effect, Exit, FileSystem, Layer, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -375,9 +376,9 @@ const seedAccess = (admin: PgClient.PgClient) =>
 const durableDatabase = Effect.gen(function* durableDatabaseEffect() {
   // This disposable-database suite uses explicit process configuration, never the workspace .env.
   const connections = yield* loadDatabaseConnectionPair({ envPath: `${import.meta.filename}.no-environment-file` });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-  const name = `access_durable_dispatch_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `access_durable_dispatch_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -436,7 +437,7 @@ const publishedCapability = {
  */
 const dispatchFixture = Effect.fn('durableDispatchFixture')(function* dispatchFixtureEffect() {
   const { admin, executor, frozenCommands, store } = yield* durableDatabase;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   yield* seedAccess(admin);
   const projection = makeScriptedProjection(ROLE_REVISION_ID);
   projection.bind(requesterWitness, 'propose');
@@ -610,7 +611,9 @@ const expectStorageConflict = (code: string) => expect(code).toBe('approval_stor
 const proposalIdOf = proposalIdForInvocation(TENANT, INVOCATION);
 const secondProposalId = proposalIdForInvocation(TENANT, SECOND_INVOCATION);
 
-it.layer(NodeServices.layer)('durable propose and execute dispatch', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('durable propose and execute dispatch', (suite) => {
   suite.effect('commits the proposal, its frozen command and the proposed receipt together (O90.3)', () =>
     Effect.gen(function* parkedTogether() {
       const { admin, dispatch, executor, store } = yield* dispatchFixture();

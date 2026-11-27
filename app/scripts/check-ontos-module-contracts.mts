@@ -152,21 +152,28 @@ export const walkSourceFiles = (
     return files.flat();
   });
 
-const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: string) =>
+const IMPORT_SPECIFIER = /(?:from\s|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu;
+const PRIVATE_DEPLOYMENT_SPECIFIER = /vertical\.(?:manifest|registration|runtime-declaration)(?:\.ts)?$/u;
+const PRODUCTION_VERTICAL_ROOT = /verticals\/|@app\/(?!core-runtime(?:\/|$))/u;
+const PRIVATE_SOURCE_SEGMENT = /\/(?:src|routes|providers|handlers|repositories|db|vertical\.registration)(?:\/|$)/u;
+
+/** True when a specifier names a private source directory below a production vertical or its package. */
+const importsProductionVerticalPrivateSource = (specifier: string): boolean => {
+  const root = PRODUCTION_VERTICAL_ROOT.exec(specifier);
+  return root !== null && PRIVATE_SOURCE_SEGMENT.test(specifier.slice(root.index + root[0].length));
+};
+
+export const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: string) =>
   Effect.gen(function* checkSharedSource() {
     const content = yield* fileSystem.readFileString(filePath);
-    if (
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*(?:vertical\.manifest|vertical\.registration|vertical\.runtime-declaration)(?:\.ts)?['"]/u.test(
-        content,
-      )
-    ) {
+    const specifiers = [...content.matchAll(IMPORT_SPECIFIER)].flatMap((match) => {
+      const specifier = match.groups?.['specifier'];
+      return specifier === undefined ? [] : [specifier];
+    });
+    if (specifiers.some((specifier) => PRIVATE_DEPLOYMENT_SPECIFIER.test(specifier))) {
       yield* failure(`${filePath} imports a private deployment manifest or registration`);
     }
-    if (
-      /(?:from\s+|import\s*\(|require\s*\()\s*['"][^'"]*(?:verticals\/|@app\/(?!core-runtime(?:\/|['"])))[^'"]*\/(?:src|routes|providers|handlers|repositories|db|vertical\.registration)(?:\/|['"])/u.test(
-        content,
-      )
-    ) {
+    if (specifiers.some(importsProductionVerticalPrivateSource)) {
       yield* failure(`${filePath} imports production vertical private source`);
     }
   });
@@ -174,13 +181,10 @@ const checkSharedSourceFile = (fileSystem: FileSystem.FileSystem, filePath: stri
 const checkOwnerSourceFile = (fileSystem: FileSystem.FileSystem, ownerRoot: string, filePath: string) =>
   Effect.gen(function* checkOwnerSource() {
     const content = yield* fileSystem.readFileString(filePath);
-    const imports = [...content.matchAll(/(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu)];
+    const imports = [...content.matchAll(IMPORT_SPECIFIER)];
     const hasPrivateOwnerImportViolation = imports.some((match) => {
-      const specifier = match.groups?.specifier;
-      if (
-        specifier === undefined ||
-        !/vertical\.(?:manifest|registration|runtime-declaration)(?:\.ts)?$/u.test(specifier)
-      ) {
+      const specifier = match.groups?.['specifier'];
+      if (specifier === undefined || !PRIVATE_DEPLOYMENT_SPECIFIER.test(specifier)) {
         return false;
       }
       if (!specifier.startsWith('.')) {
@@ -232,7 +236,7 @@ const validateOwner = (filePath: string, markers: readonly string[]) =>
     if (invalidMarker !== undefined) {
       return yield* failure(`${filePath} must contain exactly one ${invalidMarker}`);
     }
-    const moduleId = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(content)?.groups?.moduleId;
+    const moduleId = /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(content)?.groups?.['moduleId'];
     if (moduleId === undefined) {
       return yield* failure(`${filePath} is missing its generated module ID marker`);
     }
@@ -554,8 +558,9 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
       validateOwner(registrationPath, declaration === undefined ? registrationMarkers : splitRegistrationMarkers),
     ]);
     if (declaration !== undefined) {
-      const deploymentMarker = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(declaration.content)?.groups
-        ?.appId;
+      const deploymentMarker = /^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/mu.exec(declaration.content)?.groups?.[
+        'appId'
+      ];
       if (deploymentMarker !== appId) {
         return yield* failure(`${appId} shared declaration deployment marker disagrees with its topology owner`);
       }
@@ -575,8 +580,8 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     }
     const verticalName = path.basename(relativePath);
     if (
-      !packageJson.scripts.build?.includes(`--vertical ${verticalName} --target dist`) ||
-      !packageJson.scripts['cloudflare:build']?.includes(`--vertical ${verticalName} --target cloudflare-dist`)
+      packageJson.scripts['build']?.includes(`--vertical ${verticalName} --target dist`) !== true ||
+      packageJson.scripts['cloudflare:build']?.includes(`--vertical ${verticalName} --target cloudflare-dist`) !== true
     ) {
       return yield* failure(`${appId} build scripts do not emit both module-contract deployment targets`);
     }
@@ -625,9 +630,12 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
       yield* failure('development ontosModuleManifests keys must exactly match topology verticals');
     }
     const contracts = yield* Effect.all(
-      topology.verticals.map((vertical) =>
-        checkVertical(workspaceRoot, vertical, overlay.ontosModuleManifests[vertical.id]),
-      ),
+      topology.verticals.map((vertical) => {
+        const url = overlay.ontosModuleManifests[vertical.id];
+        return url === undefined
+          ? failure(`Missing module manifest URL for ${vertical.id}`)
+          : checkVertical(workspaceRoot, vertical, url);
+      }),
     );
     yield* validateCoreSystemWorkloadRegistrations(workspaceRoot);
     const moduleIds = contracts.map((entry) => entry.contract.manifest.module.id);

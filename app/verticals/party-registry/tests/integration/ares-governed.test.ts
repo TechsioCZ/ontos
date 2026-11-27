@@ -12,19 +12,8 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
-import {
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Redacted,
-  Schema,
-  Predicate,
-} from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -78,7 +67,7 @@ import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject
 import { preparePartyReconciliationNative } from '../support/party-reconciliation-native.fixture.ts';
 import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const subjectEvidence = [
   {
@@ -172,11 +161,11 @@ it.layer(nativeServices, { excludeTestServices: true })((suite) => {
           keys: [jwk],
         });
         // The operation gateway issuer contract has no requirements, so assertion IDs come from the captured service.
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const sign = Effect.fn('AresGovernedTest.sign')(function* signAssertion(
           principal: typeof fixture.manager & { readonly legalEntityId?: string },
         ) {
-          const assertionId = yield* Effect.orDie(crypto.randomUUIDv4());
+          const assertionId = yield* Effect.orDie(crypto.uuidV4());
           // Grants use PostgreSQL time; derive both claims from it to preserve the exact 300-second JWT lifetime.
           const [databaseNow] = yield* adminClient<{ readonly nowSeconds: number }>`
             select floor(extract(epoch from now()))::int as "nowSeconds"
@@ -186,12 +175,12 @@ it.layer(nativeServices, { excludeTestServices: true })((suite) => {
           const expiresAtEpochSeconds = issuedAtEpochSeconds + 300;
           const token = yield* Effect.promise(() =>
             new SignJWT({
-              compositionRevision: compositionSnapshot.composition.revision,
               principal,
+              compositionRevision: compositionSnapshot.composition.revision,
               targetBuildMarker: ultramodernApiMarker.buildMarker,
               ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
             })
-              .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
+              .setProtectedHeader({ kid, alg: 'EdDSA', typ: 'JWT' })
               .setIssuer(issuer)
               .setAudience('party-registry')
               .setSubject(principal.principalId)

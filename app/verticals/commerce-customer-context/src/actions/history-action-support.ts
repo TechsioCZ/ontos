@@ -1,4 +1,4 @@
-import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
+import type { ActionHandlerContext, DomainEventContractMap, OperationalScope } from '@app/core-runtime';
 import { DateTime, Effect, Option } from 'effect';
 import type {
   RepeatCounterpartyOrderPayload,
@@ -25,7 +25,10 @@ import type { CustomerHistorySubject, HistoricalRecordRef } from '../../shared/d
 import { customerHistoryPortsForOperation } from '../history-production-services.ts';
 import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
 
-type NoDomainEvents = Readonly<Record<never, never>>;
+type HistoryActionContext = Pick<
+  ActionHandlerContext<DomainEventContractMap, HistoryActionServices>,
+  'actionInvocationId' | 'recordAuditEvidence' | 'recordDataAccess' | 'scope' | 'services'
+>;
 const moduleKey = 'commerce.customer-context' as const;
 const cartModuleKey = 'commerce.cart' as const;
 const cartResourceType = 'commerce.cart.cart' as const;
@@ -78,7 +81,7 @@ const assertTrustedTenant = (tenantId: string, refs: readonly { readonly tenantI
 };
 
 const recordRepeatEvidence = Effect.fn('HistoryActionSupport.recordRepeatEvidence')(function* recordEvidence(
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+  context: HistoryActionContext,
   input: {
     readonly actionKind: 'REPEAT_COUNTERPARTY_ORDER' | 'REPEAT_RETAIL_ORDER';
     readonly result: RepeatOrderActionResult;
@@ -170,7 +173,7 @@ const createRepeatCart = Effect.fn('HistoryActions.createRepeatCart')(function* 
   prepared: RepeatOrderPreparationResult,
   storefrontId: string | undefined,
   subject: CustomerHistorySubject,
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+  context: HistoryActionContext,
 ) {
   if (!hasRepeatableLines(prepared)) {
     return yield* new RepeatOrderNoRepeatableLines({
@@ -206,7 +209,7 @@ const createRepeatCart = Effect.fn('HistoryActions.createRepeatCart')(function* 
 
 export const handleRepeatRetailOrder = Effect.fn('HistoryActions.handleRepeatRetailOrder')(function* repeatRetail(
   payload: RepeatRetailOrderPayload,
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+  context: HistoryActionContext,
 ) {
   yield* assertTrustedTenant(context.scope.tenantId, [payload.profileRef, payload.sourceOrderRef]);
   const now = yield* context.services.now;
@@ -227,10 +230,7 @@ export const handleRepeatRetailOrder = Effect.fn('HistoryActions.handleRepeatRet
 });
 
 export const handleRepeatCounterpartyOrder = Effect.fn('HistoryActions.handleRepeatCounterpartyOrder')(
-  function* repeatCounterparty(
-    payload: RepeatCounterpartyOrderPayload,
-    context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
-  ) {
+  function* repeatCounterparty(payload: RepeatCounterpartyOrderPayload, context: HistoryActionContext) {
     yield* assertTrustedTenant(context.scope.tenantId, [
       payload.counterpartyRef,
       payload.profileRef,

@@ -1,10 +1,5 @@
-import {
-  Crypto as NativeCrypto,
-  Logger as NativeLogger,
-  Tracer as NativeTracer,
-  References as NativeReferences,
-  Schema,
-} from 'effect';
+import { Logger as NativeLogger, Tracer as NativeTracer, References as NativeReferences, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { SqlClient as NativeSqlClient } from 'effect/sql';
 import { Reactivity as NativeReactivity } from 'effect/reactivity';
 import { FetchHttpClient as NativeFetchHttpClient, HttpClient as NativeHttpClient } from 'effect/http';
@@ -82,7 +77,7 @@ interface Module {
 }
 interface Reference {
   readonly captures: Captures;
-  readonly eagerProducer?: Reference;
+  readonly eagerProducer?: Reference | undefined;
   readonly elements?: readonly Reference[];
   readonly expression: Expression;
   readonly invocation?: { readonly call: CallExpression; readonly module: Module };
@@ -135,7 +130,12 @@ const nativeEffectCallArities = new Map<
 type EffectReadWork = (
   | { readonly expression: Expression; readonly kind: 'expression' }
   | { readonly implementation: Implementation; readonly kind: 'function' }
-) & { readonly captures?: Captures; readonly depth: number; readonly module: Module; readonly requiresEffect: boolean };
+) & {
+  readonly captures?: Captures | undefined;
+  readonly depth: number;
+  readonly module: Module;
+  readonly requiresEffect: boolean;
+};
 interface ContextSnapshotProof {
   readonly expression: Expression;
   readonly module: Module;
@@ -304,6 +304,8 @@ const comparatorRequestKeys = [
   'tenantId',
 ];
 const inside = (node: Span, scope: Span): boolean => scope.start <= node.start && node.end <= scope.end;
+const isTestSourcePath = (file: string): boolean =>
+  /(?:^|\/)(?:tests?|__tests__)\//u.test(file) || /\.(?:test|spec)\.[cm]?tsx?$/u.test(file);
 const unwrap = (input: Expression): Expression => {
   let node = input;
   for (let index = 0; index < budget; index += 1) {
@@ -354,7 +356,7 @@ const nativeModule = (source: string): boolean =>
     'effect/Effect',
     'effect/Layer',
     nativeContextModule,
-    'effect/Crypto',
+    'effect/crypto',
     'effect/Schema',
     'effect/SchemaIssue',
     'effect/Logger',
@@ -644,19 +646,20 @@ const parseModule = (file: string, source: string): Module | undefined => {
           node: name,
           scope: variableScope(kinds.get(node)),
         };
-        if (node.id.type === 'Identifier' && node.init !== null) {
+        const declaredId = node.id;
+        if (declaredId.type === 'Identifier' && node.init !== null) {
           binding.init = node.init;
         }
-        if (node.id.type === 'ArrayPattern' && node.init !== null) {
-          const index = node.id.elements.findIndex(
+        if (declaredId.type === 'ArrayPattern' && node.init !== null) {
+          const index = declaredId.elements.findIndex(
             (element) => element !== null && names(element).some((value) => value.start === name.start),
           );
           if (index !== -1) {
             binding.projection = { expression: node.init, index };
           }
         }
-        if (node.id.type === 'ObjectPattern' && node.init !== null) {
-          for (const property of node.id.properties) {
+        if (declaredId.type === 'ObjectPattern' && node.init !== null) {
+          for (const property of declaredId.properties) {
             if (
               property.type === 'Property' &&
               !property.computed &&
@@ -778,7 +781,8 @@ const fixedTagMember = (module: Module, input: Expression, binding: Binding): bo
     node.type === 'MemberExpression' &&
     rootedAtBinding(module, node.object, binding) &&
     [
-      'Crypto',
+      'SecureRandom',
+      'Digest',
       'PgClient',
       'Reactivity',
       'RequestInit',
@@ -1212,7 +1216,7 @@ class FactoryResolver {
       return cached;
     }
     const source = this.sources.get(file);
-    if (source === undefined || /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[cm]?tsx?$/u.test(file)) {
+    if (source === undefined || isTestSourcePath(file)) {
       return undefined;
     }
     const parsed = parseModule(file, source);
@@ -1221,12 +1225,13 @@ class FactoryResolver {
       this.moduleMutationRevision += 1;
       for (const statement of parsed.program.body) {
         if (
-          statement.type === 'ImportDeclaration' &&
-          statement.importKind !== 'type' &&
-          (statement.specifiers.length === 0 ||
-            statement.specifiers.some(
-              (specifier) => specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type',
-            ))
+          (statement.type === 'ImportDeclaration' &&
+            statement.importKind !== 'type' &&
+            (statement.specifiers.length === 0 ||
+              statement.specifiers.some(
+                (specifier) => specifier.type !== 'ImportSpecifier' || specifier.importKind !== 'type',
+              ))) ||
+          (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type')
         ) {
           this.dependency(parsed, statement.source.value);
         }
@@ -1236,9 +1241,6 @@ class FactoryResolver {
           statement.source !== null &&
           statement.specifiers.some((specifier) => specifier.exportKind !== 'type')
         ) {
-          this.dependency(parsed, statement.source.value);
-        }
-        if (statement.type === 'ExportAllDeclaration' && statement.exportKind !== 'type') {
           this.dependency(parsed, statement.source.value);
         }
       }
@@ -1261,7 +1263,7 @@ class FactoryResolver {
     return [base, `${base}.ts`, `${base}.mts`, this.path.join(base, 'index.ts')].find((file) => this.sources.has(file));
   }
   candidateModule(file: string): Module | undefined {
-    if (/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[cm]?tsx?$/u.test(file)) {
+    if (isTestSourcePath(file)) {
       return undefined;
     }
     const active = this.modules.get(file) ?? this.parsedCandidates.get(file);
@@ -1423,7 +1425,6 @@ class FactoryResolver {
         'Context',
         'ConfigProvider',
         'Data',
-        'Crypto',
         'Logger',
         'Tracer',
         'References',
@@ -1433,6 +1434,7 @@ class FactoryResolver {
     }
     const namespaces = new Map([
       [nativeEffectClient, ['Effect', 'Layer', 'Schema', 'HttpApi', 'HttpApiGroup', 'HttpApiEndpoint']],
+      ['effect/crypto', ['SecureRandom', 'Digest']],
       ['effect/reactivity', ['Reactivity']],
       ['effect/http', ['FetchHttpClient', 'HttpClient', 'HttpRouter', 'HttpServerResponse']],
       ['@effect/sql-pg', ['PgClient']],
@@ -1446,7 +1448,6 @@ class FactoryResolver {
           'Effect',
           'Layer',
           'Context',
-          'Crypto',
           'HttpApi',
           'HttpApiGroup',
           'HttpApiEndpoint',
@@ -1641,7 +1642,9 @@ class FactoryResolver {
     const match = /^(?<kind>verticals|apps)\/(?<owner>[^/]+)\//u.exec(relative);
     return match === null
       ? undefined
-      : this.module(this.path.join(this.root, match.groups?.kind ?? '', match.groups?.owner ?? '', 'api/index.ts'));
+      : this.module(
+          this.path.join(this.root, match.groups?.['kind'] ?? '', match.groups?.['owner'] ?? '', 'api/index.ts'),
+        );
   }
   assembly(module: Module, input: Expression, captures: Captures, hops: number): Reference | undefined {
     if (hops >= budget) {
@@ -1795,6 +1798,12 @@ class FactoryResolver {
   }
 
   fixedLayerKeys(module: Module, input: Expression): readonly string[] | undefined {
+    if (this.native(module, input, 'SecureRandom', 'layerWebCrypto')) {
+      return [SecureRandom.SecureRandom.key];
+    }
+    if (this.native(module, input, 'Digest', 'layerWebCrypto')) {
+      return [Digest.Digest.key];
+    }
     if (this.native(module, input, 'Reactivity', 'layer')) {
       return [NativeReactivity.Reactivity.key];
     }
@@ -2205,8 +2214,9 @@ class FactoryResolver {
     const keys: string[] = [];
     const memo = new Map<Reference, string>();
     const remaining = { value: budget };
+    const moduleBindings = new Set(module.bindings);
     for (const [binding, reference] of captures) {
-      if (!module.bindings.includes(binding) || !inside(call, binding.scope)) {
+      if (!moduleBindings.has(binding) || !inside(call, binding.scope)) {
         continue;
       }
       const fingerprint = this.referenceFingerprint(reference, new Set(), memo, remaining);
@@ -2421,14 +2431,20 @@ class FactoryResolver {
     if (binding !== undefined && key !== undefined) {
       return { binding, key };
     }
+    return this.nativeOutputTag(module, node);
+  }
+  nativeOutputTag(module: Module, node: Expression): NativeTagIdentity | undefined {
     if (this.native(module, node, 'Tracer', 'Tracer')) {
       return { key: NativeTracer.Tracer.key };
     }
     if (this.native(module, node, 'References', 'MinimumLogLevel')) {
       return { key: NativeReferences.MinimumLogLevel.key };
     }
-    if (this.native(module, node, 'Crypto', 'Crypto')) {
-      return { key: NativeCrypto.Crypto.key };
+    if (this.native(module, node, 'Digest', 'Digest')) {
+      return { key: Digest.Digest.key };
+    }
+    if (this.native(module, node, 'SecureRandom', 'SecureRandom')) {
+      return { key: SecureRandom.SecureRandom.key };
     }
     if (this.native(module, node, 'Reactivity', 'Reactivity')) {
       return { key: NativeReactivity.Reactivity.key };
@@ -2458,8 +2474,9 @@ class FactoryResolver {
     return cohort.size === this.modules.size && [...this.modules.values()].every((module) => cohort.has(module));
   }
   taggedCallbackEnvironment(module: Module, call: CallExpression, captures: Captures): string | undefined {
+    const moduleBindings = new Set(module.bindings);
     const local = new Map(
-      [...captures].filter(([binding]) => module.bindings.includes(binding) && inside(call, binding.scope)),
+      [...captures].filter(([binding]) => moduleBindings.has(binding) && inside(call, binding.scope)),
     );
     return this.referenceFingerprint(FactoryResolver.reference(module, call, local), new Set(), new Map(), {
       value: budget,
@@ -2585,8 +2602,7 @@ class FactoryResolver {
       fn === undefined || returned === undefined
         ? undefined
         : this.values(FactoryResolver.reference(fn.module, returned, provider.frame.captures), new Set(), 0);
-    const rooted = values?.map((value) => ({ ...value, authority: binding }));
-    return rooted;
+    return values?.map((value) => ({ ...value, authority: binding }));
   }
   effectContainsRead(
     module: Module,
@@ -2605,7 +2621,14 @@ class FactoryResolver {
     }
     const closed: { readonly key: string; readonly node: object }[] = [];
     const queue: EffectReadWork[] = [
-      { captures, depth: hops, expression: input, kind: 'expression', module, requiresEffect },
+      {
+        captures,
+        depth: hops,
+        expression: input,
+        kind: 'expression',
+        module,
+        requiresEffect,
+      },
     ];
     const visited = new WeakMap<Expression | Implementation, Map<string, number>>();
     const frameIds = new Map<Captures, number>();
@@ -2683,7 +2706,14 @@ class FactoryResolver {
   expandEffectRead(work: EffectReadWork, node: Expression | Implementation, queue: EffectReadWork[]): boolean {
     const { captures, depth, module, requiresEffect } = work;
     for (const expression of FactoryResolver.effectContainerChildren(node)) {
-      queue.push({ captures, depth: depth + 1, expression, kind: 'expression', module, requiresEffect: false });
+      queue.push({
+        captures,
+        depth: depth + 1,
+        expression,
+        kind: 'expression',
+        module,
+        requiresEffect: false,
+      });
     }
     const literal = functionValue(node);
     if (literal !== undefined) {
@@ -3416,11 +3446,10 @@ class FactoryResolver {
     const aliases = module.bindings.filter(
       (binding) => binding.init !== undefined && this.function(module, binding.init)?.fn === fn,
     );
+    const exportedLocals = new Set(module.exports.values());
     if (
       aliases.length !== 1 ||
-      aliases.some(
-        (binding) => [...module.exports.values()].includes(binding.name) || !directCallsOnly(module, binding),
-      )
+      aliases.some((binding) => exportedLocals.has(binding.name) || !directCallsOnly(module, binding))
     ) {
       return false;
     }
@@ -4336,9 +4365,9 @@ class FactoryResolver {
         if (actual.arguments.some((value) => value.type === 'SpreadElement')) {
           return undefined;
         }
-        const values = actual.arguments
-          .filter((value) => value.type !== 'SpreadElement')
-          .map((value) => FactoryResolver.reference(caller, value, new Map()));
+        const values = actual.arguments.flatMap((value) =>
+          value.type === 'SpreadElement' ? [] : [FactoryResolver.reference(caller, value, new Map())],
+        );
         if (vectors.length >= budget || values.length > budget) {
           return undefined;
         }
@@ -4599,7 +4628,8 @@ class FactoryResolver {
     if (references === undefined) {
       return undefined;
     }
-    return references.length === 0 ? {} : { reference: references[0] };
+    const [reference] = references;
+    return reference === undefined ? {} : { reference };
   }
   static materializeArgumentReference(reference: Reference): Reference | undefined {
     let value = reference;
@@ -7511,9 +7541,9 @@ class FactoryResolver {
     return frames;
   }
   static consumerBodyCalls(source: ConsumerBodySource): readonly CallExpression[] {
-    const defaults = source.fn.params
-      .filter((parameter) => parameter.type === 'AssignmentPattern')
-      .map((parameter) => parameter.right);
+    const defaults = source.fn.params.flatMap((parameter) =>
+      parameter.type === 'AssignmentPattern' ? [parameter.right] : [],
+    );
     return source.module.calls.filter(
       (call) => inside(call, source.fn) && !defaults.some((value) => inside(call, value)),
     );
@@ -7734,7 +7764,7 @@ class FactoryResolver {
   consumerInventoryModules(): readonly Module[] | undefined {
     const modules: Module[] = [];
     for (const file of this.sources.keys()) {
-      if (/(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[cm]?tsx?$/u.test(file)) {
+      if (isTestSourcePath(file)) {
         continue;
       }
       const module = this.candidateModule(file);
@@ -7747,6 +7777,8 @@ class FactoryResolver {
   }
   consumerPrivateExports(modules: readonly Module[], wanted: Binding, root: Module): boolean {
     const owner = this.path.dirname(this.path.dirname(root.file));
+    const packageExportFiles = new Set(this.packageExports.values());
+    const conditionalExportFiles = new Set([...this.conditionalPackageExports.values()].flat());
     for (const module of modules) {
       for (const statement of module.program.body) {
         if (statement.type !== 'ExportAllDeclaration' || statement.exportKind === 'type') {
@@ -7772,8 +7804,8 @@ class FactoryResolver {
       if (
         relative.startsWith('..') ||
         this.path.isAbsolute(relative) ||
-        [...this.packageExports.values()].includes(module.file) ||
-        [...this.conditionalPackageExports.values()].some((files) => files.includes(module.file))
+        packageExportFiles.has(module.file) ||
+        conditionalExportFiles.has(module.file)
       ) {
         return false;
       }
@@ -8663,10 +8695,8 @@ class FactoryResolver {
     const ownBindings = bindingSyntax(module).initialized.filter(
       (binding) => binding.init !== undefined && this.function(module, binding.init)?.fn === fn,
     );
-    if (
-      methodName === undefined &&
-      !ownBindings.some((binding) => [...module.exports.values()].includes(binding.name))
-    ) {
+    const exportedLocals = new Set(module.exports.values());
+    if (methodName === undefined && !ownBindings.some((binding) => exportedLocals.has(binding.name))) {
       return [module];
     }
     for (const binding of ownBindings) {
@@ -8679,7 +8709,7 @@ class FactoryResolver {
       }
     }
     if (
-      ownBindings.some((binding) => [...module.exports.values()].includes(binding.name)) &&
+      ownBindings.some((binding) => exportedLocals.has(binding.name)) &&
       [...this.packageExports.values()].includes(module.file)
     ) {
       return undefined;
@@ -9194,9 +9224,9 @@ class FactoryResolver {
       if (path === suffix) {
         return [''];
       }
-      return suffix.startsWith(path.length === 0 ? '' : `${path}.`)
-        ? [path.length === 0 ? suffix : suffix.slice(path.length + 1)]
-        : [];
+      const prefix = path.length === 0 ? '' : `${path}.`;
+      const remainder = path.length === 0 ? suffix : suffix.slice(path.length + 1);
+      return suffix.startsWith(prefix) ? [remainder] : [];
     }
     if (node.type !== 'ObjectExpression') {
       return [];
@@ -10322,14 +10352,14 @@ class FactoryResolver {
     const node = unwrap(reference.expression);
     if (node.type === 'Identifier') {
       const binding = bindingAt(reference.module, node.name, node);
-      const input =
-        binding === undefined
-          ? undefined
-          : (reference.captures.get(binding) ??
-            (binding.init === undefined
-              ? undefined
-              : FactoryResolver.reference(reference.module, binding.init, reference.captures)));
-      return binding === undefined || seen.has(binding) || input === undefined || !stable(reference.module, binding)
+      if (binding === undefined) {
+        return undefined;
+      }
+      let input = reference.captures.get(binding);
+      if (input === undefined && binding.init !== undefined) {
+        input = FactoryResolver.reference(reference.module, binding.init, reference.captures);
+      }
+      return seen.has(binding) || input === undefined || !stable(reference.module, binding)
         ? undefined
         : this.nativeSqlQuery(input, new Set(seen).add(binding), depth + 1);
     }
@@ -10930,9 +10960,11 @@ class FactoryResolver {
     const input = this.nativeSqlInput(reference);
     const target = input === undefined ? undefined : this.function(input.module, input.expression);
     const output = input === undefined ? undefined : FactoryResolver.nativeSqlOutput(input);
-    return target === undefined || output === undefined
-      ? undefined
-      : { captures: output.captures, file: target.module.file, implementation: target.fn };
+    if (target === undefined || output === undefined) {
+      return undefined;
+    }
+    const resolved = { file: target.module.file, implementation: target.fn };
+    return output.captures === undefined ? resolved : { ...resolved, captures: output.captures };
   }
   resolveDeclaredFunction(request: ScopedContextFactoryRequest): ScopedContextFactoryCandidate | undefined {
     const module = this.module(request.file);

@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PromotionEvaluationRequestSchema, PromotionIssuedProofSchema } from '../../shared/apis/preview-promotions.ts';
@@ -290,6 +291,27 @@ const retainMonetaryProof = Effect.fn('EvaluationTest.retainProof')(function* re
 });
 
 describe('Real Promotion evaluator composition', () => {
+  it.effect('binds the Purchasing Subject with unchanged SHA-256 bytes and keeps a broken Digest a defect', () =>
+    Effect.gen(function* subjectBindingDigest() {
+      expect(yield* promotionSubjectBinding(request.purchase).pipe(Effect.provide(NodeCrypto.layer))).toBe(
+        'd90f5ea9c2dad8e9a252900c288aa793a252288e24d1471eb846550d251aa9ed',
+      );
+      const broken = yield* Effect.exit(
+        promotionSubjectBinding(request.purchase).pipe(
+          Effect.provideService(
+            Digest.Digest,
+            Digest.Digest.of({
+              digest: () => Effect.die(new Error('SHA-256 unavailable')),
+              digestHex: () => Effect.die(new Error('SHA-256 unavailable')),
+            }),
+          ),
+        ),
+      );
+      expect(Exit.hasDies(broken)).toBe(true);
+      expect(Exit.hasFails(broken)).toBe(false);
+    }),
+  );
+
   it.effect('completes proven monetary absence before Shipping and normalizes authoritative source order', () =>
     Effect.gen(function* monetaryBeforeShipping() {
       const input = {

@@ -1,4 +1,5 @@
-import { Config, Crypto, DateTime, Effect, Redacted, Result } from 'effect';
+import { Config, DateTime, Effect, Redacted, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { eq } from 'drizzle-orm';
@@ -198,7 +199,7 @@ const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.ma
   function* makeSessionAuditFixtureEffect(): Effect.fn.Return<
     SessionAuditFixture,
     unknown,
-    Scope.Scope | Crypto.Crypto
+    Scope.Scope | SecureRandom.SecureRandom
   > {
     const connectionString = yield* DATABASE_URL;
     const configuration = yield* parseCommercePortalAuthConfig({
@@ -249,7 +250,7 @@ const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.ma
       sessionId,
       sessionRows: () =>
         database.executor.select({ id: session.id }).from(session).where(eq(session.id, sessionId)).pipe(Effect.orDie),
-      store: makeCommercePortalAuthSessionStore(database.executor, yield* Crypto.Crypto),
+      store: makeCommercePortalAuthSessionStore(database.executor, yield* SecureRandom.SecureRandom),
     };
   },
 );

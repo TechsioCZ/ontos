@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Layer, Schema } from 'effect';
+import { Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { eq, sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
 import { getActionAccessTargetResolver } from '@app/core-runtime';
@@ -39,8 +40,8 @@ import { ExternalPriceInputBoundaryFactoryLive } from '../../src/services/extern
 
 const originalPriceRequestIdentityEffect = Effect.scoped(
   Effect.gen(function* originalPriceRequestIdentity() {
-    const crypto = yield* Crypto.Crypto;
-    const nextId = crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const nextId = crypto.uuidV4();
     const tenantId = yield* nextId;
     const legalEntityId = yield* nextId;
     const principalId = yield* nextId;
@@ -107,7 +108,7 @@ const originalPriceRequestIdentityEffect = Effect.scoped(
     };
     const runtime = makeActionRuntime(
       { executor: database },
-      makeActionRepository(yield* Crypto.Crypto),
+      makeActionRepository(yield* SecureRandom.SecureRandom),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       testOperationalScopeResolver,
       {

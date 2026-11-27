@@ -12,7 +12,7 @@ import type {
   ObjectExpression,
 } from 'oxc-parser';
 
-import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
+import { LanguageVariant, SyntaxKind, createScanner } from 'tsrs/ast';
 
 import { DelimiterDepth, toCamelCase } from './boundary-source-structure.mts';
 
@@ -1151,11 +1151,12 @@ export const hasConnectedGeneratedActionContract = (
       }
       for (const entry of declaration.declarations) {
         if (entry.id.type === 'Identifier') {
+          const { name: bindingName } = entry.id;
           if (declaration.kind !== 'const' || entry.init === null) {
-            blocked.add(entry.id.name);
+            blocked.add(bindingName);
           } else {
-            bindings.set(entry.id.name, [
-              ...(bindings.get(entry.id.name) ?? []),
+            bindings.set(bindingName, [
+              ...(bindings.get(bindingName) ?? []),
               { exported: statement.type === 'ExportNamedDeclaration', expression: entry.init, id: entry.id },
             ]);
           }
@@ -2141,7 +2142,7 @@ export const hasEngagementLifecycleRegistrationContract = (
   ) {
     return false;
   }
-  const subject = identity.subject === 'organization' ? 'Organization' : 'Person';
+  const subject = identity['subject'] === 'organization' ? 'Organization' : 'Person';
   const exportedName = `${toCamelCase(action)}Action`;
   const payload = `${subject}EngagementLifecyclePayload`;
   const result = `${subject}EngagementProfile`;
@@ -2517,7 +2518,7 @@ const normalizedModuleApiReadContractSource = (source: string, moduleId: string)
       ),
     ),
   ];
-  const alias = aliases.length === 1 ? aliases[0]?.groups?.name : undefined;
+  const alias = aliases.length === 1 ? aliases[0]?.groups?.['name'] : undefined;
   if (alias === undefined) {
     return source;
   }
@@ -2581,7 +2582,7 @@ const hasGeneratedModuleApiReadDefinition = (
 const hasDirectCoreReadImport = (program: Program, name: string): boolean => {
   const imports = program.body.flatMap((statement) =>
     statement.type === 'ImportDeclaration'
-      ? statement.specifiers.filter((entry) => entry.local.name === name).map((entry) => ({ entry, statement }))
+      ? statement.specifiers.flatMap((entry) => (entry.local.name === name ? [{ entry, statement }] : []))
       : [],
   );
   const [binding] = imports;
@@ -2600,9 +2601,11 @@ const directReadBinding = (program: Program, name: string) => {
   const bindings = program.body.flatMap((statement) => {
     const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
     return declaration?.type === 'VariableDeclaration'
-      ? declaration.declarations
-          .filter((entry) => entry.id.type === 'Identifier' && entry.id.name === name)
-          .map((entry) => ({ expression: entry.init, id: entry.id, kind: declaration.kind }))
+      ? declaration.declarations.flatMap((entry) =>
+          entry.id.type === 'Identifier' && entry.id.name === name
+            ? [{ expression: entry.init, id: entry.id, kind: declaration.kind }]
+            : [],
+        )
       : [];
   });
   const [binding] = bindings;

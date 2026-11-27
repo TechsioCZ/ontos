@@ -10,7 +10,8 @@ import type { OrganizationIcoFactsResponse } from '@app/party-registry/apis/orga
 import { executeOrganizationIcoFactsWithAuthorization } from '@app/party-registry/apis/organization-ico-facts/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { and, eq } from 'drizzle-orm';
-import { Config, Context, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Config, Context, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   OrganizationIcoApplicabilityContextSchema,
   OrganizationIcoApplicabilityRequestSchema,
@@ -122,7 +123,7 @@ export const organizationIcoBusinessFacts = (
 export const fetchOrganizationIcoOwnerFacts = Effect.fn('Privacy.fetchOrganizationIcoOwnerFacts')(function* ownerFacts(
   request: OrganizationIcoApplicabilityRequest,
   scope: OperationalScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   operationRequirementKey:
     | 'privacy.core.requirement.organization-ico-owner-facts'
     | 'privacy.core.requirement.record-organization-ico-owner-facts'
@@ -197,7 +198,7 @@ export const resolveOrganizationIcoBusinessFacts = Effect.fn('Privacy.resolveOrg
     const proof = yield* fetchOrganizationIcoOwnerFacts(
       context.request,
       scope,
-      yield* Crypto.Crypto,
+      yield* SecureRandom.SecureRandom,
       'privacy.core.requirement.record-organization-ico-owner-facts',
     ).pipe(Effect.mapError(authorityFailure));
     if (proof.outcome !== 'CURRENT_ORGANIZATION' || !currentProofMatches(proof, context.request, request.asOf)) {
@@ -389,7 +390,7 @@ export const organizationIcoNativeEvidenceForScope = Effect.fn('Privacy.organiza
   ): Effect.fn.Return<
     Pick<OrganizationIcoApplicabilityServices, 'decision' | 'holds' | 'purposes' | 'repository'>,
     OperationContextUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   > {
     const { purposes, repository } = yield* Effect.all(
       {
@@ -478,7 +479,7 @@ export const organizationIcoNativeEvidenceForScope = Effect.fn('Privacy.organiza
 
 export const organizationIcoApplicabilityService = Effect.fn('Privacy.organizationIcoApplicabilityServices')(
   function* make(transaction: Transaction, scope: OperationalScope) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const owner = yield* Effect.serviceOption(OrganizationIcoFactsOwner);
     const contexts = yield* organizationIcoContexts.pipe(
       Effect.mapError((cause) =>

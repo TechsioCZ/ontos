@@ -150,7 +150,7 @@ it.live(
           credentials.push(key);
           principals.push(principal.principalId);
         }
-        expect(shell.additionalRelaySourceProviderUsers.length).toBe(2);
+        expect(shell.additionalRelaySourceProviderUsers).toHaveLength(2);
         expect(new Set(principals).size).toBe(3);
         expect(new Set(credentials.map(({ providerKeyId }) => providerKeyId)).size).toBe(3);
         const issue = (apiKey: Redacted.Redacted) =>

@@ -48,7 +48,8 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeCrypto } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Clock, ConfigProvider, Context, Crypto, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
+import { Clock, ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -75,7 +76,7 @@ import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolut
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
 import { createPartyAction } from '../../src/actions/create-party.action.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const principal = {
   authBindingId: 'a1000000-0000-4000-8000-000000000001',
@@ -98,19 +99,19 @@ const otherPartyRef = {
 } as const;
 
 const archivePayload = {
-  expectedRevision: 1,
   partyRef,
+  expectedRevision: 1,
   reason: 'No longer active',
 };
 
 const archivedParty = Schema.decodeSync(PartySchema)({
+  partyRef,
   archivedAt: '2026-09-01T00:00:00.000Z',
   createdAt: '2026-09-01T00:00:00.000Z',
   businessName: 'Example organization',
   displayName: 'Example organization',
   firstName: null,
   lastName: null,
-  partyRef,
   partyType: 'ORGANIZATION' as const,
   revision: 1,
   updatedAt: '2026-09-01T00:00:00.000Z',
@@ -268,8 +269,8 @@ const makeAssertion = (
     const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
-        compositionRevision: snapshot.composition.revision,
         principal,
+        compositionRevision: snapshot.composition.revision,
         targetBuildMarker: ultramodernApiMarker.buildMarker,
         ver: 1,
       })
@@ -475,8 +476,8 @@ const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(function
   expect(Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)).toBe(true);
   expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
     invocationId,
-    retryCommand: false,
     state,
+    retryCommand: false,
   });
 });
 

@@ -11,7 +11,6 @@ import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-read
 import { and, eq, sql } from 'drizzle-orm';
 import {
   Array as EffectArray,
-  Crypto,
   Effect,
   FileSystem,
   Layer,
@@ -23,6 +22,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { assert, expect, it } from 'effect-rstest';
 
 import { CatalogToStockBindingSchema } from '../../shared/domain/catalog-to-stock-binding.ts';
@@ -186,7 +186,7 @@ const makeScenario = Effect.fn('ClosedNoncommitRelease.makeScenario')(function* 
   const fixture = yield* makeNativeReadTestContext(configuration);
   const { tenantId } = fixture.principal;
   const lineage = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const originalIds = [
     ...new Set(
       JSON.stringify({
@@ -199,7 +199,7 @@ const makeScenario = Effect.fn('ClosedNoncommitRelease.makeScenario')(function* 
   const identities = new Map([
     ...(yield* Effect.forEach(
       originalIds,
-      (source) => crypto.randomUUIDv4().pipe(Effect.map((target) => [source, target] as const)),
+      (source) => crypto.uuidV4().pipe(Effect.map((target) => [source, target] as const)),
       { concurrency: 1 },
     )),
     ['11111111-1111-4111-8111-111111111111', tenantId],

@@ -225,7 +225,7 @@ export type CommerceQuantitySelector = typeof CommerceQuantitySelectorSchema.Typ
 export const ExactPositiveCommerceQuantitySchema = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(80),
-  Schema.isPattern(/^(?:[1-9][0-9]*(?:\.[0-9]+)?|0\.0*[1-9][0-9]*)$/u),
+  Schema.isPattern(/^(?:[1-9]\d*(?:\.\d+)?|0\.0*[1-9]\d*)$/u),
 ).pipe(Schema.brand('ExactPositiveCommerceQuantity'));
 export type ExactPositiveCommerceQuantity = typeof ExactPositiveCommerceQuantitySchema.Type;
 

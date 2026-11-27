@@ -1,4 +1,5 @@
-import { Crypto, DateTime, Duration, Effect, Option, Stream } from 'effect';
+import { DateTime, Duration, Effect, Option, Stream } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { HttpClient, HttpClientRequest } from 'effect/http';
 import type { HttpClientError, HttpClientResponse } from 'effect/http';
@@ -61,7 +62,7 @@ const MAXIMUM_ERROR_BODY_CHARACTERS = 8192;
 const SAFE_CODE = /^[A-Za-z]{1,64}$/u;
 const SAFE_TOKEN = /^[!-~]{1,2048}$/u;
 const SAFE_VERSION = /^[!-~]{1,1024}$/u;
-const CONTENT_LENGTH = /^[0-9]{1,16}$/u;
+const CONTENT_LENGTH = /^\d{1,16}$/u;
 const TRANSFER_FAULT_CODE =
   /^(?:BadDigest|ClientDisconnect|IncompleteBody|InvalidDigest|RequestTimeout|XAmzContentSHA256Mismatch)$/u;
 
@@ -205,13 +206,10 @@ const readAnswer = (operation: Operation, response: HttpClientResponse.HttpClien
     Effect.mapError((fault) => networkError(`${operation}: the answer could not be read (${fault.reason._tag})`)),
   );
 
-const payloadDigest = (crypto: Crypto.Crypto, bytes: PartBytes): Effect.Effect<string, ObjectStorageFailure> =>
+const payloadDigest = (crypto: Digest.Digest['Service'], bytes: PartBytes): Effect.Effect<string> =>
   bytes.byteLength === 0
     ? Effect.succeed(EMPTY_PAYLOAD_SHA256)
-    : crypto.digest('SHA-256', bytes).pipe(
-        Effect.map((digest) => Hex.encode(digest)),
-        Effect.mapError((fault) => serverError(`The payload digest could not be computed (${fault.reason._tag})`)),
-      );
+    : crypto.digest(Digest.sha256, bytes).pipe(Effect.map((digest) => Hex.encode(digest)));
 
 interface SendInput {
   readonly body?: PartBytes;
@@ -226,7 +224,7 @@ interface SendInput {
 interface Wiring {
   readonly client: HttpClient.HttpClient;
   readonly config: S3ObjectStorageConfigValue;
-  readonly crypto: Crypto.Crypto;
+  readonly crypto: Digest.Digest['Service'];
 }
 
 interface PutTarget {
@@ -568,11 +566,11 @@ const put = Effect.fn('S3ObjectStorage.put')(function* put<BodyError>(
   );
 });
 
-/** The adapter, ready to be composed: it needs the Effect `HttpClient` and `Crypto` services and nothing else. */
+/** The adapter, ready to be composed: it needs the Effect `HttpClient` and `Digest` services and nothing else. */
 export const makeS3ObjectStorage = Effect.fn('S3ObjectStorage.make')(function* makeS3ObjectStorage(
   config: S3ObjectStorageConfigValue,
 ) {
-  const wiring: Wiring = { client: yield* HttpClient.HttpClient, config, crypto: yield* Crypto.Crypto };
+  const wiring: Wiring = { client: yield* HttpClient.HttpClient, config, crypto: yield* Digest.Digest };
   const service: ObjectStorageService = {
     get: (key) => get(wiring, key),
     maximumObjectBytes: S3_MAXIMUM_PARTS * S3_MAXIMUM_PART_BYTES,

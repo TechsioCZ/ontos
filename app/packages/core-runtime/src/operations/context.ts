@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
-import { Context, Crypto, DateTime, Effect, Layer, Option } from 'effect';
+import { Context, DateTime, Effect, Layer, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { recoverSqlTransactionError } from '../actions/repository.ts';
@@ -437,8 +438,8 @@ const validateLegalEntity = Effect.fn('OperationalScopeResolver.validateLegalEnt
 export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOperationalScopeResolver(
   repository: Pick<OperationalScopeRepository, 'load'>,
   access: OperationalScopeAccess,
-): Effect.fn.Return<OperationalScopeResolverService, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<OperationalScopeResolverService, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   const prepareExternalAdmission = Effect.fn('OperationalScopeResolver.prepareExternalAdmission')(
     function* prepareExternalAdmissionEffect(input: ResolveOperationalScopeInput) {
       const { principal } = input;
@@ -504,8 +505,8 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
       if (Option.isNone(authenticationOption)) {
         return yield* operationContextUnavailable();
       }
-      const operationRef = yield* crypto.randomUUIDv4().pipe(Effect.mapError(operationContextUnavailable));
-      const nonce = yield* crypto.randomUUIDv4().pipe(Effect.mapError(operationContextUnavailable));
+      const operationRef = yield* crypto.uuidV4();
+      const nonce = yield* crypto.uuidV4();
       const request: ExternalOperationAuthenticationRequest = {
         audience: input.audience,
         authBindingId,

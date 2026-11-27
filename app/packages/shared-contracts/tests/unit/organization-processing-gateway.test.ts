@@ -4,7 +4,8 @@ import {
   trustVerifiedGatewayPrincipalContext,
   preserveSystemPrincipalContextTrust,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { ConfigProvider, Crypto, Effect, Match, Redacted, Result, Schema, Struct } from 'effect';
+import { ConfigProvider, Effect, Match, Redacted, Result, Schema, Struct } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { acquireDelegatedGatewayContext, GatewayDelegationSourceError } from '../../src/gateway-context-server.ts';
@@ -19,10 +20,7 @@ const configuration = ConfigProvider.fromEnvRecord({
   ONTOS_GATEWAY_MODULE_API_KEY: 'fixture-module-key',
   ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test/shell-super-app-api',
 });
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 
 /** Shared transport fixture only: the response is harmless wire data and is never used as an authenticated token. */
 const sourceScope = (finite = false) => {

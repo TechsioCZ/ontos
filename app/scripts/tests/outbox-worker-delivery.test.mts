@@ -818,7 +818,7 @@ it.live('rejects missing owner identity declarations, marker sources, and live w
       [unversionedRoot, 'Missing delivery-unit build identity for ledger'],
       [versionedRoot, 'does not import its owner build identity: ledger'],
       [missingMarkerRoot, 'Missing owner build identity source for ledger'],
-    ]) {
+    ] satisfies [string, string][]) {
       const failure = yield* Effect.flip(
         Effect.tryPromise(() =>
           materializeOutboxWorker({
@@ -1129,7 +1129,7 @@ it.live('bundles the real Party host including the production Effect HTTP health
     expect(artifact.sourceInputs.includes('packages/core-runtime/src/outbox/health.ts')).toBe(true);
     expect(bundle).toMatch(/@effect\/platform-node\/NodeHttpServer/u);
     expect(bundle).not.toMatch(/from ["']@effect\/platform-node["']/u);
-    expect(runtimePackage.dependencies['@effect/platform-node']).toBe('4.0.7');
+    expect(runtimePackage.dependencies['@effect/platform-node']).toBe('4.1.4');
   }),
 );
 

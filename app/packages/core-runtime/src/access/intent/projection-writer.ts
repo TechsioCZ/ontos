@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Clock, Context, Crypto, DateTime, Effect, Layer, Match, Option, Ref, Result } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Match, Option, Ref, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import type { OperationalScope } from '../../operations/context.ts';
@@ -112,7 +113,11 @@ export interface AccessProjectionWriterService {
 export interface UnboundAccessProjectionWriter {
   readonly reconcileTenant: (
     request: TenantProjectionRequest,
-  ) => Effect.Effect<TenantProjectionWrite, AccessProjectionWriteError, AccessWriteJournalPort | Crypto.Crypto>;
+  ) => Effect.Effect<
+    TenantProjectionWrite,
+    AccessProjectionWriteError,
+    AccessWriteJournalPort | SecureRandom.SecureRandom
+  >;
 }
 
 /** The compile-checked shape of the intent reads this writer makes: one complete tenant picture (D13). */
@@ -426,18 +431,9 @@ export const reconcileTenantIntent = (
   ) {
     const { scope } = request;
     const tenantId = TenantIdSchema.make(scope.tenantId);
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const operationId = yield* Option.match(Option.fromUndefinedOr(request.operationId), {
-      onNone: () =>
-        crypto.randomUUIDv4().pipe(
-          Effect.map((minted) => AccessOperationIdSchema.make(minted)),
-          Effect.mapError((cause) =>
-            projectionWriteRefusal(
-              'access_projection_write_unavailable',
-              `An identifier for this operation could not be generated, so nothing was projected: ${cause.message}`,
-            ),
-          ),
-        ),
+      onNone: () => crypto.uuidV4().pipe(Effect.map((minted) => AccessOperationIdSchema.make(minted))),
       // A caller that resumed a journal of its own continues that operation (D24).
       onSome: (resumed: AccessOperationId) => Effect.succeed(resumed),
     });
@@ -625,12 +621,12 @@ export class AccessProjectionWriter extends Context.Service<AccessProjectionWrit
 export const AccessProjectionWriterLive: Layer.Layer<
   AccessProjectionWriter,
   never,
-  AccessProjectionCompiler | AccessWriteJournalStore | Crypto.Crypto | TenantIntentLoader
+  AccessProjectionCompiler | AccessWriteJournalStore | SecureRandom.SecureRandom | TenantIntentLoader
 > = Layer.effect(
   AccessProjectionWriter,
   Effect.gen(function* accessProjectionWriterLayer() {
     const compiler = yield* AccessProjectionCompiler;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const journal = yield* AccessWriteJournalStore;
     const loader = yield* TenantIntentLoader;
     const reconcile = reconcileTenantIntent(compiler, loader);
@@ -644,7 +640,7 @@ export const AccessProjectionWriterLive: Layer.Layer<
               readJournal: (command) => journal.readJournal(request.scope, command),
               releaseFence: (command) => journal.releaseFence(request.scope, command),
               writeJournal: (entry) => journal.writeJournal(request.scope, entry),
-            }).pipe(Context.add(Crypto.Crypto, crypto)),
+            }).pipe(Context.add(SecureRandom.SecureRandom, crypto)),
           ),
         ),
     });

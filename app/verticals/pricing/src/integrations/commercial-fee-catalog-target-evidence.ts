@@ -1,7 +1,8 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { executeProductVariantSnapshotWithAuthorization } from '@app/catalog/api/client';
 import type { PricingCommercialFeeCatalogTargetEvidence } from '@app/pricing-contracts/domain/commercial-fee';
-import { Crypto, Effect, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
@@ -123,8 +124,8 @@ export const commercialFeeCatalogTargetAssessmentPortFromEnvironment = Effect.fn
     readonly scope: OperationalScope;
   },
   execute: SnapshotExecutor = executeSnapshot,
-): Effect.fn.Return<CommercialFeeCatalogTargetAssessmentPort, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<CommercialFeeCatalogTargetAssessmentPort, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeCommercialFeeCatalogTargetAssessmentPort({
     acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
     context,

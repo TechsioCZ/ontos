@@ -1,7 +1,8 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -18,7 +19,7 @@ const fixture = Effect.gen(function* durableWorkFixture() {
   const configuration = yield* loadDatabaseConnectionPair();
   const { executor: database } = yield* makeCoreDatabase(configuration.runtime);
   const { executor: adminDatabase } = yield* makeCoreDatabase(configuration.admin);
-  const workId = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const workId = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   yield* Effect.acquireRelease(Effect.void, () =>
     Effect.gen(function* removeOwnedDurableWorkFixture() {
       yield* adminDatabase

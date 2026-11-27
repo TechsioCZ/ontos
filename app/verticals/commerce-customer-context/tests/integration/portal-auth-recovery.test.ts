@@ -2,20 +2,9 @@ import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { and, eq, inArray, like } from 'drizzle-orm';
-import {
-  Config,
-  Context,
-  Crypto,
-  DateTime,
-  Deferred,
-  Effect,
-  Fiber,
-  Layer,
-  Option,
-  Redacted,
-  Result,
-  Schema,
-} from 'effect';
+import { Config, Context, DateTime, Deferred, Effect, Fiber, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { CommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 import { expect, it } from 'effect-rstest';
 import type { Scope } from 'effect';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
@@ -79,13 +68,9 @@ const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
 const emailVerificationIdentifiers = (digests: readonly string[]): string[] =>
   digests.map((digest) => `${EMAIL_VERIFICATION_IDENTIFIER_PREFIX}${digest}`);
-const recoveryCrypto = Crypto.make({
-  digest: (algorithm, data) =>
-    Effect.sync(() => {
-      const nodeAlgorithm = algorithm.toLowerCase().replace('-', '');
-      return new Uint8Array(createHash(nodeAlgorithm).update(data).digest());
-    }),
-  randomBytes: (size) => new Uint8Array(randomBytes(size)),
+const recoveryCrypto = SecureRandom.make((size) => new Uint8Array(randomBytes(size)));
+const recoveryDigest = CommerceAuthSha256.of({
+  hash: (text) => Effect.sync(() => new Uint8Array(createHash('sha256').update(text, 'utf-8').digest())),
 });
 let recoveryFixtureNumber = 200;
 
@@ -126,9 +111,7 @@ interface RecoveryFixture {
 
 const cleanupRecoveryFixture = (fixture: RecoveryFixture) =>
   Effect.all(
-    fixture.verificationTokens.map((token) =>
-      recoveryCrypto.digest('SHA-256', new TextEncoder().encode(token)).pipe(Effect.map(bytesToHex)),
-    ),
+    fixture.verificationTokens.map((token) => recoveryDigest.hash(token).pipe(Effect.map(bytesToHex))),
     { concurrency: 1 },
   ).pipe(
     Effect.flatMap((digests) =>
@@ -169,7 +152,8 @@ const makeRecoveryFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
   });
   const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(
-    Effect.provideService(Crypto.Crypto, recoveryCrypto),
+    Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+    Effect.provideService(CommerceAuthSha256, recoveryDigest),
   );
   const email = `recovery-${caseName}-${randomUUID()}@example.test`;
   const password = `${ORIGINAL_PASSWORD}${caseName}`.slice(0, 64);
@@ -298,7 +282,7 @@ const makeRecoveryRuntime = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
 });
 
 const customVerificationRows = (fixture: RecoveryFixture) =>
-  recoveryCrypto.digest('SHA-256', new TextEncoder().encode(Redacted.value(fixture.verificationToken))).pipe(
+  recoveryDigest.hash(Redacted.value(fixture.verificationToken)).pipe(
     Effect.map(bytesToHex),
     Effect.flatMap((digest) =>
       fixture.database.executor
@@ -420,8 +404,8 @@ it.live(
       Effect.gen(function* postgresVerificationHappyPath() {
         const fixture = yield* makeRecoveryFixture('verification-consumed');
         yield* registerFixtureVerificationToken(fixture);
-        const tokenDigest = yield* recoveryCrypto
-          .digest('SHA-256', new TextEncoder().encode(Redacted.value(fixture.verificationToken)))
+        const tokenDigest = yield* recoveryDigest
+          .hash(Redacted.value(fixture.verificationToken))
           .pipe(Effect.map(bytesToHex));
         yield* Effect.addFinalizer(() =>
           fixture.database.executor
@@ -679,7 +663,8 @@ it.live('spends one PostgreSQL recovery budget across two independent HttpApi ru
         [0, 1],
         () =>
           makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
-            Effect.provideService(Crypto.Crypto, recoveryCrypto),
+            Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+            Effect.provideService(CommerceAuthSha256, recoveryDigest),
           ),
         { concurrency: 1 },
       );
@@ -697,7 +682,7 @@ it.live('spends one PostgreSQL recovery budget across two independent HttpApi ru
       yield* fixture.database.executor
         .delete(rateLimit)
         .where(inArray(rateLimit.key, [globalKey, targetedKey, bystanderKey]));
-      const requestReset = (app: (typeof runtimes)[number], email: string, origin: string) =>
+      const requestReset = (app: (typeof runtimes)[number] | undefined, email: string, origin: string) =>
         app === undefined
           ? Effect.fail(new Error('Recovery runtime was not constructed'))
           : Effect.promise(() =>
@@ -831,16 +816,15 @@ const makeDispatchFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
     yield* registerFixtureVerificationToken(fixture);
     yield* fixture.recovery.verifyEmail({ token: fixture.verificationToken });
     const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
-      Effect.provideService(Crypto.Crypto, recoveryCrypto),
+      Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+      Effect.provideService(CommerceAuthSha256, recoveryDigest),
     );
     const requested = yield* fixture.provider.requestPasswordReset({ body: { email: fixture.email } });
     expect(requested.status).toBe(true);
     const resetToken = yield* Effect.head(Effect.succeed(fixture.resetTokens)).pipe(
       Effect.mapError(() => new Error('Recovery fixture did not receive a password reset token')),
     );
-    const tokenDigest = yield* recoveryCrypto
-      .digest('SHA-256', new TextEncoder().encode(resetToken))
-      .pipe(Effect.map(bytesToHex));
+    const tokenDigest = yield* recoveryDigest.hash(resetToken).pipe(Effect.map(bytesToHex));
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* cleanupDispatchFixture() {
         yield* fixture.database.executor
@@ -1242,8 +1226,7 @@ it.live(
     ),
 );
 
-const digestOf = (token: string) =>
-  recoveryCrypto.digest('SHA-256', new TextEncoder().encode(token)).pipe(Effect.map(bytesToHex));
+const digestOf = (token: string) => recoveryDigest.hash(token).pipe(Effect.map(bytesToHex));
 
 it.live('sweeps an aged PostgreSQL dispatch claim to expired and leaves a fresh one alone', () =>
   Effect.scoped(
@@ -1316,9 +1299,7 @@ it.live(
       Effect.gen(function* postgresResetLedgerDispatchSweepRecordsReconciliation() {
         const { fixture, resetToken, store, tokenDigest } = yield* makeDispatchFixture('reset-sweep-evidence');
         const sweepingToken = `sweep-evidence-trigger-${randomUUID()}`;
-        const sweepingDigest = yield* recoveryCrypto
-          .digest('SHA-256', new TextEncoder().encode(sweepingToken))
-          .pipe(Effect.map(bytesToHex));
+        const sweepingDigest = yield* recoveryDigest.hash(sweepingToken).pipe(Effect.map(bytesToHex));
         yield* Effect.addFinalizer(() =>
           fixture.database.executor
             .delete(recoveryResetLedger)
@@ -1381,7 +1362,8 @@ it.live(
         const fixture = yield* makeRecoveryFixture('verification-completion');
         yield* registerFixtureVerificationToken(fixture);
         const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
-          Effect.provideService(Crypto.Crypto, recoveryCrypto),
+          Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+          Effect.provideService(CommerceAuthSha256, recoveryDigest),
         );
         // The one write that cannot be made is the transaction carrying the ledger's consumption
         // and the completion row together; nothing about the token or the account changes.
@@ -1425,7 +1407,8 @@ it.live(
         const fixture = yield* makeRecoveryFixture('verification-user-gone');
         yield* registerFixtureVerificationToken(fixture);
         const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
-          Effect.provideService(Crypto.Crypto, recoveryCrypto),
+          Effect.provideService(SecureRandom.SecureRandom, recoveryCrypto),
+          Effect.provideService(CommerceAuthSha256, recoveryDigest),
         );
         const reconciliation = yield* makeCommercePortalAuthRecoveryReconciliation().pipe(
           Effect.provideService(CommercePortalAuthRecoveryStoreService, store),

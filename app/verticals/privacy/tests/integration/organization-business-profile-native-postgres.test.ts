@@ -16,7 +16,8 @@ import {
 } from '@app/commerce-customer-context/domain/organization-profile-source';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { OrganizationBusinessApplicabilityIntentSchema } from '../../shared/apis/organization-business-applicability.ts';
@@ -58,12 +59,12 @@ it.live('prepares exact current-profile membership/price/source-read policies wi
       mode: 'schema-only',
       purpose: 'implementation-1096-registered-workload-gateway',
     });
-    const crypto = yield* Crypto.Crypto;
-    const tenantId = yield* crypto.randomUUIDv4();
-    const legalEntityId = yield* crypto.randomUUIDv4();
-    const governancePrincipalId = yield* crypto.randomUUIDv4();
-    const readerId = yield* crypto.randomUUIDv4();
-    const profileId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const tenantId = yield* crypto.uuidV4();
+    const legalEntityId = yield* crypto.uuidV4();
+    const governancePrincipalId = yield* crypto.uuidV4();
+    const readerId = yield* crypto.uuidV4();
+    const profileId = yield* crypto.uuidV4();
     const profileRef = {
       moduleId: 'commerce.customer-context',
       resourceId: profileId,
@@ -81,7 +82,7 @@ it.live('prepares exact current-profile membership/price/source-read policies wi
       },
     };
     const profileSource = {
-      effectId: yield* crypto.randomUUIDv4(),
+      effectId: yield* crypto.uuidV4(),
       issuer: 'internal:fixture',
       mappingRevision: 'internal-profile-mapping-v1',
       namespace: 'profiles',

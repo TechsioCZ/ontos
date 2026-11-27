@@ -332,13 +332,14 @@ export const makeCatalogToStockBindingLifecycle = (
             candidate.exactSelectionMeaning,
           ),
         ),
-        Effect.flatMap((existing) =>
-          existing.length === 0
-            ? Effect.void
-            : Effect.fail(
-                rejected(existing.length === 1 ? 'SELECTION_MEANING_ALREADY_BOUND' : 'MULTIPLE_CURRENT_BINDINGS'),
-              ),
-        ),
+        Effect.flatMap((existing) => {
+          if (existing.length === 0) {
+            return Effect.void;
+          }
+          return Effect.fail(
+            rejected(existing.length === 1 ? 'SELECTION_MEANING_ALREADY_BOUND' : 'MULTIPLE_CURRENT_BINDINGS'),
+          );
+        }),
         Effect.flatMap(() => persistence.findCurrentByStockItem(candidate.stockItem.stockItemRef)),
         Effect.flatMap(
           Option.match({

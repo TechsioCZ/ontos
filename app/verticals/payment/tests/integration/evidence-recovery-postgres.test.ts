@@ -5,7 +5,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
-import { Clock, Crypto, DateTime, Effect, Exit, Fiber, Layer, Option, Predicate, Ref, Schema } from 'effect';
+import { Clock, DateTime, Effect, Exit, Fiber, Layer, Option, Predicate, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { TestClock } from 'effect/testing';
@@ -82,7 +83,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );
 const native = <A, E>(
-  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope>,
+  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope>,
 ) => Effect.scoped(effect).pipe(Effect.provide(nativeServices));
 
 const nativeDatabase = Effect.gen(function* evidenceNativeDatabase() {
@@ -98,7 +99,7 @@ const makeEvidenceRuntimes = Effect.fn('EvidenceNative.makeRuntimes')(function* 
   compositionRevision: string,
   lockCompositionAuthority: typeof lockApplicationCompositionAuthority = openActionRuntimeOptions.lockCompositionAuthority,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const actions = makeActionRuntime(
     { executor: database.database },
@@ -274,7 +275,7 @@ const recoveryDelivery = Effect.fn('EvidenceRecoveryTest.delivery')(function* re
   const { revision } = snapshot.composition;
   const r1 = yield* makeEvidenceRuntimes(database, revision, lockApplicationCompositionAuthority);
   const evidence = evidenceScenarioOf({ native: database, r1, r2: r1, scope });
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const repository = makeOutboxRepository(database.database, crypto);
   return { database, evidence, fixture, isolated, r1, repository, revision, template };
 });
@@ -641,7 +642,7 @@ it.live(
           }),
         );
         const afterLease = DateTime.toDateUtc(DateTime.add(claimedAt, { seconds: 2 }));
-        const restarted = makeOutboxRuntime(makeOutboxRepository(database.database, yield* Crypto.Crypto));
+        const restarted = makeOutboxRuntime(makeOutboxRepository(database.database, yield* SecureRandom.SecureRandom));
         const cycle = yield* fixture.bind(
           [worker],
           restarted.runCycle({

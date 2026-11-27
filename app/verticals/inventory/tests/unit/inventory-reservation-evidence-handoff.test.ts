@@ -230,7 +230,7 @@ const originalBindingEvidence = [
     acceptedBindingOwnerEvidenceRef: 'binding-proof:original:1',
     purchaseDemandOccurrenceId: 'demand-occurrence-1',
   }),
-];
+] satisfies [typeof InventoryReservationRequirementBindingEvidenceSchema.Type];
 
 describe('Inventory Reservation evidence handoff', () => {
   it.effect('hands one exact Reservation, Confirmation, and Protection lineage to the Order proof set', () =>

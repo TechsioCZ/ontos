@@ -442,11 +442,11 @@ const prepare = Effect.fn('PrivacyOrganizationBusinessSourceNative.prepare')(fun
     authority,
     contexts,
     decisionRef,
-    processingScopeRef,
-    recordPayload,
     intent: seed.intent,
     policyRef: policy.policyKey,
+    processingScopeRef,
     purposeRef: authority.purposeRef,
+    recordPayload,
     sourceSubjectRef: snapshot.record.subjectRef,
     sourceSubjectRevision: snapshot.revision,
   };

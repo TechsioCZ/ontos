@@ -11,7 +11,8 @@ import {
 } from '@app/pricing-contracts/current-supported-currencies';
 import { executeCurrentSupportedCurrenciesWithAuthorization } from '@app/pricing-contracts/current-supported-currencies/client';
 import { SymmyRouteRefSchema, SymmySourceRecordRefSchema } from '@app/shared-contracts/symmy';
-import { Crypto, DateTime, Effect, Match, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Match, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import type { SymmyIngressProblem } from './contract.ts';
 import { SymmyRegionSourceIdSchema } from './regions-projection-contract.ts';
@@ -112,7 +113,7 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
     readonly scope: SymmyRegionsProjectionScope;
   },
   acquire: AcquireSymmyRegionOwnerAssertion,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const configuration = yield* Schema.decodeUnknownEffect(Schema.toType(SymmyRegionsProjectionConfigurationSchema))(
     input.configuration,
@@ -146,13 +147,7 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
   const markets = yield* executeCurrentMarketCatalogWithAuthorization(
     marketRequest,
     `Bearer ${Redacted.value(marketCredential.assertion)}`,
-    yield* crypto
-      .randomUUIDv4()
-      .pipe(
-        Effect.mapError(
-          (cause) => new SymmyRegionsProjectionError({ cause: Redacted.make(cause), reason: 'owner_unavailable' }),
-        ),
-      ),
+    yield* crypto.uuidV4(),
     { baseUrl: marketCredential.apiBaseUrl, compositionRevision: marketCredential.compositionRevision },
   ).pipe(Effect.mapError(ownerFailure));
   const currencyCredential = yield* acquire({ audience: 'pricing' });
@@ -166,13 +161,7 @@ export const projectSymmyRegionsWithCrypto = Effect.fn('SymmyRegions.project')(f
   const currencyResult = yield* executeCurrentSupportedCurrenciesWithAuthorization(
     currencyRequest,
     `Bearer ${Redacted.value(currencyCredential.assertion)}`,
-    yield* crypto
-      .randomUUIDv4()
-      .pipe(
-        Effect.mapError(
-          (cause) => new SymmyRegionsProjectionError({ cause: Redacted.make(cause), reason: 'owner_unavailable' }),
-        ),
-      ),
+    yield* crypto.uuidV4(),
     { baseUrl: currencyCredential.apiBaseUrl, compositionRevision: currencyCredential.compositionRevision },
   ).pipe(Effect.mapError(ownerFailure));
   if (
@@ -260,6 +249,6 @@ export const projectSymmyRegions = Effect.fn('SymmyRegions.projectWithServices')
   input: Parameters<typeof projectSymmyRegionsWithCrypto>[0],
   acquire: AcquireSymmyRegionOwnerAssertion,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return yield* projectSymmyRegionsWithCrypto(input, acquire, crypto);
 });

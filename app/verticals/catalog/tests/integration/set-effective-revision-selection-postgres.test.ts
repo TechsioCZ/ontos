@@ -80,7 +80,6 @@ import {
   Clock,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Exit,
@@ -92,6 +91,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import { selectionEvidenceReadApiLive } from '../../api/selection-evidence-read-server.ts';
@@ -138,7 +138,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
 const demand = (condition: boolean, reason: string) =>
   condition ? Effect.void : Effect.fail(new ProductAxisReceiverFailure({ reason }));
 const catalogModuleKey = 'commerce.catalog' as const;
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const produceCatalogSelection = Effect.fn('SetEffectiveRevision.produceSelection')(function* produceSelection(
   transaction: ScopedTransactionExecutor,

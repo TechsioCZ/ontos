@@ -1,4 +1,5 @@
-import { Context, Crypto, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { CommerceAuthSha256 } from '../sha256.ts';
 import type { PlatformError } from 'effect';
 
 import { withCause } from '../../../api/portal-auth/problems-support.ts';
@@ -63,10 +64,11 @@ const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16)
 /** The deterministic issuance of one enrollment operation: namespaced, one-way and distinct from the invocation identity itself. */
 export const enrollmentVerificationIssuanceRef = (
   ownerInvocationId: string,
-): Effect.Effect<PortalAuthIssuanceRef, PlatformError.PlatformError | Schema.SchemaError, Crypto.Crypto> =>
-  Crypto.Crypto.use((crypto) =>
-    crypto.digest('SHA-256', new TextEncoder().encode(`portal-auth.verify-email.enrollment|${ownerInvocationId}`)),
-  ).pipe(Effect.flatMap((digest) => decodeIssuanceRef(`pae-${hex(digest).slice(0, 40)}`)));
+): Effect.Effect<PortalAuthIssuanceRef, PlatformError.PlatformError | Schema.SchemaError, CommerceAuthSha256> =>
+  CommerceAuthSha256.pipe(
+    Effect.flatMap((crypto) => crypto.hash(`portal-auth.verify-email.enrollment|${ownerInvocationId}`)),
+    Effect.flatMap((digest) => decodeIssuanceRef(`pae-${hex(digest).slice(0, 40)}`)),
+  );
 
 const unavailable = (cause: unknown) =>
   withCause(new VerificationReplayUnavailable({ reason: 'OUTCOME_UNAVAILABLE' }), cause);
@@ -75,7 +77,7 @@ export const makeVerificationReplay = Effect.fn('CommercePortalAuthVerificationR
   function* makeVerificationReplayEffect() {
     const handoff = yield* CommercePortalAuthProtectedHandoff;
     const outcomes = yield* CommercePortalAuthCommunicationOutcomeReader;
-    const context = yield* Effect.context<Crypto.Crypto>();
+    const context = yield* Effect.context<CommerceAuthSha256>();
     const issuanceRefOf = (ownerInvocationId: string) =>
       enrollmentVerificationIssuanceRef(ownerInvocationId).pipe(
         Effect.provideContext(context),

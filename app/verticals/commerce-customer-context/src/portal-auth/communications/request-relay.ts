@@ -2,7 +2,8 @@ import {
   ActiveApplicationCompositionService,
   loadActiveApplicationComposition,
 } from '@app/core-runtime/modules/active-application-composition';
-import { Crypto, DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
+import { DateTime, Duration, Effect, Layer, Option, Ref, Result, Schedule, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { portalAuthRealmConfigured } from '../../../api/portal-auth/provider/config.ts';
 import { ultramodernApiMarker } from '../../../shared/ultramodern-build.ts';
@@ -287,7 +288,7 @@ export const makePortalAuthCommunicationRelayLive = (admitted: Effect.Effect<boo
   Layer.effectDiscard(
     Effect.gen(function* startPortalAuthCommunicationRelay() {
       const trustedScope = yield* CommercePortalAuthTrustedScope;
-      const process = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+      const process = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
       const leaseOwner = `portal-auth-relay:${process}`;
       /** Whether the previous tick was admitted, so a refused release is logged once per change. */
       const wasAdmitted = yield* Ref.make(true);

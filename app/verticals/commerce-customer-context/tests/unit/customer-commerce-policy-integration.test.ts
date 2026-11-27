@@ -1,7 +1,8 @@
 import type { ContextAccessService, OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
-import { getVerticalRuntimeEntrypoints, ScopedRoutineInvocationError } from '@app/core-runtime';
+import { getVerticalRuntimeEntrypoints, ReadHandlerUnavailable, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Predicate, Result, Schema } from 'effect';
+import { Effect, Option, Predicate, Result, Schema } from 'effect';
+import { ConnectionError, SqlError } from 'effect/sql/SqlError';
 import { describe, expect, it } from 'effect-rstest';
 
 import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
@@ -81,6 +82,7 @@ const actionPrincipal = {
 
 interface PolicyReadAuthorizationHarnessOptions {
   readonly access: TestAccessOutcome;
+  readonly inspectQuantityProfile?: () => Effect.Effect<Schema.Json, SqlError>;
   readonly routineResults?: readonly (readonly [name: string, result: Schema.Json])[];
 }
 
@@ -104,6 +106,12 @@ const makePolicyReadAuthorizationHarness = Effect.fn(function* makePolicyReadAut
         if (text.includes(routineName)) {
           handlerQueries += 1;
           routineCalls.push(routineName);
+          if (
+            routineName === 'inspect_commerce_quantity_assignment_profile' &&
+            options.inspectQuantityProfile !== undefined
+          ) {
+            return options.inspectQuantityProfile().pipe(Effect.map((inspection) => [{ result: inspection }]));
+          }
           return Effect.succeed([{ result }]);
         }
       }
@@ -1061,6 +1069,60 @@ describe('Customer Commerce Policy integration', () => {
         expect(new Set(allowed.routineCalls)).toEqual(new Set(currentRead.routineCalls));
       }
     }),
+  );
+
+  it.effect(
+    'preserves the owner-query outage contract, refuses stale Quantity Current, and recovers unchanged state',
+    () =>
+      Effect.gen(function* currentQuantityOwnerQueryOutage() {
+        let unavailable = false;
+        const privateDiagnostic = 'controlled_quantity_owner_private';
+        const transportFailure = new SqlError({
+          reason: new ConnectionError({
+            cause: { code: 'ECONNRESET', message: privateDiagnostic },
+            message: privateDiagnostic,
+            operation: 'query',
+          }),
+        });
+        const harness = yield* makePolicyReadAuthorizationHarness({
+          access: 'allowed',
+          inspectQuantityProfile: () =>
+            unavailable ? Effect.fail(transportFailure) : Effect.succeed({ outcome: 'VERIFIED' }),
+          routineResults: currentRoutineResults,
+        });
+        const read = () =>
+          harness.runtime.runRead({
+            input: { at },
+            principal: actionPrincipal,
+            registration: commerceQuantityPolicyCurrentRead,
+            transport: { correlationId: 'quantity-current-owner-query-outage' },
+          });
+        const positive = yield* read();
+        expect(positive.assignmentSet.assignments).toHaveLength(1);
+        unavailable = true;
+        const failure = yield* Effect.flip(read());
+        expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+        expect(failure).toMatchObject({
+          cause: {
+            cause: {
+              code: 'scoped_routine_invocation_failed',
+              ownerModuleKey: 'commerce.customer-context',
+              postgresCode: Option.some('ECONNRESET'),
+              routineKey: 'customer-commerce-policy.inspect-commerce-quantity-assignment-profile',
+            },
+            code: 'PERSISTENCE_UNAVAILABLE',
+            retryable: true,
+          },
+          code: 'read_handler_unavailable',
+          reason: 'Current Commerce Quantity policy is temporarily unavailable',
+        });
+        expect(JSON.stringify(failure)).not.toContain(privateDiagnostic);
+        unavailable = false;
+        expect(yield* read()).toEqual(positive);
+        expect(
+          harness.routineCalls.filter((name) => name === 'inspect_commerce_quantity_assignment_profile'),
+        ).toHaveLength(3);
+      }),
   );
 
   it('publishes real Action, outbox, read-scope, audit, and exact permission contracts', () => {

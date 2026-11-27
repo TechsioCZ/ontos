@@ -9,7 +9,8 @@ import type { ReadHandlerContext, OperationalScope, ScopedTransactionExecutor } 
 import { CurrentPricingDecisionRequestSchema } from '@app/pricing-contracts/current-pricing-decision';
 import { PricingDecisionSchema } from '@app/pricing-contracts/pricing-decision';
 import type { PricingQuotationIssued } from '@app/pricing-contracts/domain/quotation';
-import { Crypto, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   QuotationVerificationRequestSchema,
   QuotationVerificationResponseSchema,
@@ -44,7 +45,7 @@ const servicesForScope = Effect.fn('PricingQuotationVerification.servicesForScop
     if (compositionRevision === undefined) {
       return yield* unavailable('The active composition revision is required');
     }
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const owners = () =>
       pricingFinalizationOwnerGateways(scope, compositionRevision, crypto).pipe(Effect.mapError(unavailable));
     const authority = currentPricingDecisionCustomerContextSubjectAuthorityForIssuer(

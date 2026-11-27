@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -60,7 +61,7 @@ const codeOf = <Failure>(failure: Failure) =>
 // Evidence harness (GoPay / POS / refund statements through the accept and local-evidence Actions).
 // ---------------------------------------------------------------------------------------------------
 
-const nativeEvidence = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const nativeEvidence = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const nativeDatabase = Effect.gen(function* sourceReplayNativeDatabase() {
@@ -74,7 +75,7 @@ const makeRuntimes = Effect.fn('SourceReplayRoute.makeRuntimes')(function* makeR
   database: EvidenceNativeDatabase,
   compositionRevision: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const actions = makeActionRuntime(
     { executor: database.database },
@@ -223,7 +224,7 @@ const ledgerRuntime = Effect.gen(function* acquireLedgerNativeRuntime() {
   const coreAdmin = yield* makeTestDatabaseFromClient(admin, paymentTestRelations);
   const actionRuntime = makeActionRuntime(
     { executor: database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     refundRuntimePermission,
     testOperationalScopeResolver,
     {

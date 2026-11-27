@@ -1,6 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessTeamId, AuthorityCell, ResolvedAgentConnection } from '../../src/access/decision/authority.ts';
@@ -116,12 +117,14 @@ const cellMatchesQuery =
     cell.capabilityKey === query.capabilityKey &&
     cell.mode === query.mode;
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('access decision engine against SpiceDB', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices, { excludeTestServices: true })('access decision engine against SpiceDB', (suite) => {
   suite.effect('decides against a real SpiceDB projection with one bulk snapshot per decision', () =>
     Effect.gen(function* decidesAgainstRealSpiceDb() {
       const configuration = yield* loadSpiceDbConfig();
-      const crypto = yield* Crypto.Crypto;
-      const uuid = () => crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const uuid = () => crypto.uuidV4();
       const ids = yield* Effect.all({
         agentId: uuid(),
         alice: uuid(),

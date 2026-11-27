@@ -56,8 +56,8 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
     const issuedAt = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const token = yield* Effect.promise(() =>
       new SignJWT({
-        principal,
         compositionRevision: compositionSnapshot.composition.revision,
+        principal,
         targetBuildMarker: ultramodernApiMarker.buildMarker,
         ver: 1,
       })

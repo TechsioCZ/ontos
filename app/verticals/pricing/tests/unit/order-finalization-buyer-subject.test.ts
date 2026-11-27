@@ -1,7 +1,8 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { PricingCommitmentConfirmationBindingSchema } from '@app/pricing-contracts/domain/commitment-confirmation';
-import { ConfigProvider, Crypto, Effect, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -59,7 +60,7 @@ const candidateRoute = (buyerPrincipalId: string) => ({
 
 // The actual gateway guard, delegated Shell client and owner HTTP clients run; only their peers are fakes.
 const overTransport = <A, E>(
-  program: Effect.Effect<A, E, Crypto.Crypto>,
+  program: Effect.Effect<A, E, SecureRandom.SecureRandom>,
   transport: ReturnType<typeof makeOwnerTransport>,
 ) =>
   program.pipe(
@@ -70,7 +71,7 @@ const overTransport = <A, E>(
 const readCandidate = (scope: ReturnType<typeof scopeFor>, transport: ReturnType<typeof makeOwnerTransport>) =>
   overTransport(
     Effect.gen(function* readOwnerCandidate() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const owners = yield* pricingFinalizationOwnerGateways(scope, revision, crypto);
       return yield* owners.readCandidate(candidateRef, candidateHash);
     }),
@@ -163,7 +164,7 @@ it.layer(NodeCrypto.layer)('Order finalization owner gateways act for the buyer 
       ]);
       const failure = yield* overTransport(
         Effect.gen(function* verifyForeignBinding() {
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           const owners = yield* pricingFinalizationOwnerGateways(scopeFor('commerce-order'), revision, crypto);
           return yield* Effect.flip(owners.verifyBinding(binding));
         }),

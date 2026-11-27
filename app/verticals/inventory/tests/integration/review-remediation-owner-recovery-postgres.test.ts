@@ -1,8 +1,9 @@
 import { inventoryRegistration } from '../../vertical.registration.ts';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Context, Crypto, Effect, Match, Ref, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { Context, Effect, Match, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { assert, expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -272,9 +273,8 @@ it.live('repairs physical and reservation owner state before terminal recovery w
       const reservation = replaceStrings(ProvisionalInventoryReservationSchema, baseLineage.reservation);
       const positionRef = reservation.requirements[0]?.allocations[0]?.positionRef;
       const unitRef = reservation.requirements[0]?.unitRef;
-      if (positionRef === undefined || unitRef === undefined) {
-        yield* Effect.die('owner recovery fixture requires one allocated stock position');
-      }
+      assert.isDefined(positionRef, 'owner recovery fixture requires one allocated stock position');
+      assert.isDefined(unitRef, 'owner recovery fixture requires a stock unit');
       const stockLocationRef = {
         moduleId: 'commerce.inventory' as const,
         resourceId: 'a6666666-6666-4666-8666-666666666666',
@@ -543,7 +543,7 @@ it.live('repairs physical and reservation owner state before terminal recovery w
       };
       const actionRuntime = makeActionRuntime(
         { executor: runtimeDatabase },
-        makeActionRepository(yield* Crypto.Crypto),
+        makeActionRepository(yield* SecureRandom.SecureRandom),
         allowedPermission,
         testOperationalScopeResolver,
         {

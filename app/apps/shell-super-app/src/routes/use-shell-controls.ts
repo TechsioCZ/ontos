@@ -9,6 +9,7 @@ import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts'
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
+import { useHydrated } from './use-hydrated.ts';
 
 const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
 type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
@@ -45,7 +46,8 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
   const { language } = useModernI18n();
   const navigate = useNavigate();
   const compositionRevision = model?.compositionRevision;
-  const browserDocument = 'document' in globalThis ? globalThis.document : undefined;
+  const hydrated = useHydrated();
+  const browserDocument = hydrated && 'document' in globalThis ? globalThis.document : undefined;
   const reloadRequired =
     compositionRevision !== undefined &&
     browserDocument !== undefined &&
@@ -76,8 +78,8 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
         Effect.matchEffect({
           onFailure: (error) =>
             Effect.sync(() => {
-              void error;
               setLogoutFailed(true);
+              return error;
             }),
           onSuccess: Effect.succeed,
         }),
@@ -108,8 +110,8 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
         Effect.matchEffect({
           onFailure: (error) =>
             Effect.sync(() => {
-              void error;
               setFailed(true);
+              return error;
             }),
           onSuccess: Effect.succeed,
         }),

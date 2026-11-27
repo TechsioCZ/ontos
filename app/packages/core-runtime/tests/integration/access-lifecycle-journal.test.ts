@@ -1,7 +1,8 @@
 // @effect-diagnostics strictEffectProvide:off -- Test-owned entry point: it provides the store and its one-request port to `runAccessWrite` itself; expires: 2026-12-31.
 import { NodeCrypto } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
-import { Crypto, DateTime, Deferred, Effect, Match, Option, Ref, Result, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Match, Option, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -50,7 +51,7 @@ import type { TestDatabaseFromClient } from '../support/database.ts';
  */
 type CoreTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const digestOf = (seed: string) => CommandDigestSchema.make(seed.repeat(64));
 
 const databaseFixture = Effect.gen(function* accessJournalDatabases() {

@@ -65,7 +65,6 @@ import {
   ConfigProvider,
   DateTime,
   Context,
-  Crypto,
   Deferred,
   Effect,
   Exit,
@@ -80,6 +79,7 @@ import {
   Stream,
   Scope,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServer, HttpServerResponse } from 'effect/http';
@@ -87,7 +87,7 @@ import { Socket } from 'effect/socket';
 import { createHash } from 'node:crypto';
 import { generateKeyPair, exportJWK, decodeJwt } from 'jose';
 import { Pool } from 'pg';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import {
   OwnerExecutionOutcomeSchema,
@@ -320,8 +320,8 @@ const prepareNativeIdentities = Effect.fn('PrivacyFixture.prepareNativeIdentitie
     address.pathname = `/${capability.databaseName}`;
     urls[identity.urlKey] = address.href;
   }
-  const issuerUrl = urls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-  const requestUrl = urls.PARTY_REGISTRY_DATABASE_URL;
+  const issuerUrl = urls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+  const requestUrl = urls['PARTY_REGISTRY_DATABASE_URL'];
   if (issuerUrl === undefined || requestUrl === undefined) {
     return yield* failure('Canonical native fixture identities were incomplete');
   }
@@ -632,7 +632,7 @@ const observePublicWriter = <Value>(writer: Deferred.Deferred<Result.Result<Valu
   });
 const privilegesMatch = (actual: Readonly<Record<string, boolean>>, allowed: readonly string[]) =>
   Object.entries(actual).every(([operation, permitted]) => permitted === allowed.includes(operation)) &&
-  allowed.every((operation) => actual[operation]);
+  allowed.every((operation) => actual[operation] === true);
 const surplusCapabilitiesSchema = Schema.Struct({
   schemaCreate: Schema.Boolean,
   schemaUsageGrant: Schema.Boolean,
@@ -650,7 +650,7 @@ const receivePrivateShellResponse = (
   ) => Effect.Effect<
     { readonly handoff: LiveOperationFixtureRuntimeHandoff; readonly type: 'fixture-prepared' },
     Effect.Error<ReturnType<typeof makeLiveOperationFixture>>,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >,
 ) =>
   Effect.gen(function* privateShellResponse() {
@@ -751,15 +751,15 @@ const start = Effect.fn('PrivacyCompletionTest.start')(function* start(
     yield* child.stdout.pipe(
       Stream.decodeText(),
       Stream.splitLines,
-      Stream.runForEach((value) =>
+      Stream.runForEach((value) => {
         // Worker/owner stdout contains only non-secret machine messages; Shell uses its private socket.
-        value.startsWith('{')
-          ? (retrySession === undefined
-              ? Deferred.succeed(line, value)
-              : Queue.offer(retrySession.replies, value)
-            ).pipe(Effect.asVoid)
-          : Effect.void,
-      ),
+        if (!value.startsWith('{')) {
+          return Effect.void;
+        }
+        const publish =
+          retrySession === undefined ? Deferred.succeed(line, value) : Queue.offer(retrySession.replies, value);
+        return publish.pipe(Effect.asVoid);
+      }),
       Effect.ensuring(
         retrySession === undefined
           ? Effect.void
@@ -820,8 +820,8 @@ const prepareArtifacts = Effect.gen(function* prepareNativeArtifacts() {
   const shellIdentity = yield* resolvePrivacyFixtureShellBuildIdentity(shellRelease);
   const encodeBuildIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
-  const crypto = yield* Crypto.Crypto;
-  const suffix = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const suffix = yield* crypto.uuidV4();
   const fs = yield* FileSystem.FileSystem;
   const roots = {
     party: `${appRoot}verticals/party-registry/node_modules/.cache/ontos-1258/${suffix}`,
@@ -1067,8 +1067,8 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
   if (additionalLegalEntity === 'same-tenant') {
     Object.assign(additionalLegalEntityConfiguration, { additionalLegalEntity });
   }
-  const crypto = yield* Crypto.Crypto;
-  const suffix = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const suffix = yield* crypto.uuidV4();
   const { contractsDescription, party, paths, privacyMarker, shellDescription } = yield* PreparedArtifacts;
   yield* Effect.logInfo('Privacy fixture setup: immutable artifacts available');
   const base = yield* makePrivacyPartyCompositionSnapshot(contractsDescription);
@@ -1438,7 +1438,7 @@ const fixture = Effect.gen(function* publicCompletionFixture() {
     preconditionRefs: ['TEST:decision'],
     requestedAt: '2026-01-01T00:00:00.000Z',
     requestedResult: 'RESTRICTED',
-    resourceRefs: [`party.registry|party.registry.counterparty|${shell.legalEntityId}|${yield* crypto.randomUUIDv4()}`],
+    resourceRefs: [`party.registry|party.registry.counterparty|${shell.legalEntityId}|${yield* crypto.uuidV4()}`],
     right: null,
     sourceDecisionRef: `decision:${suffix}`,
     sourceDecisionRevision: 1,
@@ -1862,9 +1862,13 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
       for (const [schema, path, declaration] of sources) {
         const source = yield* fs.readFileString(`${appRoot}${path}`);
         const body = source.split(`const ${declaration} = [`)[1]?.split('] as const;')[0];
-        expect(body).toBeDefined();
+        assert(body !== undefined);
         const expected = EffectArray.sort(
-          Array.from((body ?? '').matchAll(/'(?<table>[^']+)'/gu), (match) => match[1]),
+          Array.from(body.matchAll(/'(?<table>[^']+)'/gu), (match) => {
+            const [, table] = match;
+            assert(table !== undefined);
+            return table;
+          }),
           Order.String,
         );
         const actual = fixtureRuntimeInventory
@@ -1875,9 +1879,13 @@ it.layer(services, { excludeTestServices: true })('owned bootstrap source contra
       }
       const verifier = yield* fs.readFileString(`${appRoot}verticals/privacy/scripts/verify-db-schema.mts`);
       const immutableBody = verifier.split('const IMMUTABLE_TABLES = [')[1]?.split('] as const;')[0];
-      expect(immutableBody).toBeDefined();
+      assert(immutableBody !== undefined);
       const immutable = EffectArray.sort(
-        Array.from((immutableBody ?? '').matchAll(/'(?<table>[^']+)'/gu), (match) => match[1]),
+        Array.from(immutableBody.matchAll(/'(?<table>[^']+)'/gu), (match) => {
+          const [, table] = match;
+          assert(table !== undefined);
+          return table;
+        }),
         Order.String,
       );
       expect(

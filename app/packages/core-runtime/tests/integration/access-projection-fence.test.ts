@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Cause, Context, Crypto, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TenantAccessBootstrap, TenantAccessBootstrapLive } from '../../src/access/bootstrap/index.ts';
@@ -183,12 +184,12 @@ const withTenant = <Value, Failure>(
   run: (tenant: Tenant) => Effect.Effect<Value, Failure>,
 ) =>
   Effect.gen(function* tenantScenario() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const [connections, configuration] = yield* Effect.all([loadDatabaseConnectionPair(), loadSpiceDbConfig()], {
       concurrency: 2,
     }).pipe(Effect.orDie);
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `access_projection_fence_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const database = `access_projection_fence_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
@@ -198,7 +199,7 @@ const withTenant = <Value, Failure>(
     });
     // The whole committed migration set, its login roles and their grants: the same schema every suite uses.
     yield* createTemplateDatabase(admin);
-    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+    const tenantId = TenantIdSchema.make(yield* crypto.uuidV4());
     yield* seedTenant(admin, tenantId);
     const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
       maxConnections: 4,
@@ -316,7 +317,9 @@ const forkPausedReconciliation = (tenant: Tenant, scope: OperationalScope) =>
     return fiber;
   });
 
-it.layer(NodeServices.layer)('access projection fence', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('access projection fence', (suite) => {
   suite.effect('does not restore a revoked member when a reconcile was still waiting for the fence', () =>
     withTenant('fence_scope', (tenant) =>
       Effect.gen(function* revokedWhileWaitingForTheFence() {

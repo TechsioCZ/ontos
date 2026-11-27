@@ -421,7 +421,7 @@ it.effect('asks for a company when nothing company-scoped could be decided witho
     }).compose(tenantScope);
     expect(result).toEqual({ navigation: [], state: 'selection_required' });
     // The Shell never guesses at the company's absence: the gate reports the missing scope (O28).
-    expect(gate.batches.length).toBe(1);
+    expect(gate.batches).toHaveLength(1);
     expect(gate.batches[0]?.every((entry) => entry.legalEntityScope === 'required') ?? false).toBe(true);
   }),
 );

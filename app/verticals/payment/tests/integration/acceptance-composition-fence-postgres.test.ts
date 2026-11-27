@@ -14,7 +14,8 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { and, count, eq, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
-import { ConfigProvider, Crypto, DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Exit, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import type { ChildProcessSpawner } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -115,7 +116,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeCrypto.layer),
 );
 const native = <A, E>(
-  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope>,
+  effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom | Scope.Scope>,
 ) => Effect.scoped(effect).pipe(Effect.provide(nativeServices));
 
 /**
@@ -163,7 +164,7 @@ const isolatedPayment = Effect.fn('AcceptanceCompositionFence.isolated')(functio
   const accessDecision = makeScriptedBoundAccessGate('allowed').bound;
   const actions: ActionRuntimeService = makeActionRuntime(
     { executor: database.database },
-    makeActionRepository(yield* Crypto.Crypto),
+    makeActionRepository(yield* SecureRandom.SecureRandom),
     evidenceAllowedPermission,
     testOperationalScopeResolver,
     {
@@ -542,10 +543,10 @@ it.live(
 
         // Core's real Outbox matcher keeps running while admission is closed. It hands both rows to
         // Payment's registered executor and recovery workers: a delivery is never completion of the work.
-        const matched = yield* makeOutboxRepository(payment.database.database, yield* Crypto.Crypto).matchUnmatched(
-          payment.revision,
-          yield* DateTime.nowAsDate,
-        );
+        const matched = yield* makeOutboxRepository(
+          payment.database.database,
+          yield* SecureRandom.SecureRandom,
+        ).matchUnmatched(payment.revision, yield* DateTime.nowAsDate);
         expect(matched).toEqual({ deliveriesCreated: 2, messagesMatched: 2 });
         expect((yield* paymentMessages).every((message) => message.matchedAt !== null)).toBe(true);
         // Matched Outbox rows do not release R1: the unknown COLLECT is still tracked, so it neither
@@ -628,7 +629,7 @@ it.live(
         expect(Exit.isFailure(yield* Effect.exit(payment.isolated.composition.seal()))).toBe(true);
 
         // Matching hands the row to the registered executor; it still holds R1 until the executor completes.
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const repository = makeOutboxRepository(payment.database.database, crypto);
         const now = yield* DateTime.nowAsDate;
         expect(yield* repository.matchUnmatched(payment.revision, now)).toEqual({

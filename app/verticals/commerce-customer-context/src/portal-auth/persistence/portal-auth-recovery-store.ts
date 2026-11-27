@@ -1,6 +1,8 @@
 import { isSqlError } from 'effect/sql/SqlError';
 import { and, desc, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
-import { Cause, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { Cause, Context, DateTime, Effect, Exit, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { CommerceAuthSha256 } from '../sha256.ts';
 
 import { CommercePortalAuthProviderSubjectIdSchema } from '../../../api/portal-auth/provider/recovery/contracts.ts';
 import type {
@@ -60,7 +62,8 @@ const VerificationLedgerRecordSchema = Schema.Struct({
 });
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
-const digestBytes = (crypto: Crypto.Crypto, value: string) => crypto.digest('SHA-256', new TextEncoder().encode(value));
+const digestBytes = (digest: CommerceAuthSha256['Service'], value: string, operation: string) =>
+  digest.hash(value).pipe(Effect.mapError((cause) => unavailable(operation, cause)));
 
 const base64UrlOf = (bytes: Uint8Array): string =>
   btoa(String.fromCodePoint(...bytes))
@@ -225,20 +228,20 @@ const emailVerificationIdentifier = (digest: string): string => `${EMAIL_VERIFIC
 const emailVerificationReservationIdentifier = (digest: string): string =>
   `${EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX}${digest}`;
 
-const digestText = (crypto: Crypto.Crypto, value: string) =>
-  crypto.digest('SHA-256', new TextEncoder().encode(value)).pipe(Effect.map(bytesToHex));
+const digestText = (digest: CommerceAuthSha256['Service'], value: string, operation: string) =>
+  digestBytes(digest, value, operation).pipe(Effect.map(bytesToHex));
 
-const digestToken = (crypto: Crypto.Crypto, token: Redacted.Redacted) =>
-  crypto.digest('SHA-256', new TextEncoder().encode(Redacted.value(token))).pipe(Effect.map(bytesToHex));
+const digestToken = (digest: CommerceAuthSha256['Service'], token: Redacted.Redacted, operation: string) =>
+  digestText(digest, Redacted.value(token), operation);
 
 /**
  * Whether two secrets are the same, compared as their SHA-256 digests: the comparison never branches on where the secrets first
  * differ, so its timing says nothing about a secret a caller does not already hold.
  */
-const sameSecret = (crypto: Crypto.Crypto, left: string, right: string) =>
-  Effect.all([digestText(crypto, left), digestText(crypto, right)], { concurrency: 1 }).pipe(
-    Effect.map(([first, second]) => first === second),
-  );
+const sameSecret = (digest: CommerceAuthSha256['Service'], left: string, right: string) =>
+  Effect.all([digestText(digest, left, 'otp-compare-hash'), digestText(digest, right, 'otp-compare-hash')], {
+    concurrency: 1,
+  }).pipe(Effect.map(([first, second]) => first === second));
 
 const epochMillis = (value: Date): number => {
   const date = DateTime.make(value);
@@ -298,23 +301,22 @@ const RATE_LIMIT_RETENTION_MILLISECONDS =
 export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuthRecoveryStore.make')(
   function* makeCommercePortalAuthRecoveryStoreEffect(
     database: CommercePortalAuthDatabaseExecutor,
-  ): Effect.fn.Return<CommercePortalAuthRecoveryStore, never, Crypto.Crypto> {
-    const crypto = yield* Crypto.Crypto;
+  ): Effect.fn.Return<CommercePortalAuthRecoveryStore, never, SecureRandom.SecureRandom | CommerceAuthSha256> {
+    const crypto = yield* SecureRandom.SecureRandom;
+    const digestService = yield* CommerceAuthSha256;
 
     const registerEmailVerificationToken = Effect.fn('CommercePortalAuthRecoveryStore.registerEmailVerificationToken')(
       function* registerEmailVerificationTokenEffect(
         input: CommercePortalAuthEmailVerificationTokenRegistration & { readonly expiresAt: Date },
       ): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const digest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
-        );
-        const verificationId = yield* crypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError((cause) => unavailable('verification-token-id', cause)));
+        const digest = yield* digestToken(digestService, input.token, 'verification-token-hash');
+        const verificationId = yield* crypto.uuidV4();
         const identifier = emailVerificationIdentifier(digest);
-        const reservationDigest = yield* digestText(crypto, normalizeCommercePortalAuthEmail(input.email)).pipe(
-          Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
+        const reservationDigest = yield* digestText(
+          digestService,
+          normalizeCommercePortalAuthEmail(input.email),
+          'verification-reservation-hash',
         );
         const reservationIdentifier = emailVerificationReservationIdentifier(reservationDigest);
         return yield* database
@@ -383,13 +385,13 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       readonly providerSubjectId: string;
     }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
       const now = yield* DateTime.nowAsDate;
-      const emailDigest = yield* digestText(crypto, normalizeCommercePortalAuthEmail(input.email)).pipe(
-        Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
+      const emailDigest = yield* digestText(
+        digestService,
+        normalizeCommercePortalAuthEmail(input.email),
+        'verification-reservation-hash',
       );
       const identifier = emailVerificationReservationIdentifier(emailDigest);
-      const reservationId = yield* crypto
-        .randomUUIDv4()
-        .pipe(Effect.mapError((cause) => unavailable('verification-reservation-id', cause)));
+      const reservationId = yield* crypto.uuidV4();
       const expiresAt = DateTime.toDate(
         DateTime.add(DateTime.makeUnsafe(now), {
           seconds: COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds,
@@ -447,9 +449,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       readonly now: Date;
       readonly token: Redacted.Redacted;
     }): Effect.fn.Return<Option.Option<string>, CommercePortalAuthRecoveryUnavailable> {
-      const digest = yield* digestToken(crypto, input.token).pipe(
-        Effect.mapError((cause) => unavailable('verification-token-hash', cause)),
-      );
+      const digest = yield* digestToken(digestService, input.token, 'verification-token-hash');
       const identifier = emailVerificationIdentifier(digest);
       const transactionBody = Effect.fn(
         'CommercePortalAuthRecoveryStore.consumeEmailVerificationWithAudit.transaction',
@@ -632,9 +632,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         .where(eq(user.email, email))
         .limit(1)
         .pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
-      const reconciliationId = yield* crypto
-        .randomUUIDv4()
-        .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)));
+      const reconciliationId = yield* crypto.uuidV4();
       yield* insertRecoveryReconciliationRow(transaction, {
         conflictClass: 'RESET_OUTCOME_INDETERMINATE',
         createdAt: now,
@@ -744,12 +742,8 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         // running concurrently, bounded to the two of them.
         const [identifierDigest, tokenDigest] = yield* Effect.all(
           [
-            digestText(crypto, email).pipe(
-              Effect.mapError((cause) => unavailable('password-reset-identifier-hash', cause)),
-            ),
-            digestToken(crypto, input.token).pipe(
-              Effect.mapError((cause) => unavailable('password-reset-token-hash', cause)),
-            ),
+            digestText(digestService, email, 'password-reset-identifier-hash'),
+            digestToken(digestService, input.token, 'password-reset-token-hash'),
           ],
           { concurrency: 2 },
         );
@@ -792,9 +786,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         Option.Option<CommercePortalAuthRecoveryLedgerBinding>,
         CommercePortalAuthRecoveryUnavailable
       > {
-        const digest = yield* digestToken(crypto, token).pipe(
-          Effect.mapError((cause) => unavailable('recovery-ledger-peek-hash', cause)),
-        );
+        const digest = yield* digestToken(digestService, token, 'recovery-ledger-peek-hash');
         const now = yield* DateTime.nowAsDate;
         const identifier = `${prefix}${digest}`;
         // An expired token can no longer verify anything, so it must not be evidence either:
@@ -874,9 +866,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         CommercePortalAuthRecoveryUnavailable
       > {
         const now = yield* DateTime.nowAsDate;
-        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('password-reset-ledger-peek-hash', cause)),
-        );
+        const tokenDigest = yield* digestToken(digestService, input.token, 'password-reset-ledger-peek-hash');
         const rows = yield* database
           .select({
             email: recoveryResetLedger.email,
@@ -925,9 +915,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly token: Redacted.Redacted;
       }): Effect.fn.Return<CommercePortalAuthRecoveryResetClaim, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-hash', cause)),
-        );
+        const tokenDigest = yield* digestToken(digestService, input.token, 'password-reset-ledger-dispatch-hash');
         const claimed = yield* database
           .update(recoveryResetLedger)
           .set({ dispatchedAt: now, state: RESET_LEDGER_STATE_DISPATCHED, updatedAt: now })
@@ -963,9 +951,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly token: Redacted.Redacted;
       }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailable('password-reset-ledger-release-hash', cause)),
-        );
+        const tokenDigest = yield* digestToken(digestService, input.token, 'password-reset-ledger-release-hash');
         yield* database
           .update(recoveryResetLedger)
           .set({ dispatchedAt: null, state: RESET_LEDGER_STATE_PENDING, updatedAt: now })
@@ -993,9 +979,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       Option.Option<CommercePortalAuthRecoveryLedgerBinding>,
       CommercePortalAuthRecoveryUnavailable
     > {
-      const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-        Effect.mapError((cause) => unavailable('password-reset-ledger-dispatch-peek-hash', cause)),
-      );
+      const tokenDigest = yield* digestToken(digestService, input.token, 'password-reset-ledger-dispatch-peek-hash');
       const rows = yield* database
         .select({ email: recoveryResetLedger.email, providerSubjectId: recoveryResetLedger.providerSubjectId })
         .from(recoveryResetLedger)
@@ -1031,9 +1015,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       readonly token: Redacted.Redacted;
     }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
       const now = yield* DateTime.nowAsDate;
-      const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-        Effect.mapError((cause) => unavailable('password-reset-ledger-consume-hash', cause)),
-      );
+      const tokenDigest = yield* digestToken(digestService, input.token, 'password-reset-ledger-consume-hash');
       yield* database
         .transaction(
           Effect.fn('CommercePortalAuthRecoveryStore.consumePasswordResetLedgerWithAudit.transaction')(
@@ -1097,9 +1079,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly providerSubjectId: string;
       }): Effect.fn.Return<void, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const id = yield* crypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError((cause) => unavailable('recovery-reconciliation-id', cause)));
+        const id = yield* crypto.uuidV4();
         yield* insertRecoveryReconciliationRow(database, {
           conflictClass: input.conflictClass,
           createdAt: now,
@@ -1114,7 +1094,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
 
     /** The identifier Better Auth stores a two-factor code under: its key, hashed (SHA-256, base64url) as the realm configures. */
     const storedOtpIdentifier = (key: string) =>
-      digestBytes(crypto, otpStorageIdentifierOf(key)).pipe(Effect.map(base64UrlOf));
+      digestBytes(digestService, otpStorageIdentifierOf(key), 'otp-identifier-hash').pipe(Effect.map(base64UrlOf));
 
     /** The pending two-factor sign-in row names the user, so the user a sign-in challenge belongs to is read from it, never assumed. */
     const challengeOwnedBy = Effect.fn('CommercePortalAuthRecoveryStore.challengeOwnedBy')(function* ownership(
@@ -1126,7 +1106,9 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         // a session challenge key is `<user id>!<session id>`: the key itself carries the user it was issued for
         return true;
       }
-      const pending = yield* digestBytes(crypto, Redacted.value(key.cookie)).pipe(Effect.map(base64UrlOf));
+      const pending = yield* digestBytes(digestService, Redacted.value(key.cookie), 'otp-cookie-hash').pipe(
+        Effect.map(base64UrlOf),
+      );
       const [row] = yield* database
         .select({ value: verification.value })
         .from(verification)
@@ -1180,7 +1162,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           .pipe(Effect.mapError((cause) => unavailableSafe('otp-challenge-locate', cause)));
         const matches =
           newest !== undefined &&
-          (yield* sameSecret(crypto, storedOneTimeCodeOf(newest.value).code, code).pipe(
+          (yield* sameSecret(digestService, storedOneTimeCodeOf(newest.value).code, code).pipe(
             Effect.mapError((cause) => unavailableSafe('otp-challenge-locate-compare', cause)),
           ));
         return newest !== undefined && matches
@@ -1215,7 +1197,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           return 'EXPIRED';
         }
         const sameCode = yield* sameSecret(
-          crypto,
+          digestService,
           storedOneTimeCodeOf(newest.value).code,
           Redacted.value(input.otp),
         ).pipe(Effect.mapError((cause) => unavailableSafe('otp-challenge-read-compare', cause)));
@@ -1233,9 +1215,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       readonly token: Redacted.Redacted;
     }): Effect.fn.Return<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable> {
       const now = yield* DateTime.nowAsDate;
-      const digest = yield* digestToken(crypto, input.token).pipe(
-        Effect.mapError((cause) => unavailableSafe('verification-state-hash', cause)),
-      );
+      const digest = yield* digestToken(digestService, input.token, 'verification-state-hash');
       const rows = yield* database
         .select({ expiresAt: verification.expiresAt, value: verification.value })
         .from(verification)
@@ -1270,9 +1250,7 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         readonly token: Redacted.Redacted;
       }): Effect.fn.Return<CommercePortalAuthIssuanceLedgerState, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const tokenDigest = yield* digestToken(crypto, input.token).pipe(
-          Effect.mapError((cause) => unavailableSafe('password-reset-state-hash', cause)),
-        );
+        const tokenDigest = yield* digestToken(digestService, input.token, 'password-reset-state-hash');
         const [row] = yield* database
           .select({
             expiresAt: recoveryResetLedger.expiresAt,

@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Exit, Layer, Schema, Struct } from 'effect';
+import { DateTime, Effect, Exit, Layer, Schema, Struct } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PrivacyProcessingInterventionSchema } from '../../shared/domain/privacy-processing-eligibility.ts';
@@ -50,7 +51,7 @@ const entityPolicy = (tenantId: string, legalEntityId: string) => ({
 });
 
 const world = Effect.fn('PrivacyTests.preVerificationWorld')(function* makeWorld() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const ledger = yield* freshPrivacyLedgerScope();
   const { legalEntityId, principalId, tenantId } = ledger;
   if (legalEntityId === undefined) {
@@ -67,7 +68,7 @@ const world = Effect.fn('PrivacyTests.preVerificationWorld')(function* makeWorld
     principalId,
     tenantId,
   });
-  const account = `fictional-provider-subject-${yield* crypto.randomUUIDv4()}`;
+  const account = `fictional-provider-subject-${yield* crypto.uuidV4()}`;
   const bindPayload = (validUntil = '2099-01-01T00:00:00.000Z', resourceId = account) =>
     ({
       occurrence: { occurrenceId: `fictional-issuance-${resourceId}`, validUntil },
@@ -172,7 +173,7 @@ describe('#1406 D.8 Privacy binds an unverified Portal Auth account and answers 
   it.live('P1: a restriction Privacy recorded for the bound subject in the policy scope is a proven NOT_ALLOWED', () =>
     Effect.gen(function* restricted() {
       const w = yield* world();
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const bound = yield* w.privacy.bind(
         w.inEntity('commerce-customer-context'),
         w.bindPayload('2099-01-01T00:00:00.000Z', `${w.account}-restricted`),
@@ -191,7 +192,7 @@ describe('#1406 D.8 Privacy binds an unverified Portal Auth account and answers 
         scope: bound.scope,
         status: 'ACTIVE',
       });
-      const actionInvocationId = yield* crypto.randomUUIDv4();
+      const actionInvocationId = yield* crypto.uuidV4();
       yield* inPrivacyLedger(w.ledger, (transaction) =>
         transaction.insert(processingInterventions).values({
           actionInvocationId,
@@ -310,8 +311,8 @@ describe('#1406 D.8 Privacy binds an unverified Portal Auth account and answers 
   it.live('answers an unknown binding or another operation without evaluating anything', () =>
     Effect.gen(function* notEvaluated() {
       const w = yield* world();
-      const crypto = yield* Crypto.Crypto;
-      expect(yield* w.ask(yield* crypto.randomUUIDv4())).toMatchObject({
+      const crypto = yield* SecureRandom.SecureRandom;
+      expect(yield* w.ask(yield* crypto.uuidV4())).toMatchObject({
         eligibility: { outcome: 'NOT_EVALUATED', reasonCode: 'SUBJECT_NOT_FOUND' },
       });
       const bound = yield* w.privacy.bind(w.tenantWide('commerce-customer-context'), w.bindPayload());

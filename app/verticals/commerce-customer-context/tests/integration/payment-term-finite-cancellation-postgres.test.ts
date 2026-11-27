@@ -39,7 +39,7 @@ import {
 import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 import type { RemoveCustomerPaymentTermPayload } from '../../shared/actions/remove-customer-payment-term.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import {
@@ -388,8 +388,8 @@ const migrateOwner = Effect.fn('FiniteEntitlement.migrateOwner')(function* migra
   );
   if (Number(status) !== 0) {
     const text = diagnostics.join('');
-    const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.sqlState;
-    const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.position;
+    const sqlState = /(?:code|sqlState|sqlstate):\s*['"](?<sqlState>[A-Z0-9]{5})['"]/u.exec(text)?.groups?.['sqlState'];
+    const position = /position:\s*['"]?(?<position>\d+)/u.exec(text)?.groups?.['position'];
     yield* Effect.logError({
       failureClass: 'MIGRATION_CHILD_FAILURE',
       knownLeasedBoundary: '20261019151457_finite-entitlement-cancellation',
@@ -444,6 +444,7 @@ const makeOwnerStorage = Effect.fn('FiniteEntitlement.makeOwnerStorage')(functio
     );
     expect(after?.count).toBeGreaterThan(0);
   }
+  assert.isDefined(old);
   const legacySource = mode === 'empty' || !old.installed;
   // The upgraded case may initially clone pre-forward source schema. New proof always migrates its own DB only.
   if (mode === 'empty') {
@@ -504,7 +505,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
       const input = yield* request.json.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(CurrentPaymentTermsRequestSchema)),
       );
-      expect(request.headers.authorization).toBe('Bearer bounded-native-catalog-credential');
+      expect(request.headers['authorization']).toBe('Bearer bounded-native-catalog-credential');
       requests += 1;
       const provenance = {
         actionInvocationId: randomUUID(),
@@ -1038,6 +1039,7 @@ const scenario = Effect.fn('FiniteEntitlement.nativeScenario')(function* nativeS
       sql`select to_char(transaction_timestamp() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at`,
       'objects',
     );
+    assert.isDefined(clock);
     const request = {
       ...payload,
       effectiveAt: clock.at,

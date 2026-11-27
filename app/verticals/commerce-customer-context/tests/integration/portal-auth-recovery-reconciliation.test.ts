@@ -493,7 +493,7 @@ it.live(
         const registerToken = store.registerPasswordResetToken;
         const peekLedger = store.peekPasswordResetLedger;
 
-        const registered = yield* registerToken({ expiresAt: alreadyExpired, email, providerSubjectId, token });
+        const registered = yield* registerToken({ email, expiresAt: alreadyExpired, providerSubjectId, token });
         expect(registered).toBe(true);
 
         // #8: an expired row is excluded from lookups immediately, whether or not a sweep has run

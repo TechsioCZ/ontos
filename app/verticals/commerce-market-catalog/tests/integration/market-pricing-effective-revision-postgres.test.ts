@@ -41,7 +41,6 @@ import {
   Array as EffectArray,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   FileSystem,
@@ -54,6 +53,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import {
   makeApiKeyGatewayNativeComposition,
@@ -397,7 +397,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
             snapshot,
           ),
         });
-  const baseConfiguration = {
+  let configuration: Parameters<typeof makeLiveOperationFixture>[0] = {
     access: 'allowed' as const,
     actionKeys: [
       ...actionKeys,
@@ -414,17 +414,14 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     ownerRegistration: commerceMarketCatalogRegistration,
     runtimeConnectionString: Redacted.make(isolated.connections.runtime.connectionString),
   };
-  const fixture = yield* Effect.acquireRelease(
-    makeLiveOperationFixture(
-      shell === undefined
-        ? baseConfiguration
-        : {
-            ...baseConfiguration,
-            managerProviderSubjectId: shell.providerUserId,
-            readerProviderSubjectId: shell.relaySourceProviderUserId,
-          },
-    ),
-    (value) => value.close().pipe(Effect.orDie),
+  if (shell !== undefined) {
+    configuration = { ...configuration, managerProviderSubjectId: shell.providerUserId };
+    if (shell.relaySourceProviderUserId !== undefined) {
+      configuration = { ...configuration, readerProviderSubjectId: shell.relaySourceProviderUserId };
+    }
+  }
+  const fixture = yield* Effect.acquireRelease(makeLiveOperationFixture(configuration), (value) =>
+    value.close().pipe(Effect.orDie),
   );
   if (registry !== undefined) {
     // The native Registry receiver runs the real v2 gate: the manager owns the Tenant, nobody else holds access.
@@ -435,11 +432,11 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
       spiceDb: yield* liveFixtureSpiceDb(fixture.permissionEnvironment),
     });
   }
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const [marketId, secondMarketId, associationId] = yield* Effect.all([
-    crypto.randomUUIDv4(),
-    crypto.randomUUIDv4(),
-    crypto.randomUUIDv4(),
+    crypto.uuidV4(),
+    crypto.uuidV4(),
+    crypto.uuidV4(),
   ]);
   const marketRef = {
     moduleId: moduleKey,
@@ -810,7 +807,7 @@ const makeScenario = Effect.fn('MarketRevisionNative.makeScenario')(function* ma
     function* addCompetingLifecycle() {
       yield* admin.insert(marketLifecyclePeriods).values({
         actingPrincipalId: fixture.manager.principalId,
-        actionInvocationId: yield* crypto.randomUUIDv4(),
+        actionInvocationId: yield* crypto.uuidV4(),
         effectiveFrom: DateTime.toDateUtc(startsAt),
         lifecycle: 'SUSPENDED',
         marketId,

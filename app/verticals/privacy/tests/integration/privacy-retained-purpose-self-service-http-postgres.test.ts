@@ -81,7 +81,6 @@ import {
   Config,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Exit,
@@ -98,6 +97,7 @@ import {
   Scope,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { ChildProcess } from 'effect/process';
 import { Socket } from 'effect/socket';
@@ -486,8 +486,8 @@ const prepareRetainedNativeIdentities = Effect.fn('RetainedAccount.prepareRetain
       address.pathname = `/${capability.databaseName}`;
       urls[identity.urlKey] = address.href;
     }
-    const issuerUrl = urls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-    const requestUrl = urls.PARTY_REGISTRY_DATABASE_URL;
+    const issuerUrl = urls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+    const requestUrl = urls['PARTY_REGISTRY_DATABASE_URL'];
     if (issuerUrl === undefined || requestUrl === undefined) {
       return yield* failed('Canonical native fixture identities were incomplete');
     }
@@ -1366,11 +1366,11 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     catch: () => failed('gateway-private-key'),
     try: () => exportJWK(pair.privateKey),
   });
-  const suffix = yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+  const suffix = yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
   const keyAttributes = { alg: 'EdDSA', kid: `retained-${suffix}`, use: 'sig' };
   const environment = {
     APP_ENV_PATH: '/dev/null',
-    BETTER_AUTH_SECRET: `${suffix}${yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4())}`,
+    BETTER_AUTH_SECRET: `${suffix}${yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4())}`,
     BETTER_AUTH_URL: 'http://retained-shell.localhost',
     DATABASE_URL: isolated.connections.runtime.connectionString,
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${coreOrigin}/composition`,
@@ -2098,7 +2098,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     });
     const next = yield* issueExternalGatewayContext(nextRequest, {
       ...identityOptions,
-      requestCorrelation: `retained-current:${yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4())}`,
+      requestCorrelation: `retained-current:${yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4())}`,
     });
     const clientRequest = {
       api: commerceCustomerContextApi,
@@ -2344,7 +2344,9 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
     const privacyRuntime: Parameters<typeof makePrivacyApiRuntime> = [readLayer, actionLayer, yield* makeRedemption()];
     const presentationConfiguration = {
       keyId: `retained-notice:${suffix}`,
-      signingKey: Redacted.make(base64url.encode(yield* Crypto.Crypto.use((crypto) => crypto.randomBytes(32)))),
+      signingKey: Redacted.make(
+        base64url.encode(yield* SecureRandom.SecureRandom.use((crypto) => crypto.randomBytes(32))),
+      ),
     };
     const privacyConfiguration = ConfigProvider.fromUnknown({
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${coreOrigin}/composition`,
@@ -2405,7 +2407,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
           subject: { kind: 'DATA_SUBJECT', partyRef: actualPartyRef },
           subjectRef: {
             moduleId: 'privacy.core',
-            resourceId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+            resourceId: yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()),
             resourceType: 'privacy.core.privacy-subject',
             tenantId: fixture.tenantId,
           },
@@ -2464,7 +2466,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
             language: 'en',
             wording: 'This exact original V1 Notice explains the native consent choice.',
           },
-          noticeId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+          noticeId: yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()),
         }),
         ...(yield* privacyTransport('manager', `retained-notice:${suffix}`)),
       ),
@@ -2672,7 +2674,7 @@ const retainedPublicJourney = Effect.fn('RetainedAccount.publicJourney')(functio
           noticeVersionId: notice.versionId,
           privacySubjectRef: {
             ...publicSubject.subjectRef,
-            tenantId: yield* Crypto.Crypto.use((crypto) => crypto.randomUUIDv4()),
+            tenantId: yield* SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4()),
           },
           retailProfileId: existingProfile.profileRef.resourceId,
         },

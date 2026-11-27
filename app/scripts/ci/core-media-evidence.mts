@@ -152,7 +152,7 @@ const readRun = Effect.fn('CoreMediaEvidence.readRun')(function* readRun(directo
     declared,
     name,
     // `<package>/tests/...` names its package; a root file has no such segment and is already relative to app/.
-    packageDirectory: /^(?<directory>.+?)\/tests\//u.exec(declared[0] ?? '')?.groups?.directory ?? '',
+    packageDirectory: /^(?<directory>.+?)\/tests\//u.exec(declared[0] ?? '')?.groups?.['directory'] ?? '',
     report,
     settings,
   } satisfies RunInput;

@@ -1,6 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Crypto, DateTime, Effect, Exit, Layer, Option, Ref, Schema, Stream } from 'effect';
+import { Cause, DateTime, Effect, Exit, Layer, Option, Ref, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { Hex } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
@@ -52,7 +53,7 @@ const withProxy = <Value, Failure, Requirement>(
 const encoder = new TextEncoder();
 const MIB = 1024 * 1024;
 const digestOf = (bytes: Uint8Array) => Hex.encode(sha256(bytes));
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const freshKey = Effect.gen(function* freshKeyEffect() {
   const identity = yield* Schema.decodeUnknownEffect(TenantMediaAssetKeySchema)({

@@ -50,7 +50,6 @@ import {
   Array as EffectArray,
   Config,
   Context,
-  Crypto,
   FileSystem,
   Path,
   Effect,
@@ -65,6 +64,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Socket } from 'effect/socket';
 import { ChildProcess } from 'effect/process';
 import { FetchHttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
@@ -694,7 +694,7 @@ const observePartyDetailReturned = Effect.sync(() => {
 });
 const resolveRetainedParty = (
   scope: typeof retainedServerScopeSchema.Type,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   currentScope: OperationalScope,
   authority: ActiveApplicationCompositionServiceContract,
   input: PartyRegistryRetailPartyResolverFactoryInput,
@@ -893,7 +893,7 @@ const serve = Effect.scoped(
             'RECONCILIATION_REQUIRED',
             'VERIFICATION_REQUIRED',
           ]),
-        )(options.fiber.getRef(References.CurrentLogAnnotations).reason);
+        )(options.fiber.getRef(References.CurrentLogAnnotations)['reason']);
         continuationObservation.continuation = Result.isSuccess(reason) ? reason.success : 'UNKNOWN_HALT';
       }
     });
@@ -1158,7 +1158,7 @@ const serve = Effect.scoped(
       path: string,
       init: Omit<RequestInit, 'headers'> & { readonly headers?: Readonly<Record<string, string>> },
     ) {
-      const response = yield* Effect.tryPromise({
+      return yield* Effect.tryPromise({
         catch: () => failed('public-request'),
         try: async () =>
           await actualFetch(`${baseUrl}${COMMERCE_CUSTOMER_CONTEXT_API_PREFIX}${path}`, {
@@ -1167,7 +1167,6 @@ const serve = Effect.scoped(
             redirect: 'manual',
           }),
       }).pipe(bounded);
-      return response;
     });
     yield* Effect.addFinalizer(() =>
       Effect.all(
@@ -1241,9 +1240,9 @@ const serve = Effect.scoped(
           if (yield* Ref.getAndSet(claimed, true)) {
             return yield* failed('duplicate-enrollment');
           }
-          const crypto = yield* Crypto.Crypto;
-          const email = `retained-${yield* crypto.randomUUIDv4()}@example.test`;
-          const password = Redacted.make(`${yield* crypto.randomUUIDv4()}${yield* crypto.randomUUIDv4()}`);
+          const crypto = yield* SecureRandom.SecureRandom;
+          const email = `retained-${yield* crypto.uuidV4()}@example.test`;
+          const password = Redacted.make(`${yield* crypto.uuidV4()}${yield* crypto.uuidV4()}`);
           yield* Effect.sync(() => {
             mailbox.expectedAddress = email;
           });
@@ -1260,8 +1259,8 @@ const serve = Effect.scoped(
             headers: {
               authorization: Redacted.value(command.authorization),
               'content-type': 'application/json',
-              'idempotency-key': yield* crypto.randomUUIDv4(),
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
+              'idempotency-key': yield* crypto.uuidV4(),
+              'x-correlation-id': yield* crypto.uuidV4(),
             },
             method: 'POST',
           });

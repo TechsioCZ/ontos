@@ -42,7 +42,6 @@ import { NodeCrypto } from '@effect/platform-node';
 import {
   Cause,
   Context,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -54,6 +53,7 @@ import {
   Schema,
   Struct,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
@@ -778,7 +778,7 @@ const makeRepositoryFailures = Effect.fn(function* testProgram1() {
     }),
   });
   const executor = yield* makeTestDatabase(() => Effect.fail(cause));
-  const repository = makeActionRepository(yield* Crypto.Crypto);
+  const repository = makeActionRepository(yield* SecureRandom.SecureRandom);
   const input = {
     actionInvocationId: 'invocation-1',
     actionKey: 'shell.counter.denied',
@@ -5062,7 +5062,7 @@ it.layer(NodeCrypto.layer)('Action post-attempt runtime', (suite) => {
           (payload, context) => Effect.succeed({ total: payload.amount + context.services.offset }),
           () =>
             Effect.gen(function* factoryWithCrypto() {
-              yield* Crypto.Crypto;
+              yield* SecureRandom.SecureRandom;
               return { offset: 1 };
             }),
           undefined,
@@ -6433,7 +6433,7 @@ it.layer(NodeCrypto.layer)('Action saved reply persistence', (suite) => {
         statements.push({ sql: statement, values });
         return Effect.succeed(statement.startsWith('update') ? [{ actionInvocationId: 'invocation-1' }] : []);
       });
-      const repository = makeActionRepository(yield* Crypto.Crypto);
+      const repository = makeActionRepository(yield* SecureRandom.SecureRandom);
       yield* executor.transaction((transaction) =>
         repository.flushSuccess(transaction, {
           actionInvocationId: 'invocation-1',
@@ -6474,7 +6474,7 @@ it.layer(NodeCrypto.layer)('Action saved reply persistence', (suite) => {
             : [],
         );
       });
-      const repository = makeActionRepository(yield* Crypto.Crypto);
+      const repository = makeActionRepository(yield* SecureRandom.SecureRandom);
       const failure = yield* repository
         .finalizePolicyDenial(executor, {
           actionInvocationId: 'invocation-1',
@@ -6504,7 +6504,7 @@ it.layer(NodeCrypto.layer)('Action saved reply persistence', (suite) => {
           statements.push({ sql: statement, values });
           return Effect.succeed([{ committedReplyJson: { encoded: { total: 4 }, kind: 'result' } }]);
         });
-        const repository = makeActionRepository(yield* Crypto.Crypto);
+        const repository = makeActionRepository(yield* SecureRandom.SecureRandom);
         const reply = yield* repository.loadCommittedReply(executor, {
           actionInvocationId: 'invocation-1',
           committedSince: DateTime.toDateUtc(DateTime.makeUnsafe('2026-11-11T12:00:00.000Z')),

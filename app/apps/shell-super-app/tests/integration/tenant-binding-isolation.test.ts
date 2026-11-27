@@ -20,7 +20,8 @@ import {
 import type { TrustedAdmissionObservationService } from '@app/core-runtime/auth/external-identity-admission';
 import { ExternalOperationAuthentication } from '@app/core-runtime/operations/external-authentication';
 import { NodeCrypto } from '@effect/platform-node';
-import { Clock, Crypto, DateTime, Effect, Schema } from 'effect';
+import { Clock, DateTime, Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -212,7 +213,7 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
     );
     const actionRuntime = makeActionRuntime(
       { executor: database },
-      makeActionRepository(yield* Crypto.Crypto),
+      makeActionRepository(yield* SecureRandom.SecureRandom),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       scopeResolver,
       { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
@@ -376,6 +377,6 @@ it.live('revokes only T1 through the governed Core action and keeps T2 admitted 
       .from(outboxMessages)
       .where(eq(outboxMessages.tenantId, tenantOneId));
     expect(pendingOutbox).toHaveLength(1);
-    expect(pendingOutbox[0]?.matchedAt).toBe(null);
+    expect(pendingOutbox[0]?.matchedAt).toBeNull();
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );

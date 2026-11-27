@@ -19,7 +19,6 @@ import {
   Array as EffectArray,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Layer,
@@ -29,6 +28,7 @@ import {
   Result,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -100,7 +100,7 @@ import { inventoryRegistration } from '../../vertical.registration.ts';
 import { requireExecutionResult } from '../support/action-execution-result.ts';
 import { sourceImportCompositionFixture } from '../support/source-import-composition.fixture.ts';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 
 /** Catalog-owned inputs this Inventory test does not run Catalog for; Inventory retains them as given. */

@@ -5,7 +5,8 @@ import {
   PricingCurrencySupportRootIdSchema,
   PricingInstantSchema,
 } from '@app/pricing-contracts/domain/currency-support';
-import { Crypto, Deferred, Effect, Exit, Fiber, Schema } from 'effect';
+import { Deferred, Effect, Exit, Fiber, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -15,7 +16,7 @@ import {
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 type PricingTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 type PricingTransaction = Parameters<Parameters<PricingTestDatabase['transaction']>[0]>[0];

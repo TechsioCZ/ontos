@@ -223,6 +223,28 @@ it.effect('rejects an owner-local worker missing from the installed subscription
   }),
 );
 
+it.effect('retains the declared subscription validation failure before claiming work', () =>
+  Effect.gen(function* preserveSubscriptionFailure() {
+    const controlled = repository();
+    const registration = worker(() => Effect.void);
+    const error = yield* Effect.flip(
+      makeOutboxRuntime(controlled.service).runCycle({
+        claimOwner: 'unit-runtime',
+        compositionRevision: 'a'.repeat(64),
+        registrations: [registration],
+        subscriptions: [registration.descriptor, registration.descriptor],
+      }),
+    );
+
+    expect(Schema.is(OutboxWorkerDescriptorError)(error)).toBe(true);
+    expect(error).toMatchObject({
+      code: 'outbox_worker_descriptor_invalid',
+      reason: `duplicate Outbox Worker key ${registration.descriptor.workerKey}`,
+    });
+    expect(controlled.probe.claimedAt).toEqual([]);
+  }),
+);
+
 it.effect('rejects deployed owner descriptors without a matching local worker registration', () =>
   Effect.gen(function* missingLocalRegistration() {
     const controlled = repository();

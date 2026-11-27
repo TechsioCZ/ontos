@@ -1,4 +1,5 @@
-import { Context, Crypto, Effect, Layer } from 'effect';
+import { Context, Effect, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { CoreDatabase } from '../../db/client.ts';
 import type { OperationalScope } from '../../operations/context.ts';
@@ -55,12 +56,12 @@ export class AccessApprovalsInbox extends Context.Service<AccessApprovalsInbox, 
 export const AccessApprovalsInboxLive: Layer.Layer<
   AccessApprovalsInbox,
   never,
-  AccessChangesStore | ApprovalStore | CoreDatabase | Crypto.Crypto | FrozenCommands | TenantIntentLoader
+  AccessChangesStore | ApprovalStore | CoreDatabase | SecureRandom.SecureRandom | FrozenCommands | TenantIntentLoader
 > = Layer.effect(
   AccessApprovalsInbox,
   Effect.gen(function* accessApprovalsInboxLayer() {
     const database = yield* CoreDatabase;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const frozenCommands = yield* FrozenCommands;
     const records = yield* ApprovalStore;
     const changes = yield* AccessChangesStore;

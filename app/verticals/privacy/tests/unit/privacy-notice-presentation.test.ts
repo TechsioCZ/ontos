@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Exit, Redacted, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, base64url } from 'jose';
 
@@ -40,6 +41,30 @@ const claims = Schema.decodeUnknownEffect(PrivacyNoticePresentationClaimsSchema)
   v: 1,
   wordingDigest: 'c'.repeat(64),
 });
+
+it.effect('digests Notice material with unchanged SHA-256 bytes', () =>
+  Effect.gen(function* nativeDigestParity() {
+    const service = yield* makePrivacyNoticePresentationService(configuration);
+    expect(yield* service.digest('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  }).pipe(Effect.provide(NodeCrypto.layer)),
+);
+
+it.effect('keeps a broken native digest primitive a defect, not Notice integrity unavailability', () =>
+  Effect.gen(function* nativeDigestDefect() {
+    const service = yield* makePrivacyNoticePresentationService(configuration);
+    const exit = yield* Effect.exit(service.digest('abc'));
+    expect(Exit.hasDies(exit)).toBe(true);
+    expect(Exit.hasFails(exit)).toBe(false);
+  }).pipe(
+    Effect.provideService(
+      Digest.Digest,
+      Digest.Digest.of({
+        digest: () => Effect.die(new Error('private digest failure')),
+        digestHex: () => Effect.die(new Error('private digest failure')),
+      }),
+    ),
+  ),
+);
 
 it.effect('authenticates the exact Notice receipt and preserves supported timestamp precision', () =>
   Effect.gen(function* validReceipt() {

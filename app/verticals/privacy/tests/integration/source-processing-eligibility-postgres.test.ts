@@ -1,7 +1,8 @@
 import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { privacyRegistration } from '../../vertical.registration.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import {
@@ -34,8 +35,8 @@ it.live('checks exact current source processing through governed Read and native
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
     }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
-    const crypto = yield* Crypto.Crypto;
-    const nextId = () => crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const nextId = () => crypto.uuidV4();
     const { tenantId } = native.principal;
     const { principalId } = native.principal;
     const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));

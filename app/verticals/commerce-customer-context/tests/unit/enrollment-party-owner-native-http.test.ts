@@ -1,9 +1,10 @@
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
-import { Crypto, ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Base64Url } from 'effect/encoding';
 import { FetchHttpClient } from 'effect/http';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
@@ -22,10 +23,7 @@ const originatorInvocationId = '31000000-0000-4000-8000-000000000001';
 const actorPrincipalId = '40000000-0000-4000-8000-000000000001';
 const requestCorrelation = 'scheduled-party-owner-native';
 const ownerInvocationId = '30000000-0000-4000-8000-000000000001';
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 const partyRef = { moduleId: 'party.registry', resourceId: 'party-1', resourceType: 'party.registry.party', tenantId };
 const decisionRef = {
   moduleId: 'party.registry',
@@ -124,7 +122,8 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
       'https://shell.example.test/api/approved/party-registry/party-registry/actions/create-party',
     ]);
     for (const request of [requests[0], requests[2]]) {
-      expect(request?.headers.get('x-api-key')).toBe('scheduled-module-credential');
+      assert.isDefined(request);
+      expect(request.headers.get('x-api-key')).toBe('scheduled-module-credential');
       expect(yield* Effect.promise(() => request.json())).toMatchObject({
         audience: 'party-registry',
         compositionRevision,
@@ -165,7 +164,9 @@ it.effect('a stale original Attempt is denied by issuance before contacting Part
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(requests).toHaveLength(1);
-    expect(yield* Effect.promise(() => requests[0].json())).toMatchObject({
+    const [issuanceRequest] = requests;
+    assert.isDefined(issuanceRequest);
+    expect(yield* Effect.promise(() => issuanceRequest.json())).toMatchObject({
       audience: 'party-registry',
       compositionRevision,
       legalEntityScope: 'subject',
@@ -221,7 +222,9 @@ it.effect('keeps the original Attempt revision and scope when a caller later mut
       .dispatch(transition)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(outcome.resultReference).toBe(partyRef.resourceId);
-    expect(yield* Effect.promise(() => requests[0].json())).toMatchObject({
+    const [issuanceRequest] = requests;
+    assert.isDefined(issuanceRequest);
+    expect(yield* Effect.promise(() => issuanceRequest.json())).toMatchObject({
       audience: 'party-registry',
       compositionRevision,
       legalEntityScope: 'subject',
@@ -265,7 +268,9 @@ it.effect('scheduled reconciliation reads the original invocation through native
     );
     expect(requests[1]?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
     expect(requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
-    expect(yield* Effect.promise(() => requests[1].json())).toEqual({ invocationId: ownerInvocationId });
+    const [, recoveryRequest] = requests;
+    assert.isDefined(recoveryRequest);
+    expect(yield* Effect.promise(() => recoveryRequest.json())).toEqual({ invocationId: ownerInvocationId });
   }),
 );
 
@@ -284,6 +289,7 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
       }
       const credential = request.headers.get('authorization') ?? '';
       const [, tokenPayload] = credential.slice('Bearer '.length).split('.');
+      assert.isDefined(tokenPayload);
       const claims = Schema.decodeSync(Schema.fromJsonString(SupportedGatewayContextClaimsSchema))(
         Result.getOrThrow(Base64Url.decodeString(tokenPayload)),
       );

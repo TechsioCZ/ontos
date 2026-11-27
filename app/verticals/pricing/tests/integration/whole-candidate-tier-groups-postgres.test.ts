@@ -140,7 +140,6 @@ import {
   ConfigProvider,
   Context,
   Config,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -153,12 +152,14 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Cause } from 'effect';
 import { ChildProcess } from 'effect/process';
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
+  HttpMethod,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
@@ -306,7 +307,7 @@ const catalogActionKeys = [
   'revise-product-unit',
   'publish-product-configuration',
 ].map((slug) => ActionKeySchema.make(`commerce.catalog.${slug}`));
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const appRoot = new URL('../../../../', import.meta.url).pathname;
 const componentPermission = 'pricing.whole_candidate_component_test.read';
 const services = NodeChildProcessSpawner.layer.pipe(
@@ -420,7 +421,7 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
   const composition = Context.get(context, CurrentPricingDecisionWholeComposition);
   const { decision } = request;
   const at = decision.operationTime;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const feeIdentities = new Map<string, { readonly feeId: string; readonly revisionId: string }>();
   const discountId = yield* nextId;
   const discountRevisionId = yield* nextId;
@@ -530,7 +531,7 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
             ],
             currentSets: [],
           };
-        }).pipe(Effect.orDie, Effect.provideService(Crypto.Crypto, crypto)),
+        }).pipe(Effect.orDie, Effect.provideService(SecureRandom.SecureRandom, crypto)),
     },
     externalOwnerEvidence: config.external,
     feeReader: {
@@ -627,7 +628,7 @@ const evaluateNativeWhole1225 = Effect.fn('WholeCandidate.joinedConsumer')(funct
             factProofs: [],
             input,
           };
-        }).pipe(Effect.orDie, Effect.provideService(Crypto.Crypto, crypto)),
+        }).pipe(Effect.orDie, Effect.provideService(SecureRandom.SecureRandom, crypto)),
     },
     floorReader: {
       loadCurrent: (_request, _attempt, raw) =>
@@ -2194,13 +2195,13 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
       outcome: 'QUANTITY_TIER_APPLIED',
       resultingUnitPrice: { amount: '75.000000000', currencyCode: 'CZK' },
     });
-    const issuerCrypto1225 = yield* Crypto.Crypto;
+    const issuerCrypto1225 = yield* SecureRandom.SecureRandom;
     const catalogAssertion1225 = Effect.gen(function* issueActualCatalogAssertion1225() {
       return { ...endpoint, credential: Redacted.make(yield* authorization(yield* DateTime.now)) };
     }).pipe(
       Effect.orDie,
       Effect.provideService(Clock.Clock, nativeClock),
-      Effect.provideService(Crypto.Crypto, issuerCrypto1225),
+      Effect.provideService(SecureRandom.SecureRandom, issuerCrypto1225),
     );
     const issuer1225: OwnerGatewayConnectionAcquire = () => catalogAssertion1225;
     // Stands in for the Shell the joined read reaches through Pricing's own module credential: the
@@ -2221,6 +2222,9 @@ const nativeWholeCandidateComponents = (nativeClock: Clock.Clock) =>
             if (value !== undefined) {
               headers[name] = value;
             }
+          }
+          if (!HttpMethod.isHttpMethod(request.method)) {
+            return HttpServerResponse.empty({ status: 405 });
           }
           const target = HttpClientRequest.make(request.method)(
             new URL(`${url.pathname.slice(catalogPath1225.length)}${url.search}`, endpoint.baseUrl),

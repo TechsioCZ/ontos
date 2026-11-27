@@ -12,19 +12,8 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { and, eq } from 'drizzle-orm';
-import {
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Exit,
-  Layer,
-  Option,
-  Predicate,
-  Redacted,
-  Schema,
-} from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Exit, Layer, Option, Predicate, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
@@ -61,7 +50,7 @@ import {
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 
 it.layer(

@@ -24,19 +24,8 @@ import {
   ReserveMarketRetirementForbiddenProblemSchema,
   ReserveMarketRetirementPayloadSchema,
 } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
-import {
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Match,
-  Predicate,
-  Redacted,
-  Result,
-  Schema,
-} from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Predicate, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 import { MarketRetirementActionRuntimeLive, MarketRetirementRuntimeBindings } from '../../api/index.ts';
@@ -99,12 +88,9 @@ const scope = trustVerifiedGatewayPrincipalContext(
   { assertion: Redacted.make('fresh-original-actor-assertion'), audience: 'commerce-market-catalog' },
 );
 let sequence = 0;
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => {
-    sequence += 1;
-    return new Uint8Array(size).fill(sequence);
-  },
+const crypto = SecureRandom.make((size) => {
+  sequence += 1;
+  return new Uint8Array(size).fill(sequence);
 });
 const configuration = ConfigProvider.fromUnknown({
   ONTOS_GATEWAY_MODULE_API_KEY: 'module-key',
@@ -233,7 +219,7 @@ const buildOwnerRuntime = Effect.fn('MarketRetirementTest.buildOwnerRuntime')(fu
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(MarketRetirementRuntimeBindings, bindings),
-          MarketRetirementImpactAuthorityLive.pipe(Layer.provide(Layer.succeed(Crypto.Crypto, crypto))),
+          MarketRetirementImpactAuthorityLive.pipe(Layer.provide(Layer.succeed(SecureRandom.SecureRandom, crypto))),
         ),
       ),
     ),
@@ -483,7 +469,16 @@ const makeWorkflowFixture = Effect.fn('MarketRetirementTest.makeWorkflowFixture'
         abort,
         authorityFor,
         decodeFailure: Effect.fail,
-        readState: Effect.sync(() => ({ admission, admitted: source, ownerFailure })),
+        readState: Effect.sync(() => {
+          let state: Effect.Success<typeof MarketRetirementPostAttempt.Service.readState> = {
+            admission,
+            admitted: source,
+          };
+          if (ownerFailure !== undefined) {
+            state = { ...state, ownerFailure };
+          }
+          return state;
+        }),
         recover: readReceipt,
         resolveOriginalSource: () => Effect.succeed(source),
         unavailable: modeledSettlementUnavailable,
@@ -573,10 +568,12 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
         let late = false;
         let released = false;
         const transport = scripted(
-          () =>
-            late
-              ? found(released ? 'RELEASED' : 'RESERVED')
-              : { marketRef, outcome: 'NOT_FOUND', sourceActionInvocationId, tenantId },
+          () => {
+            if (late) {
+              return found(released ? 'RELEASED' : 'RESERVED');
+            }
+            return { marketRef, outcome: 'NOT_FOUND', sourceActionInvocationId, tenantId };
+          },
           (request, body) => {
             expect(body).toMatchObject({
               operation: 'RELEASE',
@@ -678,11 +675,11 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
   it.effect('recovers outage and unknown effects with the same original key while retaining the PENDING fence', () =>
     Effect.gen(function* originalRetry() {
       const fixture = yield* makeWorkflowFixture();
-      const outage = yield* fixture.run().pipe(Effect.flip, Effect.provideService(Crypto.Crypto, crypto));
+      const outage = yield* fixture.run().pipe(Effect.flip, Effect.provideService(SecureRandom.SecureRandom, crypto));
       expect(Predicate.isTagged(outage, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
       expect(fixture.status()).toBe('PENDING');
       fixture.phase('unknown');
-      const unknown = yield* fixture.run().pipe(Effect.flip, Effect.provideService(Crypto.Crypto, crypto));
+      const unknown = yield* fixture.run().pipe(Effect.flip, Effect.provideService(SecureRandom.SecureRandom, crypto));
       expect(Predicate.isTagged(unknown, 'ActionInvocationPersistenceError')).toBe(true);
       expect(fixture.status()).toBe('PENDING');
       expect(fixture.operations).not.toContain('ABORT');
@@ -840,7 +837,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
   it.effect('never reopens or creates a new command for an irrevocably ABORTED original admission', () =>
     Effect.gen(function* abortedOriginal() {
       const fixture = yield* makeWorkflowFixture('ABORTED');
-      const failure = yield* fixture.run().pipe(Effect.flip, Effect.provideService(Crypto.Crypto, crypto));
+      const failure = yield* fixture.run().pipe(Effect.flip, Effect.provideService(SecureRandom.SecureRandom, crypto));
       expect(Predicate.isTagged(failure, 'MarketCommandRejected')).toBe(true);
       expect(failure).toMatchObject({
         retirementSettlement: { pendingCleanup: true, retryCommand: false, sourceActionInvocationId, state: 'ABORTED' },
@@ -891,7 +888,7 @@ describe('Market pure owner settlement and scripted transport (not Core authoriz
           })
           .pipe(
             Effect.flip,
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             // Generic ActionRuntimeService retains registration R. The wrapper binds its own
             // request-local value; these negative fault-injection ports must never be consumed.
             Effect.provideService(MarketRetirementPostAttempt, {

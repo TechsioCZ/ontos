@@ -13,7 +13,8 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Layer, Predicate, Redacted, Result } from 'effect';
+import { DateTime, Effect, Layer, Predicate, Redacted, Result } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -30,7 +31,7 @@ const services = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const nativeGuestEvidenceAuthority = Effect.fn('GuestEvidenceTest.nativeGuestEvidenceAuthority')(
   function* nativeGuestEvidenceAuthority() {

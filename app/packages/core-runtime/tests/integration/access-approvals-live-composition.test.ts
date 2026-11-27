@@ -1,7 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { Context, Crypto, Effect, Exit, FileSystem, Layer, Option, Result, Schema } from 'effect';
+import { Context, Effect, Exit, FileSystem, Layer, Option, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
@@ -425,9 +426,9 @@ const disposableDatabaseFor = (roleScope: 'company' | 'tenant') =>
   Effect.gen(function* disposableDatabaseEffect() {
     // This disposable-database suite uses explicit process configuration, never the workspace .env.
     const connections = yield* loadDatabaseConnectionPair({ envPath: `${import.meta.filename}.no-environment-file` });
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const name = `live_approvals_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const name = `live_approvals_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -467,7 +468,7 @@ interface LiveMandateStores {
 
 /** The live services over the shipped stores of one disposable database. */
 const liveApprovals = Effect.fn('LiveApprovalsFixture.make')(function* liveApprovalsEffect(executor: LiveDatabase) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const frozenCommands = makeDrizzleFrozenCommandStore({ executor });
   const changes = makeAccessChangesDrizzleStore({ executor });
   const records = Context.get(
@@ -650,7 +651,9 @@ const inspectVoidApproval =
       witnesses: [witnessFor('approval', approvalWitness, 'approve')],
     });
 
-it.layer(NodeServices.layer)('live approvals composition', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('live approvals composition', (suite) => {
   suite.effect('proposes and approves a mandate from Core intent alone', () =>
     onLiveClock(
       Effect.gen(function* liveMandate() {

@@ -138,8 +138,8 @@ const requestCancel = (ctx: CancellationScenario, paymentId: string, targetOpera
       payload: {
         operationKey,
         paymentId,
-        targetOperationId,
         reason: 'Customer abandoned the checkout',
+        targetOperationId,
       },
       principal: principalOf(ctx.scope),
       registration: requestPaymentCancellationAction,

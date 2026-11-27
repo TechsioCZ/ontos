@@ -21,19 +21,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { retireControlledAttributeValueActionApiLive } from '../../api/retire-controlled-attribute-value-action-server.ts';
 import { setVariantAttributeOverrideActionApiLive } from '../../api/set-variant-attribute-override-action-server.ts';
@@ -98,7 +87,7 @@ export const retainedControlledValueTestServices = NodeChildProcessSpawner.layer
 const demand = (condition: boolean, reason: string) =>
   condition ? Effect.void : Effect.fail(new RetainedControlledReceiverFailure({ reason }));
 const catalogModuleKey = 'commerce.catalog' as const;
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const produceCatalogSelection = Effect.fn('RetainedControlledValue.produceSelection')(function* produceSelection(
   transaction: ScopedTransactionExecutor,

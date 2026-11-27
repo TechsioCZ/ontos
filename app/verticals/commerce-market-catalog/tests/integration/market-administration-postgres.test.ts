@@ -166,7 +166,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
         ),
       );
       expectOutcome(create, 'created', { changed: true, generation: 1, revision: 1 });
-      const definitionRevisionId = Schema.decodeUnknownSync(Schema.String)(create.definitionRevisionId);
+      const definitionRevisionId = Schema.decodeUnknownSync(Schema.String)(create['definitionRevisionId']);
 
       const replay = oneOutcome(
         yield* scoped(runtime, (transaction) =>
@@ -237,7 +237,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
       );
       expectOutcome(revisedDefinition, 'revised', { changed: true, generation: 2, revision: 2 });
       const currentDefinitionRevisionId = Schema.decodeUnknownSync(Schema.String)(
-        revisedDefinition.definitionRevisionId,
+        revisedDefinition['definitionRevisionId'],
       );
       const replayAfterRevision = oneOutcome(
         yield* scoped(runtime, (transaction) =>
@@ -358,7 +358,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
           ),
         ).pipe(Effect.map(oneOutcome));
       const previouslyEligible = yield* eligibilityAt('2031-06-01T00:00:00.000Z');
-      expect(previouslyEligible.facts).toHaveLength(1);
+      expect(previouslyEligible['facts']).toHaveLength(1);
 
       const removed = oneOutcome(
         yield* scoped(runtime, (transaction) =>
@@ -392,7 +392,7 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
         ['2031-06-01T00:00:00.001Z', 0],
         ['2031-12-31T00:00:00.000Z', 0],
       ] as const) {
-        expect((yield* eligibilityAt(at)).facts).toHaveLength(count);
+        expect((yield* eligibilityAt(at))['facts']).toHaveLength(count);
         const current = oneOutcome(
           yield* scoped(runtime, (transaction) =>
             transaction.execute(
@@ -402,11 +402,11 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
             ),
           ),
         );
-        expect(current.associations).toHaveLength(count);
+        expect(current['associations']).toHaveLength(count);
       }
       const afterRemoval = yield* eligibilityAt('2031-06-01T00:00:00.000Z');
-      expect(afterRemoval.predicateRevision).not.toBe(previouslyEligible.predicateRevision);
-      expect(afterRemoval.generation).toBe(5);
+      expect(afterRemoval['predicateRevision']).not.toBe(previouslyEligible['predicateRevision']);
+      expect(afterRemoval['generation']).toBe(5);
 
       const transition = (
         lifecycle: 'ACTIVE' | 'RETIRED' | 'SUSPENDED',

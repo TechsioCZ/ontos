@@ -749,9 +749,9 @@ it.effect('decides the ephemeral proof the release states and never one this sur
     // The same projection without the stated proof is not a declaration at all: a run-only sensitive action
     // is only valid as an ephemeral one (O42), so a release that omits it is a broken catalog and this
     // surface refuses to repair it by guessing.
-    expect(publishedDeclaration(capability(PAY_KEY, { kind: 'action', modes: ['run'], risk: 'sensitive' }))).toBe(
-      undefined,
-    );
+    expect(
+      publishedDeclaration(capability(PAY_KEY, { kind: 'action', modes: ['run'], risk: 'sensitive' })),
+    ).toBeUndefined();
   }),
 );
 

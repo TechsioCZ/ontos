@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
+import { DateTime, Effect, Exit, Match, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -24,7 +25,7 @@ import { sellerVatRegimeDeclarationsForScope } from '../../src/services/seller-v
 const MIGRATION_STARTED_AT = '2026-01-15T00:00:00.000Z';
 const T = '2026-06-01T00:00:00.000Z';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 interface FixtureIdentity {
   readonly principalId: string;

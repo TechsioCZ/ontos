@@ -1,5 +1,6 @@
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
-import { ConfigProvider, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { organizationBusinessApplicabilityRead } from '../../src/api/organization-business-applicability.read.ts';
@@ -26,14 +27,14 @@ const seedClassification = Effect.fn('PrivacyTests.seedOrganizationBusinessClass
   native: Native,
   mode: 'SOURCE_CREATE' | 'MEMBERSHIP' | 'PRICE',
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const { principalId, tenantId } = native.principal;
   const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
   return yield* native
     .prepareOwner((transaction, scope) =>
       Effect.gen(function* nativeGovernance() {
         const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
-        const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), {
+        const purpose = yield* purposes.create(tenantId, legalEntityId, yield* crypto.uuidV4(), {
           businessCode: `INTERNAL_ORGANIZATION_${mode}`,
           effectiveFrom: '2026-11-01T00:00:00.000Z',
           governanceOwnerId: principalId,
@@ -70,7 +71,7 @@ const seedClassification = Effect.fn('PrivacyTests.seedOrganizationBusinessClass
         if (mode === 'SOURCE_CREATE') {
           yield* repository.createSubject(
             { legalEntityId, tenantId },
-            { actionInvocationId: yield* crypto.randomUUIDv4(), subject: fixture.sourceSnapshot.record },
+            { actionInvocationId: yield* crypto.uuidV4(), subject: fixture.sourceSnapshot.record },
           );
           const snapshot = yield* organizationBusinessSourceAuthorityForScope(transaction, scope).read(
             fixture.sourceProof.source.sourceReference,
@@ -78,17 +79,12 @@ const seedClassification = Effect.fn('PrivacyTests.seedOrganizationBusinessClass
           expect(snapshot.revision).toBe(fixture.sourceProof.sourceSubjectRevision);
           expect(snapshot.record.subject.kind).toBe('SOURCE_ASSERTED');
         }
-        yield* repository.assignResponsibility(tenantId, legalEntityId, yield* crypto.randomUUIDv4(), responsibility);
-        yield* repository.recordApplicabilityPolicy(
-          tenantId,
-          legalEntityId,
-          yield* crypto.randomUUIDv4(),
-          fixture.policy,
-        );
+        yield* repository.assignResponsibility(tenantId, legalEntityId, yield* crypto.uuidV4(), responsibility);
+        yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* crypto.uuidV4(), fixture.policy);
         yield* repository.recordApplicability(
           tenantId,
           legalEntityId,
-          yield* crypto.randomUUIDv4(),
+          yield* crypto.uuidV4(),
           fixture.context.decisionRef,
           decision,
         );
@@ -108,7 +104,7 @@ it.live('rechecks native organization classification, source protection, exact h
       const native = yield* privacyOrganizationBusinessNativeContext(
         'privacy.core.organization-business-applicability.read',
       );
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const { principalId, tenantId } = native.principal;
       const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
       const source = yield* seedClassification(native, 'SOURCE_CREATE');
@@ -195,7 +191,7 @@ it.live('rechecks native organization classification, source protection, exact h
               reviewRef: 'internal:organization-business-hold-review',
             };
             yield* transaction.insert(legalHolds).values({
-              actionInvocationId: yield* crypto.randomUUIDv4(),
+              actionInvocationId: yield* crypto.uuidV4(),
               effectiveFrom: DateTime.toDateUtc(DateTime.makeUnsafe(hold.effectiveFrom)),
               effectiveTo: DateTime.toDateUtc(DateTime.makeUnsafe(hold.effectiveTo)),
               holdRecord: hold,
@@ -216,7 +212,7 @@ it.live('rechecks native organization classification, source protection, exact h
             yield* repository.recordApplicabilityPolicy(
               tenantId,
               legalEntityId,
-              yield* crypto.randomUUIDv4(),
+              yield* crypto.uuidV4(),
               Schema.decodeUnknownSync(PrivacyApplicabilityPolicySchema)({ ...price.policy, policyVersion: '2' }),
             );
           }),

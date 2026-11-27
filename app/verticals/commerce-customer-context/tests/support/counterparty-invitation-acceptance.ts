@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { layer as nodeServicesLayer } from '@effect/platform-node/NodeServices';
 import { sql } from 'drizzle-orm';
-import { Context, Crypto, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Context, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { CommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 
 import {
   ActionInvocationPersistenceError,
@@ -445,7 +446,7 @@ export const prepareCounterpartyInvitationClaimPayload = Effect.fnUntraced(
     realm: CounterpartyInvitationRealm,
     input: Pick<IssuedCounterpartyInvitation, 'claimProofReference' | 'invitationId' | 'secret'>,
   ) {
-    const crypto = yield* Crypto.Crypto.pipe(Effect.provide(commercePortalAuthPlatformCryptoLive));
+    const digest = yield* CommerceAuthSha256.pipe(Effect.provide(commercePortalAuthPlatformCryptoLive));
     const trustedScope = {
       ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
         authBindingId: realm.recipientAuthBindingId,
@@ -467,7 +468,7 @@ export const prepareCounterpartyInvitationClaimPayload = Effect.fnUntraced(
     };
     return yield* fixture
       .run({ legalEntityId: realm.legalEntityId, tenantId: realm.tenantId }, (transaction) =>
-        counterpartyInvitationClaimRedemptionForTransaction(transaction, crypto, trustedScope)
+        counterpartyInvitationClaimRedemptionForTransaction(transaction, digest, trustedScope)
           .redeem({
             invitationRef: Schema.decodeUnknownSync(
               ClaimCounterpartyAccessInvitationPayloadSchema.fields.invitationRef,

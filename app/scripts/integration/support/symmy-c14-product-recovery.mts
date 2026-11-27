@@ -1,6 +1,7 @@
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { issueDelegatedGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Crypto, Effect } from 'effect';
+import { Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Redacted, Schema } from 'effect';
 
 /** Request a fresh real Shell signature; this helper never creates or attaches trusted provenance. */
@@ -22,10 +23,10 @@ export const issueSymmyC14RecoveryAssertion = Effect.fn('SymmyC14Recovery.issue'
     { readonly _tag: 'RegisteredRecovery' }
   >['source'];
 }) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const requestHash = computeCanonicalValueHash(input.readPayload);
-  const exchangeId = yield* crypto.randomUUIDv4();
-  const requestCorrelation = yield* crypto.randomUUIDv4();
+  const exchangeId = yield* crypto.uuidV4();
+  const requestCorrelation = yield* crypto.uuidV4();
   let subject: Extract<
     Parameters<typeof issueDelegatedGatewayContext>[0]['subject'],
     { readonly _tag: 'RegisteredRecovery' }

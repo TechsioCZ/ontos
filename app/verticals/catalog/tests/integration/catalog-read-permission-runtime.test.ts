@@ -15,7 +15,8 @@ import {
 } from '@app/core-runtime/testing/native-reads';
 import { makeTestBoundAccessGate } from '@app/core-runtime/testing/access-gate';
 import type { TestGateAnswer } from '@app/core-runtime/access/enforcement';
-import { Crypto, Effect, Match, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { catalogDocumentCurrentRead } from '../../src/api/catalog-document-current.read.ts';
@@ -212,16 +213,16 @@ const produceNativeCatalogProduct = Effect.fn('NativeCatalogReadFixture.product'
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
 ) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const service = yield* catalogPersistenceForScope(transaction, scope);
   const result = yield* service.create({
-    actionInvocationId: yield* crypto.randomUUIDv4(),
+    actionInvocationId: yield* crypto.uuidV4(),
     description: 'Created through native Catalog persistence',
     name: 'Native read target fixture',
     principalId: scope.principalId,
     reason: 'Isolated native read target proof',
     tenantId: scope.tenantId,
-    variantId: yield* crypto.randomUUIDv4(),
+    variantId: yield* crypto.uuidV4(),
   });
   return yield* Match.value(result).pipe(
     Match.tag('conflict', () =>

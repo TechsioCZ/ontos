@@ -340,20 +340,20 @@ it.live(
           generatedModule.RentalUnitRefSchema.ast,
         );
         const reference = yield* Schema.decodeUnknownEffect(rentalUnitRefSchema)({
-          resourceId: 'unit-42',
           moduleId,
+          resourceId: 'unit-42',
           resourceType,
           tenantId,
         });
         expect(reference).toEqual({
-          resourceId: 'unit-42',
           moduleId,
+          resourceId: 'unit-42',
           resourceType,
           tenantId,
         });
         const invalidReference = yield* Schema.decodeUnknownEffect(rentalUnitRefSchema)({
-          resourceId: '',
           moduleId,
+          resourceId: '',
           resourceType,
           tenantId,
         }).pipe(Effect.flip);

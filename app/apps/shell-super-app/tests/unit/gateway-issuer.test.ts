@@ -1,4 +1,5 @@
 import { Cause, ConfigProvider, DateTime, Effect, Exit, Fiber, Layer, Predicate, Redacted, Schema } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { expect, rs, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
@@ -31,6 +32,7 @@ import {
   issueRouteScopedGatewayContextAssertion,
   issueSymmyGatewayContextAssertion,
   makeGatewayIssuerLayer,
+  ShellCryptoLive,
   SYMMY_INGRESS_AUDIENCE,
 } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
@@ -42,6 +44,17 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   value: Value,
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
+it.effect('provides native randomness and payload digests for Shell-hosted Core Media', () =>
+  Effect.gen(function* shellCryptoServices() {
+    const random = yield* SecureRandom.SecureRandom;
+    expect(Schema.is(Schema.String.check(Schema.isUUID(4)))(yield* random.uuidV4())).toBe(true);
+    const digest = yield* Digest.Digest;
+    expect(yield* digest.digestHex(Digest.sha256, new TextEncoder().encode('abc'))).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    );
+  }).pipe(Effect.provide(ShellCryptoLive)),
+);
 
 const issuer = 'https://shell.example.test';
 const compositionRevision = 'a'.repeat(64);
@@ -215,7 +228,7 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
     ).pipe(Effect.provide(layer));
     // The signing key is imported once and shared: the slot serialises concurrent first callers.
     expect(importKey).toHaveBeenCalledTimes(1);
-    expect(results.length).toBe(8);
+    expect(results).toHaveLength(8);
     expect(loadConfigCount).toBe(1);
     yield* Effect.all(
       results.map((result) =>

@@ -20,7 +20,8 @@ import {
   PricingPurchaseContextVerificationResponseSchema,
 } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import type { PricingPurchaseContextVerificationRequest } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
-import { Crypto, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
 import type { OwnerGatewayConnectionAcquire } from './owner-gateway-connection.ts';
 import { PriceIdentityKeySchema } from '@app/pricing-contracts/domain/price-definition';
@@ -502,10 +503,12 @@ export const makePricingCurrentDecisionPricingOwnerFinalFenceGateway = <
     const retainedAuthority = yield* Schema.decodeUnknownEffect(CommercialFeeSetAuthoritySchema)(
       material.ownerReadReceipt.authority,
     ).pipe(Effect.mapError((cause) => unavailable('Original Commercial Fee authority is invalid', cause)));
-    const checked = yield* dependencies.fees
-      // The fresh read may follow aggregate completion; retain the original native witness.
-      .verifySetGeneration({ ...query, authority: retainedAuthority, through })
-      .pipe(Effect.mapError((cause) => unavailable('Commercial Fee generation history is unavailable', cause)));
+    const checked = yield* (
+      dependencies.fees
+        // The fresh read may follow aggregate completion; retain the original native witness.
+        .verifySetGeneration({ ...query, authority: retainedAuthority, through })
+        .pipe(Effect.mapError((cause) => unavailable('Commercial Fee generation history is unavailable', cause)))
+    );
     if (
       checked.outcome !== 'COMMERCIAL_FEE_SET_GENERATION_CURRENT' ||
       anyMismatch(
@@ -1590,7 +1593,7 @@ export const makePricingCurrentDecisionMarketOwnerFinalFenceGateway = (dependenc
 export const pricingCurrentDecisionMarketOwnerFinalFenceLive = Layer.effect(
   PricingMarketMaterialEvidenceFenceGateway,
   Effect.gen(function* pricingCurrentDecisionMarketOwnerFinalFenceLive() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return makePricingCurrentDecisionMarketOwnerFinalFenceGateway({
       acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
       execute: executeAuthorizedMarketEvidence,
@@ -1957,7 +1960,7 @@ export const makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway = (
 export const pricingCurrentDecisionCustomerContextOwnerFinalFenceLive = Layer.effect(
   PricingCustomerContextMaterialEvidenceFenceGateway,
   Effect.gen(function* pricingCurrentDecisionCustomerContextOwnerFinalFenceLive() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return makePricingCurrentDecisionCustomerContextOwnerFinalFenceGateway({
       acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
       execute: executeAuthorizedCustomerGroup,
@@ -2277,7 +2280,7 @@ export const makePricingCurrentDecisionCatalogOwnerFinalFenceGateway = (dependen
 export const pricingCurrentDecisionCatalogOwnerFinalFenceLive = Layer.effect(
   PricingCatalogMaterialEvidenceFenceGateway,
   Effect.gen(function* pricingCurrentDecisionCatalogOwnerFinalFenceLive() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return makePricingCurrentDecisionCatalogOwnerFinalFenceGateway({
       acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
       equivalence: executeAuthorizedCatalogEquivalence,

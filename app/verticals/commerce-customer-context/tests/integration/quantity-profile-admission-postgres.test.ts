@@ -561,7 +561,7 @@ const openRetailReconciliation = Effect.fn('QuantityProfileAdmissionTests.openRe
     const [canonicalPartyId] = owner.partyIds;
     assert.isOk(secondPartyId !== undefined && canonicalPartyId !== undefined);
     const collision = yield* owner.createRetail(secondPartyId);
-    const opened = yield* owner.runtime
+    return yield* owner.runtime
       .runAction({
         payload: {
           canonicalizationEvidence: {
@@ -599,7 +599,6 @@ const openRetailReconciliation = Effect.fn('QuantityProfileAdmissionTests.openRe
         transport: owner.transport(),
       })
       .pipe(Effect.provideContext(owner.context));
-    return opened;
   },
 );
 
@@ -1069,9 +1068,11 @@ it.live(
           Effect.flip,
           Effect.timeout('5 seconds'),
         );
+        // The relay cuts the owner lookup, not connection acquisition. Native Pg skips rollback
+        // on the dead session, preserving the handler's typed owner failure.
         expect(yield* Schema.decodeUnknownEffect(ReadHandlerUnavailable)(unavailable)).toMatchObject({
           code: 'read_handler_unavailable',
-          reason: 'The governed read database connection is temporarily unavailable',
+          reason: 'Current Commerce Quantity policy is temporarily unavailable',
         });
         expect(wire.observed().cutCount).toBe(1);
         const recovered = yield* current(owner, owner.effectiveAt);

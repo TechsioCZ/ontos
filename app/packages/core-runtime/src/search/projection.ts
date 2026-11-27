@@ -31,7 +31,7 @@ const resourceId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength
 const resourceType = stableKey.pipe(Schema.brand('ResourceType'));
 const selectedLegalEntityId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('SelectedLegalEntityId'));
 const tenantId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
-const projectionVersion = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u));
+const projectionVersion = Schema.String.check(Schema.isPattern(/^[1-9]\d*$/u));
 type UnparsedCoreSearchInput = typeof Schema.Unknown.Type;
 
 export const CoreSearchResourceRefSchema = Schema.Struct({

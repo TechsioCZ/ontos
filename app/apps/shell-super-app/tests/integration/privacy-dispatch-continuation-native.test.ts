@@ -46,7 +46,8 @@ import { GatewayDelegatedContextRequestSchema, privacyDispatchConsumers } from '
 import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair } from 'jose';
@@ -357,8 +358,8 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* nativeContinuation() {
-        const crypto = yield* Crypto.Crypto;
-        const id = () => crypto.randomUUIDv4();
+        const crypto = yield* SecureRandom.SecureRandom;
+        const id = () => crypto.uuidV4();
         const shellDeployment = { appId: 'shell-super-app' as const, buildMarker: ultramodernDeliveryUnit.buildMarker };
         const shellRuntime = {
           document: JSON.stringify({
@@ -477,7 +478,7 @@ it.live(
         });
         const signer = makeGatewayIssuerLayer({
           currentTimeSeconds: Effect.succeed(Math.floor(DateTime.toEpochMillis(snapshot.observedAt) / 1000)),
-          generateJti: crypto.randomUUIDv4().pipe(Effect.orDie),
+          generateJti: crypto.uuidV4(),
           loadAdmission: Effect.succeed({
             audiences: new Map([
               ['communications', 'communications-build'],
@@ -946,6 +947,6 @@ it.live(
         });
         expect(widened.outcome).not.toBe('ALLOWED');
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(NodeServices.layer), Effect.provide(SecureRandom.layerWebCrypto)),
   180_000,
 );

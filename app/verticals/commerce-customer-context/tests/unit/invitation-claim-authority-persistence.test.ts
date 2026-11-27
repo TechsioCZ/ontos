@@ -1,7 +1,14 @@
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
-import { Crypto, Effect, Option, Redacted, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { Effect, Exit, Fiber, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import {
+  CommerceAuthSha256,
+  commerceAuthDigestUnavailable,
+  makeCommerceAuthSha256,
+} from '../../src/portal-auth/sha256.ts';
+import { TestClock } from 'effect/testing';
+import { assert, expect, it } from 'effect-rstest';
 
 import {
   CounterpartyAccessContractViolation,
@@ -52,9 +59,9 @@ const permissionScope = { kind: 'storefront', storefrontKey: storefrontId } as c
 const expiresAt = '2026-09-10T09:00:00.000Z';
 const proofReference = 'safe-proof-reference';
 
-const crypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array(32).fill(0xcd)),
-  randomBytes: (size) => new Uint8Array(size).fill(size === 32 ? 0xab : 0x11),
+const crypto = SecureRandom.make((size) => new Uint8Array(size).fill(size === 32 ? 0xab : 0x11));
+const digest = CommerceAuthSha256.of({
+  hash: () => Effect.succeed(new Uint8Array(32).fill(0xcd)),
 });
 
 const routineFailure = (routineKey: string) =>
@@ -199,7 +206,7 @@ it.effect('issues and stages one proof without exposing its raw value to either 
           events.push('delivery.stage');
         }),
     };
-    const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(transaction, crypto, delivery);
+    const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(transaction, crypto, digest, delivery);
 
     const result = yield* proofLifecycle.issueAndStageDelivery(registrationInput);
 
@@ -213,7 +220,9 @@ it.effect('issues and stages one proof without exposing its raw value to either 
       'delivery.stage',
       'counterparty-invitation-proof.stage-delivery',
     ]);
-    expect(Redacted.value(deliveries[0]?.rawProof)).toBe(rawProofText);
+    const [stagedDelivery] = deliveries;
+    assert.isDefined(stagedDelivery);
+    expect(Redacted.value(stagedDelivery.rawProof)).toBe(rawProofText);
     expect(routineCalls.map(({ values }) => JSON.stringify(values))).not.toContain(rawProofText);
     expect(routineCalls[0]?.values).toEqual([
       invitationId,
@@ -242,6 +251,7 @@ it.effect('returns an issue replay without restaging delivery or replacing its s
         return [{ operation_outcome: 'REPLAYED', proof_reference: 'existing-proof-reference' }];
       }),
       crypto,
+      digest,
       successfulDelivery(deliveries),
     );
 
@@ -270,6 +280,7 @@ it.effect('uses the explicit rotate operation before staging the replacement pro
     const { proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
       transaction,
       crypto,
+      digest,
       successfulDelivery(),
     );
 
@@ -289,6 +300,7 @@ it.effect('fails closed when secure delivery staging fails and never marks deliv
         return [{ operation_outcome: 'REGISTERED', proof_reference: proofReference }];
       }),
       crypto,
+      digest,
       {
         stage: () =>
           Effect.fail(
@@ -324,6 +336,7 @@ it.effect('escrows a proof with the exact committed release identity and no plai
           : [{ operation_outcome: 'STAGED', proof_reference: proofReference }],
       ),
       crypto,
+      digest,
       delivery,
     );
 
@@ -360,12 +373,71 @@ it.effect('maps wrong, expired, and rate-limited redemption outcomes to precise 
             storefront_resource_id: storefrontId,
           },
         ]),
-        crypto,
+        digest,
         trustedRedemptionScope,
       );
       const failure = yield* Effect.flip(redemption.redeem(redemptionInput));
       expectViolation(failure, expectedCode);
     }
+  }),
+);
+
+it.effect('bounds invitation-proof hashing to five seconds before calling persistence', () =>
+  Effect.gen(function* boundedInvitationHash() {
+    const stalledDigest = makeCommerceAuthSha256(() => Effect.never);
+    const routineCalls: string[] = [];
+    const redemption = counterpartyInvitationClaimRedemptionForTransaction(
+      invokerWith((key) => {
+        routineCalls.push(key);
+        return [];
+      }),
+      stalledDigest,
+      trustedRedemptionScope,
+    );
+    const fiber = yield* redemption.redeem(redemptionInput).pipe(Effect.forkChild);
+    yield* TestClock.adjust('5 seconds');
+    expect(fiber.pollUnsafe()).toBeDefined();
+    const failure = yield* Fiber.join(fiber).pipe(Effect.flip);
+    expectUnavailable(failure);
+    expect(routineCalls).toEqual([]);
+    expect(JSON.stringify(failure)).not.toContain(rawProofText);
+  }),
+);
+
+it.effect('reports an unavailable host digest before consuming the invitation', () =>
+  Effect.gen(function* rejectedDigest() {
+    const routineCalls: string[] = [];
+    const redemption = counterpartyInvitationClaimRedemptionForTransaction(
+      invokerWith((key) => {
+        routineCalls.push(key);
+        return [];
+      }),
+      makeCommerceAuthSha256(() => Effect.fail(commerceAuthDigestUnavailable(new Error('Host digest unavailable')))),
+      trustedRedemptionScope,
+    );
+    expectUnavailable(yield* Effect.flip(redemption.redeem(redemptionInput)));
+    expect(routineCalls).toEqual([]);
+  }),
+);
+
+it.effect('preserves a broken native digest as a defect without calling persistence', () =>
+  Effect.gen(function* brokenNativeInvitationDigest() {
+    const brokenDigest = CommerceAuthSha256.of({
+      hash: () => Effect.die('broken-digest'),
+    });
+    const routineCalls: string[] = [];
+    const redemption = counterpartyInvitationClaimRedemptionForTransaction(
+      invokerWith((key) => {
+        routineCalls.push(key);
+        return [];
+      }),
+      brokenDigest,
+      trustedRedemptionScope,
+    );
+    const result = yield* Effect.exit(redemption.redeem(redemptionInput));
+    expect(Exit.hasDies(result)).toBe(true);
+    expect(Exit.hasFails(result)).toBe(false);
+    expect(routineCalls).toEqual([]);
   }),
 );
 
@@ -386,7 +458,7 @@ it.effect('binds redemption claimant and owner scope only from authenticated con
           },
         ];
       }),
-      crypto,
+      digest,
       trustedRedemptionScope,
     );
 
@@ -416,6 +488,7 @@ it.effect('rejects a cross-Tenant claimant before authority or persistence can r
         return [];
       }),
       crypto,
+      digest,
       successfulDelivery(),
     );
 
@@ -441,6 +514,7 @@ it.effect('rechecks current inviter authority and stops before consumption when 
         return [];
       }),
       crypto,
+      digest,
       successfulDelivery(),
       (input) => {
         ownerChecks.push(input);
@@ -469,6 +543,7 @@ it.effect('owner pending revoke denies invitation claim before Core authority ca
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
       crypto,
+      digest,
       successfulDelivery(),
       () => Effect.succeed('DENIED' as const),
     );
@@ -484,6 +559,7 @@ it.effect('fails closed when invitation authority has no owner reader', () =>
     const { claimAuthority } = counterpartyInvitationClaimServicesForTransaction(
       invokerWith(() => []),
       crypto,
+      digest,
       successfulDelivery(),
     );
 
@@ -614,15 +690,13 @@ it.effect('preflight maps expired, revoked, consumed, and partial failures fail 
           },
         ),
       );
-      expectViolation(
-        failure,
-        // oxlint-disable-next-line eslint/no-nested-ternary -- The three exhaustive fixture outcomes map directly to their expected violation codes.
-        operationOutcome === 'EXPIRED'
-          ? 'invitation_expired'
-          : operationOutcome === 'CONSUMED'
-            ? 'invitation_claim_proof_consumed'
-            : 'invitation_claim_proof_invalid',
-      );
+      if (operationOutcome === 'EXPIRED') {
+        expectViolation(failure, 'invitation_expired');
+      } else if (operationOutcome === 'CONSUMED') {
+        expectViolation(failure, 'invitation_claim_proof_consumed');
+      } else {
+        expectViolation(failure, 'invitation_claim_proof_invalid');
+      }
     }
     const unavailableFailure = yield* Effect.flip(
       verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
@@ -669,6 +743,7 @@ it.effect('replays the stored same-Action attestation while preserving the exact
         ];
       }),
       crypto,
+      digest,
       successfulDelivery(),
       allowedOwnerAccess,
     );
@@ -704,6 +779,7 @@ it.effect('rejects reuse by a conflicting Action without releasing an attestatio
         },
       ]),
       crypto,
+      digest,
       successfulDelivery(),
       allowedOwnerAccess,
     );

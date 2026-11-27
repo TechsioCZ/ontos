@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Context, Crypto, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -30,7 +31,7 @@ import {
 import { taxGovernedReadsForScope } from '../../src/services/tax-governed-read.service.ts';
 import { taxRuleGovernancePersistenceForScope } from '../../src/services/tax-rule-governance.service.ts';
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const scopeFor = (principalId: string, tenant: string, legalEntityId: string) =>
   Effect.gen(function* makeTaxGovernanceScope() {
@@ -243,7 +244,7 @@ const awaitRuleLockWaiter = (observer: Effect.Success<typeof testDatabaseClients
 // These tests wait on the live clock, so each stays a live registration and builds Node Crypto in its scope.
 // Tests that poll with `Effect.sleep` provide the built services directly so the sleep stays visibly live-owned.
 const nodeCryptoServices = Layer.build(NodeCrypto.layer);
-const nodeCrypto = nodeCryptoServices.pipe(Effect.map((context) => Context.get(context, Crypto.Crypto)));
+const nodeCrypto = nodeCryptoServices.pipe(Effect.map((context) => Context.get(context, SecureRandom.SecureRandom)));
 
 it.live(
   '#929 #930 F8 #955 Tax Rule governance replays, rejects reused keys and stale bases, and keeps corrections addressable',
@@ -415,7 +416,7 @@ it.live(
         const repeated = yield* applicableAt('2027-06-01T00:00:00.000Z');
         expect(repeated.completeness.setFingerprint).toBe(corrected2027.completeness.setFingerprint);
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#950 F24-F28 Tax governance state is isolated per Tenant and Selling Legal Entity by forced RLS', () =>
@@ -470,7 +471,7 @@ it.live('#950 F24-F28 Tax governance state is isolated per Tenant and Selling Le
       )((persistence) => persistence.createTaxRule({ ...createInput, ...forgedInvocation })).pipe(Effect.exit);
       expect(Exit.isFailure(forged)).toBe(true);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live('#929 F2 #930 F8 Tax Rule revisions and facts are immutable for the runtime role', () =>
@@ -511,7 +512,7 @@ it.live('#929 F2 #930 F8 Tax Rule revisions and facts are immutable for the runt
       );
       expect(stored).toEqual([{ ratePercent: '21' }]);
     }),
-  ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+  ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(
@@ -839,7 +840,7 @@ it.live(
         );
         expect(replayedEnd).toEqual({ ended: false, revisionId: rev1 });
       }),
-    ).pipe(Effect.provideServiceEffect(Crypto.Crypto, nodeCrypto)),
+    ).pipe(Effect.provideServiceEffect(SecureRandom.SecureRandom, nodeCrypto)),
 );
 
 it.live(

@@ -2,7 +2,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, Effect, Layer, Redacted, Schema } from 'effect';
+import { Effect, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { seedSourceProcessingNativeFixture } from '../support/source-processing-native.ts';
@@ -27,10 +28,10 @@ it.live(
         mode: 'schema-only',
         purpose: 'implementation-1096-registered-workload-gateway',
       });
-      const crypto = yield* Crypto.Crypto;
-      const tenantId = yield* crypto.randomUUIDv4();
-      const legalEntityId = yield* crypto.randomUUIDv4();
-      const governancePrincipalId = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const tenantId = yield* crypto.uuidV4();
+      const legalEntityId = yield* crypto.uuidV4();
+      const governancePrincipalId = yield* crypto.uuidV4();
       const source = yield* seedSourceProcessingNativeFixture({
         connections: ownedDatabase.connections,
         contexts: [
@@ -95,7 +96,7 @@ it.live(
           ),
         ).toBe(true);
       }
-      const controlId = yield* crypto.randomUUIDv4();
+      const controlId = yield* crypto.uuidV4();
       yield* client`insert into privacy.processing_purposes (processing_purpose_id,tenant_id,legal_entity_id,business_code,governance_owner_id,lifecycle)
       values (${controlId}::uuid,${tenantId}::uuid,${legalEntityId}::uuid,'NON_FIXTURE_CONTROL',${governancePrincipalId}::uuid,'ACTIVE')`;
       const controlRef = yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)({

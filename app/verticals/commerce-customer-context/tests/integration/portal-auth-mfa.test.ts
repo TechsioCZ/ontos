@@ -6,7 +6,8 @@ import { splitSetCookieHeader, applySetCookies, parseCookies } from 'better-auth
 import type { Auth } from 'better-auth';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
-import { Config, Context, Crypto, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Config, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { SchemaAST, Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -822,7 +823,11 @@ interface FreshnessFixture {
 }
 
 const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegration.makeFixture')(
-  function* makeFreshnessFixtureEffect(): Effect.fn.Return<FreshnessFixture, unknown, Scope.Scope | Crypto.Crypto> {
+  function* makeFreshnessFixtureEffect(): Effect.fn.Return<
+    FreshnessFixture,
+    unknown,
+    Scope.Scope | SecureRandom.SecureRandom
+  > {
     const connectionString = yield* PORTAL_AUTH_DATABASE_URL;
     const configuration = yield* parseCommercePortalAuthConfig({
       COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
@@ -875,7 +880,7 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
       },
     ]);
 
-    const store = makeCommercePortalAuthSessionStore(database.executor, yield* Crypto.Crypto);
+    const store = makeCommercePortalAuthSessionStore(database.executor, yield* SecureRandom.SecureRandom);
     const lifecycle = makeCommercePortalAuthSessionLifecycle(
       store,
       {

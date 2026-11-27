@@ -10,7 +10,8 @@ import { isVerifiedGatewayPrincipalContext, readVerifiedGatewayActor } from '@ap
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { Crypto, DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
+import { DateTime, Effect, Match, Option, Schema, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { OrderFinalizationPricingContextSchema } from '../../shared/domain/order-finalization-pricing-context.ts';
 import {
@@ -78,7 +79,7 @@ const readOrderStorefrontCurrent = Effect.fn('OrderFinalizationPricingContext.re
     compositionRevision: string,
   ) {
     const { legalEntityId } = scope;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     if (legalEntityId === undefined || approved.proposal.context.channelId !== 'B2B') {
       return yield* invalid();
     }
@@ -571,7 +572,7 @@ export const resolveOrderCurrentnessFacts = Effect.fn('OrderFinalizationPricingC
     observedAt: DateTime.Utc,
     compositionRevision: string,
   ) {
-    const facts = yield* Effect.gen(function* loadFacts() {
+    return yield* Effect.gen(function* loadFacts() {
       const [row] = yield* transaction.invoke(readCurrentPurchaseApprovalRevalidationRoutine, [
         { requestRef: approvedRequest.requestRef },
       ]);
@@ -627,6 +628,5 @@ export const resolveOrderCurrentnessFacts = Effect.fn('OrderFinalizationPricingC
         ),
       ),
     );
-    return facts;
   },
 );

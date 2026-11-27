@@ -15,7 +15,8 @@ import {
 } from '@app/party-registry/apis/organization-record-facts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { OrganizationBusinessApplicabilityIntentSchema } from '../../shared/apis/organization-business-applicability.ts';
@@ -45,15 +46,15 @@ it.live('prepares only Name Export and strict corporate UPDATE policies with exa
       mode: 'schema-only',
       purpose: 'implementation-1096-registered-workload-gateway',
     });
-    const crypto = yield* Crypto.Crypto;
-    const tenantId = yield* crypto.randomUUIDv4();
-    const legalEntityId = yield* crypto.randomUUIDv4();
-    const governancePrincipalId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const tenantId = yield* crypto.uuidV4();
+    const legalEntityId = yield* crypto.uuidV4();
+    const governancePrincipalId = yield* crypto.uuidV4();
     // Expected locator metadata only. Actual Party/source admission and classification remain
     // separate receiving-owner public RecordAction/NameExport acceptance, with no proof stub here.
     const partyRef = {
       moduleId: 'party.registry',
-      resourceId: yield* crypto.randomUUIDv4(),
+      resourceId: yield* crypto.uuidV4(),
       resourceType: 'party.registry.party',
       tenantId,
     };

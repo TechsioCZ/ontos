@@ -236,7 +236,7 @@ const fixture = Effect.fn('ScopedOwnerMigrations.ownedDatabase')(function* owned
     }
     urls[identity.urlKey] = withDatabase(runtime.connectionString, database);
   }
-  const sharedUrl = urls.DATABASE_URL;
+  const sharedUrl = urls['DATABASE_URL'];
   if (sharedUrl === undefined) {
     return yield* new ScopedOwnerNativeFailure({ stage: 'missing_shared_runtime_identity' });
   }

@@ -1,5 +1,7 @@
+import { commerceAuthSha256Live } from '../../src/portal-auth/sha256.ts';
 import { expect, it } from 'effect-rstest';
-import { Crypto, Effect, Layer, Predicate } from 'effect';
+import { Effect, Layer, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   ContextAccess,
@@ -101,10 +103,7 @@ const operationalScope = Object.freeze({
   principalId,
   tenantId,
 });
-const testCrypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array(32)),
-  randomBytes: (size) => new Uint8Array(size),
-});
+const testCrypto = SecureRandom.make((size) => new Uint8Array(size));
 const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),
@@ -125,7 +124,7 @@ const unusedInvitationProofLifecycleLayer = Layer.succeed(
   CounterpartyInvitationProofLifecycle,
   unavailableCounterpartyInvitationProofLifecycle('not used by the injected Read test service'),
 );
-const testCryptoLayer = Layer.succeed(Crypto.Crypto, testCrypto);
+const testCryptoLayer = Layer.succeed(SecureRandom.SecureRandom, testCrypto);
 const unusedAccessDependencies = Layer.mergeAll(
   unusedContextAccessLayer,
   unusedPrincipalEligibilityLayer,
@@ -133,6 +132,7 @@ const unusedAccessDependencies = Layer.mergeAll(
   unusedInvitationProofDeliveryLayer,
   unusedInvitationProofLifecycleLayer,
   testCryptoLayer,
+  commerceAuthSha256Live,
 );
 const provideUnusedAccessPort = Effect.provide(unusedAccessDependencies);
 

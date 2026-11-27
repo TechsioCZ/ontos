@@ -11,7 +11,8 @@ import { AuthenticationNamespaceRegistrationSchema } from '@app/core-runtime/aut
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '@app/commerce-customer-context/portal-auth/contracts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 import { base64url } from 'jose';
@@ -117,7 +118,7 @@ const noticeUnitNamespaceLive = authenticationNamespaceRegistryLayer(
 /** Explicit owner-local unit ports; these are not public account/channel acceptance evidence. */
 const fixture = Effect.fn('NoticeUnit.fixture')(function* fixture(selectedNotice: PrivacyNoticeVersion = notice) {
   yield* TestClock.setTime(Date.parse(now));
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const integrity = yield* makePrivacyNoticePresentationService({
     keyId: 'unit-channel-only',
     signingKey: Redacted.make(base64url.encode(new Uint8Array(32).fill(29))),

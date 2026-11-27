@@ -271,14 +271,11 @@ const fixture = (input: FixtureInput = {}) => {
       }),
   };
 
+  const defaultGateOutcome = input.gate === 'DENIED' ? 'DENIED' : 'ALLOWED';
   const gate =
-    (input.gate ?? 'ALLOWED') === 'UNAVAILABLE'
+    input.gate === 'UNAVAILABLE'
       ? makeTestAccessDecision({ unavailable: true })
-      : makeTestAccessDecision(
-          (input.gate ?? 'ALLOWED') === 'DENIED'
-            ? { defaultAnswer: { outcome: 'DENIED' } }
-            : { defaultAnswer: { outcome: 'ALLOWED' } },
-        );
+      : makeTestAccessDecision({ defaultAnswer: { outcome: defaultGateOutcome } });
 
   const fixedClock = { now: Effect.succeed(NOW) };
 
@@ -341,7 +338,7 @@ it.effect('lists the tenant roles with their cells and holder counts, without a 
   Effect.gen(function* listRoles() {
     const { run } = fixture();
     const response = yield* run((bff) => bff.list(headers, listPayload()));
-    expect(response.items.length).toBe(1);
+    expect(response.items).toHaveLength(1);
     expect(response.items[0]?.id).toBe(ROLE);
     expect(response.items[0]?.scope).toBe('tenant');
     expect(response.items[0]?.holderCount).toBe(1);
@@ -375,7 +372,7 @@ it.effect('answers one role with the people it reaches, and refuses an unknown r
     const detail = yield* run((bff) => bff.detail(headers, decode(GetAccessRolePayloadSchema, { roleId: ROLE })));
     expect(detail.role.id).toBe(ROLE);
     expect(detail.holderCount).toBe(1);
-    expect(detail.holders.length).toBe(1);
+    expect(detail.holders).toHaveLength(1);
     expect(detail.holders[0]?.assignmentIncarnationId).toBe(INCARNATION);
     expect(detail.holders[0]?.roleId).toBe(ROLE);
 
@@ -441,7 +438,7 @@ it.effect('saves the exact previewed cells, writes one fenced revision and answe
       }),
     );
     expect(recorded.reconciles).toBe(1);
-    expect(recorded.revisions.length).toBe(1);
+    expect(recorded.revisions).toHaveLength(1);
     expect(saved.role.revision).toBe(2);
     expect(saved.added.map(({ capabilityKey }) => capabilityKey)).toEqual(['test.invoice.pay']);
     expect(saved.removed).toEqual([]);
@@ -577,7 +574,7 @@ it.effect('creates an empty role and refuses any cells at creation, so cells onl
     expect(created.scope).toBe('tenant');
     expect(created.revision).toBe(1);
     expect(created.cells).toEqual([]);
-    expect(recorded.creates.length).toBe(1);
+    expect(recorded.creates).toHaveLength(1);
     expect(recorded.reconciles).toBe(1);
 
     const inflated = yield* run((bff) =>
@@ -625,7 +622,7 @@ it.effect('creates an empty role and refuses any cells at creation, so cells onl
     ).pipe(Effect.flip);
     expect(movedRelease.status).toBe(409);
 
-    expect(recorded.creates.length).toBe(1);
+    expect(recorded.creates).toHaveLength(1);
   }),
 );
 
@@ -650,7 +647,7 @@ it.effect('maps every Core refusal onto the one status a client can act on', () 
 it.effect('declares one tenant-context administration capability per operation, never a record selector', () =>
   Effect.sync(() => {
     const declarations = Object.values(accessRolesDeclarations);
-    expect(declarations.length).toBe(6);
+    expect(declarations).toHaveLength(6);
     expect(new Set(declarations.map(({ key }) => key)).size).toBe(6);
     for (const declaration of declarations) {
       expect(declaration.kind).toBe('admin');
@@ -660,7 +657,7 @@ it.effect('declares one tenant-context administration capability per operation, 
       // namespace, so the catalog's O27 prefix rule and the module key agree.
       expect(declaration.key.startsWith('shell-super-app.access-')).toBe(true);
     }
-    expect(Object.keys(accessRolesEntrypoints).length).toBe(6);
+    expect(Object.keys(accessRolesEntrypoints)).toHaveLength(6);
     for (const entrypoint of Object.values(accessRolesEntrypoints)) {
       expect(entrypoint.moduleKey).toBe('shell-super-app');
       expect(entrypoint.entrypointKey.startsWith('shell-super-app.access-')).toBe(true);

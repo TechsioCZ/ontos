@@ -81,7 +81,12 @@ const amount = ({ coefficient, scale }: Decimal): string => {
     return `${sign}${digits}`;
   }
   const integer = digits.slice(0, -scale);
-  const fraction = digits.slice(-scale).replace(/0+$/u, '');
+  const rawFraction = digits.slice(-scale);
+  let fractionEnd = rawFraction.length;
+  while (rawFraction[fractionEnd - 1] === '0') {
+    fractionEnd -= 1;
+  }
+  const fraction = rawFraction.slice(0, fractionEnd);
   return fraction.length === 0 ? `${sign}${integer}` : `${sign}${integer}.${fraction}`;
 };
 

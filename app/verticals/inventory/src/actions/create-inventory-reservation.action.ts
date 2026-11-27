@@ -6,7 +6,8 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, DateTime, Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import { makeCatalogToStockBindingResolver } from '../../shared/domain/catalog-to-stock-binding.ts';
@@ -132,7 +133,7 @@ export const createInventoryReservationAction = defineAction(
   handleCreateInventoryReservation,
   (transaction, scope) =>
     Effect.all(
-      { commerceContexts: InventoryReservationCommerceContextAuthorityPort, crypto: Crypto.Crypto },
+      { commerceContexts: InventoryReservationCommerceContextAuthorityPort, crypto: SecureRandom.SecureRandom },
       { concurrency: 2 },
     ).pipe(
       Effect.map(({ commerceContexts, crypto }) =>
@@ -161,7 +162,7 @@ export const createInventoryReservationAction = defineAction(
               Hex.encode(sha256(utf8ToBytes(`${effectId}\u0000${purchaseDemandOccurrenceId}\u0000${positionId}`))),
             ),
           makeMutationId: crypto
-            .randomUUIDv4()
+            .uuidV4()
             .pipe(Effect.map((mutationId) => InventoryReservationCreateMutationIdSchema.make(mutationId))),
           resolver: makeCatalogToStockBindingResolver(
             makeDrizzleCatalogToStockBindingPersistence(transaction),

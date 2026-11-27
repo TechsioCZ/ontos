@@ -31,7 +31,6 @@ import {
   DateTime,
   Config,
   Context,
-  Crypto,
   Deferred,
   Effect,
   FileSystem,
@@ -42,6 +41,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
 
@@ -72,9 +72,9 @@ it.live('rejects resolved person admission without authoritative Party proof in 
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
     }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
-    const crypto = yield* Crypto.Crypto;
-    const subjectId = yield* crypto.randomUUIDv4();
-    const partyId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const subjectId = yield* crypto.uuidV4();
+    const partyId = yield* crypto.uuidV4();
     const result = yield* Effect.result(
       native
         .prepareOwner(
@@ -86,7 +86,7 @@ it.live('rejects resolved person admission without authoritative Party proof in 
                 tenantId: scope.tenantId,
               },
               {
-                actionInvocationId: yield* crypto.randomUUIDv4(),
+                actionInvocationId: yield* crypto.uuidV4(),
                 subject: {
                   createdAt: '2026-01-01T00:00:00Z',
                   subject: {
@@ -127,7 +127,7 @@ it.live('foreign-only Subject references cannot select all trusted-Tenant record
       moduleId: 'privacy.core',
       ownerFixtureRetention: 'retain-complete-context',
     }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const created = yield* native
       .prepareOwner(
         Effect.fn('anonymousSubjectSelectionOwner')(function* anonymousSubjectSelectionOwner(transaction, scope) {
@@ -137,7 +137,7 @@ it.live('foreign-only Subject references cannot select all trusted-Tenant record
             subject: {
               anonymousContext: {
                 addressability: 'SESSION',
-                contextRef: yield* crypto.randomUUIDv4(),
+                contextRef: yield* crypto.uuidV4(),
                 createdAt: '2026-01-01T00:00:00Z',
                 expiresAt: '2027-01-01T00:00:00Z',
                 kind: 'ANONYMOUS_PRIVACY_CONTEXT',
@@ -147,7 +147,7 @@ it.live('foreign-only Subject references cannot select all trusted-Tenant record
             },
             subjectRef: {
               moduleId: 'privacy.core',
-              resourceId: yield* crypto.randomUUIDv4(),
+              resourceId: yield* crypto.uuidV4(),
               resourceType: 'privacy.core.privacy-subject',
               tenantId: scope.tenantId,
             },
@@ -155,7 +155,7 @@ it.live('foreign-only Subject references cannot select all trusted-Tenant record
           });
           return yield* owner.createSubject(
             { legalEntityId: Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId)), tenantId: scope.tenantId },
-            { actionInvocationId: yield* crypto.randomUUIDv4(), subject },
+            { actionInvocationId: yield* crypto.uuidV4(), subject },
           );
         }),
       )
@@ -165,16 +165,16 @@ it.live('foreign-only Subject references cannot select all trusted-Tenant record
         input: { subjectRefs: [] },
         principal: native.principal,
         registration: privacySubjectsRead,
-        transport: { correlationId: yield* crypto.randomUUIDv4() },
+        transport: { correlationId: yield* crypto.uuidV4() },
       })
       .pipe(Effect.provide(native.layer));
     expect(all.items).toEqual([created]);
     const foreign = yield* native.runtime
       .runRead({
-        input: { subjectRefs: [{ ...created.subjectRef, tenantId: yield* crypto.randomUUIDv4() }] },
+        input: { subjectRefs: [{ ...created.subjectRef, tenantId: yield* crypto.uuidV4() }] },
         principal: native.principal,
         registration: privacySubjectsRead,
-        transport: { correlationId: yield* crypto.randomUUIDv4() },
+        transport: { correlationId: yield* crypto.uuidV4() },
       })
       .pipe(Effect.provide(native.layer));
     expect(foreign.items).toEqual([]);
@@ -256,8 +256,8 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
       address.pathname = `/${capability.databaseName}`;
       urls[identity.urlKey] = address.href;
     }
-    const issuerUrl = urls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-    const requestUrl = urls.PARTY_REGISTRY_DATABASE_URL;
+    const issuerUrl = urls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+    const requestUrl = urls['PARTY_REGISTRY_DATABASE_URL'];
     if (issuerUrl === undefined || requestUrl === undefined) {
       return yield* identityFailure('Canonical native fixture identities were incomplete');
     }
@@ -320,13 +320,14 @@ const ownerReadySchema = Schema.Struct({ marker: ownerMarkerSchema, port: Schema
 const publicProofServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeHttpServer.layerTest),
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
 );
 
 it.layer(publicProofServices, { excludeTestServices: true })('actual Party owner HTTP → Privacy identity', (suite) => {
   suite.effect('admits only owner-proven PERSON through the registered Action and governed native Subject Read', () =>
     Effect.gen(function* personOwnerHttpAcceptance() {
-      const crypto = yield* Crypto.Crypto;
-      const nextId = () => crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const nextId = () => crypto.uuidV4();
       const description = yield* describeControllerContracts();
       const partyIdentity = description.buildIdentities['party-registry'];
       const encodeIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));

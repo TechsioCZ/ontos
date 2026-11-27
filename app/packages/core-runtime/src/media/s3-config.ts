@@ -80,7 +80,7 @@ const IP_LITERAL_HOST = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[.*\])$/u;
 const BUCKET_NAME = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u;
 const REGION_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const CREDENTIAL_TEXT = /^[!-~]{1,512}$/u;
-const POSITIVE_INTEGER = /^[1-9][0-9]{0,15}$/u;
+const POSITIVE_INTEGER = /^[1-9]\d{0,15}$/u;
 
 const isAcceptedOrigin = (url: URL): boolean => {
   const transportAllowed = url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOST.test(url.hostname));

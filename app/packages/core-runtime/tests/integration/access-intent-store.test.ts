@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Cause, Crypto, DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Option, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -164,8 +165,8 @@ interface AccessIntentSchema {
 /** A database of this run's own, with the committed schema applied and the runtime role granted. */
 const makeAccessIntentSchema = Effect.gen(function* accessIntentSchema() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
-  const database = `${databasePrefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const database = `${databasePrefix}${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   const sourceAdmin = yield* makeTestPgClient(connections.admin.connectionString);
   yield* sourceAdmin.unsafe(`create database "${database}"`);
   yield* Effect.addFinalizer(() =>
@@ -195,7 +196,9 @@ const makeAccessIntentSchema = Effect.gen(function* accessIntentSchema() {
   } satisfies AccessIntentSchema;
 });
 
-it.layer(NodeServices.layer)('the Access membership store', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('the Access membership store', (suite) => {
   suite.effect(
     'records a tenant bootstrap, ends one membership and refuses every command outside its scope',
     Effect.fnUntraced(function* accessMembershipStoreIntegration() {
@@ -369,7 +372,7 @@ it.layer(NodeServices.layer)('the Access membership store', (suite) => {
   );
 });
 
-it.layer(NodeServices.layer)('the Access team store', (suite) => {
+it.layer(nativeServices)('the Access team store', (suite) => {
   suite.effect(
     'keeps a team and its membership in the scope that owns them, and removes only the membership',
     Effect.fnUntraced(function* accessTeamStoreIntegration() {

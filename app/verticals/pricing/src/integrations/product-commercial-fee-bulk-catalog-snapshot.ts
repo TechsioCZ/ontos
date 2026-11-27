@@ -4,7 +4,8 @@ import { CatalogSelectionValidEvidenceSchema } from '@app/catalog-selection-cont
 import { priceCatalogTargetsEqual } from '@app/pricing-contracts/domain/catalog-price-target';
 import type { PricingCommercialFeeProductTargetSnapshot } from '@app/pricing-contracts/domain/commercial-fee';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
-import { Crypto, Effect, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PricingCatalogSelectionUnavailable } from '../../shared/domain/pricing-catalog-selection-unavailable.ts';
 import { acquireOwnerGatewayConnection } from './owner-gateway-connection.ts';
@@ -157,8 +158,8 @@ export const productCommercialFeeBulkCatalogSnapshotPortFromEnvironment = Effect
     readonly scope: OperationalScope;
   },
   execute: SnapshotExecutor = executeSnapshot,
-): Effect.fn.Return<ProductCommercialFeeBulkCatalogSnapshotPort, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
+): Effect.fn.Return<ProductCommercialFeeBulkCatalogSnapshotPort, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   return makeProductCommercialFeeBulkCatalogSnapshotPort({
     acquire: (input) => acquireOwnerGatewayConnection(input, crypto),
     context,

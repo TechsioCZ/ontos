@@ -217,9 +217,9 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
   const decisionRef = `internal:measure-decision:${id}`;
   const evidenceRefs = [`internal:explicit-fixture-governance:${id}`];
   const common = {
+    controllerRef: seed.legalEntityId,
     evidenceRefs,
     policyRef,
-    controllerRef: seed.legalEntityId,
     policyVersion: 1,
     provenanceRef: `internal:measure-provenance:${id}`,
   };
@@ -330,7 +330,7 @@ const prepare = Effect.fn('PrivacyMeasureNativeFixture.prepare')(function* prepa
     ruleRef,
     ruleVersion: 1,
   });
-  return { handoff, policyRef, holdRef: `internal:measure-hold:${id}` };
+  return { handoff, holdRef: `internal:measure-hold:${id}`, policyRef };
 });
 type Identity = Effect.Success<ReturnType<typeof prepare>>;
 const changeHold = Effect.fn('PrivacyMeasureNativeFixture.setHold')(function* changeHold(

@@ -1,5 +1,5 @@
 import { Effect, Option, Ref, Schema } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 import { getActionOwnerPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import type { ImportSourceAssertionResult } from '../../shared/actions/import-source-assertion.ts';
@@ -995,9 +995,7 @@ describe('Inventory external source conflicts', () => {
           correlations: { resolve: () => Effect.die('not used') },
         });
         const [outcome] = indeterminateImportResult(incoming).items;
-        if (outcome === undefined) {
-          yield* Effect.die('Expected one indeterminate import outcome');
-        }
+        assert(outcome !== undefined, 'Expected one indeterminate import outcome');
         yield* finalize({
           acceptedHistory: [acceptedImport(accepted)],
           outcome,
@@ -1032,9 +1030,7 @@ describe('Inventory external source conflicts', () => {
       for (const assertionId of [assertionTwoId, assertionThreeId]) {
         const incoming = proposal(assertionId, '12', '2026-09-24T10:02:00.000Z');
         const [outcome] = indeterminateImportResult(incoming).items;
-        if (outcome === undefined) {
-          yield* Effect.die('Expected one indeterminate import outcome');
-        }
+        assert(outcome !== undefined, 'Expected one indeterminate import outcome');
         yield* finalize({ acceptedHistory: [acceptedImport(accepted)], outcome, proposal: incoming });
       }
 
@@ -1087,9 +1083,7 @@ describe('Inventory external source conflicts', () => {
       });
       for (const replay of [incoming, semanticReplay]) {
         const [outcome] = indeterminateImportResult(replay).items;
-        if (outcome === undefined) {
-          yield* Effect.die('Expected one indeterminate import outcome');
-        }
+        assert(outcome !== undefined, 'Expected one indeterminate import outcome');
         yield* finalize({ acceptedHistory: [acceptedImport(accepted)], outcome, proposal: replay });
       }
 

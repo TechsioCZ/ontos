@@ -112,8 +112,8 @@ const makeNoticeContext = Effect.fn('NoticeInstants.makeContext')(function* make
     noticeId?: string,
   ) {
     return yield* runAction({
-      principal,
       payload: { input, noticeId: noticeId ?? (yield* nextId) },
+      principal,
       registration: createNoticeVersionAction,
       transport: { correlationId: yield* nextId, idempotencyKey: yield* nextId, targetModuleKey: 'privacy.core' },
     }).pipe(Effect.provideContext(context));

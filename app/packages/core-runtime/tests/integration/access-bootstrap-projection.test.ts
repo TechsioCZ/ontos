@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Context, Crypto, DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { AccessDecisionLive } from '../../src/access/enforcement/service.ts';
@@ -188,10 +189,10 @@ interface Tenant {
 const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value, Failure>) =>
   Effect.gen(function* tenantScenario() {
     const connections = yield* loadDatabaseConnectionPair();
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const configuration = yield* loadSpiceDbConfig();
     const bootstrapConnection = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-    const database = `access_bootstrap_projection_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const database = `access_bootstrap_projection_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     yield* bootstrapConnection.unsafe(`create database "${database}"`).pipe(Effect.orDie);
     yield* Effect.addFinalizer(() =>
       bootstrapConnection.unsafe(`drop database if exists "${database}" with (force)`).pipe(Effect.orDie),
@@ -201,7 +202,7 @@ const withTenant = <Value, Failure>(run: (tenant: Tenant) => Effect.Effect<Value
     });
     yield* createTemplateDatabase(admin);
     // Every case gets a tenant of its own, so its projected objects are its own in the shared engine.
-    const tenantId = TenantIdSchema.make(yield* crypto.randomUUIDv4());
+    const tenantId = TenantIdSchema.make(yield* crypto.uuidV4());
     yield* seedTenant(admin, tenantId);
     const runtime = yield* makeTestPgClient(replacedDatabase(connections.runtime.connectionString, database), {
       maxConnections: 2,
@@ -281,7 +282,9 @@ const bootstrapped = (tenant: Tenant) =>
     Effect.orDie,
   );
 
-it.layer(NodeServices.layer)('access bootstrap and projection writer', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('access bootstrap and projection writer', (suite) => {
   suite.effect('gives a new tenant its owner, its release and its whole catalog, and the gate allows it', () =>
     withTenant((tenant) =>
       Effect.gen(function* bootstrapsTenant() {

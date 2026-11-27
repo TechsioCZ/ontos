@@ -147,8 +147,8 @@ const main = Effect.scoped(
         const result = yield* runtime.runAction({
           audience: OWNER_AUDIENCE,
           payload: request.parameters,
-          registration: createMarketAction,
           principal,
+          registration: createMarketAction,
           transport,
         });
         return yield* Schema.encodeEffect(
@@ -160,8 +160,8 @@ const main = Effect.scoped(
       const result = yield* runtime.runAction({
         audience: OWNER_AUDIENCE,
         payload: request.parameters,
-        registration: associateStorefrontAction,
         principal,
+        registration: associateStorefrontAction,
         transport,
       });
       return yield* Schema.encodeEffect(

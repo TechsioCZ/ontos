@@ -10,7 +10,8 @@ import { PgClient } from '@effect/sql-pg';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { Crypto, Effect, FileSystem, Layer, Option, Path, Redacted, Result, Schema, Stream } from 'effect';
+import { Effect, FileSystem, Layer, Option, Path, Redacted, Result, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { Reactivity } from 'effect/reactivity';
 import { ChildProcess } from 'effect/process';
 import { expect, it } from 'effect-rstest';
@@ -47,8 +48,8 @@ const legacyPrivacySubjects = pgSchema('privacy').table('privacy_subjects', {
 
 const prepareConsentSubjectFixture = Effect.fn('PrivacyConsentSubjectFixture.prepare')(
   function* prepareConsentSubjectFixture(fixture: NativeConsentContext, schema: 'current' | 'legacy' = 'current') {
-    const crypto = yield* Crypto.Crypto;
-    const nextId = () => crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const nextId = () => crypto.uuidV4();
     const subjectA = yield* nextId();
     const subjectB = yield* nextId();
     const mainScope = `consent:${yield* nextId()}`;
@@ -399,12 +400,12 @@ it.live('binds native Consent history to one exact Subject across valid competin
 
 const recordBaselineConsentDecision = Effect.fn('PrivacyConsentLegacyFixture.recordBaselineDecision')(
   function* recordBaselineConsentDecision(fixture: NativeConsentContext, decision: ConsentDecision) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return yield* fixture.prepareOwner(
       Effect.fn('recordBaselineConsentDecisionRows')(function* recordBaselineConsentDecisionRows(transaction, scope) {
         const decoded = yield* Schema.decodeUnknownEffect(ConsentDecisionSchema)(decision);
         return yield* transaction.insert(consentDecisions).values({
-          actionInvocationId: yield* crypto.randomUUIDv4(),
+          actionInvocationId: yield* crypto.uuidV4(),
           decision: decoded.decision,
           decisionId: decoded.decisionId,
           decisionRecord: Schema.encodeSync(ConsentDecisionSchema)(decoded),
@@ -442,7 +443,10 @@ const readNativeConsentHistory = Effect.fn('PrivacyConsentLegacyFixture.history'
   );
 });
 
-const legacyNativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const legacyNativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
+);
 
 it.live(
   'preserves ambiguous legacy Consent history across the actual forward migration without assigning a Subject winner',

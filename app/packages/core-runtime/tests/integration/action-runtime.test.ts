@@ -1,6 +1,7 @@
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { and, eq, sql } from 'drizzle-orm';
-import { Cause, Context, Crypto, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
+import { Cause, Context, Deferred, Effect, Layer, Exit, Fiber, Option, Schema, Predicate } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError, UnknownError } from 'effect/sql/SqlError';
 import { commitActionThenReject } from '../../src/actions/context.ts';
@@ -160,11 +161,11 @@ const testOperationalScopeResolver: OperationalScopeResolverService = {
     }),
 };
 const makeActionRuntimeSuite = Effect.gen(function* makeActionRuntimeSuite() {
-  const crypto = yield* Crypto.Crypto;
-  const tenantId = yield* crypto.randomUUIDv4();
-  const legalEntityId = yield* crypto.randomUUIDv4();
-  const principalId = yield* crypto.randomUUIDv4();
-  const authBindingId = yield* crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const tenantId = yield* crypto.uuidV4();
+  const legalEntityId = yield* crypto.uuidV4();
+  const principalId = yield* crypto.uuidV4();
+  const authBindingId = yield* crypto.uuidV4();
   const principal = {
     authBindingId,
     authContextRef: `better-auth-session:${authBindingId}`,
@@ -1778,7 +1779,7 @@ const testProgram12 = () =>
           invocationId,
           principal: {
             ...principal,
-            principalId: yield* crypto.randomUUIDv4(),
+            principalId: yield* crypto.uuidV4(),
           },
         }),
       );
@@ -2041,8 +2042,8 @@ const testCompositionTransactionFence = () =>
       const repository = makeActionRepository(crypto);
       let handlerExecutions = 0;
       let invocationLocks = 0;
-      const key = `composition-owner-${yield* crypto.randomUUIDv4()}`;
-      const moduleStateKey = `core.composition-owner-${yield* crypto.randomUUIDv4()}`;
+      const key = `composition-owner-${yield* crypto.uuidV4()}`;
+      const moduleStateKey = `core.composition-owner-${yield* crypto.uuidV4()}`;
       const admittedRevision = { current: Option.none<string>() };
       const registration = makeRegistration({
         actionKey: 'core.shell.test.composition-write',
@@ -2136,7 +2137,7 @@ const testCompositionTransactionFence = () =>
             payload: { value: 'draining' },
             principal,
             registration,
-            transport: transport(`composition-draining-${yield* crypto.randomUUIDv4()}`),
+            transport: transport(`composition-draining-${yield* crypto.uuidV4()}`),
           }),
         );
         expect(Schema.is(ActionTransactionError)(drainingFailure)).toBe(true);
@@ -2162,7 +2163,7 @@ const testCompositionTransactionFence = () =>
             payload: { value: 'superseded' },
             principal,
             registration,
-            transport: transport(`composition-stale-${yield* crypto.randomUUIDv4()}`),
+            transport: transport(`composition-stale-${yield* crypto.uuidV4()}`),
           }),
         );
         expect(Schema.is(ActionTransactionError)(staleFailure)).toBe(true);

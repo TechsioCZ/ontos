@@ -3,7 +3,8 @@ import type { OwnerExecutionOutcome, PrivacyMeasureHandoff } from '@app/privacy/
 import { OwnerExecutionOutcomeSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { Option } from 'effect';
-import { Config, Context, Crypto, Effect, Layer, Schema } from 'effect';
+import { Config, Context, Effect, Layer, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { executeExecutePrivacyMeasureWithAuthorization } from '../api/execute-privacy-measure-action-client.ts';
 import { executePrivacyMeasureExecutionWithAuthorization } from '../api/privacy-measure-execution-client.ts';
@@ -92,7 +93,7 @@ const makeGateway = (
     readonly ownerBaseUrl: URL;
     readonly privacyBaseUrl: URL;
   },
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ): PrivacyMeasureOwnerGatewayService => {
   const credential = (
     audience: 'party-registry' | 'privacy',
@@ -179,7 +180,7 @@ const unavailableGateway = (cause: unknown): PrivacyMeasureOwnerGatewayService =
 export const PrivacyMeasureOwnerGatewayLive = Layer.effect(
   PrivacyMeasureOwnerGateway,
   Effect.gen(function* privacyMeasureOwnerGatewayLayer() {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     return yield* configuration.pipe(
       Effect.match({ onFailure: unavailableGateway, onSuccess: (value) => makeGateway(value, crypto) }),
     );

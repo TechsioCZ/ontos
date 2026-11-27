@@ -1,4 +1,5 @@
-import { Cause, Crypto, DateTime, Effect, Exit, Schema } from 'effect';
+import { Cause, DateTime, Effect, Exit, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -42,10 +43,7 @@ const sellingLegalEntityRef = Schema.decodeSync(SellingLegalEntityRefSchema)({
   resourceType: 'core.identity.legal-entity',
   tenantId,
 });
-const ownerCrypto = Crypto.make({
-  digest: () => Effect.succeed(new Uint8Array()),
-  randomBytes: (size) => new Uint8Array(size).fill(1),
-});
+const ownerCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(1));
 const input = {
   compositionRevision: 'a'.repeat(64),
   crypto: ownerCrypto,

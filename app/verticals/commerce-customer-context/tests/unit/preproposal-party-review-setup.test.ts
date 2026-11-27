@@ -222,13 +222,13 @@ it.effect(
       expect(peer.routes()).toEqual(['create', 'detail', 'decision', 'review', 'decision', 'decision']);
       const [create] = peer.sent('create');
       expect(create?.body).toEqual(Schema.encodeSync(CreatePartyPayloadSchema)(payload));
-      expect(create?.headers.authorization).toBe('unit-manager-tenant-assertion-1');
+      expect(create?.headers['authorization']).toBe('unit-manager-tenant-assertion-1');
       expect(create?.headers['x-correlation-id']).toBe('unit-setup:party');
       expect(create?.headers['idempotency-key']).toBe('unit-setup:party');
       expect(create?.headers['x-ontos-composition-revision']).toBe(options.compositionRevision);
       const [read] = peer.sent('detail');
       expect(read?.body).toEqual({ caseRef });
-      expect(read?.headers.authorization).toBe('unit-manager-le-assertion-2');
+      expect(read?.headers['authorization']).toBe('unit-manager-le-assertion-2');
       expect(read?.headers['x-correlation-id']).toBe('unit-setup:party-review-detail');
       const [resolve] = peer.sent('review');
       expect(resolve?.body).toEqual({
@@ -236,7 +236,7 @@ it.effect(
         expectedRevision: 7,
         reason: expect.stringContaining('original direct-interaction PERSON attestation'),
       });
-      expect(resolve?.headers.authorization).toBe('unit-manager-le-assertion-4');
+      expect(resolve?.headers['authorization']).toBe('unit-manager-le-assertion-4');
       expect(resolve?.headers['x-correlation-id']).toBe('unit-setup:party-review-create');
       expect(resolve?.headers['idempotency-key']).toBe('unit-setup:party-review-create');
       const decisions = peer.sent('decision');
@@ -245,7 +245,7 @@ it.effect(
         { decisionRef: reviewedRef },
         { decisionRef: initialRef },
       ]);
-      expect(decisions.map(({ headers }) => headers.authorization)).toEqual([
+      expect(decisions.map(({ headers }) => headers['authorization'])).toEqual([
         'unit-manager-le-assertion-3',
         'unit-manager-le-assertion-5',
         'unit-manager-le-assertion-6',

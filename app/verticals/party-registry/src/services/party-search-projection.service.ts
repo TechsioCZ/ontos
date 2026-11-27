@@ -205,7 +205,7 @@ export const makePartySearchProjector = (
     target: PartySearchProjectionTarget,
   ) {
     const snapshot = yield* source.load(context, target);
-    if (snapshot.tenantId !== context.tenantId || !/^[1-9][0-9]*$/u.test(snapshot.projectionVersion)) {
+    if (snapshot.tenantId !== context.tenantId || !/^[1-9]\d*$/u.test(snapshot.projectionVersion)) {
       return yield* unavailable();
     }
     const documents = yield* buildPartySearchDocuments(snapshot);

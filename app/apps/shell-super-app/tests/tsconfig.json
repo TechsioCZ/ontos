@@ -1,9 +1,11 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
+    "customConditions": ["node"],
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node", "bun-types/sqlite"]
   },
+  "files": ["../src/modern-app-env.d.ts"],
   "include": ["**/*.ts", "**/*.tsx", "**/*.mts"],
   "exclude": ["integration/**"]
 }

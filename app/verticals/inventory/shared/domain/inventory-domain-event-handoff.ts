@@ -13,7 +13,7 @@ const moduleKey = checkedModuleKey.pipe(
 );
 const inventoryEventType = Schema.String.check(
   Schema.isTrimmed(),
-  Schema.isPattern(/^commerce\.inventory\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.v[1-9][0-9]*$/u),
+  Schema.isPattern(/^commerce\.inventory\.[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.v[1-9]\d*$/u),
   Schema.isMaxLength(200),
 );
 const checkedInventoryOwnerOperationKey = Schema.String.check(

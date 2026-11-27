@@ -392,48 +392,50 @@ const listRoleReadRows = (
   adminRead: boolean,
   currentOnly: boolean,
   effectiveAt: Date,
-): Effect.Effect<readonly RolePeriodReadRow[], CounterpartyPersistenceUnavailable> =>
-  adminRead
-    ? transaction
-        .select()
-        .from(counterpartyRoleAdminReadModels)
-        .where(
-          and(
-            eq(counterpartyRoleAdminReadModels.tenantId, counterparty.tenantId),
-            eq(counterpartyRoleAdminReadModels.counterpartyId, counterparty.counterpartyId),
-            currentOnly
-              ? and(
-                  eq(counterpartyRoleAdminReadModels.state, 'ACTIVE'),
-                  lte(counterpartyRoleAdminReadModels.validFrom, effectiveAt),
-                  or(
-                    isNull(counterpartyRoleAdminReadModels.validTo),
-                    gt(counterpartyRoleAdminReadModels.validTo, effectiveAt),
-                  ),
-                )
-              : undefined,
-          ),
-        )
-        .orderBy(asc(counterpartyRoleAdminReadModels.validFrom), asc(counterpartyRoleAdminReadModels.rolePeriodId))
-        .pipe(Effect.mapError(unavailable))
-    : transaction
-        .select()
-        .from(counterpartyRolePeriods)
-        .where(
-          and(
-            eq(counterpartyRolePeriods.tenantId, counterparty.tenantId),
-            eq(counterpartyRolePeriods.legalEntityId, counterparty.legalEntityId),
-            eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
-            currentOnly
-              ? and(
-                  eq(counterpartyRolePeriods.state, 'ACTIVE'),
-                  lte(counterpartyRolePeriods.validFrom, effectiveAt),
-                  or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, effectiveAt)),
-                )
-              : undefined,
-          ),
-        )
-        .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
-        .pipe(Effect.mapError(unavailable));
+): Effect.Effect<readonly RolePeriodReadRow[], CounterpartyPersistenceUnavailable> => {
+  if (adminRead) {
+    return transaction
+      .select()
+      .from(counterpartyRoleAdminReadModels)
+      .where(
+        and(
+          eq(counterpartyRoleAdminReadModels.tenantId, counterparty.tenantId),
+          eq(counterpartyRoleAdminReadModels.counterpartyId, counterparty.counterpartyId),
+          currentOnly
+            ? and(
+                eq(counterpartyRoleAdminReadModels.state, 'ACTIVE'),
+                lte(counterpartyRoleAdminReadModels.validFrom, effectiveAt),
+                or(
+                  isNull(counterpartyRoleAdminReadModels.validTo),
+                  gt(counterpartyRoleAdminReadModels.validTo, effectiveAt),
+                ),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(asc(counterpartyRoleAdminReadModels.validFrom), asc(counterpartyRoleAdminReadModels.rolePeriodId))
+      .pipe(Effect.mapError(unavailable));
+  }
+  return transaction
+    .select()
+    .from(counterpartyRolePeriods)
+    .where(
+      and(
+        eq(counterpartyRolePeriods.tenantId, counterparty.tenantId),
+        eq(counterpartyRolePeriods.legalEntityId, counterparty.legalEntityId),
+        eq(counterpartyRolePeriods.counterpartyId, counterparty.counterpartyId),
+        currentOnly
+          ? and(
+              eq(counterpartyRolePeriods.state, 'ACTIVE'),
+              lte(counterpartyRolePeriods.validFrom, effectiveAt),
+              or(isNull(counterpartyRolePeriods.validTo), gt(counterpartyRolePeriods.validTo, effectiveAt)),
+            )
+          : undefined,
+      ),
+    )
+    .orderBy(asc(counterpartyRolePeriods.validFrom), asc(counterpartyRolePeriods.rolePeriodId))
+    .pipe(Effect.mapError(unavailable));
+};
 
 export const createCounterpartyRecord = Effect.fn('CounterpartyPersistenceService.createCounterpartyRecord')(
   function* createCounterparty(

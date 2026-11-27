@@ -4,7 +4,8 @@ import { readModuleOperationRequirement } from '@app/core-runtime';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { executeMeasureExecutionEligibilityWithAuthorization } from '@app/privacy/api/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Layer } from 'effect';
+import { Context, Effect, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { HttpClient } from 'effect/http';
 
 import { SymmyJobPrivacyError } from './symmy-job-privacy-error.ts';
@@ -21,7 +22,7 @@ export interface SymmyJobPrivacyService {
   readonly current: (
     handoff: PrivacyMeasureHandoff,
     scope: OperationalScope,
-  ) => Effect.Effect<SymmyJobPrivacyAuthority, SymmyJobPrivacyError, Crypto.Crypto | HttpClient.HttpClient>;
+  ) => Effect.Effect<SymmyJobPrivacyAuthority, SymmyJobPrivacyError, SecureRandom.SecureRandom | HttpClient.HttpClient>;
 }
 export class SymmyJobPrivacy extends Context.Service<SymmyJobPrivacy, SymmyJobPrivacyService>()(
   '@app/symmy-integration/services/symmy-job-privacy.service/SymmyJobPrivacy',
@@ -52,7 +53,7 @@ export const symmyJobPrivacyService = () =>
         ) {
           return yield* new SymmyJobPrivacyError({ code: 'retention_privacy_unavailable' });
         }
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const subject = {
           _tag: 'PrivacyDispatch' as const,
           operation: { _tag: 'PrivacyEligibility' as const },

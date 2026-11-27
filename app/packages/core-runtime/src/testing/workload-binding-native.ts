@@ -1,5 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Exit, Redacted, Ref, Schema } from 'effect';
+import { DateTime, Effect, Exit, Redacted, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 
 import { PrincipalIdSchema, TenantIdSchema } from '../access/ids.ts';
@@ -100,9 +101,9 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
   ): Effect.fn.Return<
     OwnedNativeWorkloadBindingControl,
     NativeWorkloadBindingControlError,
-    Crypto.Crypto | Scope.Scope
+    SecureRandom.SecureRandom | Scope.Scope
   > {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const pins = yield* Schema.decodeUnknownEffect(WorkloadControlInputSchema)(input).pipe(
       Effect.mapError((cause) => unavailable('Invalid owned enrollment control input', cause)),
     );
@@ -275,8 +276,8 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
         if (ended === undefined) {
           return yield* unavailable('The original ended workload enrollment is missing');
         }
-        const bindingId = AccessWorkloadBindingIdSchema.make(yield* crypto.randomUUIDv4());
-        const incarnation = AccessWorkloadBindingIdSchema.make(yield* crypto.randomUUIDv4());
+        const bindingId = AccessWorkloadBindingIdSchema.make(yield* crypto.uuidV4());
+        const incarnation = AccessWorkloadBindingIdSchema.make(yield* crypto.uuidV4());
         if (
           bindingId === originalBinding.bindingId ||
           bindingId === originalBinding.incarnation ||

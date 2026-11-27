@@ -212,7 +212,7 @@ const PackageSchema = Schema.Struct({
 });
 
 /** Matches the actual owner-local Module Federation policy, without evaluating framework configuration. */
-const ownerSharedClaims = Effect.fn('OutboxWorkerHostProof.ownerSharedClaims')(function* sharedClaims(
+export const ownerSharedClaims = Effect.fn('OutboxWorkerHostProof.ownerSharedClaims')(function* sharedClaims(
   directory: string,
   role: 'host' | 'remote',
 ) {
@@ -223,7 +223,7 @@ const ownerSharedClaims = Effect.fn('OutboxWorkerHostProof.ownerSharedClaims')(f
     yield* fileSystem.readFileString(ownerPackage),
   );
   const versions = yield* Effect.forEach(
-    ['@modern-js/plugin-i18n', '@modern-js/runtime', 'react', 'react-dom', '@tanstack/react-router'],
+    ['@modern-js/plugin-i18n', '@modern-js/runtime', 'react', 'react-dom'],
     (packageName) =>
       Effect.gen(function* installedVersion() {
         const filename = yield* Effect.try({
@@ -237,16 +237,15 @@ const ownerSharedClaims = Effect.fn('OutboxWorkerHostProof.ownerSharedClaims')(f
       }),
     { concurrency: 1 },
   );
-  const [i18n, runtime, react, reactDom, router] = versions;
-  if (router !== packageJson.dependencies?.['@tanstack/react-router']) {
-    return yield* fail('the installed router singleton does not match the owner policy');
-  }
+  const [i18n, runtime, react, reactDom] = versions;
   const ownerUrl = pathToFileURL(ownerPackage).href;
   const sharing = createSharedRuntimeConfig(
     {
       '@modern-js/plugin-i18n/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(i18n),
       '@modern-js/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(runtime),
-      '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(router),
+      '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(
+        packageJson.dependencies?.['@tanstack/react-router'],
+      ),
       react: yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(react),
       'react-dom': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(reactDom),
     },

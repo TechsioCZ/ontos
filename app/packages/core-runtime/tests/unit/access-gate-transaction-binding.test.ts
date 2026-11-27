@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
@@ -184,7 +185,7 @@ it.layer(NodeCrypto.layer)(
   (suite) => {
     suite.effect('routes every adapter through the named transaction and opens none', () =>
       Effect.gen(function* joinedAdapters() {
-        const crypto = yield* Crypto.Crypto;
+        const crypto = yield* SecureRandom.SecureRandom;
         const statements: string[] = [];
         const executor = yield* makeTestDatabase(scripted(statements));
         const principalKinds = makeDrizzleAccessPrincipalKinds({ executor });

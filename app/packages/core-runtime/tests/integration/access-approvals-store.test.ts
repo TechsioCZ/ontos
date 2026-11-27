@@ -1,6 +1,7 @@
 import { NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
-import { Crypto, DateTime, Deferred, Effect, Option, Ref, Result, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Option, Ref, Result, Schema, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeDrizzleApprovalStore } from '../../src/access/approvals/drizzle-store.ts';
@@ -146,11 +147,11 @@ const seedFixtures = (admin: PgClient.PgClient): Effect.Effect<Fixtures> =>
  */
 const approvalsDatabase = Effect.gen(function* approvalsDatabaseEffect() {
   const connections = yield* loadDatabaseConnectionPair();
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   // Two connections per client: the suite creates one database per test, so the pools stay small
   // enough that every test can hold its own fixture without starving the server's connection budget.
   const bootstrap = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
-  const name = `access_approvals_${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+  const name = `access_approvals_${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
   yield* bootstrap.unsafe(`create database "${name}"`).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     bootstrap.unsafe(`drop database if exists "${name}" with (force)`).pipe(Effect.orDie),
@@ -326,8 +327,8 @@ const withoutWitness = (
 };
 
 const nextProposalId = Effect.gen(function* nextProposalIdEffect() {
-  const crypto = yield* Crypto.Crypto;
-  return ProposalIdSchema.make(yield* crypto.randomUUIDv4());
+  const crypto = yield* SecureRandom.SecureRandom;
+  return ProposalIdSchema.make(yield* crypto.uuidV4());
 });
 
 const rejectedEvidence = (fixtures: Fixtures): ApprovalDecisionEvidence => ({
@@ -375,7 +376,9 @@ const storedExecution = (admin: PgClient.PgClient): Effect.Effect<Option.Option<
       Effect.map((rows) => Option.fromNullishOr(rows[0]?.execution_operation_id)),
     );
 
-it.layer(NodeServices.layer)('access approvals store', (suite) => {
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(nativeServices)('access approvals store', (suite) => {
   suite.effect('walks a proposal from propose through approve to one execution receipt', () =>
     Effect.gen(function* approvalFlow() {
       const { admin, store } = yield* approvalsDatabase;

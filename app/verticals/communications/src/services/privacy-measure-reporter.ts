@@ -7,7 +7,9 @@ import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privac
 import type { PrivacyDispatchContinuationPayload } from '@app/shared-contracts';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Option, Schema } from 'effect';
+import { Context, Effect, Option, Schema } from 'effect';
+import type { Digest } from 'effect/crypto';
+import { SecureRandom } from 'effect/crypto';
 import type { HttpClient } from 'effect/http';
 
 import { sha256Hex } from '../../shared/privacy-owner/measure-handoff.ts';
@@ -36,7 +38,7 @@ export interface PrivacyMeasureReporterService {
   ) => Effect.Effect<void, PrivacyMeasureReportError>;
 }
 
-type ReporterTransport = Crypto.Crypto | HttpClient.HttpClient;
+type ReporterTransport = SecureRandom.SecureRandom | Digest.Digest | HttpClient.HttpClient;
 
 /** The same operations before the worker host binds their transport (Crypto and the HTTP client). */
 export interface PrivacyMeasureReporterOperations {
@@ -127,7 +129,7 @@ const sendOutcomeReport = Effect.fn('CommunicationsPrivacyReporter.send')(functi
   const { attempt, context } = report;
   // The Composition must provide the operation that reports to Privacy: a deployment without it retries, never drops.
   yield* requireModuleOperation(report.requirementKey).pipe(Effect.mapError(requirementUnavailable));
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const [issued, digest] = yield* Effect.all(
     [
       acquireDelegatedGatewayContext(

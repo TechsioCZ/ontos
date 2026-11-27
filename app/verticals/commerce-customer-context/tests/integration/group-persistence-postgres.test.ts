@@ -2,7 +2,7 @@ import { runAction, makeActiveApplicationCompositionService } from '@app/core-ru
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { PgClient } from '@effect/sql-pg';
-import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Layer, Redacted, Schema } from 'effect';
@@ -1050,5 +1050,9 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
           .where(eq(customerGroupLifecyclePeriods.actionInvocationId, replayInvocation)),
       ).toHaveLength(1);
     }),
-  ).pipe(Effect.provide(NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  ).pipe(
+    Effect.provide(
+      NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(Layer.mergeAll(NodeCrypto.layer, NodeServices.layer))),
+    ),
+  ),
 );

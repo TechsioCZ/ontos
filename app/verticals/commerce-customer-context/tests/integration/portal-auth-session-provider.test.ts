@@ -5,7 +5,6 @@ import {
   Config,
   Context,
   DateTime,
-  Crypto,
   Deferred,
   Duration,
   Effect,
@@ -16,6 +15,7 @@ import {
   Result,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -130,7 +130,7 @@ const assertProviderCookieRenewal = (headers: Headers): void => {
 
 const readSafeResponseBody = (
   response: Response,
-): Effect.Effect<Option.Option<{ readonly code?: string; readonly outcome?: string }>> =>
+): Effect.Effect<Option.Option<typeof SafePublicResponseBodySchema.Type>> =>
   Effect.tryPromise({
     catch: (cause) => cause,
     try: () => response.clone().json(),
@@ -341,7 +341,7 @@ const publicRefresh = (fixture: ProviderFixture, headers: Headers): Effect.Effec
 const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.makeFixture')(function* makeFixture(
   caseName: string,
   ipPrefix: string,
-): Effect.fn.Return<ProviderFixture, unknown, Scope.Scope | Crypto.Crypto> {
+): Effect.fn.Return<ProviderFixture, unknown, Scope.Scope | SecureRandom.SecureRandom> {
   const connectionString = yield* DATABASE_URL;
   const configuration = yield* parseCommercePortalAuthConfig({
     COMMERCE_PORTAL_AUTH_DATABASE_URL: Redacted.value(connectionString),
@@ -389,7 +389,7 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
         returnHeaders: true,
       }),
   });
-  const store = makeCommercePortalAuthSessionStore(database.executor, yield* Crypto.Crypto);
+  const store = makeCommercePortalAuthSessionStore(database.executor, yield* SecureRandom.SecureRandom);
   const lifecycle = makeCommercePortalAuthSessionLifecycle(
     store,
     makeCommercePortalAuthSessionProvider(auth),

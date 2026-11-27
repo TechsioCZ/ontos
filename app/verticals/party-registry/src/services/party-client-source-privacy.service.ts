@@ -22,7 +22,8 @@ import {
   OrganizationBusinessNameExportFields,
   organizationBusinessNameExportInputDigest,
 } from '../../shared/apis/organization-business-name-export.ts';
-import { Config, Context, Crypto, Effect, Option, Schema } from 'effect';
+import { Config, Context, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import {
   OrganizationBusinessUpdateFields,
   OrganizationBusinessEvidenceReadFields,
@@ -105,9 +106,7 @@ const failUnavailable = (stage: 'scope' | 'crypto' | 'delegation' | 'privacy-rea
             stage,
             failureTag: Schema.is(Schema.Struct({ _tag: Schema.String }))(cause) ? cause._tag : 'unclassified',
             status: Schema.is(Schema.Struct({ status: Schema.Number }))(cause) ? cause.status : undefined,
-            code: Schema.is(Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_]{1,100}$/u)) }))(
-              cause,
-            )
+            code: Schema.is(Schema.Struct({ code: Schema.String.check(Schema.isPattern(/^\w{1,100}$/u)) }))(cause)
               ? cause.code
               : undefined,
           })
@@ -186,7 +185,7 @@ const usesRegisteredPartyPrivacyCarrier = (scope: PartyClientSourceScope) =>
 
 const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOrganization')(function* execute(
   scope: PartyClientSourceScope,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   operationRequirementKey: string,
   nativeRequest: typeof OrganizationBusinessApplicabilityRequestSchema.Type,
 ) {
@@ -206,9 +205,7 @@ const executeOrganizationPrivacy = Effect.fn('PartyClientSourcePrivacy.executeOr
       subject = { ...registered, recoveryRequestHash: computeCanonicalValueHash(nativeRequest) };
     }
   }
-  const requestCorrelation = yield* crypto
-    .randomUUIDv4()
-    .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
+  const requestCorrelation = yield* crypto.uuidV4();
   yield* tracePartyPrivacyCarrier(scope, subject, operationRequirementKey);
   const credential = yield* acquireDelegatedGatewayContext(
     { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject },
@@ -262,7 +259,7 @@ const checkOrganizationUpdate = Effect.fn('PartyClientSourcePrivacy.checkOrganiz
     readonly scope: PartyClientSourceScope;
     readonly intent: SourceIntent;
   },
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   sourceRequirementKey: string,
 ) {
   const request = yield* PartySourceRequest;
@@ -307,9 +304,10 @@ const checkOrganizationUpdate = Effect.fn('PartyClientSourcePrivacy.checkOrganiz
     onExcessProperty: 'error',
   })(nativeInput).pipe(Effect.catch((error) => failUnavailable('privacy-read', error)));
   const result = yield* executeOrganizationPrivacy(input.scope, crypto, operationRequirementKey, nativeRequest);
-  return organizationUpdateResultMatches(result, nativeRequest, recovering ? undefined : payload.expectedRevision)
-    ? ('ORGANIZATION_BUSINESS_ALLOWED' as const)
-    : ('DENIED' as const);
+  if (organizationUpdateResultMatches(result, nativeRequest, recovering ? undefined : payload.expectedRevision)) {
+    return 'ORGANIZATION_BUSINESS_ALLOWED' as const;
+  }
+  return 'DENIED' as const;
 });
 
 const checkOrganizationBusinessNameExport = Effect.fn('PartyClientSourcePrivacy.checkBusinessNameExport')(
@@ -319,7 +317,7 @@ const checkOrganizationBusinessNameExport = Effect.fn('PartyClientSourcePrivacy.
       readonly scope: PartyClientSourceScope;
       readonly intent: SourceIntent;
     },
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     sourceRequirementKey: string,
   ) {
     const request = yield* PartySourceRequest;
@@ -381,7 +379,7 @@ const checkKnownOrganizationOnboard = Effect.fn('PartyClientSourcePrivacy.checkK
       readonly scope: PartyClientSourceScope;
       readonly intent: SourceIntent;
     },
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     sourceRequirementKey: string,
   ) {
     const request = yield* PartySourceRequest;
@@ -525,7 +523,7 @@ const checkDeferredOrganizationOnboard = Effect.fn('PartyClientSourcePrivacy.che
       readonly scope: PartyClientSourceScope;
       readonly intent: SourceIntent;
     },
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     sourceRequirementKey: string,
   ) {
     const request = yield* PartySourceRequest;
@@ -620,7 +618,7 @@ const checkSourceOrganization = Effect.fn('PartyClientSourcePrivacy.checkSourceO
     readonly scope: PartyClientSourceScope;
     readonly intent: SourceIntent;
   },
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   sourceRequirementKey: string,
 ) {
   const request = yield* PartySourceRequest;
@@ -693,7 +691,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
   if (!isVerifiedGatewayPrincipalContext(scope)) {
     return yield* failUnavailable('scope');
   }
-  const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+  const crypto = yield* Effect.serviceOption(SecureRandom.SecureRandom);
   if (Option.isNone(crypto)) {
     return yield* failUnavailable('crypto');
   }
@@ -756,9 +754,7 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
   } else {
     subject = { _tag: 'Assertion', scope };
   }
-  const requestCorrelation = yield* crypto.value
-    .randomUUIDv4()
-    .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
+  const requestCorrelation = yield* crypto.value.uuidV4();
   yield* tracePartyPrivacyCarrier(scope, subject, operationRequirementKey);
   const credential = yield* acquireDelegatedGatewayContext(
     {

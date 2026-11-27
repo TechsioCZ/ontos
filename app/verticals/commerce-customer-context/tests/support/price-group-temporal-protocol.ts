@@ -35,7 +35,6 @@ import { PgClient } from '@effect/sql-pg';
 import {
   Config,
   Context,
-  Crypto,
   Deferred,
   Effect,
   FileSystem,
@@ -47,6 +46,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { Digest, SecureRandom } from 'effect/crypto';
 import { Socket } from 'effect/socket';
 import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
@@ -239,8 +239,8 @@ export const guardPriceGroupPreparedArtifact = Effect.fn('PriceGroupTemporal.gua
       ),
     )(artifact.description);
     const bytes = yield* fs.readFile(actualPath);
-    const crypto = yield* Crypto.Crypto;
-    const sha256 = Buffer.from(yield* crypto.digest('SHA-256', bytes)).toString('hex');
+    const crypto = yield* Digest.Digest;
+    const sha256 = Buffer.from(yield* crypto.digest(Digest.sha256, bytes)).toString('hex');
     yield* requireCondition(
       priceGroupPreparedArtifactMatches(artifact, {
         appId: owner,
@@ -496,8 +496,8 @@ const temporalContract = Effect.fn('TemporalNative.actualOwnerContract')(functio
 });
 
 const temporalDigest = Effect.fn('TemporalNative.metadataDigest')(function* metadataDigest(document: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Buffer.from(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))).toString('hex');
+  const crypto = yield* Digest.Digest;
+  return Buffer.from(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))).toString('hex');
 });
 
 /** Actual published owner declarations; served metadata is TEST-only and makes no browser-build claim. */
@@ -655,7 +655,7 @@ const MarkerSchema = Schema.Struct({
   appId: Schema.Literals([commerceAppId, 'party-registry', 'price-group-catalog']),
   buildMarker: Schema.String,
 });
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describeOwner')(
   function* describePriceGroupTemporalOwner(owner: typeof commerceAppId | 'party-registry' | 'price-group-catalog') {
     const fs = yield* FileSystem.FileSystem;
@@ -730,14 +730,14 @@ export const describePriceGroupTemporalOwner = Effect.fn('TemporalNative.describ
     const marker = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(MarkerSchema))(lines[0]);
     yield* requireCondition(marker.appId === owner, 'describe-identity');
     const artifactBytes = yield* fs.readFile(artifact);
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* Digest.Digest;
     const prepared = yield* Schema.decodeUnknownEffect(PriceGroupPreparedArtifactSchema)({
       appId: owner,
       artifact: yield* fs.realPath(artifact),
       buildMarker: marker.buildMarker,
       description: lines[0],
       directory: yield* fs.realPath(directory),
-      sha256: Buffer.from(yield* crypto.digest('SHA-256', artifactBytes)).toString('hex'),
+      sha256: Buffer.from(yield* crypto.digest(Digest.sha256, artifactBytes)).toString('hex'),
     });
     yield* guardPriceGroupPreparedArtifact(prepared, owner);
     return Object.freeze({
@@ -907,8 +907,8 @@ export const preparePriceGroupTemporalRetailAccess = Effect.fn('PriceGroupTempor
     if (authBindingId === undefined) {
       return yield* failure('retail-binding-auth-binding');
     }
-    const crypto = yield* Crypto.Crypto;
-    const invocationId = yield* crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const invocationId = yield* crypto.uuidV4();
     const namespace = staffAuthenticationNamespaceRegistryLayer([commerceAppId]);
     const bindArguments = [
       profileRef.resourceId,

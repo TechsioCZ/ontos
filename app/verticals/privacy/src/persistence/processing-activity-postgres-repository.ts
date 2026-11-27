@@ -4,7 +4,8 @@ import type { ProcessingActivityRepositoryService } from './processing-activity-
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import { and, eq } from 'drizzle-orm';
-import { flow, Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { flow, DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { PrivacyApplicabilityDecisionSchema } from '../../shared/domain/privacy-applicability.ts';
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
@@ -83,10 +84,8 @@ const prerequisiteRejected = (reason: string) =>
 const makeRepository = Effect.fn('ProcessingActivityPostgresRepository.make')(function* makeRepositoryEffect(
   transaction: ScopedTransaction,
   trustedScope: Readonly<{ legalEntityId: string; tenantId: string }>,
-): Effect.fn.Return<ProcessingActivityRepositoryService, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
-  const nextIdentifier = (reason: string) =>
-    crypto.randomUUIDv4().pipe(Effect.mapError((cause) => failure(reason, cause)));
+): Effect.fn.Return<ProcessingActivityRepositoryService, never, SecureRandom.SecureRandom> {
+  const crypto = yield* SecureRandom.SecureRandom;
   const assertScope = (tenantId: string, legalEntityId: string) =>
     tenantId === trustedScope.tenantId && legalEntityId === trustedScope.legalEntityId
       ? Effect.void
@@ -290,12 +289,8 @@ const makeRepository = Effect.fn('ProcessingActivityPostgresRepository.make')(fu
       const nowDateTime = yield* DateTime.now;
       const now = DateTime.toDateUtc(nowDateTime);
       const createdAt = DateTime.formatIso(nowDateTime);
-      const resourceId =
-        input.activityRef?.resourceId ??
-        (yield* nextIdentifier('Processing Activity identifier could not be generated'));
-      const lifecycleEventId = yield* nextIdentifier(
-        'Processing Activity lifecycle event identifier could not be generated',
-      );
+      const resourceId = input.activityRef?.resourceId ?? (yield* crypto.uuidV4());
+      const lifecycleEventId = yield* crypto.uuidV4();
       const activity = buildProcessingActivity({
         actor,
         createdAt,
@@ -410,9 +405,7 @@ const makeRepository = Effect.fn('ProcessingActivityPostgresRepository.make')(fu
       if (event === undefined) {
         return yield* failure('Processing Activity transition evidence is missing');
       }
-      const lifecycleEventId = yield* nextIdentifier(
-        'Processing Activity lifecycle event identifier could not be generated',
-      );
+      const lifecycleEventId = yield* crypto.uuidV4();
       yield* transaction
         .insert(processingActivityLifecycleEvents)
         .values({
@@ -438,7 +431,7 @@ const makeRepository = Effect.fn('ProcessingActivityPostgresRepository.make')(fu
 export const processingActivityRepositoryForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-): Effect.Effect<ProcessingActivityRepositoryService, OperationContextUnavailable, Crypto.Crypto> => {
+): Effect.Effect<ProcessingActivityRepositoryService, OperationContextUnavailable, SecureRandom.SecureRandom> => {
   const { legalEntityId, tenantId } = scope;
   return legalEntityId === undefined
     ? Effect.fail(scopeUnavailable())

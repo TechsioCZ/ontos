@@ -1,6 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeHttpClient, NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 
@@ -142,12 +143,8 @@ const failedWith = (code: number) => ({ code: Option.some(code), status: 'failed
 
 const transportParityProgram = Effect.gen(function* provesTransportParity() {
   const transports = yield* makeTransports;
-  const crypto = yield* Crypto.Crypto;
-  const [tenantId, memberId, strangerId] = yield* Effect.all([
-    crypto.randomUUIDv4(),
-    crypto.randomUUIDv4(),
-    crypto.randomUUIDv4(),
-  ]);
+  const crypto = yield* SecureRandom.SecureRandom;
+  const [tenantId, memberId, strangerId] = yield* Effect.all([crypto.uuidV4(), crypto.uuidV4(), crypto.uuidV4()]);
 
   // WriteSchema: the bootstrapped schema rewrites idempotently; an invalid schema is rejected alike.
   expect(
@@ -347,7 +344,9 @@ const GatewayHttpClientLive = Layer.unwrap(
   ),
 );
 
-it.layer(Layer.mergeAll(NodeServices.layer, GatewayHttpClientLive), { excludeTestServices: true })(
+const nativeServices = Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto);
+
+it.layer(Layer.mergeAll(nativeServices, GatewayHttpClientLive), { excludeTestServices: true })(
   'SpiceDB transport parity',
   (suite) => {
     suite.effect(

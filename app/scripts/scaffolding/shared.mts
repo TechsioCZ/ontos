@@ -121,8 +121,12 @@ export const createScaffoldErrorTools = <Failure,>(
     new ErrorClass(cause === undefined ? { message } : { cause, message });
   const trySync = <Value,>(operation: () => Value): Effect.Effect<Value, Failure> =>
     Effect.try({
-      catch: (cause) =>
-        isOwnError(cause) ? cause : scaffoldError(Predicate.isError(cause) ? cause.message : fallbackMessage, cause),
+      catch: (cause) => {
+        if (isOwnError(cause)) {
+          return cause;
+        }
+        return scaffoldError(Predicate.isError(cause) ? cause.message : fallbackMessage, cause);
+      },
       try: operation,
     });
   return { scaffoldError, trySync };
@@ -992,11 +996,16 @@ export const isModuleRegistrationImport = (candidate: string): boolean =>
   /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(candidate) ||
   /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(candidate);
 
+const moduleManifestImportPatterns = [
+  /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u,
+  /^import \{ [A-Z][A-Za-z0-9]*Api \} from '(?:\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts|@app\/[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*)';$/u,
+  /^import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';$/u,
+  /^import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';$/u,
+  /^import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';$/u,
+] as const;
+
 export const isModuleManifestImport = (candidate: string): boolean =>
-  isModuleReadImport(candidate) ||
-  /^(?:import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';|import \{ [A-Z][A-Za-z0-9]*Api \} from '(?:\.\/shared\/apis\/[a-z][a-z0-9-]*\.ts|@app\/[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*)';|import \{ [A-Z][A-Za-z0-9]*Page \} from '\.\/src\/routes\/.+\/page\.tsx';|import \{ [A-Z][A-Za-z0-9]* \} from '\.\/src\/components\/[a-z][a-z0-9-]*\.tsx';|import \{ [a-z][A-Za-z0-9]*ResourceDescriptor \} from '\.\/shared\/resources\/[a-z][a-z0-9-]*\.ts';)$/u.test(
-    candidate,
-  );
+  isModuleReadImport(candidate) || moduleManifestImportPatterns.some((pattern) => pattern.test(candidate));
 
 export const readJsonEffect = (filePath: string, label: string) =>
   Effect.gen(function* readJsonProgram() {
@@ -1457,13 +1466,15 @@ const ownerObjectView = (
       ? property.key.name
       : undefined,
   );
+  const allowedNames = new Set([...keys, ...optionalKeys]);
+  const presentNames = new Set(names);
   return (
     first?.type === 'SpreadElement' &&
     ownerReference(first.argument, source, spread) &&
     names.length >= keys.length &&
-    names.every((name) => name !== undefined && [...keys, ...optionalKeys].includes(name)) &&
-    keys.every((key) => names.includes(key)) &&
-    new Set(names).size === names.length
+    names.every((name) => name !== undefined && allowedNames.has(name)) &&
+    keys.every((key) => presentNames.has(key)) &&
+    presentNames.size === names.length
   );
 };
 
@@ -1552,11 +1563,13 @@ const ownerKeys = (
       ? property.key.name
       : undefined,
   );
+  const allowedNames = new Set([...keys, ...optionalKeys]);
+  const presentNames = new Set(names);
   return (
     names.length >= keys.length &&
-    names.every((name) => name !== undefined && [...keys, ...optionalKeys].includes(name)) &&
-    keys.every((key) => names.includes(key)) &&
-    new Set(names).size === names.length
+    names.every((name) => name !== undefined && allowedNames.has(name)) &&
+    keys.every((key) => presentNames.has(key)) &&
+    presentNames.size === names.length
   );
 };
 
@@ -1661,9 +1674,11 @@ const matchesOwnerModuleIdentity = (
   const bindings = source.program.body.flatMap((statement) => {
     const declaration = statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
     return declaration?.type === 'VariableDeclaration'
-      ? declaration.declarations
-          .filter((entry) => entry.id.type === 'Identifier' && entry.id.name === expression.name)
-          .map((entry) => ({ expression: entry.init, kind: declaration.kind }))
+      ? declaration.declarations.flatMap((entry) =>
+          entry.id.type === 'Identifier' && entry.id.name === expression.name
+            ? [{ expression: entry.init, kind: declaration.kind }]
+            : [],
+        )
       : [];
   });
   const [binding] = bindings;
@@ -1946,8 +1961,8 @@ export const deleteMutationEffect = (
   });
 
 const WORKSPACE_DEPENDENCY_VERSION = 'workspace:*';
-/** Generated composition roots provide Node platform services, such as `Crypto`, from this exact package. */
-export const PLATFORM_NODE_DEPENDENCY = ['@effect/platform-node', '4.0.7'] as const;
+/** Generated composition roots provide native Node platform services from this exact package. */
+export const PLATFORM_NODE_DEPENDENCY = ['@effect/platform-node', '4.1.4'] as const;
 
 export const withCoreDependency = (vertical: VerticalMetadata): Mutation | undefined => {
   const dependenciesValue = vertical.packageJson['dependencies'];
@@ -2070,7 +2085,7 @@ const dedentGeneratedSlotBody = (slotBody: string): string => {
     return '';
   }
   const indentation = Math.min(
-    ...lines.filter((line) => line.trim().length > 0).map((line) => /^[ \t]*/u.exec(line)?.[0].length ?? 0),
+    ...lines.flatMap((line) => (line.trim().length > 0 ? [/^[ \t]*/u.exec(line)?.[0].length ?? 0] : [])),
   );
   return lines.map((line) => line.slice(indentation)).join('\n');
 };
@@ -2176,8 +2191,13 @@ const isCompleteFluentSlotTail = (state: GeneratedSlotScanState, source: string)
   !state.blockComment &&
   generatedSlotDepthIsZero(state);
 
+const endsWithLineBreakBeforeDot = (source: string): boolean => {
+  const beforeDot = source.slice(0, -1);
+  return source.endsWith('.') && beforeDot.slice(beforeDot.trimEnd().length).includes('\n');
+};
+
 const isGeneratedSlotFluentBoundary = (state: GeneratedSlotScanState, character: string, source: string): boolean =>
-  character === '.' && /\n\s*\.$/u.test(source) && isCompleteFluentSlotTail(state, source.slice(0, -1));
+  character === '.' && endsWithLineBreakBeforeDot(source) && isCompleteFluentSlotTail(state, source.slice(0, -1));
 
 const scanGeneratedSlotEntries = (
   body: string,
@@ -2244,7 +2264,7 @@ export const normalizeGeneratedSlotEntry = (entry: string): string =>
     .replaceAll(/,\s*(?<closing>[\]})])/gu, '$<closing>')
     .replaceAll(/\s+/gu, ' ')
     .replaceAll(/(?<opening>[[({])\s+/gu, '$<opening>')
-    .replaceAll(/\s+(?<closing>[}\])])/gu, '$<closing>')
+    .replaceAll(/ (?<closing>[}\])])/gu, '$<closing>')
     .trim();
 
 const generatedSlotSortKey = (entry: string): string => {

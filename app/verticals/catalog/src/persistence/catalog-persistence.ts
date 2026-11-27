@@ -1,6 +1,7 @@
 import type { ActionRuntime, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { and, asc, eq } from 'drizzle-orm';
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread, effect-native/no-sequential-independent-yields, eslint/no-negated-condition, eslint/prefer-destructuring, perfectionist/sort-object-types, perfectionist/sort-objects, typescript/consistent-type-specifier-style -- Drizzle rows and optional SQL columns are decoded at this tenant-scoped persistence boundary; generated insert key order and transactional read ordering are intentional. expires: 2027-03-31. */
@@ -206,18 +207,19 @@ export const mapCatalogIdentityWriteError = (
   identity: 'PRODUCT_ID' | 'VARIANT_ID',
 ): CatalogPersistenceConflict | CatalogPersistenceUnavailable => {
   const constraints = identity === 'PRODUCT_ID' ? productIdentityConstraints : variantIdentityConstraints;
-  return Option.isSome(
-    findPostgresFailure(
-      error,
-      ({ code, constraint }) =>
-        code === uniqueViolationSqlState && constraints.some((approved) => approved === constraint),
-    ),
-  )
-    ? conflict(
-        identity,
-        identity === 'PRODUCT_ID' ? 'Product identity already exists' : 'Variant identity already exists',
-      )
-    : unavailable(error);
+  if (
+    Option.isSome(
+      findPostgresFailure(
+        error,
+        ({ code, constraint }) =>
+          code === uniqueViolationSqlState && constraints.some((approved) => approved === constraint),
+      ),
+    )
+  ) {
+    const reason = identity === 'PRODUCT_ID' ? 'Product identity already exists' : 'Variant identity already exists';
+    return conflict(identity, reason);
+  }
+  return unavailable(error);
 };
 
 const productRef = (tenantId: string, productId: string): ProductRef => ({
@@ -404,14 +406,14 @@ export interface CatalogPersistence {
   ) => Effect.Effect<
     CorrectProductPersistenceOutcome,
     CatalogPersistenceConflict | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
   readonly create: (
     input: CreateProductPersistenceInput,
   ) => Effect.Effect<
     CreateProductPersistenceOutcome,
     CatalogPersistenceConflict | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
   readonly getCreatedByInvocation: (
     invocationId: string,
@@ -419,16 +421,16 @@ export interface CatalogPersistence {
   ) => Effect.Effect<Option.Option<CreateProductResult>, CatalogPersistenceUnavailable>;
   readonly getCurrent: (
     productId: string,
-  ) => Effect.Effect<Option.Option<Product>, CatalogPersistenceUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<Option.Option<Product>, CatalogPersistenceUnavailable, SecureRandom.SecureRandom>;
   readonly getHistory: (
     productId: string,
-  ) => Effect.Effect<Option.Option<ProductHistory>, CatalogPersistenceUnavailable, Crypto.Crypto>;
+  ) => Effect.Effect<Option.Option<ProductHistory>, CatalogPersistenceUnavailable, SecureRandom.SecureRandom>;
   readonly reactivate: (
     input: ReactivateProductPersistenceInput,
   ) => Effect.Effect<
     ReactivateProductPersistenceOutcome,
     CatalogPersistenceConflict | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
   readonly recoverCreateProduct: (
     invocationId: string,
@@ -441,14 +443,14 @@ export interface CatalogPersistence {
   ) => Effect.Effect<
     RetireProductPersistenceOutcome,
     CatalogPersistenceConflict | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
   readonly update: (
     input: UpdateProductPersistenceInput,
   ) => Effect.Effect<
     UpdateProductPersistenceOutcome,
     CatalogPersistenceConflict | CatalogPersistenceUnavailable,
-    Crypto.Crypto
+    SecureRandom.SecureRandom
   >;
 }
 
@@ -561,8 +563,8 @@ export const catalogPersistenceForScope = (
   );
 
   const create: CatalogPersistence['create'] = Effect.fn('CatalogPersistence.create')(function* create(input) {
-    const crypto = yield* Crypto.Crypto;
-    const newId = crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+    const crypto = yield* SecureRandom.SecureRandom;
+    const newId = crypto.uuidV4();
     const productId = yield* newId;
     const variantId = input.variantId ?? (yield* newId);
     yield* transaction

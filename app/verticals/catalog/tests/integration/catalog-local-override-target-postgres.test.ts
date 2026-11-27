@@ -20,7 +20,8 @@ import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { and, eq, sql } from 'drizzle-orm';
-import { ConfigProvider, Context, Crypto, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Schema } from 'effect';
+import { ConfigProvider, Context, DateTime, Deferred, Effect, Fiber, Layer, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -77,7 +78,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 type NativeFixture = Effect.Success<ReturnType<typeof makeLiveOperationFixture>>;
 
@@ -127,7 +128,7 @@ const observesProductLockWait = Effect.fn('OverrideTarget.observesProductLockWai
           .limit(1),
       )
       .pipe(Effect.provide(fixture.layer));
-    if (row?.waiting) {
+    if (row?.waiting === true) {
       return true;
     }
     yield* Effect.sleep('25 millis');

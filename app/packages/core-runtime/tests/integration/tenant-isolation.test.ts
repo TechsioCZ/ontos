@@ -1,7 +1,8 @@
 import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
 import type { PgClient } from '@effect/sql-pg';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -74,7 +75,7 @@ const effectAccessor =
   <Value>(effect: Effect.Effect<Value>) =>
   (): Effect.Effect<Value> =>
     effect;
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const toReadResult = (rows: readonly { readonly value: string }[]) => ({
   evidence: { resultCount: rows.length },

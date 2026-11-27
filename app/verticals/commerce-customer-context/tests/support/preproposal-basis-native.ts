@@ -1029,7 +1029,7 @@ export const openNativeChild = Effect.fn('PreproposalNative.openChild')(function
         .replaceAll(JSON.stringify(document).slice(1, -1), '[REDACTED private frame]');
     }
     return diagnostic
-      .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+      .replaceAll(/(?<!\w)(?<scheme>\w+:\/\/)(?=[^\s/@][^\s/@]*:[^\s/@])[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
       .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, redacted)
       .replaceAll(/(?<field>"d"\s*:\s*")[^"]+"/gu, '$<field>[REDACTED]"');
   };
@@ -2221,13 +2221,15 @@ export const makeRegisteredPreproposalNativeFixture = Effect.fn('PreproposalNati
     ) {
       const owner = ownerFor(audience);
       const now = Math.floor(DateTime.toEpochMillis(yield* DateTime.now) / 1000);
+      let { authContextRef } = human;
+      if (human.principalId === core.manager.principalId) {
+        const session = legalEntity ? identities.buyerSessions.legalEntity : identities.buyerSessions.tenant;
+        ({ authContextRef } = session);
+      }
       const principal: typeof core.manager & { legalEntityId?: string; trustedStorefrontId?: string } = {
         ...human,
         // The buyer's assertion names the live session it is signed in with, in the Legal Entity or the Tenant.
-        authContextRef:
-          human.principalId === core.manager.principalId
-            ? (legalEntity ? identities.buyerSessions.legalEntity : identities.buyerSessions.tenant).authContextRef
-            : human.authContextRef,
+        authContextRef,
       };
       if (legalEntity) {
         principal.legalEntityId = core.legalEntityId;

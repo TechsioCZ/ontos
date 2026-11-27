@@ -25,7 +25,6 @@ import {
   Array as EffectArray,
   ConfigProvider,
   Context,
-  Crypto,
   DateTime,
   Effect,
   Layer,
@@ -35,6 +34,7 @@ import {
   Result,
   Schema,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -119,7 +119,7 @@ const nativeServices = NodeChildProcessSpawner.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeCrypto.layer),
 );
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 const emptyContext = Context.makeUnsafe<unknown>(new Map());
 
 it.live(
@@ -963,6 +963,7 @@ it.live(
         const page1 = yield* sourceRead({ ...source, limit: 1, operation: 'LIST' });
         expect(page1.items[0]?.source.recordId).toBe('literal-source-a');
         expect(page1.nextRecordId).toBe('literal-source-a');
+        assert.isDefined(page1.nextRecordId);
         const page2 = yield* sourceRead({ ...source, afterRecordId: page1.nextRecordId, limit: 1, operation: 'LIST' });
         expect(page2.items[0]?.source.recordId).toBe('literal-source-z');
         expect(page2.nextRecordId).toBeUndefined();

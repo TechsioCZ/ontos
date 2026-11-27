@@ -1,7 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { makeActionRepository } from '../../src/actions/repository.ts';
@@ -76,7 +77,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const nextUuid = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextUuid = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const relationship = (
   resourceType: string,
@@ -182,7 +183,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('identity runtime', (s
       });
       const actionRuntime = makeActionRuntime(
         { executor: runtimeDatabase },
-        makeActionRepository(yield* Crypto.Crypto),
+        makeActionRepository(yield* SecureRandom.SecureRandom),
         actionPermission,
         operationalScope,
         { ...openActionRuntimeOptions, accessDecision: accessGate, contextAccess },

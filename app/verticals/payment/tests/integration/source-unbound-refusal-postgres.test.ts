@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import type { Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -38,7 +39,7 @@ import type { EvidenceNativeDatabase } from './evidence-native-support.ts';
  * Entity. The refusals for a configured and an unconfigured binding are identical (tag, code, reason).
  */
 
-const native = <A, E>(effect: Effect.Effect<A, E, Crypto.Crypto | Scope.Scope>) =>
+const native = <A, E>(effect: Effect.Effect<A, E, SecureRandom.SecureRandom | Scope.Scope>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeCrypto.layer));
 
 const configuredBank = {
@@ -82,7 +83,7 @@ it.live('#1153 an unbound principal cannot probe which source bindings are confi
         tenantId: scope.tenantId,
       });
       const prober = principalOf({ ...scope, principalId: probeId });
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const actions = makeActionRuntime(
         { executor: database.database },
         makeActionRepository(crypto),

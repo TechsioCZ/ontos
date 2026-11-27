@@ -5,7 +5,8 @@ import {
   extractVerticalRuntimeSafeDescriptors,
 } from '@app/core-runtime';
 import { NodeHttpServer } from '@effect/platform-node';
-import { Array as EffectArray, Config, Context, Crypto, Effect, FileSystem, Layer, Schema, Stream } from 'effect';
+import { Array as EffectArray, Config, Context, Effect, FileSystem, Layer, Schema, Stream } from 'effect';
+import { Digest } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { HttpApi } from 'effect/http-api';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
@@ -28,8 +29,8 @@ const compareApiKeys = (left: string, right: string): -1 | 0 | 1 => {
   return compared > 0 ? 1 : 0;
 };
 const digest = Effect.fn('ActualCatalogComposition.digest')(function* digest(document: string) {
-  const crypto = yield* Crypto.Crypto;
-  return Hex.encode(new Uint8Array(yield* crypto.digest('SHA-256', new TextEncoder().encode(document))));
+  const crypto = yield* Digest.Digest;
+  return Hex.encode(new Uint8Array(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(document))));
 });
 
 /** Same-running SOURCE metadata, following the existing native owner-intent fixture projection. */
@@ -138,8 +139,8 @@ export const deriveActualCatalogCompositionSnapshot = Effect.fn('ActualCatalogCo
     /['"](?<key>\.\/[A-Za-z][A-Za-z0-9._-]*(?:\/[A-Za-z][A-Za-z0-9._-]*)*)['"]\s*:\s*['"][^'"]+['"]/gu;
   const declaredExposes = new Set<string>();
   for (const match of configuration.matchAll(exposurePattern)) {
-    if (match.groups?.key !== undefined) {
-      declaredExposes.add(match.groups.key);
+    if (match.groups?.['key'] !== undefined) {
+      declaredExposes.add(match.groups['key']);
     }
   }
   const contract = yield* sourceContract(owner.moduleFederation.name, declaredExposes);

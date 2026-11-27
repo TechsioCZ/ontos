@@ -18,7 +18,7 @@ import {
   TrustedPrincipalContextSchema,
   makeActiveApplicationCompositionService,
 } from '@app/core-runtime';
-import { NodeChildProcessSpawner, NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { CreatePartyPayloadSchema } from '@app/party-registry/api';
 import {
   createPartyWithAuthorization,
@@ -32,7 +32,6 @@ import {
   Clock,
   Config,
   Context,
-  Crypto,
   DateTime,
   Deferred,
   Effect,
@@ -43,6 +42,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { ChildProcess } from 'effect/process';
 import { HttpServer, HttpServerResponse } from 'effect/http';
@@ -161,8 +161,8 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
       address.pathname = `/${capability.databaseName}`;
       urls[identity.urlKey] = address.href;
     }
-    const issuerUrl = urls.SHELL_GATEWAY_ISSUER_DATABASE_URL;
-    const requestUrl = urls.PARTY_REGISTRY_DATABASE_URL;
+    const issuerUrl = urls['SHELL_GATEWAY_ISSUER_DATABASE_URL'];
+    const requestUrl = urls['PARTY_REGISTRY_DATABASE_URL'];
     if (issuerUrl === undefined || requestUrl === undefined) {
       return yield* identityFailure('Canonical native fixture identities were incomplete');
     }
@@ -222,11 +222,14 @@ const preparePartyNativeIdentities = Effect.fn('PrivacyPartyNative.prepareIdenti
 );
 const ownerMarkerSchema = Schema.Struct({ appId: Schema.Literal('party-registry'), buildMarker: Schema.String });
 const ownerReadySchema = Schema.Struct({ marker: ownerMarkerSchema, port: Schema.Number });
-const publicProofServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const publicProofServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeCrypto.layerSecureRandom),
+);
 
 const makeControllerOwner = Effect.fn('ControllerOwnerTest.makeFixture')(function* makeControllerOwner() {
-  const crypto = yield* Crypto.Crypto;
-  const nextId = () => crypto.randomUUIDv4();
+  const crypto = yield* SecureRandom.SecureRandom;
+  const nextId = () => crypto.uuidV4();
   const description = yield* describeControllerContracts();
   const partyIdentity = description.buildIdentities['party-registry'];
   const encodeIdentity = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
@@ -538,10 +541,9 @@ const proveControllerArrangement = Effect.fn('ControllerOwnerTest.proveArrangeme
   function* proveControllerArrangement(kind: 'PERSON' | 'ORGANIZATION' | 'LEGAL_ENTITY' | 'MIXED') {
     const owner = yield* makeControllerOwner();
     const { context, coreEvidenceExecutor, deniedAccess, fixture, nextId, principal, runtime } = owner;
+    const canonicalPartyType = kind === 'ORGANIZATION' ? 'ORGANIZATION' : 'PERSON';
     const canonical =
-      kind === 'LEGAL_ENTITY'
-        ? undefined
-        : yield* produceCanonicalController(owner, kind === 'ORGANIZATION' ? 'ORGANIZATION' : 'PERSON');
+      kind === 'LEGAL_ENTITY' ? undefined : yield* produceCanonicalController(owner, canonicalPartyType);
     const legalEntityController = Schema.decodeUnknownSync(PrivacyApplicabilityAuthoritySchema.fields.controllerRef)({
       moduleId: 'core.identity',
       resourceId: fixture.legalEntityId,

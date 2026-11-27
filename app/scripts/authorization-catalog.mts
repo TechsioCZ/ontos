@@ -1,4 +1,4 @@
-import { LanguageVariant, SyntaxKind, createScanner } from '@typescript/native/unstable/ast';
+import { LanguageVariant, SyntaxKind, createScanner } from 'tsrs/ast';
 import { Array as EffectArray, Order, Predicate, Redacted, Result, Schema } from 'effect';
 
 import {
@@ -1614,15 +1614,19 @@ const verbSegmentsOf = (moduleId: string, key: string): string =>
 
 /** Review items beyond the Core findings: dangerous verbs in the verb segments of a declared key. */
 const dangerousVerbFindings = (snapshot: AccessCatalogSnapshot): readonly AccessCatalogReport['findings'][number][] =>
-  snapshot.entries
-    .filter((entry) => hasDangerousAccessVerb(verbSegmentsOf(entry.moduleId, entry.key)))
-    .map((entry) => ({
-      code: 'dangerous_verb',
-      file: entry.file,
-      key: entry.key,
-      moduleId: entry.moduleId,
-      reason: `dangerous verb declared as ${entry.risk}`,
-    }));
+  snapshot.entries.flatMap((entry) =>
+    hasDangerousAccessVerb(verbSegmentsOf(entry.moduleId, entry.key))
+      ? [
+          {
+            code: 'dangerous_verb',
+            file: entry.file,
+            key: entry.key,
+            moduleId: entry.moduleId,
+            reason: `dangerous verb declared as ${entry.risk}`,
+          },
+        ]
+      : [],
+  );
 
 const declaredReport = (entry: AccessCatalogSnapshotEntry): AccessCatalogReport['declared'][number] => {
   const base = {
@@ -1961,7 +1965,9 @@ export const buildAccessCatalogDiff = (
   const lineagePredecessors = lineagePredecessorsOf(before.entries, after.entries);
   return {
     added: sortChanges(
-      after.entries.filter((entry) => !beforeKeys.has(qualifiedKey(entry.moduleId, entry.key))).map(changeSource),
+      after.entries.flatMap((entry) =>
+        beforeKeys.has(qualifiedKey(entry.moduleId, entry.key)) ? [] : [changeSource(entry)],
+      ),
     ),
     baseRef: refs.baseRef,
     headRef: refs.headRef,
@@ -1974,10 +1980,10 @@ export const buildAccessCatalogDiff = (
       }),
     ),
     removed: sortChanges(
-      before.entries
-        .filter((entry) => !afterKeys.has(qualifiedKey(entry.moduleId, entry.key)))
-        .filter((entry) => !lineagePredecessors.has(qualifiedKey(entry.moduleId, entry.key)))
-        .map(changeSource),
+      before.entries.flatMap((entry) => {
+        const qualified = qualifiedKey(entry.moduleId, entry.key);
+        return afterKeys.has(qualified) || lineagePredecessors.has(qualified) ? [] : [changeSource(entry)];
+      }),
     ),
     renamed: renamedChanges(before.entries, after.entries),
     riskChanged: sortChanges(

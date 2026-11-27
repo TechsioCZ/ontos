@@ -305,7 +305,7 @@ const componentExposes = (verticalDirectory: string) =>
     const exposes = new Set<string>();
     const pattern = /['"](?<key>\.\/[A-Za-z][A-Za-z0-9._-]*(?:\/[A-Za-z][A-Za-z0-9._-]*)*)['"]\s*:\s*['"][^'"]+['"]/gu;
     for (const match of config.matchAll(pattern)) {
-      const key = match.groups?.key;
+      const key = match.groups?.['key'];
       if (key !== undefined) {
         exposes.add(key);
       }
@@ -407,7 +407,10 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       for (const key of Object.keys(owner.manifest.publicSurface.components)) {
         const componentKey = `${owner.manifest.module.id}.${toKebab(key)}`;
         const selectors = new Set(
-          bindings.filter((binding) => binding.componentKey === componentKey).map(({ expose }) => expose),
+          bindings.flatMap((binding) => {
+            const { expose } = binding;
+            return binding.componentKey === componentKey ? [expose] : [];
+          }),
         );
         if (selectors.size > 1) {
           return yield* failure(`public component ${key} has conflicting Shell Federation selectors`);

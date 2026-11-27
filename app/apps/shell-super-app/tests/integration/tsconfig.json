@@ -1,8 +1,5 @@
 {
   "extends": "../tsconfig.json",
-  "compilerOptions": {
-    "customConditions": ["node"]
-  },
   "include": ["**/*.ts", "**/*.tsx"],
   "exclude": []
 }

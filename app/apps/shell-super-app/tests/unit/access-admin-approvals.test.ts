@@ -657,7 +657,7 @@ it.effect('projects a tenant-context proposal without requiring a selected compa
     const inbox = yield* bffOf().list(headers(), listPayload());
     const scope = inbox.items[0]?.scope;
     expect(scope?.kind).toBe('tenant');
-    expect(scope?.kind === 'company').toBe(false);
+    expect(scope?.kind).not.toBe('company');
   }),
 );
 

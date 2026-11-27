@@ -345,7 +345,7 @@ const browserCompositionFixture = Effect.gen(function* serveBrowserComposition()
             if (request.method !== 'POST') {
               return HttpServerResponse.empty({ status: 405 });
             }
-            if (request.headers.origin !== shellOrigin) {
+            if (request.headers['origin'] !== shellOrigin) {
               return HttpServerResponse.empty({ status: 403 });
             }
             if (

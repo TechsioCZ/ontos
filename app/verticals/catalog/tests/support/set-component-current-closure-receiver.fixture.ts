@@ -21,19 +21,8 @@ import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/iso
 import { deriveActualCatalogCompositionSnapshot } from './actual-catalog-composition.fixture.ts';
 import { NodeChildProcessSpawner, NodeCrypto, NodeHttpServer, NodeRuntime, NodeServices } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Effect,
-  Layer,
-  Match,
-  Option,
-  Redacted,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { createSetCompositionActionApiLive } from '../../api/create-set-composition-action-server.ts';
 import { CreateSetCompositionResultSchema } from '../../shared/actions/create-set-composition.ts';
@@ -158,7 +147,7 @@ export const makeSetComponentVerificationJwks = Effect.fn('SetComponentClosure.v
 );
 const catalogModuleKey = 'commerce.catalog' as const;
 const populationToken = '1247-owned-empty-population';
-const nextId = Crypto.Crypto.use((crypto) => crypto.randomUUIDv4());
+const nextId = SecureRandom.SecureRandom.use((crypto) => crypto.uuidV4());
 
 const produceCatalogSelection = Effect.fn('SetComponentClosure.produceSelection')(function* produceSelection(
   transaction: ScopedTransactionExecutor,

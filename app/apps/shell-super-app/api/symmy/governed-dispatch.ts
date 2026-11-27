@@ -6,7 +6,8 @@ import { executeAdmitSymmySyncWithAuthorization } from '@app/symmy-integration/a
 import { AdmitSymmySyncPayloadSchema } from '@app/symmy-integration/api/admit-symmy-sync-action';
 import { executeSymmyJobStatusWithAuthorization } from '@app/symmy-integration/api/symmy-job-status/client';
 import { executeSymmyRouteContextWithAuthorization } from '@app/symmy-integration/api/symmy-route-context/client';
-import { Array as EffectArray, Config, Context, Crypto, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Config, Context, Effect, Layer, Match, Option, Redacted, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import { resolveSymmyOwnerReleaseBase } from './owner-release-transport.ts';
 
@@ -519,10 +520,9 @@ export const makeSymmyGovernedDispatch = (
 export const SymmyGovernedDispatchLive = Layer.effect(
   SymmyGovernedDispatch,
   Effect.gen(function* symmyGovernedDispatchLayer() {
-    const crypto = yield* Crypto.Crypto;
-    return makeSymmyGovernedDispatch(
-      crypto.randomUUIDv4().pipe(Effect.catchTag('PlatformError', unavailable)),
-      (input, acquire) => projectSymmyRegionsWithCrypto(input, acquire, crypto),
+    const crypto = yield* SecureRandom.SecureRandom;
+    return makeSymmyGovernedDispatch(crypto.uuidV4(), (input, acquire) =>
+      projectSymmyRegionsWithCrypto(input, acquire, crypto),
     );
   }),
 );

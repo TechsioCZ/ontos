@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { Digest } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -13,7 +14,7 @@ it.effect(
   'independently reads the exact historical Symmy outcome and rejects receipt and complete-scope substitution',
   () =>
     Effect.gen(function* exactSymmyOwnerReceipt() {
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* Digest.Digest;
       const tenantId = '75000000-0000-4000-8000-000000000001';
       const legalEntityId = '75000000-0000-4000-8000-000000000002';
       const principalId = '75000000-0000-4000-8000-000000000003';

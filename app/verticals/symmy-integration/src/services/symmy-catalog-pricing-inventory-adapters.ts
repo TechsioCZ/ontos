@@ -92,7 +92,8 @@ import {
 import { executePriceDefinitionWithAuthorization } from '@app/pricing-contracts/price-definition/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';
+import { Context, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -582,9 +583,9 @@ const freshGateway = Effect.fn('SymmyOwnerAdapters.freshGateway')(function* fres
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
   recovery: boolean,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
-  const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  const requestCorrelation = yield* crypto.uuidV4();
   const legalEntityId = contract.audience === 'pricing' ? input.legalEntityId : undefined;
   if (contract.audience === 'pricing' && legalEntityId === undefined) {
     return yield* symmyJobWorkerInvalid();
@@ -636,7 +637,7 @@ const readCatalogSourceProduct = Effect.fn('SymmyOwnerAdapters.readCatalogSource
   input: SymmyEffectAdapterInput,
   source: typeof CatalogSourceCorrelationSchema.Type,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const wire = yield* freshGateway(
     input,
@@ -1020,7 +1021,7 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
 const resolveProductDependency = Effect.fn('SymmyOwnerAdapters.resolveProductDependency')(function* resolveDependency(
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const requested = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema, {
     onExcessProperty: 'error',
@@ -1200,7 +1201,7 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
   input: SymmyEffectAdapterInput,
   result: typeof CreateProductRecoveryResponseSchema.Type,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   expectedInvocationId?: string,
 ) {
   const intent = yield* checkedIntent(input);
@@ -1259,7 +1260,7 @@ const verifyExistingCatalogTarget = Effect.fn('SymmyOwnerAdapters.verifyCatalogS
     input: SymmyEffectAdapterInput,
     requestIntent: SymmyCatalogPricingInventoryIntent,
     contract: AdapterContract,
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
   ) {
     const { record } = input.effect.ref.occurrence;
     const occurrenceSource = {
@@ -1371,7 +1372,7 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
   wire: GatewayAttempt,
   invocationId: string,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const { credential, options, requestCorrelation } = wire;
   const catalogRequest = yield* Schema.decodeUnknownEffect(
@@ -1716,7 +1717,7 @@ const freshRecoveryGateway = Effect.fn('SymmyOwnerAdapters.freshRecoveryGateway'
   input: SymmyEffectAdapterInput,
   intent: SymmyCatalogPricingInventoryIntent,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   invocationId: string,
 ) {
   if (
@@ -1727,7 +1728,7 @@ const freshRecoveryGateway = Effect.fn('SymmyOwnerAdapters.freshRecoveryGateway'
     return yield* symmyJobWorkerUnavailable();
   }
   const requestHash = yield* recoveryReadRequestHash(intent, invocationId);
-  const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
+  const requestCorrelation = yield* crypto.uuidV4();
   type RecoverySubject = Extract<GatewayDelegationSubject, { readonly _tag: 'RegisteredRecovery' }>;
   let source: RecoverySubject['source'] =
     input.context === undefined
@@ -1776,7 +1777,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
   requestIntent: SymmyCatalogPricingInventoryIntent,
   wire: GatewayAttempt,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const { credential, options, requestCorrelation } = wire;
   return yield* Match.value(requestIntent).pipe(
@@ -1900,9 +1901,10 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           requestCorrelation,
           options,
         );
-        return 'changed' in result
-          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
-          : safeOutcome(input, 'unresolved');
+        if (!('changed' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessUnit: Effect.fn('SymmyOwnerAdapters.readinessUnit')(function* unit({ payload }) {
         const result = yield* executeSetProductUnitTargetDivisibilityWithAuthorization(
@@ -1911,9 +1913,10 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           requestCorrelation,
           options,
         );
-        return 'unit' in result
-          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
-          : safeOutcome(input, 'unresolved');
+        if (!('unit' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogReadinessUntyped: Effect.fn('SymmyOwnerAdapters.readinessUntyped')(function* untyped({ payload }) {
         const result = yield* executeDecideProductTypeUnnecessaryWithAuthorization(
@@ -1922,9 +1925,10 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
           requestCorrelation,
           options,
         );
-        return 'decisionRevision' in result
-          ? safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change')
-          : safeOutcome(input, 'unresolved');
+        if (!('decisionRevision' in result)) {
+          return safeOutcome(input, 'unresolved');
+        }
+        return safeOutcome(input, result.changed ? 'accepted_change' : 'accepted_no_change');
       }),
       CatalogSetVariantLocalizedFacts: Effect.fn('SymmyOwnerAdapters.setVariantLocalizedFacts')(
         function* setVariantLocalizedFacts({ payload }) {
@@ -2224,7 +2228,7 @@ const readCurrentPriceGroup = Effect.fn('SymmyOwnerAdapters.readCurrentPriceGrou
   input: SymmyEffectAdapterInput,
   priceRef: Extract<SymmyCatalogPricingInventoryIntent, { readonly _tag: 'PriceRevise' }>['payload']['priceRef'],
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const wire = yield* freshGateway(
     input,
@@ -2260,7 +2264,7 @@ const sourceCreatedPriceGroup = Effect.fn('SymmyOwnerAdapters.sourceCreatedPrice
   input: SymmyEffectAdapterInput,
   priceGroupRef: Parameters<typeof sameRef>[0],
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const { record } = input.effect.ref.occurrence;
   const groupContract = {
@@ -2306,7 +2310,7 @@ const verifyBatchPriceGroup = Effect.fn('SymmyOwnerAdapters.verifyBatchPriceGrou
   input: SymmyEffectAdapterInput,
   requestIntent: SymmyCatalogPricingInventoryIntent,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   if (input.routeKey !== 'priceListPricesBatch' || !Schema.is(listPriceWriteTag)(requestIntent._tag)) {
     return true;
@@ -2387,7 +2391,7 @@ const readCreatedPriceGroup = Effect.fn('SymmyOwnerAdapters.readCreatedPriceGrou
   input: SymmyEffectAdapterInput,
   intent: PriceFromGroupIntent,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const { receipt, source } = yield* requireCreatedGroupDependency(input, intent);
   const wire = yield* freshGateway(
@@ -2435,7 +2439,7 @@ const readCreatedPriceGroup = Effect.fn('SymmyOwnerAdapters.readCreatedPriceGrou
 const readCatalogHead = Effect.fn('SymmyOwnerAdapters.readCatalogHead')(function* readHead(
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const wire = yield* freshGateway(
     input,
@@ -2461,7 +2465,7 @@ const readCatalogHead = Effect.fn('SymmyOwnerAdapters.readCatalogHead')(function
 const resolveGroupDependency = Effect.fn('SymmyOwnerAdapters.resolveGroupDependency')(function* resolveGroup(
   input: SymmyEffectAdapterInput,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   const requestIntent = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema)(
     input.effect.intent,
@@ -2537,7 +2541,7 @@ const verifyPriceListDependency = Effect.fn('SymmyOwnerAdapters.verifyPriceListD
   originalEffect: SymmyPinnedEffect,
   intent: SymmyCatalogPricingInventoryIntent,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   if (input.routeKey !== 'priceListsBatchUpsert' || !Schema.is(listPriceWriteTag)(intent._tag)) {
     return true;
@@ -2588,7 +2592,7 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   input: SymmyEffectAdapterInput,
   intent: SymmyCatalogPricingInventoryIntent,
   contract: AdapterContract,
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   error: Effect.Error<ReturnType<typeof executeNative>>,
 ) {
   if (Schema.is(committedEvidence)(error)) {
@@ -2646,7 +2650,7 @@ const preDispatchStage = Schema.Literals([
   'record-owner-request',
 ]);
 
-const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEffectAdapter => ({
+const makeAdapter = (contract: AdapterContract, crypto: SecureRandom.SecureRandom['Service']): SymmyEffectAdapter => ({
   execute: Effect.fn('SymmyOwnerAdapters.execute')(function* execute(originalInput) {
     const observe = <A, E, R>(stage: typeof preDispatchStage.Type, effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
@@ -2780,7 +2784,7 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
 });
 
 export const makeSymmyCatalogPricingInventoryAdapters = Effect.gen(function* makeOwnerAdapters() {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   return symmyCatalogPricingInventoryContracts.map((contract) => makeAdapter(contract, crypto));
 });
 

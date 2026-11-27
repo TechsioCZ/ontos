@@ -3,7 +3,9 @@
 // @ontos-action-slug issue-promotion-proof
 import type { ActionCollectorError, ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import type { Digest } from 'effect/crypto';
+import { SecureRandom } from 'effect/crypto';
 import {
   PromotionEvaluationRequestSchema,
   PromotionIssuedProofSchema,
@@ -67,18 +69,11 @@ export const handleIssuePromotionProof = Effect.fn('IssuePromotionProofAction.ha
 ): Effect.fn.Return<
   typeof PromotionProofHandleSchema.Type,
   typeof ActionErrorSchema.Type | ActionCollectorError,
-  Crypto.Crypto | PromotionExternalFactSource
+  Digest.Digest | SecureRandom.SecureRandom | PromotionExternalFactSource
 > {
   yield* context.services.persistence.lockForWrite;
-  const crypto = yield* Crypto.Crypto;
-  const proofId = yield* crypto
-    .randomUUIDv4()
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new PromotionProofFailure({ cause, code: 'UNAVAILABLE', reason: 'Proof identity cannot be assigned' }),
-      ),
-    );
+  const crypto = yield* SecureRandom.SecureRandom;
+  const proofId = yield* crypto.uuidV4();
   const calculation =
     payload.stage === 'MERCHANDISE'
       ? yield* context.services.evaluation.evaluateMerchandise(payload.request)

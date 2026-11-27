@@ -4,7 +4,6 @@ import {
   Clock,
   Config,
   Console,
-  Crypto,
   DateTime,
   Effect,
   Exit,
@@ -16,6 +15,7 @@ import {
   Semaphore,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import type { PlatformError } from 'effect';
 
@@ -373,9 +373,9 @@ export const makeIsolatedNativeDatabaseFixture = Effect.fn('IsolatedNativeDataba
     ) {
       return yield* unavailable('Isolated native test databases require localhost');
     }
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const cloneStarted = yield* Clock.monotonicTimeNanos;
-    const databaseName = `${prefix}${(yield* crypto.randomUUIDv4()).replaceAll('-', '')}`;
+    const databaseName = `${prefix}${(yield* crypto.uuidV4()).replaceAll('-', '')}`;
     const connections = yield* parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: replaceDatabase(source.admin, databaseName),
       DATABASE_URL: replaceDatabase(source.runtime, databaseName),

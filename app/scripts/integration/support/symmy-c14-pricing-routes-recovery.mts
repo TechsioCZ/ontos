@@ -7,7 +7,8 @@ import type { PriceRefSchema } from '@app/pricing-contracts/resources/price';
 import type { PriceSourceProvenanceSchema } from '@app/pricing-contracts/domain/price-source-provenance';
 import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { expect } from 'effect-rstest';
-import { Crypto, Effect, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { HttpBody, HttpClient } from 'effect/http';
 
 import type { makeInternalC14PricingRouteFixture } from './symmy-c14-pricing-routes-runtime.mts';
@@ -35,7 +36,7 @@ export const assertInternalC14PriceRecovery = Effect.fn('InternalC14PricingRoute
     readonly selectedJobId: string;
   }) {
     const { fixture } = input;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const invocationFor = (jobId: string) =>
       fixture.admin`
         select i.action_invocation_id,i.idempotency_key,i.principal_id,i.request_hash
@@ -116,7 +117,7 @@ export const assertInternalC14PriceRecovery = Effect.fn('InternalC14PricingRoute
             body: yield* HttpBody.json(payload),
             headers: {
               authorization: `Bearer ${assertion.token}`,
-              'x-correlation-id': yield* crypto.randomUUIDv4(),
+              'x-correlation-id': yield* crypto.uuidV4(),
               'x-ontos-composition-revision': fixture.snapshot.composition.revision,
             },
           },

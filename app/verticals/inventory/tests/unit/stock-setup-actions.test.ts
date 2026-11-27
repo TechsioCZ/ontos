@@ -1,6 +1,7 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { Crypto, Effect, Option, Ref, Result, Schema } from 'effect';
+import { Effect, Option, Ref, Result, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -93,7 +94,7 @@ const makeStockItems = Effect.gen(function* makeStockItems() {
     insert: (item) =>
       Ref.modify(items, (stored) => [item, new Map(stored).set(item.stockItemRef.resourceId, item)] as const),
   };
-  return { register: stockItemRegistration(repository, yield* Crypto.Crypto) };
+  return { register: stockItemRegistration(repository, yield* SecureRandom.SecureRandom) };
 });
 
 const selectedConfiguration = Schema.decodeUnknownSync(InventoryBackendConfigurationSchema)({
@@ -161,7 +162,7 @@ const registerRacing = Effect.fn('StockSetupActionsTest.registerRacing')(functio
 ) {
   const service = {
     // @ts-expect-error Mock implements only the exercised transaction chains.
-    register: stockItemRegistration(makeDrizzleStockItemRepository(transaction), yield* Crypto.Crypto),
+    register: stockItemRegistration(makeDrizzleStockItemRepository(transaction), yield* SecureRandom.SecureRandom),
   };
   return yield* handleRegisterStockItem(
     Schema.decodeUnknownSync(RegisterStockItemPayloadSchema)({

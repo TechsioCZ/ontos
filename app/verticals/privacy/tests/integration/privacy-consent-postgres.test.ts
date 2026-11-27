@@ -2,7 +2,8 @@ import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
 import { NodeCrypto } from '@effect/platform-node';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, Effect, Exit, Option, Schema } from 'effect';
+import { Effect, Exit, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import type { ConsentDecision } from '../../shared/domain/privacy-consent-decision.ts';
@@ -23,8 +24,8 @@ it.live(
       });
       const { principalId, tenantId } = native.principal;
       const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
-      const crypto = yield* Crypto.Crypto;
-      const subjectId = yield* crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const subjectId = yield* crypto.uuidV4();
       const trustedScope = () => ({ ...native.principal, correlationId: 'privacy-consent-postgres', legalEntityId });
       const inScope = <Value, Failure, Requirements>(
         _scopedTenantId: string,

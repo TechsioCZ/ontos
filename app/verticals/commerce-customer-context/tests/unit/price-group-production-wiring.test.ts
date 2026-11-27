@@ -59,8 +59,8 @@ const scopeFields = {
   authContextRef: 'better-auth-session:price-group-production-wiring',
   authMethod: 'session',
   correlationId: 'price-group-production-wiring',
-  principalId: '40000000-0000-4000-8000-000000000001',
   legalEntityId,
+  principalId: '40000000-0000-4000-8000-000000000001',
   tenantId,
 } as const;
 // SAFETY: the fixed UUID and session fields satisfy the trusted test-context contract.
@@ -245,8 +245,8 @@ const makeMissingPriceGroupComposition = Effect.fn('Test.missingPriceGroupCompos
   const digest = Hex.encode(sha256(utf8ToBytes(contractDocument)));
   const coreCapabilities = owner.requirements?.coreCapabilities ?? [];
   const shellDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))({
-    coreCapabilities,
     contributionAbi: base.composition.shell.contributionAbi,
+    coreCapabilities,
     deployment: base.composition.shell.deployment,
     schemaVersion: '2',
   });

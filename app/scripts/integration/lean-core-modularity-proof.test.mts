@@ -3,23 +3,12 @@ import { createRequire } from 'node:module';
 import nodePath from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import {
-  Config,
-  ConfigProvider,
-  Context,
-  Crypto,
-  DateTime,
-  Duration,
-  Effect,
-  FileSystem,
-  Layer,
-  Ref,
-  Schema,
-} from 'effect';
+import { Config, ConfigProvider, Context, DateTime, Duration, Effect, FileSystem, Layer, Ref, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
 import { expect, it } from 'effect-rstest';
@@ -516,13 +505,11 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   return [...cookies.values()].join('; ');
 };
 
-const mergeResponseCookies = (current: string, response: Response): string => {
-  const merged = cookieHeader([
+const mergeResponseCookies = (current: string, response: Response): string =>
+  cookieHeader([
     ...(current.length === 0 ? [] : current.split('; ').map((pair) => `${pair};`)),
     ...response.headers.getSetCookie(),
   ]);
-  return merged;
-};
 
 const requestFor = (
   baseUrl: string,
@@ -538,15 +525,15 @@ const requestFor = (
     'x-correlation-id': randomUUID(),
     ...options.headers,
   });
+  const request: RequestInit = { headers, method: options.method };
   if (options.body !== undefined) {
     headers.set('content-type', 'application/json');
+    request.body = JSON.stringify(options.body);
   }
-  return new Request(`${baseUrl}${path}`, {
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    headers,
-    method: options.method,
-  });
+  return new Request(`${baseUrl}${path}`, request);
 };
+
+const leanCoreServices = Layer.mergeAll(NodeServices.layer, NodeCrypto.layerSecureRandom);
 
 it.live(
   'proves the default Shell runtime starts and serves staff authentication without Commerce',
@@ -848,7 +835,7 @@ it.live(
     );
     const supportActionRuntime = makeActionRuntime(
       { executor: coreDatabase },
-      makeActionRepository(yield* Crypto.Crypto),
+      makeActionRepository(yield* SecureRandom.SecureRandom),
       { checkActionPermission: () => Effect.succeed('allowed' as const) },
       operationalScope,
       { ...openActionRuntimeOptions, accessDecision: accessGate.bound },
@@ -911,5 +898,5 @@ it.live(
     expect(stopped.checkpointPending).toBe(false);
 
     return yield* Effect.void;
-  }, Effect.provide(NodeServices.layer)),
+  }, Effect.provide(leanCoreServices)),
 );

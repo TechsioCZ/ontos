@@ -1,6 +1,7 @@
 import { NodeChildProcessSpawner, NodeServices } from '@effect/platform-node';
 import { and, eq, inArray, not, sql } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Exit, Layer } from 'effect';
+import { DateTime, Effect, Exit, Layer } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../src/auth/staff-authentication-namespace.ts';
@@ -26,7 +27,9 @@ import {
   makeOutboxWorkerComposition,
 } from '../support/outbox-worker-composition.ts';
 
-const nativeServices = NodeChildProcessSpawner.layer.pipe(Layer.provideMerge(NodeServices.layer));
+const nativeServices = NodeChildProcessSpawner.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, SecureRandom.layerWebCrypto)),
+);
 const groupWriter = 'commerce.customer-context.source-write';
 const inventoryWriter = 'commerce.inventory.source-write';
 const priceGroupReader = 'pricing.price-group-catalog.source-read';
@@ -56,13 +59,13 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
             });
             const client = yield* makeTestPgClient(ownedDatabase.connections.admin.connectionString);
             const database = yield* makeTestDatabaseFromClient(client, coreRelations);
-            const crypto = yield* Crypto.Crypto;
-            const tenantId = yield* crypto.randomUUIDv4();
-            const otherTenantId = yield* crypto.randomUUIDv4();
-            const operatorPrincipalId = yield* crypto.randomUUIDv4();
-            const systemPrincipalId = yield* crypto.randomUUIDv4();
-            const otherSystemId = yield* crypto.randomUUIDv4();
-            const integrationId = yield* crypto.randomUUIDv4();
+            const crypto = yield* SecureRandom.SecureRandom;
+            const tenantId = yield* crypto.uuidV4();
+            const otherTenantId = yield* crypto.uuidV4();
+            const operatorPrincipalId = yield* crypto.uuidV4();
+            const systemPrincipalId = yield* crypto.uuidV4();
+            const otherSystemId = yield* crypto.uuidV4();
+            const integrationId = yield* crypto.uuidV4();
             const operatorProviderUserId = `internal-operator-${operatorPrincipalId}`;
             yield* database.insert(tenants).values([
               { defaultLocale: 'cs', name: 'Writer control', slug: `writer-${tenantId}`, status: 'active', tenantId },
@@ -116,8 +119,8 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
             // Core-native identity fixtures; the application suite supplies its genuine Shell issuer and System enrollments.
             for (const workloadKey of [groupWriter, inventoryWriter, ...readWorkloads]) {
               yield* database.insert(accessWorkloadBindings).values({
-                bindingId: yield* crypto.randomUUIDv4(),
-                incarnation: yield* crypto.randomUUIDv4(),
+                bindingId: yield* crypto.uuidV4(),
+                incarnation: yield* crypto.uuidV4(),
                 principalId: systemPrincipalId,
                 status: 'active',
                 tenantId,
@@ -126,8 +129,8 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
             }
             for (const workloadKey of [priceGroupReader, groupWriter, 'commerce.catalog.symmy-product-read']) {
               yield* database.insert(accessWorkloadBindings).values({
-                bindingId: yield* crypto.randomUUIDv4(),
-                incarnation: yield* crypto.randomUUIDv4(),
+                bindingId: yield* crypto.uuidV4(),
+                incarnation: yield* crypto.uuidV4(),
                 principalId: integrationId,
                 status: 'active',
                 tenantId,
@@ -340,8 +343,8 @@ it.layer(nativeServices, { excludeTestServices: true })('Owned native writer enr
             // A corrupt fixture's duplicate live rows must not be selected arbitrarily.
             yield* database.execute(sql`drop index core.access_workload_bindings_active_uk`, 'objects');
             yield* database.insert(accessWorkloadBindings).values({
-              bindingId: yield* crypto.randomUUIDv4(),
-              incarnation: yield* crypto.randomUUIDv4(),
+              bindingId: yield* crypto.uuidV4(),
+              incarnation: yield* crypto.uuidV4(),
               principalId: systemPrincipalId,
               status: 'active',
               tenantId,

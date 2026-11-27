@@ -160,7 +160,7 @@ const matchCanonicalPage = (
     if (segment.startsWith(':')) {
       const name = segment.slice(1);
       if (
-        !/^[a-zA-Z][a-zA-Z0-9_]*$/u.test(name) ||
+        !/^[a-zA-Z]\w*$/u.test(name) ||
         Object.hasOwn(parameters, name) ||
         name === 'constructor' ||
         name === 'prototype' ||

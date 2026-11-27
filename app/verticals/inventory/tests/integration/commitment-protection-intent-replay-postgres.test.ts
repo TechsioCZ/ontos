@@ -12,7 +12,6 @@ import { sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import {
   Clock,
-  Crypto,
   DateTime,
   Effect,
   FileSystem,
@@ -26,6 +25,7 @@ import {
   Schema,
   Stream,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { TestClock } from 'effect/testing';
@@ -269,10 +269,10 @@ const makeScenario = Effect.fn('ProtectionIntentReplay.makeScenario')(function* 
       }).match(uuidPattern),
     ),
   ];
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const mappedIds = yield* Effect.forEach(
     ids,
-    (source) => crypto.randomUUIDv4().pipe(Effect.map((target) => [source, target] as const)),
+    (source) => crypto.uuidV4().pipe(Effect.map((target) => [source, target] as const)),
     { concurrency: 1 },
   );
   const identities = new Map([...mappedIds, ['11111111-1111-4111-8111-111111111111', fixture.tenantId]]);
