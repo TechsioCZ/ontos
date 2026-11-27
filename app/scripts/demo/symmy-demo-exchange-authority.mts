@@ -116,6 +116,14 @@ export const symmyDemoExchangeRouteOperations = (routeKey: RouteKey) =>
         symmyDemoExchangeOperations.adminProducts,
         // The demo store copy reads the current base Price and on-hand of the Catalog variants it copies.
         {
+          effectKey: 'demo-external-price-source-scopes-v1',
+          operation: {
+            entrypointKey: 'commerce.pricing.api.external-price-source-scopes',
+            moduleId: 'commerce.pricing',
+            schemaVersion: '1',
+          },
+        },
+        {
           effectKey: 'demo-catalog-page-prices-v1',
           operation: {
             entrypointKey: 'commerce.pricing.api.catalog-page-prices',
