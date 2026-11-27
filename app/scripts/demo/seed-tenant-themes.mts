@@ -1,119 +1,167 @@
 #!/usr/bin/env node
 /**
- * Gives one demo tenant its theme (tenant-themes.mts) through the Shell's own Core Actions, as a tenant administrator:
- * save-tenant-theme stores the theme (Core runs the kit's brand validator), attach-tenant-theme makes the tenant wear
- * it. Without --apply it validates the theme, signs in and shows the tenant's current theme, and writes nothing.
+ * Gives every active tenant without a theme of its own its demo theme (tenant-themes.mts): AKROS's tenant the kit's
+ * AKROS brand in the calm admin look, every other tenant the kit's Business brand in the same look. The app host runs
+ * it on every boot, after the migrations and before publication (scripts/zerops/app-host.mts, seedTenantThemes).
  *
- *   export ONTOS_DEMO_SEED_URL=https://ontos-stage.web-revolution.cz
- *   export ONTOS_DEMO_SEED_TENANT_ID=bceaa540-13eb-5508-9ac0-9ed7e40a2ee9      # AKROS
- *   export ONTOS_DEMO_SEED_LEGAL_ENTITY_ID=c0c78a3e-6e2a-57e0-9d0d-86253499fee7
- *   export ONTOS_DEMO_SEED_EMAIL=<tenant administrator>
- *   read -r -s -p 'Password: ' ONTOS_DEMO_SEED_PASSWORD; export ONTOS_DEMO_SEED_PASSWORD
- *   mise exec -- pnpm demo:seed:themes [--apply]
+ * The theme goes through Core's own theme store (themes/repository.ts) in the tenant's scope and the kit's brand
+ * validator (themes/kit.ts), as the save-tenant-theme and attach-tenant-theme Actions store it. A tenant that has a
+ * theme attached keeps it, and a tenant that keeps its demo theme saved but detached chose the default: neither is
+ * written, so an administrator's choice is never overwritten. Rerunning changes nothing.
  *
- * The password is never printed. Rerunning is safe: saving the same theme replaces it, attaching it again keeps it.
+ *   DATABASE_URL=… node scripts/demo/seed-tenant-themes.mts
  */
-import { NodeServices } from '@effect/platform-node';
-import {
-  AttachTenantThemePayloadSchema,
-  SaveTenantThemeResultSchema,
-  TenantThemeDefinitionSchema,
-  TenantThemeRequestSchema,
-  TenantThemeResponseSchema,
-} from '@app/core-runtime/themes/contract';
-import { validateBrand } from '@techsio/ui-kit/theme/brand-validator';
-import { Config, Console, Effect, Exit, FileSystem, Layer, Schema } from 'effect';
-import { Command, Flag } from 'effect/cli';
-import { FetchHttpClient } from 'effect/http';
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { and, eq } from 'drizzle-orm';
+import { Cause, Config, Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { Command } from 'effect/cli';
 
-import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
-import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
-import { demoTenantThemes } from './tenant-themes.mts';
+import { APP_DATABASE_IDENTITY_ENROLLMENT } from '../../database/identity-enrollment.ts';
+import { stableUuid } from '../../packages/core-runtime/src/access/catalog/stable-id.ts';
+import { TrustedPrincipalContextSchema } from '../../packages/core-runtime/src/actions/principal-context.ts';
+import { CoreDatabase, CoreDatabaseLive } from '../../packages/core-runtime/src/db/client.ts';
+import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { DatabaseIdentityEnrollmentContext } from '../../packages/core-runtime/src/db/database-identities.ts';
+import { principals, tenants } from '../../packages/core-runtime/src/db/schema.ts';
+import { installOperationalScope } from '../../packages/core-runtime/src/db/scoped-transaction.ts';
+import { TenantThemeDefinitionSchema } from '../../packages/core-runtime/src/themes/contract.ts';
+import { TenantThemeKit } from '../../packages/core-runtime/src/themes/definition.ts';
+import { TenantThemeKitLive } from '../../packages/core-runtime/src/themes/kit.ts';
+import { tenantThemeRepositoryFromTransaction } from '../../packages/core-runtime/src/themes/repository.ts';
+import { demoThemeOfTenant } from './tenant-themes.mts';
 
-const configuration = Config.all({
-  email: Config.String('ONTOS_DEMO_SEED_EMAIL'),
-  legalEntityId: Config.String('ONTOS_DEMO_SEED_LEGAL_ENTITY_ID'),
-  password: Config.Redacted('ONTOS_DEMO_SEED_PASSWORD'),
-  shellUrl: Config.String('ONTOS_DEMO_SEED_URL'),
-  tenantId: Config.String('ONTOS_DEMO_SEED_TENANT_ID'),
+const LOG = '[tenant-themes]';
+
+export class TenantThemeSeedFailure extends Schema.TaggedError<TenantThemeSeedFailure>()('TenantThemeSeedFailure', {
+  message: Schema.String,
+}) {}
+
+const failure = (message: string) => new TenantThemeSeedFailure({ message });
+
+/** What the seed did for one tenant. */
+export type TenantThemeSeedOutcome =
+  | { readonly outcome: 'attached'; readonly themeKey: string }
+  | { readonly outcome: 'chose-default'; readonly themeKey: string }
+  | { readonly outcome: 'kept'; readonly themeKey: string };
+
+/**
+ * Every active tenant with a person who can sign in, and one of those people: the tenant's scope names a principal,
+ * and a tenant nobody signs in to has no look to keep.
+ */
+const tenantsToTheme = Effect.gen(function* tenantsToTheme() {
+  const { executor } = yield* CoreDatabase;
+  const rows = yield* executor
+    .select({ principalId: principals.principalId, tenantId: principals.tenantId })
+    .from(principals)
+    .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
+    .where(and(eq(tenants.status, 'active'), eq(principals.kind, 'human'), eq(principals.status, 'active')))
+    .orderBy(principals.tenantId, principals.principalId)
+    .pipe(Effect.mapError(() => failure('the active tenants could not be read')));
+  return [...Map.groupBy(rows, ({ tenantId }) => tenantId).values()].flatMap(([first]) => (first === undefined ? [] : [first]));
 });
 
-const main = (apply: boolean) =>
-  Effect.gen(function* seedTenantTheme() {
-    const { email, password, ...configuredTarget } = yield* configuration;
-    const origin = yield* validateSeedTarget(configuredTarget);
-    const target = { ...configuredTarget, shellUrl: origin };
-    const theme = demoTenantThemes[target.tenantId];
-    if (theme === undefined) {
-      return yield* new DemoSeedError({
-        reason: `Tenant ${target.tenantId} has no demo theme; it wears the default Business brand.`,
-      });
-    }
-    const validation = validateBrand(theme);
-    if (!validation.ok) {
-      return yield* new DemoSeedError({
-        reason: `Theme ${theme.key} fails the kit's brand validator: ${validation.errors.join('; ')}`,
-      });
-    }
-    const payload = yield* Schema.decodeUnknownEffect(TenantThemeDefinitionSchema)(validation.brand);
-    const fs = yield* FileSystem.FileSystem;
-    const root = yield* Config.String('ONTOS_DEMO_SEED_CHECKPOINT_DIR').pipe(Config.withDefault('.scratch/demo-seed'));
-    const directory = seedCheckpointDirectory(target, root);
-    if (apply) {
-      yield* fs.makeDirectory(directory, { mode: 0o700, recursive: true });
-    }
-    const client = yield* connectSeedClient(target, email, password, seedWriteCheckpoint(fs, directory));
-    const readTheme = client.coreRead('tenant-theme', TenantThemeRequestSchema, {}, TenantThemeResponseSchema);
-    const before = yield* readTheme;
-    yield* Console.log(`Tenant ${target.tenantId} wears ${before.theme.key} (revision ${before.revision}).`);
-    if (!apply) {
-      yield* Console.log(
-        `Theme ${theme.key} passes the kit's brand validator. No data changed; run with --apply to save and attach it.`,
-      );
-      return yield* client.signOut;
-    }
-    const saved = yield* client.coreAction(
-      'save-tenant-theme',
-      TenantThemeDefinitionSchema,
-      payload,
-      SaveTenantThemeResultSchema,
-    );
-    const attachment = yield* Schema.decodeUnknownEffect(AttachTenantThemePayloadSchema)({ themeKey: saved.themeKey });
-    yield* client.coreAction(
-      'attach-tenant-theme',
-      AttachTenantThemePayloadSchema,
-      attachment,
-      AttachTenantThemePayloadSchema,
-    );
-    const after = yield* readTheme;
-    yield* client.signOut;
-    if (after.theme.key !== theme.key) {
-      return yield* new DemoSeedError({
-        reason: `Tenant still wears ${after.theme.key} after attaching ${theme.key}.`,
-      });
-    }
-    return yield* Console.log(`Tenant ${target.tenantId} now wears ${after.theme.key} (revision ${after.revision}).`);
-  });
+/** The tenant-wide scope the theme store runs in, as the theme Actions run without a selected company. */
+const scopeOf = (tenantId: string, principalId: string) =>
+  Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
+    authBindingId: stableUuid('ontos.tenant-theme-seed.auth-binding'),
+    authContextRef: 'system:tenant-theme-seed',
+    authMethod: 'session',
+    principalId,
+    tenantId,
+  }).pipe(
+    Effect.map((context) => ({ ...context, correlationId: 'tenant-theme-seed' })),
+    Effect.mapError(() => failure(`tenant ${tenantId}: ${principalId} is not a trusted principal context`)),
+  );
 
-const command = Command.make(
-  'tenant-theme-seed',
-  { apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)) },
-  ({ apply }) =>
-    main(apply).pipe(
-      Effect.tapError((failure) =>
-        Console.error(
-          Schema.is(DemoSeedError)(failure)
-            ? failure.reason
-            : `Theme seed stopped (${failure._tag}); configuration, credentials and response bodies are not logged.`,
+/** The tenant's demo theme, saved and attached in one transaction when the tenant has no theme of its own. */
+export const seedTenantTheme = Effect.fn('TenantThemeSeed.tenant')(function* seedTenantTheme(
+  tenantId: string,
+  principalId: string,
+) {
+  const { executor } = yield* CoreDatabase;
+  const enrollment = yield* DatabaseIdentityEnrollmentContext;
+  const kit = yield* TenantThemeKit;
+  const scope = yield* scopeOf(tenantId, principalId);
+  const theme = yield* Schema.decodeUnknownEffect(TenantThemeDefinitionSchema)(demoThemeOfTenant(tenantId)).pipe(
+    Effect.flatMap(kit.validate),
+    Effect.mapError(() => failure(`tenant ${tenantId}: its demo theme does not pass the kit's brand validator`)),
+  );
+  return yield* executor
+    .transaction((transaction) =>
+      installOperationalScope(transaction, scope, enrollment).pipe(
+        Effect.flatMap((scoped) =>
+          Effect.gen(function* seedInScope(): Effect.fn.Return<TenantThemeSeedOutcome, unknown> {
+            const themes = tenantThemeRepositoryFromTransaction(scoped, tenantId);
+            const attached = yield* themes.attached();
+            if (attached !== undefined) {
+              return { outcome: 'kept', themeKey: attached.key };
+            }
+            if (yield* themes.exists(theme.key)) {
+              return { outcome: 'chose-default', themeKey: theme.key };
+            }
+            yield* themes.save(theme);
+            yield* themes.attach(theme.key);
+            return { outcome: 'attached', themeKey: theme.key };
+          }),
         ),
       ),
+    )
+    .pipe(Effect.mapError(() => failure(`tenant ${tenantId}: the theme store refused the write`)));
+});
+
+const describe = (tenantId: string, { outcome, themeKey }: TenantThemeSeedOutcome) => {
+  switch (outcome) {
+    case 'attached': {
+      return `${LOG} tenant ${tenantId}: now wears ${themeKey}`;
+    }
+    case 'chose-default': {
+      return `${LOG} tenant ${tenantId}: keeps the default; ${themeKey} is saved but detached`;
+    }
+    case 'kept': {
+      return `${LOG} tenant ${tenantId}: keeps ${themeKey}`;
+    }
+  }
+};
+
+export const seedTenantThemes = Effect.gen(function* seedTenantThemes() {
+  const targets = yield* tenantsToTheme;
+  const outcomes = yield* Effect.forEach(targets, ({ principalId, tenantId }) =>
+    seedTenantTheme(tenantId, principalId).pipe(
+      Effect.tap((seeded) => Console.log(describe(tenantId, seeded))),
+      Effect.tapError(({ message }) => Console.error(`${LOG} FAILED ${message}`)),
+      Effect.exit,
     ),
+  );
+  const failed = outcomes.filter(Exit.isFailure).length;
+  if (failed > 0) {
+    return yield* failure(`${String(failed)} of ${String(outcomes.length)} tenants were not given their theme`);
+  }
+  return yield* Console.log(`${LOG} done: ${String(outcomes.length)} tenants`);
+});
+
+const RuntimeLive = Layer.unwrap(
+  Effect.gen(function* tenantThemeSeedRuntime() {
+    const url = yield* Config.Redacted('DATABASE_URL').pipe(Effect.mapError(() => failure('DATABASE_URL is required')));
+    const configuration = yield* parseDatabaseConfig({ DATABASE_URL: Redacted.value(url) }).pipe(
+      Effect.mapError(() => failure('DATABASE_URL is not a runtime database address')),
+    );
+    return Layer.mergeAll(
+      CoreDatabaseLive.pipe(Layer.provide(Layer.succeed(DatabaseConfig, configuration))),
+      Layer.succeed(DatabaseIdentityEnrollmentContext, APP_DATABASE_IDENTITY_ENROLLMENT),
+      TenantThemeKitLive,
+    );
+  }),
 );
 
 if (import.meta.main) {
-  const runtime = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(
-    Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+  NodeRuntime.runMain(
+    Command.run(Command.make('tenant-theme-seed', {}, () => seedTenantThemes), { version: '1.0.0' }).pipe(
+      Effect.provide(RuntimeLive),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+      Effect.onExit((exit) =>
+        Exit.isFailure(exit) ? Console.error(`${LOG} FAILED: ${Cause.pretty(exit.cause)}`) : Effect.void,
+      ),
+    ),
   );
-  const result = await Effect.runPromiseExit(Effect.scoped(Layer.build(runtime)));
-  process.exitCode = Exit.isFailure(result) ? 1 : 0;
 }

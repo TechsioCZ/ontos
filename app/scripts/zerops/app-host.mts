@@ -822,6 +822,27 @@ export const reconcileErpEditorGrants = Effect.gen(function* reconcileErpEditorG
 );
 
 /**
+ * On every boot of every deployment, each active tenant without a theme of its own is given its demo theme through
+ * Core's theme store and the kit's brand validator (`scripts/demo/seed-tenant-themes.mts`); a tenant with a theme
+ * attached, or with its demo theme saved but detached, is left as it is. It reads only `DATABASE_URL` and never holds
+ * the boot: it answers whether it succeeded, so its boot timing line says `failed` when it did not.
+ */
+export const seedTenantThemes = Effect.gen(function* seedTenantThemes() {
+  const url = yield* Config.Redacted('DATABASE_URL');
+  yield* runChild(
+    'tenant-themes',
+    process.execPath,
+    ['scripts/demo/seed-tenant-themes.mts'],
+    workspaceRoot,
+    { DATABASE_URL: Redacted.value(url) },
+    false,
+  );
+  return true;
+}).pipe(
+  Effect.catchCause(() => Console.error('[app-host] TENANT THEMES FAILED; publishing anyway').pipe(Effect.as(false))),
+);
+
+/**
  * The platform's internal workload registration (`release-internal-workloads.mts`), started with its own settings
  * only. It never holds or fails the boot: a failure is one loud line, and the registrations stay as they were until
  * the next run. It answers whether the run succeeded, so its boot timing line can say so.
@@ -2657,6 +2678,8 @@ export const runAppHost = Effect.fn(function* hostProgram<R>(
       Effect.catch(() => Console.error('[app-host] stage Symmy demo bootstrap failed; publishing anyway')),
     );
     yield* reconcileErpEditorGrants.pipe(timedBootStageJudged('host.erp-editor-grants', (granted: boolean) => granted));
+    // The tenants' themes are in place before the first page is served in them.
+    yield* seedTenantThemes.pipe(timedBootStageJudged('host.tenant-themes', (seeded: boolean) => seeded));
     // Whether this publication takes the authority from a running release, whose host then relays its traffic here.
     const takesOver = Option.exists(
       yield* activeRevision.pipe(Effect.option, Effect.map(Option.flatten)),

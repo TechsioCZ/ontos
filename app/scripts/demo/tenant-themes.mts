@@ -2,12 +2,12 @@ import { akrosBrand, businessBrand } from '@techsio/ui-kit/theme/built-in-brands
 import { extendBrand } from '@techsio/ui-kit/theme/theme-config';
 import type { BrandDefinition } from '@techsio/ui-kit/theme/theme-config';
 
-import { demoId, demoTenantId } from './fixture-ids.mts';
+import { demoId } from './fixture-ids.mts';
 
 /*
  * The demo tenants' themes, as data Core stores (core.tenant_themes) and attaches (core.tenant_theme_attachments).
- * They are written through the Shell's save-tenant-theme and attach-tenant-theme Actions by
- * seed-tenant-themes.mts, never applied by Shell code: the Shell renders whatever theme Core answers.
+ * seed-tenant-themes.mts writes them through Core's theme store on every app host boot, for a tenant that has none;
+ * no Shell code applies them: the Shell renders whatever theme Core answers.
  */
 
 const pageColour = 'var(--color-base)';
@@ -52,15 +52,19 @@ export const akrosTenantTheme: BrandDefinition = extendBrand(akrosBrand, {
   tokens: calmAdminTokens,
 });
 
-/** The shared sales-demo tenant: the kit's Business brand in the calm admin look. */
-export const demoTenantTheme: BrandDefinition = extendBrand(businessBrand, {
-  key: 'ontos-demo',
-  label: 'OntOS DEMO',
+/**
+ * Every other tenant: the kit's Business brand in the calm admin look. It keeps the key `business`, so the kit's
+ * compiled Business rules that are not brand tokens (its link colour, for one) still apply, as they did before the
+ * look became data.
+ */
+export const calmBusinessTheme: BrandDefinition = extendBrand(businessBrand, {
+  key: 'business',
   tokens: calmAdminTokens,
 });
 
-/** Which theme each demo tenant wears. A tenant not listed wears the default, the kit's Business brand. */
-export const demoTenantThemes = {
-  [demoId('tenant', 'akros-playground')]: akrosTenantTheme,
-  [demoTenantId]: demoTenantTheme,
-} satisfies Readonly<Record<string, BrandDefinition>>;
+/** AKROS's tenant, demoId('tenant', 'akros-playground'), on stage and stable alike. */
+export const akrosTenantId = demoId('tenant', 'akros-playground');
+
+/** The theme a tenant is given when it has none: AKROS wears its brand, every other tenant the calm Business look. */
+export const demoThemeOfTenant = (tenantId: string): BrandDefinition =>
+  tenantId === akrosTenantId ? akrosTenantTheme : calmBusinessTheme;
