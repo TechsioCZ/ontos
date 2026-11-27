@@ -262,6 +262,7 @@ export const sk: Dictionary = {
     closeSelection: "Zavrieť výber variantov",
     retry: "Skúsiť znova",
     loading: "Načítavam varianty…",
+    pagination: "Stránkovanie variantov",
     search: "Hľadať variant",
     searchPlaceholder: "Kód, názov alebo parameter",
     clearSearch: "Vymazať hľadanie",

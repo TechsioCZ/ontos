@@ -7,6 +7,8 @@ import { PortalSessionProvider } from "@/features/auth-view";
 import { RequiredLabelProvider } from "@/features/form-controls";
 import { getCartScope } from "@/ontos/cart-quote-server";
 import { storefrontRuntime } from "@/ontos/runtime";
+import { withOwnerOperation } from "@/ontos/owner-operation";
+import { sharedRead } from "@/ontos/shared-read";
 import { Effect } from "effect";
 
 export const dynamic = "force-dynamic";
@@ -22,10 +24,17 @@ const LocaleLayout = async ({
   const dictionary = getDictionary(locale);
   const [result, scope] = await Promise.all([
     getCatalog(locale, JSON.stringify({ featured: true })),
-    storefrontRuntime.runPromise(
-      getCartScope(locale).pipe(
-        Effect.match({ onFailure: () => null, onSuccess: (value) => value }),
-      ),
+    // The market's cart scope (tenant, market, currency) is the same for every shopper: shared for a minute.
+    sharedRead(
+      `cart-scope:${locale}`,
+      60_000,
+      async (operation) =>
+        await storefrontRuntime.runPromise(
+          withOwnerOperation(getCartScope(locale), { operation }).pipe(
+            Effect.match({ onFailure: () => null, onSuccess: (value) => value }),
+          ),
+        ),
+      { keep: (value) => value !== null, stale: true },
     ),
   ]);
   const imageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")

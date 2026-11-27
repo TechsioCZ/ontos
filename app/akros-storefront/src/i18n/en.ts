@@ -264,6 +264,7 @@ export const en: Dictionary = {
     closeSelection: "Close variant selection",
     retry: "Try again",
     loading: "Loading variants…",
+    pagination: "Variant pages",
     search: "Search variants",
     searchPlaceholder: "Code, name or parameter",
     clearSearch: "Clear search",

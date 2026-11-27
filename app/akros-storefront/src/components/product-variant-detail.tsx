@@ -7,6 +7,7 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { AvailabilityStatus } from "@techsio/ui-kit/molecules/availability-status";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
+import { useProductVariants } from "@/features/cart/product-variants-context";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { buildVariantDetailHref } from "@/lib/product-variant-links";
 import { formatWeight, priceUnavailableText } from "@/lib/format";
@@ -24,15 +25,19 @@ const serverMounted = () => false;
 
 /**
  * The `?variantDetail=<id>` modal of a product with several variants. `variants` is the same array the
- * variant table renders (one RSC payload copy); OntOS has no variant description, so the product's is shown.
+ * variant table renders (one RSC payload copy); a long table sends only its first page, so the server adds the
+ * requested variant as `detailVariant` and any other comes from the page's one variant read.
+ * OntOS has no variant description, so the product's is shown.
  */
 export function ProductVariantDetail({
   product,
   variants,
+  detailVariant,
   descriptionParagraphs,
 }: {
   product: CatalogPurchaseProduct;
   variants: readonly CatalogPurchaseVariant[];
+  detailVariant?: CatalogPurchaseVariant;
   descriptionParagraphs: readonly string[];
 }) {
   const cs = useDictionary();
@@ -50,8 +55,17 @@ export function ProductVariantDetail({
   useEffect(() => {
     if (!id) fromList.current = true;
   }, [id]);
+  const { list, load } = useProductVariants();
+  const variant =
+    (id ? variants.find((item) => item.id === id) : undefined) ??
+    (detailVariant?.id === id ? detailVariant : undefined) ??
+    (list.status === "ready" ? list.variants.find((item) => item.id === id) : undefined);
+  const missing = mounted && !!id && variant === undefined;
+  useEffect(() => {
+    if (missing && list.status === "idle") load();
+  }, [missing, list.status, load]);
   if (!mounted || !id) return null;
-  const variant = variants.find((item) => item.id === id);
+  const pending = variant === undefined && (list.status === "idle" || list.status === "loading");
   function close() {
     if (fromList.current) router.back();
     else
@@ -86,7 +100,7 @@ export function ProductVariantDetail({
       }
       title={
         <span ref={heading} tabIndex={-1} className="sf-variant-detail__title">
-          {variant?.label ?? cs.variants.detailUnavailable}
+          {variant?.label ?? (pending ? cs.variants.loading : cs.variants.detailUnavailable)}
         </span>
       }
       actions={
@@ -221,6 +235,15 @@ export function ProductVariantDetail({
             )}
           </section>
         </div>
+      ) : pending ? (
+        <output>{cs.variants.loading}</output>
+      ) : list.status === "failed" ? (
+        <p role="alert">
+          {cs.variants.loadFailed}{" "}
+          <Button size="sm" theme="outlined" variant="secondary" onClick={load}>
+            {cs.variants.retry}
+          </Button>
+        </p>
       ) : (
         <p role="alert">{cs.variants.notInCatalog}</p>
       )}

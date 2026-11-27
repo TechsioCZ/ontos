@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Schema } from "effect";
 import { getDictionary } from "@/i18n";
 import { getCatalog } from "@/ontos/catalog";
+import { categoryTrail } from "@/ontos/catalog-navigation";
 import { ProductView } from "@/features/product-view";
 import { CatalogState } from "@/features/catalog-state";
 import { CatalogView } from "@/features/catalog-view";
@@ -45,7 +46,11 @@ const ProductPage = async ({
 }) => {
   const { locale, slug } = await params;
   const d = getDictionary(locale);
-  const result = await getCatalog(locale, JSON.stringify({ slug }));
+  // The product read carries no category tree: the layout's featured read (same render, same cache) has it.
+  const [result, navigation] = await Promise.all([
+    getCatalog(locale, JSON.stringify({ slug })),
+    getCatalog(locale, JSON.stringify({ featured: true })),
+  ]);
   if (result.state === "unavailable") {
     return <CatalogState kind="product" />;
   }
@@ -63,7 +68,10 @@ const ProductPage = async ({
   const variantId = Schema.is(Schema.String)(search.variantId) ? search.variantId : undefined;
   // Historical N1 recommends by category. The current public owner read supports
   // one category, so use the actual primary category, never an unfiltered fallback.
-  const category = result.catalog.categories.find((item) => item.id === product.categoryId);
+  const categories = navigation.state === "ready" ? navigation.catalog.categories : [];
+  const category = categories.find((item) => item.id === product.categoryId);
+  // The browser gets only the breadcrumb trail, not the whole category tree.
+  const trail = category === undefined ? [] : categoryTrail(categories, category.slug);
   let related: Awaited<ReturnType<typeof getCatalog>> | undefined;
   if (product.relatedProductIds.length > 0) {
     related = await getCatalog(
@@ -80,6 +88,7 @@ const ProductPage = async ({
           ...related,
           catalog: {
             ...related.catalog,
+            categories: [],
             details: [],
             products: related.catalog.products
               .filter((item) => item.id !== product.id)
@@ -90,7 +99,7 @@ const ProductPage = async ({
   return (
     <>
       <ProductView
-        categories={result.catalog.categories}
+        categories={trail}
         dictionary={d}
         key={`${product.id}:${variantId ?? ""}`}
         locale={locale}

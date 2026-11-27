@@ -260,6 +260,7 @@ export const cs = {
     closeSelection: "Zavřít výběr variant",
     retry: "Zkusit znovu",
     loading: "Načítám varianty…",
+    pagination: "Stránkování variant",
     search: "Hledat variantu",
     searchPlaceholder: "Kód, název nebo parametr",
     clearSearch: "Vymazat hledání",

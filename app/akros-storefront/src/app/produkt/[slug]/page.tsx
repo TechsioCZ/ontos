@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { cache } from "react";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
 import { getBrand } from "@/brand";
@@ -14,15 +15,23 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { CategoryBranch } from "@/ontos/category-branch";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
+import { ProductVariantsProvider } from "@/features/cart/product-variants-context";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { formatPrice, formatWeight, priceUnavailableText } from "@/lib/format";
 import { getProductDescriptionParagraphs } from "@/lib/product-description";
 import { getProductStockStatus, stockStatusLabel } from "@/lib/product-stock";
+import { getVariantRangeFilters } from "@/lib/product-variant-filters";
 import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
+import {
+  compareVariants,
+  toFilterBounds,
+  VARIANT_PAGE_SIZE,
+  type VariantTablePage,
+} from "@/lib/product-variant-table";
 import { getDictionary, getMoney, marketHref } from "@/ontos/active-market";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
 import { purchaseProductOf, purchaseVariantOf } from "@/ontos/catalog-projection";
@@ -31,12 +40,18 @@ import { isImagePlaceholder } from "@/ontos/media-path";
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
   /** `variant`: a search term that narrows the variant table; `variantIds`: a shared/exact variant selection. */
-  searchParams: Promise<{ variant?: string | string[]; variantIds?: string | string[] }>;
+  searchParams: Promise<{
+    variant?: string | string[];
+    variantIds?: string | string[];
+    /** The variant detail dialog (opened by the variant table's links). */
+    variantDetail?: string | string[];
+  }>;
 }
 
-/** The one `full` read: this product with its variants, parameters and description. */
-const getProductDetail = async (slug: string) =>
-  (await getCatalogPage({ slug, pageSize: 1 }, { fields: "full" })).model;
+/** The one `full` read: this product with its variants, parameters and description (metadata and page share it). */
+const getProductDetail = cache(
+  async (slug: string) => (await getCatalogPage({ slug, pageSize: 1 }, { fields: "full" })).model,
+);
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const { slug } = await params;
@@ -78,7 +93,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     cs,
     money,
   ] = await Promise.all([getCatalog(), getProductDetail(slug), getDictionary(), getMoney()]);
-  const { variant: requestedVariantSearch, variantIds: requestedVariantIds } = await searchParams;
+  const {
+    variant: requestedVariantSearch,
+    variantIds: requestedVariantIds,
+    variantDetail: requestedVariantDetail,
+  } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
 
@@ -133,6 +152,32 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     normalizedVariantSearch &&
     detail.variants.some((variant) => matchesProductVariantSearch(variant, normalizedVariantSearch))
       ? variantSearch?.trim()
+      : undefined;
+  // A long table ships only its first page (searched and sorted as the browser would); the browser reads
+  // every variant once the shopper filters or pages. A shared selection is short and ships whole.
+  const pagedTable = !sharedIds.length && purchaseVariants.length > VARIANT_PAGE_SIZE;
+  const tableSearch = normalizeCatalogSearchTerm(initialVariantSearch ?? "");
+  const matchingVariants = tableSearch
+    ? purchaseVariants.filter((variant) => matchesProductVariantSearch(variant, tableSearch))
+    : purchaseVariants;
+  const tableVariants = sharedIds.length
+    ? sharedVariants
+    : pagedTable
+      ? [...matchingVariants].sort(compareVariants).slice(0, VARIANT_PAGE_SIZE)
+      : purchaseVariants;
+  const variantPage: VariantTablePage | undefined = pagedTable
+    ? {
+        total: purchaseVariants.length,
+        matching: matchingVariants.length,
+        filters: getVariantRangeFilters(purchaseProduct, purchaseVariants).map(toFilterBounds),
+      }
+    : undefined;
+  const detailVariantId = Array.isArray(requestedVariantDetail)
+    ? requestedVariantDetail[0]
+    : requestedVariantDetail;
+  const detailVariant =
+    detailVariantId && !tableVariants.some((variant) => variant.id === detailVariantId)
+      ? purchaseVariants.find((variant) => variant.id === detailVariantId)
       : undefined;
   const productDescriptionParagraphs = getProductDescriptionParagraphs(
     detail.descriptionParagraphs,
@@ -500,7 +545,8 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 key={sharedIds.join(",") || "all"}
                 initialVariantSearch={initialVariantSearch}
                 product={purchaseProduct}
-                variants={sharedIds.length ? sharedVariants : purchaseVariants}
+                variants={tableVariants}
+                variantPage={variantPage}
               />
             )}
           </section>
@@ -526,7 +572,8 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
       {hasMultipleVariants && (
         <ProductVariantDetail
           product={purchaseProduct}
-          variants={purchaseVariants}
+          variants={tableVariants}
+          detailVariant={detailVariant}
           descriptionParagraphs={productDescriptionParagraphs}
         />
       )}
@@ -576,6 +623,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
       </section>
     </StorefrontShell>
   );
-  // The browser navigation gets only this category branch, not the whole tree.
-  return <CategoryBranch activeSlug={category?.slug}>{page}</CategoryBranch>;
+  // The browser navigation gets only this category branch, not the whole tree. The variant table and the
+  // variant detail dialog share one on-demand read of every variant.
+  return (
+    <CategoryBranch activeSlug={category?.slug}>
+      <ProductVariantsProvider slug={product.slug}>{page}</ProductVariantsProvider>
+    </CategoryBranch>
+  );
 }

@@ -1,10 +1,12 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
+import { Pagination } from "@techsio/ui-kit/molecules/pagination";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { ProductVariantLink } from "@/components/product-variant-link";
+import { useProductVariants } from "@/features/cart/product-variants-context";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { useDictionary, useFormatPrice, useMoney } from "@/ontos/market-context";
@@ -19,30 +21,24 @@ import {
 } from "@/lib/product-variant-search";
 import { getMaximumOrderQuantity, normalizeOrderQuantity } from "@/features/cart/cart-state";
 import type { CatalogPurchaseProduct, CatalogPurchaseVariant } from "@/ontos/catalog-types";
+import {
+  compareVariants,
+  formatVariantLabel,
+  VARIANT_PAGE_SIZE,
+  type VariantTablePage,
+} from "@/lib/product-variant-table";
 
 interface ProductPurchaseFormProps {
   product: CatalogPurchaseProduct;
   variant?: CatalogPurchaseVariant;
+  /** Every variant of the table, or only its first page when `variantPage` is set. */
   variants?: CatalogPurchaseVariant[];
+  /** A long table: the server sent its first page; filters, pages and search read every variant on demand. */
+  variantPage?: VariantTablePage;
   initialVariantSearch?: string;
 }
 
-const variantListOnlyClassName =
-  "hidden @min-sf-variant-list/sf-variants:@max-sf-variant-table/sf-variants:block";
 const noVariants: CatalogPurchaseVariant[] = [];
-// Server renders only the first rows; the rest render in a transition right after hydration.
-const SSR_VARIANT_ROWS = 30;
-const variantCollator = new Intl.Collator("cs-CZ", {
-  numeric: true,
-  sensitivity: "base",
-});
-
-const formatVariantLabel = (variant: CatalogPurchaseVariant) => {
-  const dimension = variant.label.match(/\bM\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
-  if (!dimension) return variant.label;
-
-  return `M ${dimension[1]} × ${dimension[2]}`;
-};
 
 const variantAvailabilityLabel = (cs: Dictionary, variant: CatalogPurchaseVariant): string => {
   const status = getProductStockStatus(variant);
@@ -102,10 +98,21 @@ interface VariantOrderControlProps {
   variant: CatalogPurchaseVariant;
 }
 
+/** Typed quantity in either decimal separator (Czech comma or dot); empty or malformed is NaN. */
+const parseQuantity = (text: string) => {
+  const value = text.replace(/[\s\u00a0\u202f]/gu, "").replace(",", ".");
+  return /^\d*\.?\d+$|^\d+\.$/u.test(value) ? Number(value) : Number.NaN;
+};
+
+/**
+ * One row's quantity editor and buy button. Native elements styled by `sf-variant-order` classes
+ * (globals.css applies the kit's numeric input and button utilities once): every row is server-rendered,
+ * so the kit's per-element utility strings would make each row about six times larger.
+ */
 function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderControlProps) {
   const cs = useDictionary();
   const money = useMoney();
-  const inputId = useId();
+  const id = useId();
   const isPackage = mode === "package";
   const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;
   const maximumOrderQuantity = getMaximumOrderQuantity(getVariantCartItem(product, variant));
@@ -116,8 +123,9 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
     ? Math.max(1, Math.ceil(variant.minimumQuantity / packageQuantity))
     : variant.minimumQuantity;
   const step = isPackage ? 1 : (variant.quantityStep ?? variant.minimumQuantity);
-  const [selectedQuantity, setSelectedQuantity] = useState(minimum);
+  const [draft, setDraft] = useState(String(minimum));
   const [showError, setShowError] = useState(false);
+  const selectedQuantity = parseQuantity(draft);
   const quantityToAdd = isPackage
     ? Math.max(selectedQuantity, 1) * packageQuantity
     : selectedQuantity;
@@ -148,51 +156,98 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
             money.locale,
           )
       : undefined;
+  const hint =
+    !isPackage && step !== 1
+      ? cs.product.orderIncrement(step.toLocaleString(money.locale), variant.unit)
+      : undefined;
+  const current = Number.isFinite(selectedQuantity) ? selectedQuantity : minimum;
+  const stepBy = (direction: 1 | -1) => {
+    const next = Number((current + direction * step).toFixed(6));
+    setDraft(String(Math.min(Math.max(next, minimum), Math.max(maximum, minimum))));
+    setShowError(false);
+  };
+  const canDecrement = maximum > 0 && current > minimum;
+  const canIncrement = maximum > 0 && current < maximum;
 
   return (
-    <NumericInput
-      className={`sf-variant-table__order sf-variant-table__order--${mode} items-start! @max-sf-variant-table/sf-variants:grid-cols-[var(--sf-variant-table-compact-quantity-width)_minmax(0,1fr)]! @max-sf-variant-table/sf-variants:gap-(--dimension-8)! @max-sf-variant-table/sf-variants:border-0! @max-sf-variant-table/sf-variants:px-(--dimension-0)!`}
-      id={inputId}
-      locale={money.locale}
-      max={maximum}
-      min={minimum}
-      onChange={(quantity) => {
-        setSelectedQuantity(quantity);
-        setShowError(false);
-      }}
-      onValueCommit={() => setShowError(true)}
-      clampValueOnBlur={false}
-      invalid={!!error}
-      size="sm"
-      step={step}
-      value={selectedQuantity}
+    <div
+      className={`sf-variant-order sf-variant-table__order sf-variant-table__order--${mode}`}
+      data-part="root"
     >
-      <NumericInput.Control className="sf-variant-table__quantity-control @max-sf-variant-table/sf-variants:grid-cols-[var(--dimension-44)_minmax(0,1fr)_var(--dimension-44)]!">
-        <NumericInput.DecrementTrigger
+      <div
+        className="sf-variant-order__control sf-variant-table__quantity-control group numeric-input-focus-owner"
+        data-part="control"
+        data-invalid={error ? "" : undefined}
+        role="group"
+      >
+        <button
           aria-label={isPackage ? cs.product.decrementPackages : cs.product.decrementQuantity}
-          icon="token-icon-minus"
-        />
-        <NumericInput.Input
+          className="sf-variant-order__step"
+          data-part="decrement-trigger"
+          data-scope="number-input"
+          disabled={!canDecrement}
+          onClick={() => stepBy(-1)}
+          tabIndex={-1}
+          type="button"
+        >
+          <span aria-hidden="true" className="sf-variant-order__icon token-icon-minus" />
+        </button>
+        <input
+          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-errormessage={error ? `${id}-error` : undefined}
+          aria-invalid={error ? true : undefined}
           aria-label={isPackage ? cs.product.packagesOf(label) : cs.product.quantityOf(label)}
+          aria-roledescription="numberfield"
+          aria-valuemax={maximum}
+          aria-valuemin={minimum}
+          aria-valuenow={Number.isFinite(selectedQuantity) ? selectedQuantity : undefined}
+          autoComplete="off"
+          className="sf-variant-order__input"
+          data-invalid={error ? "" : undefined}
+          data-part="input"
+          data-scope="number-input"
+          id={id}
+          inputMode="decimal"
+          onBlur={() => setShowError(true)}
+          onChange={(event) => {
+            setDraft(event.currentTarget.value);
+            setShowError(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") setShowError(true);
+            else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              stepBy(event.key === "ArrowUp" ? 1 : -1);
+            }
+          }}
+          role="spinbutton"
+          spellCheck={false}
+          type="text"
+          value={draft}
         />
-        <NumericInput.IncrementTrigger
+        <button
           aria-label={isPackage ? cs.product.incrementPackages : cs.product.incrementQuantity}
-          icon="token-icon-plus"
-        />
-      </NumericInput.Control>
-      <Button
+          className="sf-variant-order__step"
+          data-part="increment-trigger"
+          data-scope="number-input"
+          disabled={!canIncrement}
+          onClick={() => stepBy(1)}
+          tabIndex={-1}
+          type="button"
+        >
+          <span aria-hidden="true" className="sf-variant-order__icon token-icon-plus" />
+        </button>
+      </div>
+      <button
         aria-label={isPackage ? cs.product.buyPackageOf(label) : cs.product.buyItem(label)}
-        block={!isPackage}
         className={
           isPackage
-            ? "sf-variant-table__buy-button sf-variant-table__buy-button--package w-(--sf-variant-table-package-button-width) max-w-full justify-self-end"
-            : "sf-variant-table__buy-button @max-sf-variant-table/sf-variants:min-h-(--dimension-44) @max-sf-variant-table/sf-variants:whitespace-normal! @max-sf-variant-table/sf-variants:[&>span]:flex-col! @max-sf-variant-table/sf-variants:[&>span]:items-center! @max-sf-variant-table/sf-variants:[&>span]:leading-(--sf-variant-table-compact-button-line-height)! @max-sf-variant-table/sf-variants:[&_small]:text-xs!"
+            ? "sf-variant-order__buy--package sf-variant-table__buy-button sf-variant-table__buy-button--package"
+            : "sf-variant-order__buy sf-variant-table__buy-button"
         }
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
-        size="sm"
-        uppercase
-        variant={isPackage ? "secondary" : "primary"}
+        type="button"
       >
         {isPackage ? (
           <span>
@@ -208,22 +263,30 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
             {cs.product.buy} <small>({variant.unit})</small>
           </span>
         )}
-      </Button>
-      {!isPackage && step !== 1 && (
-        <NumericInput.StatusText
-          className="col-start-1 justify-center text-center"
-          size="sm"
-          align="center"
+      </button>
+      {hint && (
+        <div
+          className="sf-variant-order__hint status-text-neutral-prefix"
+          data-status="default"
+          id={`${id}-hint`}
         >
-          {cs.product.orderIncrement(step.toLocaleString(money.locale), variant.unit)}
-        </NumericInput.StatusText>
+          <span>{hint}</span>
+        </div>
       )}
       {error && (
-        <NumericInput.StatusText className="col-span-full text-start" size="sm" status="error">
-          {error}
-        </NumericInput.StatusText>
+        <div
+          className="sf-variant-order__error"
+          data-status="error"
+          id={`${id}-error`}
+          role="alert"
+        >
+          <span aria-hidden="true" className="sf-variant-order__error-icon">
+            <span className="sf-variant-order__icon token-icon-status-text-error" />
+          </span>
+          <span>{error}</span>
+        </div>
       )}
-    </NumericInput>
+    </div>
   );
 }
 
@@ -231,27 +294,41 @@ export function ProductPurchaseForm({
   product,
   variant,
   variants,
+  variantPage,
   initialVariantSearch,
 }: ProductPurchaseFormProps) {
   const { addItem, adding } = useCart();
   const cs = useDictionary();
   const money = useMoney();
   const formatPrice = useFormatPrice();
-  const sourceVariants = variants ?? noVariants;
+  const { list, load } = useProductVariants();
+  // A long table holds every variant only once the shopper filtered or paged (one read for the product page).
+  const allVariants = variantPage
+    ? list.status === "ready"
+      ? list.variants
+      : undefined
+    : (variants ?? noVariants);
   // Only dimensions read reliably from the source labels/parameters become filters; they apply live.
   const filters = useMemo(
-    () => getVariantRangeFilters(product, sourceVariants),
-    [product, sourceVariants],
+    () =>
+      allVariants
+        ? getVariantRangeFilters(product, allVariants)
+        : (variantPage?.filters ?? []).map(({ stops, ...filter }) => ({
+            ...filter,
+            values: new Map(stops.map((stop, index) => [String(index), stop] as const)),
+          })),
+    [product, allVariants, variantPage],
   );
   const [ranges, setRanges] = useState<Record<string, NumericRange>>({});
   const [filterRevision, setFilterRevision] = useState(0);
+  const [page, setPage] = useState(1);
   const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
   const [showQuantityError, setShowQuantityError] = useState(false);
   const normalizedSearchTerm = normalizeCatalogSearchTerm(initialVariantSearch ?? "");
   const visibleVariants = useMemo(
     () =>
-      sourceVariants
-        .filter(
+      allVariants
+        ?.filter(
           (item) =>
             (!normalizedSearchTerm || matchesProductVariantSearch(item, normalizedSearchTerm)) &&
             filters.every((filter) => {
@@ -260,10 +337,8 @@ export function ProductPurchaseForm({
               return !range || (value !== undefined && value >= range[0] && value <= range[1]);
             }),
         )
-        .sort((left, right) =>
-          variantCollator.compare(formatVariantLabel(left), formatVariantLabel(right)),
-        ),
-    [sourceVariants, normalizedSearchTerm, filters, ranges],
+        .sort(compareVariants),
+    [allVariants, normalizedSearchTerm, filters, ranges],
   );
   const addVariant = useCallback(
     (variant: CatalogPurchaseVariant, selectedQuantity: number) => {
@@ -271,11 +346,23 @@ export function ProductPurchaseForm({
     },
     [addItem, product],
   );
-  const [allRows, setAllRows] = useState(false);
+  const visibleCount = visibleVariants?.length ?? variantPage?.matching ?? 0;
+  const totalCount = allVariants?.length ?? variantPage?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(visibleCount / VARIANT_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageOffset = (currentPage - 1) * VARIANT_PAGE_SIZE;
+  // Until every variant is here the table keeps the server's first page (already searched and sorted).
+  const shownVariants = visibleVariants
+    ? visibleVariants.slice(pageOffset, pageOffset + VARIANT_PAGE_SIZE)
+    : (variants ?? noVariants);
+  const waitingForAll =
+    variantPage !== undefined &&
+    allVariants === undefined &&
+    (Object.keys(ranges).length > 0 || page > 1);
   useEffect(() => {
-    startTransition(() => setAllRows(true));
-  }, []);
-  const shownVariants = allRows ? visibleVariants : visibleVariants.slice(0, SSR_VARIANT_ROWS);
+    // A failed read is offered again by its retry button, never in a loop.
+    if (waitingForAll && list.status === "idle") load();
+  }, [waitingForAll, list.status, load]);
 
   if (!variants?.length) {
     const purchaseItem = variant ?? product;
@@ -417,14 +504,12 @@ export function ProductPurchaseForm({
                 key={filter.id + filterRevision}
                 filter={filter}
                 value={ranges[filter.id] ?? filter.bounds}
-                onChange={(value) =>
-                  setRanges((current) => {
-                    const previous = current[filter.id] ?? filter.bounds;
-                    return previous[0] === value[0] && previous[1] === value[1]
-                      ? current
-                      : { ...current, [filter.id]: value };
-                  })
-                }
+                onChange={(value) => {
+                  const previous = ranges[filter.id] ?? filter.bounds;
+                  if (previous[0] === value[0] && previous[1] === value[1]) return;
+                  setRanges((current) => ({ ...current, [filter.id]: value }));
+                  setPage(1);
+                }}
               />
             ))}
             <Button
@@ -434,6 +519,7 @@ export function ProductPurchaseForm({
               variant="secondary"
               onClick={() => {
                 setRanges({});
+                setPage(1);
                 setFilterRevision((revision) => revision + 1);
               }}
             >
@@ -443,18 +529,30 @@ export function ProductPurchaseForm({
         </section>
       )}
       <output className="block m-0 text-sm text-fg-secondary">
-        {cs.variants.shown(visibleVariants.length, sourceVariants.length)}
+        {cs.variants.shown(visibleCount, totalCount)}
       </output>
+      {waitingForAll && list.status === "failed" ? (
+        <p className="sf-variant-purchase__status" role="alert">
+          {cs.variants.loadFailed}{" "}
+          <Button type="button" size="sm" theme="outlined" variant="secondary" onClick={load}>
+            {cs.variants.retry}
+          </Button>
+        </p>
+      ) : (
+        waitingForAll && (
+          <output className="sf-variant-purchase__status">{cs.variants.loading}</output>
+        )
+      )}
 
       <>
         <div
-          data-variant-rows-complete={allRows ? "" : undefined}
+          aria-busy={waitingForAll || undefined}
           className="sf-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border"
         >
           <div className="relative w-full overflow-auto">
             <Table
               aria-label={cs.product.variantsTitle}
-              aria-rowcount={visibleVariants.length + 1}
+              aria-rowcount={visibleCount + 1}
               className="sf-variant-data-table__table @max-sf-variant-table/sf-variants:block @max-sf-variant-table/sf-variants:[&_thead]:sr-only @max-sf-variant-table/sf-variants:[&_tbody]:grid @max-sf-variant-table/sf-variants:[&_tbody]:min-w-0 @max-sf-variant-table/sf-variants:[&_tbody]:gap-(--dimension-12)"
               showColumnBorder
               size="sm"
@@ -552,15 +650,16 @@ export function ProductPurchaseForm({
                   const basePriceTier = item.priceTiers[0];
                   const hasSeparatePackage =
                     item.packageQuantity !== undefined && item.packageQuantity > 0;
+                  // Native cells styled once in globals.css: these rows are rendered on the server.
                   return (
-                    <Table.Row
+                    <tr
                       key={item.id}
-                      aria-rowindex={index + 2}
+                      aria-rowindex={pageOffset + index + 2}
                       className="sf-variant-data-table__row"
                     >
-                      <Table.Cell style={{ width: "auto" }}>
-                        <div className="sf-variant-table__name min-w-0">
-                          <strong className="min-w-0 whitespace-normal wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
+                      <td>
+                        <div className="sf-variant-table__name">
+                          <strong className="sf-variant-table__label">
                             <ProductVariantLink
                               slug={product.slug}
                               imageSrc={product.imageSrc}
@@ -568,27 +667,23 @@ export function ProductPurchaseForm({
                               label={label}
                             />
                           </strong>
-                          <p
-                            className={`${variantListOnlyClassName} mt-(--dimension-8) whitespace-nowrap text-xs font-normal text-fg-secondary`}
-                          >
+                          <p className="sf-variant-table__list-only sf-variant-table__list-sku">
                             {cs.product.code}: {item.sku}
                           </p>
                         </div>
-                      </Table.Cell>
-                      <Table.Cell style={{ width: "16%" }}>
-                        <span className="sf-variant-table__sku block whitespace-nowrap @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal @max-sf-variant-table/sf-variants:text-fg-secondary">
-                          <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline!">
+                      </td>
+                      <td>
+                        <span className="sf-variant-table__sku">
+                          <span className="sf-variant-table__mobile-label">
                             {cs.product.code}:{" "}
                           </span>
                           <span>{item.sku}</span>
                         </span>
-                      </Table.Cell>
-                      <Table.Cell align="center" style={{ width: "4%" }}>
-                        {item.unit}
-                      </Table.Cell>
-                      <Table.Cell style={{ width: "9%" }}>
+                      </td>
+                      <td data-align="center">{item.unit}</td>
+                      <td>
                         <strong
-                          className="sf-variant-table__availability @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal"
+                          className="sf-variant-table__availability sf-variant-table__stock"
                           data-available={isAvailable}
                           title={
                             item.availabilityUnknown
@@ -598,12 +693,12 @@ export function ProductPurchaseForm({
                         >
                           {variantAvailabilityLabel(cs, item)}
                         </strong>
-                      </Table.Cell>
-                      <Table.Cell style={{ width: "12%" }}>
-                        <div className="sf-variant-table__price min-w-0">
-                          <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
+                      </td>
+                      <td>
+                        <div className="sf-variant-table__price">
+                          <div className="sf-variant-table__list-only sf-variant-table__list-stock">
                             <span
-                              className="sf-variant-table__availability text-xs font-normal"
+                              className="sf-variant-table__availability"
                               data-available={isAvailable}
                             >
                               {variantAvailabilityLabel(cs, item)}
@@ -626,15 +721,15 @@ export function ProductPurchaseForm({
                                     {formatPrice(item.originalPriceMinor)}
                                   </s>
                                 )}
-                              <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-sf-variant-table/sf-variants:text-(length:--text-base)!">
+                              <strong className="sf-variant-table__amount">
                                 {formatPrice(item.priceMinor).replace(/\s(?=\S+$)/u, " ")}
-                                <span className="sf-variant-table__mobile-label @max-sf-variant-table/sf-variants:inline! @max-sf-variant-table/sf-variants:text-xs @max-sf-variant-table/sf-variants:font-normal">
+                                <span className="sf-variant-table__mobile-label sf-variant-table__unit">
                                   {" "}
                                   / {item.unit}
                                 </span>
                               </strong>
                               {basePriceTier && (
-                                <small className="@max-sf-variant-table/sf-variants:text-xs! @max-sf-variant-table/sf-variants:font-normal">
+                                <small className="sf-variant-table__net">
                                   {formatPrice(basePriceTier.priceExcludingVatMinor)}{" "}
                                   {cs.product.excludingVat}
                                 </small>
@@ -642,12 +737,9 @@ export function ProductPurchaseForm({
                             </>
                           )}
                         </div>
-                      </Table.Cell>
-                      <Table.Cell
-                        align="center"
-                        style={{ width: "var(--sf-variant-table-purchase-column-width)" }}
-                      >
-                        <div className="sf-variant-table__purchase-cell items-start! @max-sf-variant-table/sf-variants:grid-cols-1! @max-sf-variant-table/sf-variants:gap-(--dimension-8)">
+                      </td>
+                      <td data-align="center">
+                        <div className="sf-variant-table__purchase-cell sf-variant-table__purchase-cell--row">
                           <VariantOrderControl
                             mode="minimum"
                             onAdd={addVariant}
@@ -662,19 +754,16 @@ export function ProductPurchaseForm({
                               variant={item}
                             />
                           ) : (
-                            <span
-                              aria-hidden="true"
-                              className="sf-variant-table__no-package @max-sf-variant-table/sf-variants:hidden"
-                            >
+                            <span aria-hidden="true" className="sf-variant-table__no-package">
                               —
                             </span>
                           )}
                         </div>
-                      </Table.Cell>
-                    </Table.Row>
+                      </td>
+                    </tr>
                   );
                 })}
-                {visibleVariants.length === 0 && (
+                {visibleCount === 0 && (
                   <Table.Row>
                     <Table.Cell colSpan={6}>
                       <p className="sf-variant-purchase__empty">
@@ -687,6 +776,25 @@ export function ProductPurchaseForm({
             </Table>
           </div>
         </div>
+        {pageCount > 1 && (
+          <Pagination
+            className="sf-pagination"
+            count={visibleCount}
+            // Each page link returns to the top of the variant section.
+            getPageUrl={() => "#product-variants"}
+            onPageChange={setPage}
+            page={currentPage}
+            pageSize={VARIANT_PAGE_SIZE}
+            size="sm"
+            translations={{
+              itemLabel: ({ page: item, totalPages }) => cs.pagination.page(item, totalPages),
+              nextTriggerLabel: cs.pagination.next,
+              prevTriggerLabel: cs.pagination.previous,
+              rootLabel: cs.variants.pagination,
+            }}
+            variant="filled"
+          />
+        )}
       </>
     </div>
   );
