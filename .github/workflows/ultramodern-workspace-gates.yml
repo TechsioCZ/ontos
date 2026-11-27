@@ -72,8 +72,8 @@ jobs:
   # A push to main or a dispatch on main carries a commit the merge queue may already have proven: its
   # merge_group run of this workflow ran every gate on this exact commit and succeeded. Such a commit skips
   # the gates and deploys. Any other commit (pushed before the queue, or by a ruleset bypass) runs them.
-  # The demo trunk has no merge queue: a push to it skips its gates when a candidate/* dispatch of this workflow
-  # passed on the same commit, compared with the green commit the push starts from (scripts/ci/commit-proof.sh).
+  # This workflow runs on main pushes, pull requests toward main, the merge queue, the nightly schedule and manual
+  # dispatch. A push to the demo trunk does not trigger it.
   queue-proof:
     name: Find an earlier proof of this commit
     if: >-

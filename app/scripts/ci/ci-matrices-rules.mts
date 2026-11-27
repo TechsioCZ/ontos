@@ -46,8 +46,8 @@ export interface CiIntegrationEntry {
 }
 
 /**
- * A change confined to these paths is proved by the named source rows, the static contracts, the lint of the changed
- * files and the unit rows of the packages it changes; it builds no unit and starts no service. A path matches when it
+ * A change confined to these paths is proved by the named source rows, the static contracts, all three whole-tree
+ * lint slices and the unit rows of the packages it changes; it builds no unit and starts no service. A path matches when it
  * matches a glob and no `!` glob. app/scripts/tests/demo-trunk-ci.test.mts proves that nothing outside those rows reads
  * a scoped file.
  */

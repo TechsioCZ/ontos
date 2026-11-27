@@ -910,9 +910,11 @@ const GateCommandStepSchema = Schema.Struct({
 const GateCommandsWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     [FORMAT_AND_LINT_JOB]: Schema.Struct({
+      'continue-on-error': Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
       steps: Schema.Array(
         Schema.Struct({
           ...GateCommandStepSchema.fields,
+          'continue-on-error': Schema.optional(Schema.Union([Schema.Boolean, Schema.String])),
           env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
         }),
       ),
@@ -1796,8 +1798,13 @@ it('prints all failing hook chunks and later fixes without changing the index', 
 it('runs whole-tree lint without a comparison artifact and rejects unsupported shards', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
   expect(lint.strategy.matrix.shard).toEqual([1, 2, 3]);
+  expect(lint['continue-on-error']).toBeUndefined();
   expect(lint.steps.some(({ uses }) => uses?.startsWith(DOWNLOAD_ARTIFACT_ACTION) === true)).toBe(false);
-  const step = lint.steps.find(({ uses }) => uses === LINT_ACTION);
+  const steps = lint.steps.filter(({ uses }) => uses === LINT_ACTION);
+  expect(steps).toHaveLength(1);
+  const [step] = steps;
+  expect(step?.if).toBeUndefined();
+  expect(step?.['continue-on-error']).toBeUndefined();
   expect(step?.with).toEqual({ shard: expression(MATRIX_SHARD) });
   expect(step?.env).toBeUndefined();
   expect(LINT_RUN).toContain(PRECOMMIT_COMMAND);
