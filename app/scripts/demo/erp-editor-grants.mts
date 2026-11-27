@@ -7,10 +7,13 @@
  * - each login in `ERP_EDITOR_LOGINS` is found as the active human Principal its staff binding names, in every
  *   tenant; a tenant whose Catalog module is not active has no ERP products, so its operator gets nothing, and a tenant
  *   owner already holds everything;
- * - the role has one stable id per tenant, so renaming it never makes a second one. It is created empty and revised to
- *   exactly `ERP_EDITOR_CAPABILITIES`, the run cells the editor and its dialogs call, through Core's own role writers
+ * - the role exists twice, each under a stable id, so renaming it never makes a second one: a tenant role with
+ *   exactly `ERP_EDITOR_TENANT_CAPABILITIES` (the calls Core decides in the tenant context), and a role of each company
+ *   the operator is a live member of with exactly `ERP_EDITOR_COMPANY_CAPABILITIES` (the calls decided in the selected
+ *   company: prices, stock, the current image). Each is created empty and revised through Core's own role writers
  *   (`writeRoleCreation`, `writeRoleRevision`) authored by the tenant owner; a cell added by hand is removed again;
- * - each operator holds one live tenant assignment of it, made through Core's people commands (`assignRole`).
+ * - each operator holds one live assignment of the tenant role in the tenant context and of each company role in its
+ *   company, made through Core's people commands (`assignRole`).
  *
  * A second run writes nothing. An operator it cannot grant fails the run (exit 1), so the app host's boot line
  * `host.erp-editor-grants` says `failed`. The operator must already be a member of the tenant: the account setup
@@ -47,6 +50,7 @@ import type {
 } from '../../packages/core-runtime/src/access/changes/role-revision.ts';
 import { CoreAuthorizationProjectionCompilerLive } from '../../packages/core-runtime/src/access/compiler/spice-db-compiler.ts';
 import { AssignmentIncarnationIdSchema } from '../../packages/core-runtime/src/access/ids.ts';
+import type { AccessScopeId, LegalEntityId } from '../../packages/core-runtime/src/access/ids.ts';
 import { AccessMembershipStoreLive } from '../../packages/core-runtime/src/access/intent/memberships.ts';
 import { AccessPeopleStoreLive } from '../../packages/core-runtime/src/access/intent/people-store.ts';
 import { AccessProjectionWriterLive } from '../../packages/core-runtime/src/access/intent/projection-writer.ts';
@@ -79,8 +83,14 @@ const CATALOG_MODULE = 'commerce.catalog';
 
 export const ERP_EDITOR_ROLE_NAME = 'Úpravy produktů z ERP';
 
-/** What the ERP editor (verticals/catalog/src/products-admin) and its dialogs call, each as a run cell on all records. */
-export const ERP_EDITOR_CAPABILITIES: readonly string[] = [
+/**
+ * What the ERP editor (verticals/catalog/src/products-admin) and its dialogs call, each as a run cell on all records,
+ * split by where Core decides the call. An entrypoint whose `legalEntityScope` is `optional` or `forbidden` (and every
+ * page and navigation entry) is decided in the tenant context; one whose `legalEntityScope` is `required` is decided
+ * in the selected company's scope, where only an assignment of a role of that company counts (O7): a tenant role's
+ * cells are no authority there.
+ */
+export const ERP_EDITOR_TENANT_CAPABILITIES: readonly string[] = [
   // The page and its navigation entry (routes/[lang]/katalog/produkty), and page-data.ts.
   'commerce.catalog.products.view',
   'commerce.catalog.navigation-products.read',
@@ -103,10 +113,21 @@ export const ERP_EDITOR_CAPABILITIES: readonly string[] = [
   'commerce.catalog.variant-axes.govern',
   'commerce.catalog.variant-combination.confirm',
   // erp-media-section.tsx: the main image.
-  'commerce.catalog.catalog-media-current.read',
-  'commerce.catalog.api-catalog-media-content.read',
   'commerce.catalog.catalog-media.assign',
   'commerce.catalog.catalog-media.remove',
+  // erp-price-groups.ts: the company's customer Price Groups and their names.
+  'pricing.price-group-catalog.price-group-source-associations.read',
+  'pricing.price-group-catalog.price-group.read.definition',
+  // erp-variant-editor.tsx: the stock source authority and the ERP stock assertion.
+  'commerce.inventory.staff-stock-source-authority.grant',
+  'commerce.inventory.source-assertion.import',
+];
+
+/** The editor's calls decided in the selected company (`legalEntityScope: 'required'`), held by a company role. */
+export const ERP_EDITOR_COMPANY_CAPABILITIES: readonly string[] = [
+  // erp-media-section.tsx: the current image and its preview.
+  'commerce.catalog.catalog-media-current.read',
+  'commerce.catalog.api-catalog-media-content.read',
   // erp-variant-editor.tsx and page-data.ts: the price and the customer-group prices.
   'commerce.pricing.price.read-catalog-page',
   'commerce.pricing.price.read-schedule',
@@ -114,8 +135,6 @@ export const ERP_EDITOR_CAPABILITIES: readonly string[] = [
   'commerce.pricing.price.revise',
   // erp-variant-editor.tsx and page-data.ts: the stock.
   'commerce.inventory.catalog-variant-on-hand-page.read',
-  'commerce.inventory.staff-stock-source-authority.grant',
-  'commerce.inventory.source-assertion.import',
   'commerce.inventory.stock-position.receive',
   'commerce.inventory.stock-position.issue',
 ];
@@ -126,14 +145,14 @@ export class ErpEditorGrantsFailure extends Schema.TaggedError<ErpEditorGrantsFa
 const failure = (message: string) => new ErpEditorGrantsFailure({ message });
 
 /** The editor's cells in this release; a capability the release does not publish fails the step instead of shrinking it. */
-export const erpEditorCells = (catalog: CatalogSnapshot) => {
+export const erpEditorCells = (catalog: CatalogSnapshot, capabilities: readonly string[]) => {
   const published = new Set(catalog.entries.map(({ key }) => String(key)));
-  const missing = ERP_EDITOR_CAPABILITIES.filter((key) => !published.has(key));
+  const missing = capabilities.filter((key) => !published.has(key));
   if (missing.length > 0) {
     return Effect.fail(failure(`the published access catalog ${catalog.id} lacks ${missing.join(', ')}`));
   }
   return Effect.all(
-    ERP_EDITOR_CAPABILITIES.map((capabilityKey) =>
+    capabilities.map((capabilityKey) =>
       Schema.decodeUnknownEffect(CellSchema)({ capabilityKey, mode: 'run', selector: { _tag: 'all' } }).pipe(
         Effect.mapError(() => failure(`${capabilityKey} is not a role cell`)),
       ),
@@ -231,22 +250,35 @@ const RuntimeLive = Layer.unwrap(
   }),
 );
 
-/** The tenant's ERP editor role by its stable id: created empty when absent, then revised to exactly `wanted`. */
+/**
+ * The ERP editor role of the tenant context (no company) or of one company, by its stable id: created empty when
+ * absent, then revised to exactly `wanted`.
+ */
 const reconcileRole = Effect.fn('ErpEditorGrants.reconcileRole')(function* reconcileRole(
   scope: Scope,
   catalog: CatalogSnapshot,
   wanted: readonly Cell[],
+  legalEntityId: LegalEntityId | undefined,
 ) {
   const store = yield* AccessChangesStore;
-  const roleId = RoleIdSchema.make(stableUuid(`ontos.erp-editor-grants.role:${scope.tenantId}`));
-  const label = `tenant ${scope.tenantId}: role "${ERP_EDITOR_ROLE_NAME}" (${roleId})`;
+  const roleId = RoleIdSchema.make(
+    stableUuid(
+      legalEntityId === undefined
+        ? `ontos.erp-editor-grants.role:${scope.tenantId}`
+        : `ontos.erp-editor-grants.company-role:${scope.tenantId}:${legalEntityId}`,
+    ),
+  );
+  const label = `tenant ${scope.tenantId}${legalEntityId === undefined ? '' : ` company ${legalEntityId}`}: role "${ERP_EDITOR_ROLE_NAME}" (${roleId})`;
   const load = store.loadTenantChanges(scope).pipe(
     Effect.mapError(() => failure(`${label} could not be read`)),
     Effect.map(({ roles }) => Option.fromUndefinedOr(roles.find(({ role }) => role.id === roleId))),
   );
   const existing = yield* load;
+  if (Option.isSome(existing) && existing.value.role.legalEntityId !== legalEntityId) {
+    return yield* failure(`${label} exists for another company`);
+  }
   if (Option.isNone(existing)) {
-    yield* writeRoleCreation({
+    const creation = {
       catalogSnapshotId: CatalogSnapshotIdSchema.make(catalog.id),
       cells: [],
       decidedAt: yield* DateTime.nowAsDate,
@@ -256,7 +288,10 @@ const reconcileRole = Effect.fn('ErpEditorGrants.reconcileRole')(function* recon
         stableUuid(`ontos.erp-editor-grants.role-revision:${roleId}:created`),
       ),
       targetRoleId: roleId,
-    }).pipe(Effect.mapError((error) => failure(`${label} creation refused: ${error._tag}`)));
+    };
+    yield* writeRoleCreation(legalEntityId === undefined ? creation : { ...creation, legalEntityId }).pipe(
+      Effect.mapError((error) => failure(`${label} creation refused: ${error._tag}`)),
+    );
     yield* Console.log(`${LOG} ${label} created`);
   }
   const role = Option.isSome(existing) ? existing.value : Option.getOrUndefined(yield* load);
@@ -301,21 +336,30 @@ const holdsPrincipal = (holder: Holder, principalId: string) =>
     Match.orElse(() => false),
   );
 
-/** One live tenant assignment of the role to the operator; an assignment already live is left as it is. */
+/**
+ * One live assignment of the role to the operator in one scope (the tenant context, or the company the role belongs
+ * to); an assignment already live is left as it is.
+ */
 const assignOperator = Effect.fn('ErpEditorGrants.assignOperator')(function* assignOperator(
   scope: Scope,
   roleId: RoleId,
   operator: Operator,
+  scopeId: AccessScopeId | undefined,
 ) {
   const commands = yield* AccessPeopleCommands;
-  const label = `tenant ${scope.tenantId}: ${operator.email} (${operator.principalId})`;
   const view = yield* commands
     .read(scope)
-    .pipe(Effect.mapError(({ reason }) => failure(`${label}: people could not be read: ${reason}`)));
+    .pipe(
+      Effect.mapError(({ reason }) =>
+        failure(`tenant ${scope.tenantId}: ${operator.email}: people could not be read: ${reason}`),
+      ),
+    );
+  const target = scopeId ?? view.tenantScopeId;
+  const label = `tenant ${scope.tenantId} scope ${target}: ${operator.email} (${operator.principalId})`;
   const held = view.assignments.filter(
     (assignment) =>
       assignment.roleId === roleId &&
-      assignment.scopeId === view.tenantScopeId &&
+      assignment.scopeId === target &&
       holdsPrincipal(assignment.holder, operator.principalId),
   );
   const live = held.find((assignment) => isActiveAssignment(assignment, view.at));
@@ -324,13 +368,13 @@ const assignOperator = Effect.fn('ErpEditorGrants.assignOperator')(function* ass
   }
   const member = view.memberships.some(
     (membership) =>
-      membership.scopeId === view.tenantScopeId &&
+      membership.scopeId === target &&
       membership.kind === 'member' &&
       holdsPrincipal(membership.holder, operator.principalId) &&
       membershipIsLive(membership, view.at),
   );
   if (!member) {
-    return yield* failure(`${label} is no live member of the tenant; the account setup admits people, not this step`);
+    return yield* failure(`${label} is no live member of this scope; the account setup admits people, not this step`);
   }
   const head = view.roles.find(({ role }) => role.id === roleId);
   if (head === undefined) {
@@ -346,7 +390,7 @@ const assignOperator = Effect.fn('ErpEditorGrants.assignOperator')(function* ass
       incarnationId,
       roleId,
       roleRevisionId: head.revision.id,
-      scopeId: view.tenantScopeId,
+      scopeId: target,
     })
     .pipe(Effect.mapError(({ code, reason }) => failure(`${label}: assignment refused (${code}): ${reason}`)));
   return yield* Console.log(`${LOG} ${label} assigned (${incarnationId})`);
@@ -357,7 +401,7 @@ const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTena
   tenantId: string,
   operators: readonly Operator[],
   catalog: CatalogSnapshot,
-  wanted: readonly Cell[],
+  wanted: { readonly company: readonly Cell[]; readonly tenant: readonly Cell[] },
 ) {
   const loader = yield* TenantIntentLoader;
   const [first] = operators;
@@ -382,8 +426,48 @@ const grantTenant = Effect.fn('ErpEditorGrants.grantTenant')(function* grantTena
     return yield* Effect.void;
   }
   const scope = yield* scopeOf(tenantId, String(owner));
-  const roleId = yield* reconcileRole(scope, catalog, wanted);
-  return yield* Effect.forEach(editors, (operator) => assignOperator(scope, roleId, operator), { discard: true });
+  const roleId = yield* reconcileRole(scope, catalog, wanted.tenant, undefined);
+  yield* Effect.forEach(editors, (operator) => assignOperator(scope, roleId, operator, undefined), { discard: true });
+  // The calls decided in a company need a role of that company, in every company the operator is a live member of.
+  const commands = yield* AccessPeopleCommands;
+  const view = yield* commands
+    .read(scope)
+    .pipe(Effect.mapError(({ reason }) => failure(`tenant ${tenantId}: people could not be read: ${reason}`)));
+  const companies = view.scopes.flatMap(({ legalEntityId, scopeId }) =>
+    legalEntityId === undefined || scopeId === view.tenantScopeId ? [] : [{ legalEntityId, scopeId }],
+  );
+  const companiesOf = (operator: Operator) =>
+    companies.filter(({ scopeId }) =>
+      view.memberships.some(
+        (membership) =>
+          membership.scopeId === scopeId &&
+          membership.kind === 'member' &&
+          holdsPrincipal(membership.holder, operator.principalId) &&
+          membershipIsLive(membership, view.at),
+      ),
+    );
+  const unplaced = editors.filter((operator) => companiesOf(operator).length === 0);
+  if (unplaced.length > 0) {
+    return yield* failure(
+      `tenant ${tenantId}: ${unplaced.map(({ email }) => email).join(', ')} is no live member of any company, so prices, stock and images stay refused; the account setup admits people, not this step`,
+    );
+  }
+  const reached = companies.filter(({ scopeId }) =>
+    editors.some((operator) => companiesOf(operator).some((company) => company.scopeId === scopeId)),
+  );
+  return yield* Effect.forEach(
+    reached,
+    ({ legalEntityId, scopeId }) =>
+      Effect.gen(function* grantCompany() {
+        const companyRoleId = yield* reconcileRole(scope, catalog, wanted.company, legalEntityId);
+        yield* Effect.forEach(
+          editors.filter((operator) => companiesOf(operator).some((company) => company.scopeId === scopeId)),
+          (operator) => assignOperator(scope, companyRoleId, operator, scopeId),
+          { discard: true },
+        );
+      }),
+    { discard: true },
+  );
 });
 
 export const grantErpEditors = Effect.gen(function* grantErpEditors() {
@@ -395,8 +479,13 @@ export const grantErpEditors = Effect.gen(function* grantErpEditors() {
     return yield* failure('no access catalog is published');
   }
   const catalog = published.value;
-  const wanted = yield* erpEditorCells(catalog);
-  yield* Console.log(`${LOG} catalog ${catalog.id}: ${String(wanted.length)} ERP editor cells`);
+  const wanted = {
+    company: yield* erpEditorCells(catalog, ERP_EDITOR_COMPANY_CAPABILITIES),
+    tenant: yield* erpEditorCells(catalog, ERP_EDITOR_TENANT_CAPABILITIES),
+  };
+  yield* Console.log(
+    `${LOG} catalog ${catalog.id}: ${String(wanted.tenant.length)} tenant and ${String(wanted.company.length)} company ERP editor cells`,
+  );
   const operators = yield* findOperators;
   yield* Effect.forEach(
     ERP_EDITOR_LOGINS.filter((email) => !operators.some((operator) => operator.email === email)),
