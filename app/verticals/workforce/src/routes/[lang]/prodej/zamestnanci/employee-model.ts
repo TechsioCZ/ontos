@@ -105,37 +105,112 @@ export const listedFieldsOf = (
   role: draft.role,
 });
 
-export const DraftFieldSchema = Schema.Literals(['department', 'email', 'fullName', 'phone']);
-export type DraftField = typeof DraftFieldSchema.Type;
+const errorKey = 'workforce.pages.employees.errors';
 
-/** Message suffix for a field error. A name over the stored limit gets its own message instead of "required". */
-export const errorFieldKey = (draft: EmployeeDraft, field: DraftField): string =>
-  field === 'fullName' && draft.fullName.trim().length > EmployeeFullNameMaxLength ? 'fullNameTooLong' : field;
+const fits =
+  (schema: Schema.Codec<string, string>) =>
+  (value: string): boolean =>
+    Option.isSome(Schema.decodeOption(schema)(value));
 
-export const isDepartmentName = (value: string): boolean =>
-  Option.isSome(Schema.decodeOption(EmployeeDepartmentSchema)(value));
+/**
+ * A text the person types, checked with the Action's own field schema (which trims it, as the server does). A failure
+ * reads as the field's message, an i18n key the form translates.
+ */
+const typedText = (accepts: (value: string) => boolean, message: (value: string) => string) =>
+  Schema.String.check(Schema.makeFilter((value: string) => accepts(value) || message(value)));
 
-const isFullName = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeeFullNameSchema)(value));
-const isEmail = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeeEmailSchema)(value));
-const isPhone = (value: string): boolean => Option.isSome(Schema.decodeOption(EmployeePhoneInputSchema)(value));
+/** A name over the stored limit gets its own message instead of "required". */
+export const FullNameTextSchema = typedText(fits(EmployeeFullNameSchema), (value) =>
+  value.trim().length > EmployeeFullNameMaxLength ? `${errorKey}.fullNameTooLong` : `${errorKey}.fullName`,
+);
+export const EmailTextSchema = typedText(fits(EmployeeEmailSchema), () => `${errorKey}.email`);
+export const DepartmentTextSchema = typedText(fits(EmployeeDepartmentSchema), () => `${errorKey}.department`);
+/** An empty phone is no phone; anything typed is checked like the Action checks it. */
+export const PhoneTextSchema = typedText(
+  (value) => value.trim() === '' || fits(EmployeePhoneInputSchema)(value),
+  () => `${errorKey}.phone`,
+);
 
-/** Field-level problems of a draft, checked against the same schemas the server uses. */
-export const draftErrors = (draft: EmployeeDraft): DraftField[] => {
-  const errors: DraftField[] = [];
-  if (!isFullName(draft.fullName.trim())) {
-    errors.push('fullName');
-  }
-  if (!isEmail(draft.email.trim())) {
-    errors.push('email');
-  }
-  if (!isDepartmentName(draft.department.trim())) {
-    errors.push('department');
-  }
-  if (draft.phone.trim() !== '' && !isPhone(draft.phone.trim())) {
-    errors.push('phone');
-  }
-  return errors;
+/** The typed fields of a draft, checked by the same schemas the form shows its field messages from. */
+const EmployeeTextsSchema = Schema.Struct({
+  department: DepartmentTextSchema,
+  email: EmailTextSchema,
+  fullName: FullNameTextSchema,
+  phone: PhoneTextSchema,
+});
+
+/** A draft the save may send: every typed field passes its schema. */
+export const isSendableDraft = (draft: EmployeeDraft): boolean => Schema.is(EmployeeTextsSchema)(draft);
+
+/** The employee form's values: the draft as its controls hold it, plus the e-mail the server last refused. */
+export interface EmployeeValues {
+  readonly active: boolean;
+  readonly department: string;
+  readonly email: string;
+  readonly fullName: string;
+  readonly phone: string;
+  /** `""` is no login account. */
+  readonly principalId: string;
+  readonly role: string;
+  /** The e-mail another Employee already uses, as the server refused it; `""` while none was refused. */
+  readonly takenEmail: string;
+}
+
+export const valuesOfDraft = (draft: EmployeeDraft): EmployeeValues => ({
+  active: draft.active,
+  department: draft.department,
+  email: draft.email,
+  fullName: draft.fullName,
+  phone: draft.phone,
+  principalId: draft.principalRef?.principalId ?? '',
+  role: draft.role,
+  takenEmail: '',
+});
+
+type PrincipalRef = NonNullable<Employee['principalRef']>;
+
+/**
+ * The draft the form's values stand for. The account is the one of `principals` (the accounts the form offers) the
+ * form picked. The role choice offers employee roles only; a value outside them keeps the role the form opened with.
+ */
+export const draftOfValues = (
+  values: EmployeeValues,
+  principals: readonly PrincipalRef[],
+  opened: EmployeeDraft,
+): EmployeeDraft => {
+  const principalRef = principals.find(({ principalId }) => principalId === values.principalId);
+  const draft: EmployeeDraft = {
+    active: values.active,
+    department: values.department,
+    email: values.email,
+    fullName: values.fullName,
+    phone: values.phone,
+    role: roleFromValue(values.role) ?? opened.role,
+  };
+  return principalRef === undefined ? draft : { ...draft, principalRef };
 };
+
+/** The filter bar's values: `allOption` is no role or department filter. */
+export interface EmployeeFilterValues {
+  readonly activeOnly: boolean;
+  readonly department: string;
+  readonly query: string;
+  readonly role: string;
+}
+
+export const noFilterValues: EmployeeFilterValues = {
+  activeOnly: false,
+  department: allOption,
+  query: '',
+  role: allOption,
+};
+
+export const filtersOfValues = (values: EmployeeFilterValues): EmployeeFilters => ({
+  activeOnly: values.activeOnly,
+  department: departmentFromValue(values.department),
+  query: values.query,
+  role: roleFromValue(values.role),
+});
 
 /** The organisational fields of a draft. Phone is omitted when empty; the contract cannot clear it. */
 const employeeFields = (draft: EmployeeDraft) => {
