@@ -182,25 +182,7 @@ const foldSearch = (value: string) =>
     .toLocaleLowerCase("cs-CZ");
 
 /**
- * A query word as it matches its Czech word forms: a word of letters loses its common noun or adjective ending
- * („pojistná“, „pojistné“, „pojistnou“ → „pojistn“; „šrouby“ → „sroub“), keeping at least three letters, and then
- * matches inside the stored text. Codes, sizes and SKUs (anything with a digit or a sign) stay whole.
- */
-const CZECH_ENDINGS = [
-  ...["ami", "emi", "imi", "ymi", "ech", "ich", "ych", "ach", "ovi", "ove", "eho", "emu", "imu"],
-  ...["ou", "em", "um", "mi", "a", "e", "i", "o", "u", "y"],
-];
-const stemOf = (word: string) => {
-  if (!/^[a-z]+$/u.test(word)) return word;
-  const ending = CZECH_ENDINGS.find(
-    (candidate) => word.endsWith(candidate) && word.length - candidate.length >= 3,
-  );
-  return ending === undefined ? word : word.slice(0, -ending.length);
-};
-
-/**
- * Whether every word of the query (as its stem) occurs in the product's name (its text in the market language or its
- * source name),
+ * Whether every word of the query occurs in the product's name (its text in the market language or its source name),
  * a Variant's name, SKU or option values.
  */
 export const erpItemMatches = (
@@ -222,7 +204,7 @@ export const erpItemMatches = (
       ]),
     ].join(" "),
   );
-  return words.every((word) => text.includes(stemOf(word)));
+  return words.every((word) => text.includes(word));
 };
 
 /** Variant refs of every shown variant of the page, in page order: the stock and price reads ask for exactly these. */
