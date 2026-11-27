@@ -80,6 +80,7 @@ const upsert = Effect.fn('SymmyMerchandiseCopy.upsert')(function* upsertOne(
   scope: SymmySourceReadScope & { readonly legalEntityId: string },
   admission: SymmyIngressAdmission,
   command: NonNullable<ReturnType<typeof symmyUpsertSourceProductCommand>>,
+  runId: string,
 ) {
   if (admission.acquireOwnerAssertion === undefined) {
     return yield* Effect.fail(symmyUnavailableProblem);
@@ -98,9 +99,10 @@ const upsert = Effect.fn('SymmyMerchandiseCopy.upsert')(function* upsertOne(
     return yield* Effect.fail(symmyUnavailableProblem);
   }
   const baseUrl = yield* resolveSymmyOwnerReleaseBase(assertion.apiBaseUrl, 'merchandise');
-  // The same accepted state always gives the same key, so a repeated copy is the owner's replay of one write.
+  // One key per copy run and command: a retry inside the run is the owner's replay, while a later run always reaches
+  // the upsert (which answers UNCHANGED without writing), so a return to an earlier value (A → B → A) is applied.
   const idempotencyKey = yield* symmyDemoCatalogDigest(
-    JSON.stringify([yield* symmyDemoCatalogScopeIdentity(scope), 'merchandise-copy-v1', sourceRequestDigest]),
+    JSON.stringify([yield* symmyDemoCatalogScopeIdentity(scope), 'merchandise-copy-v2', runId, sourceRequestDigest]),
   );
   const result = yield* executeImportSourceCatalogWithAuthorization(
     payload,
@@ -151,14 +153,17 @@ export const copySymmyProductsToMerchandise = Effect.fn('SymmyMerchandiseCopy.co
     return yield* Effect.fail(symmyUnavailableProblem);
   }
   const outcomes: Record<string, number> = {};
+  const runId = yield* newRequestIdentifier;
   for (const item of products) {
     const command = symmyUpsertSourceProductCommand(item, stock);
     const outcome =
       command === undefined
         ? 'SKIPPED'
-        : yield* upsert({ ...write.route, legalEntityId }, admission, command).pipe(
+        : yield* upsert({ ...write.route, legalEntityId }, admission, command, runId).pipe(
             Effect.catchCause((cause) =>
               Console.error(`${LOG} ${item.source_record_id} failed: ${Cause.pretty(cause).slice(0, 400)}`).pipe(
+                // The accepted on-hand of a failed product is kept for the next run instead of being dropped.
+                Effect.andThen(Effect.sync(() => requeueStock(command.variants, stock))),
                 Effect.as('FAILED'),
               ),
             ),
@@ -177,6 +182,16 @@ const state: { pending: SymmyIngressAdmission | undefined; running: boolean; sto
 };
 const COOL_DOWN = '10 seconds';
 
+/** Puts accepted on-hand figures back for the next run unless a newer figure for the same item arrived meanwhile. */
+const requeueStock = (variants: readonly { readonly sku: string }[], stock: ReadonlyMap<string, number>) => {
+  for (const { sku } of variants) {
+    const onHand = stock.get(sku);
+    if (onHand !== undefined && !state.stock.has(sku)) {
+      state.stock.set(sku, onHand);
+    }
+  }
+};
+
 const drain: Effect.Effect<void> = Effect.suspend(() => {
   const next = state.pending;
   const stock = state.stock;
@@ -188,7 +203,11 @@ const drain: Effect.Effect<void> = Effect.suspend(() => {
   }
   return copySymmyProductsToMerchandise(next, stock).pipe(
     Effect.asVoid,
-    Effect.catchCause((cause) => Console.error(`${LOG} copy failed: ${Cause.pretty(cause).slice(0, 400)}`)),
+    Effect.catchCause((cause) =>
+      Console.error(`${LOG} copy failed: ${Cause.pretty(cause).slice(0, 400)}`).pipe(
+        Effect.andThen(Effect.sync(() => requeueStock([...stock.keys()].map((sku) => ({ sku })), stock))),
+      ),
+    ),
     Effect.andThen(Effect.sleep(COOL_DOWN)),
     Effect.andThen(drain),
   );
