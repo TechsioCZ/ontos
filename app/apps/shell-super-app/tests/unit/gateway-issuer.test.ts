@@ -917,14 +917,14 @@ it.effect('reserves the Symmy audience for fresh verified Integration Principal 
         ),
       );
       expect(denied.every(({ code }) => code === 'gateway_audience_invalid')).toBe(true);
-      const session = yield* Effect.flip(
-        issueSymmyGatewayContextAssertion({
-          compositionRevision,
-          principal: { ...apiKeyPrincipal, authMethod: 'session' },
-          principalKind: 'integration',
-        }),
-      );
-      expect(session.code).toBe('gateway_audience_invalid');
+      // A staff browser session may hold the audience since fc78bb3cfe (the Integrace card's Symmy routes panel); the
+      // module's own staff Read and Action decide for that person.
+      const session = yield* issueSymmyGatewayContextAssertion({
+        compositionRevision,
+        principal: { ...apiKeyPrincipal, authMethod: 'session' },
+        principalKind: 'integration',
+      });
+      expect(decodeJwt(session.token).aud).toBe(SYMMY_INGRESS_AUDIENCE);
 
       const result = yield* issueSymmyGatewayContextAssertion({
         compositionRevision,
