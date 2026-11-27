@@ -1,6 +1,5 @@
 import "server-only";
 import { getConfig } from "./config";
-import { getErpOffer } from "./erp-config";
 import { shellFetch } from "./shell-fetch";
 
 // The Shell pushes one invalidation for every owner Action that commits for this storefront's company: the app ids of
@@ -18,9 +17,8 @@ const RETRY_MAX_MS = 30_000;
 const HEALTHY_MS = 30_000;
 const MAX_FRAME = 64_000;
 
-/** Owner app ids of the merchandise catalogue and of the ERP products (Catalog, Pricing, Inventory). */
+/** Owner app ids of the shop catalogue: every product, Symmy-imported ones included, is a merchandise row. */
 export const MERCHANDISE_OWNERS = ["merchandise"] as const;
-export const ERP_OWNERS = ["catalog", "pricing", "inventory"] as const;
 
 interface Feed {
   connected: boolean;
@@ -179,10 +177,8 @@ export const startLiveChanges = () => {
       const openedAt = Date.now();
       let problem: unknown;
       try {
-        // Only the owners this storefront shares answers of (a brand without an ERP offer reads no ERP owner).
-        await followLiveChanges(
-          getErpOffer() === undefined ? MERCHANDISE_OWNERS : [...MERCHANDISE_OWNERS, ...ERP_OWNERS],
-        );
+        // Only the owners this storefront shares answers of.
+        await followLiveChanges(MERCHANDISE_OWNERS);
       } catch (error) {
         problem = error;
       }
