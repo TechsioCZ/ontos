@@ -5,6 +5,7 @@ import { executeRecords as executeOccupancy } from '@app/property-leasing/client
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Breadcrumb } from '@techsio/ui-kit/molecules/breadcrumb';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { CheckboxField, FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
@@ -638,7 +639,17 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
       <section aria-busy={loading} aria-labelledby="overview-heading" className="sp-overview">
         <header className="sp-heading">
           <div className="sp-stack">
-            <span className="sp-eyebrow">SPRÁVA NEMOVITOSTÍ</span>
+            <Breadcrumb aria-label={t('property-portfolio.overview.breadcrumb')} size="sm">
+              <Breadcrumb.List>
+                <Breadcrumb.Item>
+                  <Breadcrumb.Link href={href('nemovitosti')}>{t('property-portfolio.title')}</Breadcrumb.Link>
+                </Breadcrumb.Item>
+                <Breadcrumb.Separator />
+                <Breadcrumb.Item>
+                  <Breadcrumb.CurrentLink>{t('property-portfolio.pages.overview.title')}</Breadcrumb.CurrentLink>
+                </Breadcrumb.Item>
+              </Breadcrumb.List>
+            </Breadcrumb>
             <h1 id="overview-heading">Vaše nemovitosti v souvislostech</h1>
             <p className="sp-muted">
               Obsazenost, nájemci a nejbližší kroky na jednom místě. Stav k {formatDay(today)}.

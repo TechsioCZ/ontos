@@ -1,4 +1,5 @@
 import type { Server } from 'node:http';
+import { format as formatLine } from 'node:util';
 
 import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import type { PgClient } from '@effect/sql-pg';
@@ -434,6 +435,35 @@ const edgeOf = (origin: string): ShellEdge => {
   return { open, origin, request: (input) => Effect.flatMap(open(input), readAll) };
 };
 
+/** Receives every line the in-process Shell writes to the console (a sink the scenario reads back). */
+export type ShellLogSink = (entry: string) => void;
+
+/**
+ * The Shell's default logger writes to the console of this process, and the request fibers of the mounted handler do
+ * not see a logger layer added to the runtime layer, so a scenario that has to read what an operator reads taps the
+ * console for its scope. The lines still reach the console.
+ */
+const tapConsole = (sink: ShellLogSink) =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const methods = ['debug', 'error', 'info', 'log', 'warn'] as const;
+      const originals = methods.map((method) => [method, console[method]] as const);
+      for (const [method, original] of originals) {
+        console[method] = (...args: unknown[]) => {
+          sink(formatLine(...args));
+          original.apply(console, args);
+        };
+      }
+      return originals;
+    }),
+    (originals) =>
+      Effect.sync(() => {
+        for (const [method, original] of originals) {
+          console[method] = original;
+        }
+      }),
+  );
+
 const mountShell = (
   platform: E2ePlatform,
   input: {
@@ -484,10 +514,13 @@ export interface MediaE2eWorld {
   ) => Effect.Effect<{ readonly principal: TrustedPrincipalContext; readonly principalId: string }>;
   /** The revision of the active Application Composition every request of this world runs under. */
   readonly compositionRevision: string;
+  /** The active Application Composition itself (the sealed document the harness serves and published as authority). */
+  readonly compositionSnapshot: typeof ActiveApplicationCompositionSnapshotSchema.Type;
   readonly databases: DatabaseConnectionPair;
   readonly enrolSystemWorkload: (
     workloadKey: string,
     tenantId: string,
+    options?: SystemWorkloadEnrolmentOptions,
   ) => Effect.Effect<{ readonly principalId: string }>;
   /**
    * CONTROLLED FAULT INJECTION: the relays between the Shell and the emulator (`faults`, forwarding until a rule is
@@ -502,6 +535,8 @@ export interface MediaE2eWorld {
     capabilityKeys: readonly string[],
     options?: { readonly mode?: 'propose' | 'run'; readonly targets?: readonly [string, ...string[]] },
   ) => Effect.Effect<{ readonly incarnationId: AssignmentIncarnationId }>;
+  /** The company the stage install created for the tenant: the one a person of this world can select. */
+  readonly legalEntityId: string;
   readonly people: ReadonlyMap<string, E2eActor>;
   /** The Read runtime over the same database and engine (the Core owner reads that have no Shell route). */
   readonly reads: ReadRuntimeService;
@@ -511,6 +546,8 @@ export interface MediaE2eWorld {
   readonly revoke: (incarnationId: AssignmentIncarnationId) => Effect.Effect<void>;
   /** The production Shell BFF mounted on loopback, for the scope of the caller. */
   readonly shell: Effect.Effect<ShellEdge, never, Scope.Scope>;
+  /** The same Shell, with every log entry it writes handed to the sink (to prove what an operator can read). */
+  readonly shellWithLogs: (sink: ShellLogSink) => Effect.Effect<ShellEdge, never, Scope.Scope>;
   /** The real S3 adapter straight on the emulator: observations that bypass the Shell. */
   readonly storage: ObjectStorageService;
   readonly tenantId: string;
@@ -723,9 +760,22 @@ const recordMembers = (
     yield* Context.get(graph.context, AccessMembershipStore).recordMemberships(ownerScope, { memberships });
   }).pipe(Effect.orDie);
 
-/** A `system` principal of the tenant with one active binding for one workload key, written as the operator's install would. */
+/**
+ * What an enrolment of the fixture may differ in, to show which look-alikes are NOT an enrolment: the principal kind
+ * (the stage accounts file's `workloads` entry binds a person or a service, never a `system` principal) and its status.
+ */
+export interface SystemWorkloadEnrolmentOptions {
+  readonly kind?: 'service' | 'system';
+  readonly status?: 'active' | 'archived' | 'disabled';
+}
+
+/** A principal of the tenant (a `system` one by default) with one active binding for one workload key, written as the operator's install would. */
 const enrolSystemWorkloadOf = (admin: PgClient.PgClient) =>
-  Effect.fn('MediaE2e.enrolSystemWorkload')(function* enrolSystemWorkload(workloadKey: string, tenantId: string) {
+  Effect.fn('MediaE2e.enrolSystemWorkload')(function* enrolSystemWorkload(
+    workloadKey: string,
+    tenantId: string,
+    options: SystemWorkloadEnrolmentOptions = {},
+  ) {
     const crypto = yield* Crypto.Crypto;
     const [principalId, bindingId, incarnation] = yield* Effect.all([
       crypto.randomUUIDv4(),
@@ -734,8 +784,8 @@ const enrolSystemWorkloadOf = (admin: PgClient.PgClient) =>
     ]);
     yield* admin.unsafe(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
-           values ($1::uuid, $2::uuid, 'system', $3, 'active')`,
-      [principalId, tenantId, `E2E workload ${workloadKey}`],
+           values ($1::uuid, $2::uuid, $3, $4, $5)`,
+      [principalId, tenantId, options.kind ?? 'system', `E2E workload ${workloadKey}`, options.status ?? 'active'],
     );
     yield* admin.unsafe(
       `insert into core.access_workload_bindings (binding_id, tenant_id, principal_id, workload_key, incarnation, status)
@@ -893,19 +943,22 @@ export const withMediaE2eWorld = <Value, Failure>(
             tenantId,
           )(workloadKey).pipe(Effect.provideService(Crypto.Crypto, crypto)),
         compositionRevision: composition.composition.revision,
+        compositionSnapshot: composition,
         databases,
-        enrolSystemWorkload: (workloadKey, enrolledTenantId) =>
-          enrolSystemWorkloadOf(admin)(workloadKey, enrolledTenantId).pipe(
+        enrolSystemWorkload: (workloadKey, enrolledTenantId, enrolment) =>
+          enrolSystemWorkloadOf(admin)(workloadKey, enrolledTenantId, enrolment).pipe(
             Effect.provideService(Crypto.Crypto, crypto),
           ),
         faultInjection,
         foreign: foreignRoster.actors,
         grant: commands.grant,
+        legalEntityId: roster.bootstrap.tenant.legalEntity.legalEntityId,
         people: roster.actors,
         reads: runtimes.reads,
         replaceStoredObject: replaceStored(storage, tenantId),
         revoke: commands.revoke,
         shell: mountShell(platform, { databases, principals }),
+        shellWithLogs: (logs) => tapConsole(logs).pipe(Effect.andThen(mountShell(platform, { databases, principals }))),
         storage: storage.directStorage,
         tenantId,
         withStorage: (effect) => Effect.provideService(effect, ObjectStorage, storage.shellFacingStorage),

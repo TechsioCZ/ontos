@@ -1,5 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { Duration, Effect, Exit, Fiber } from 'effect';
+import { Cause, Duration, Effect, Exit, Fiber, Option } from 'effect';
 import { TestClock } from 'effect/testing';
 import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
@@ -108,13 +108,16 @@ it.effect('bounds each step, not the object: many slow steps pass a guard shorte
   }).pipe(Effect.provideService(DigestStepTimeout, Duration.millis(100))),
 );
 
-it.effect('dies on a step that does not answer within the configured guard', () =>
+it.effect('fails a step that does not answer within the configured guard as a retryable unavailability', () =>
   Effect.gen(function* stuck() {
     const digest = new ContentDigest({ digestStream: StandInDigestStream });
     writeGates.push(Promise.withResolvers<undefined>());
     const added = yield* Effect.forkChild(digest.add(new Uint8Array(4)));
     yield* TestClock.adjust(Duration.millis(40));
     const exit = yield* Fiber.await(added);
-    expect(Exit.hasDies(exit)).toBe(true);
+    expect(Exit.hasDies(exit)).toBe(false);
+    expect(Exit.isFailure(exit) && Option.getOrUndefined(Cause.findErrorOption(exit.cause))?.code).toBe(
+      'media_unavailable',
+    );
   }).pipe(Effect.provideService(DigestStepTimeout, Duration.millis(40))),
 );

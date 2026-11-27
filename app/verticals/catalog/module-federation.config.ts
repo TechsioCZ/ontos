@@ -4,6 +4,7 @@ import { resolveEffectTsgoCompiler } from '@modern-js/app-tools-extensions/confi
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import { decodeUnknownSync, String as SchemaString, Struct } from 'effect/Schema';
 
+import { resolveUiKitShare, uiKitSharedConfig } from '../../module-federation.shared.ts';
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
@@ -17,6 +18,8 @@ const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
+
+const uiKitShared = uiKitSharedConfig({ role: 'remote', uiKit: resolveUiKitShare(import.meta.url) });
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
   bridge: {
@@ -38,6 +41,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   filename: 'remoteEntry.js',
   name: 'verticalCatalog',
   shared: {
+    ...uiKitShared,
     '@modern-js/plugin-i18n/runtime/no-react-i18next': {
       requiredVersion: pluginI18nVersion,
       singleton: true,

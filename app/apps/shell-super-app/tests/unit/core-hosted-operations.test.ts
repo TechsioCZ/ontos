@@ -84,27 +84,30 @@ const hostedRequirement = {
   key: 'commerce.catalog.requirement.core-media-current',
   provider: { entrypointKey: 'core.media.api.asset-current', moduleId: 'core.media', schemaVersion: '1' },
 };
-const catalogContract = (declaresHosted: boolean, schemaVersion: string) => {
+// The operation this endpoint serves: the exact registration `assetCurrentRead` (provider identity, never a family).
+const servedAssetCurrent = {
+  entrypointKey: 'core.media.api.asset-current',
+  moduleId: 'core.media',
+  schemaVersion: '1',
+};
+const catalogContract = (declared: typeof hostedRequirement | 'nothing') => {
   const catalog = makeModuleContractFixture({ appId: 'catalog', moduleId: 'commerce.catalog' });
-  return declaresHosted
-    ? {
+  return declared === 'nothing'
+    ? catalog
+    : {
         ...catalog,
         manifest: {
           ...catalog.manifest,
-          requirements: {
-            coreCapabilities: [],
-            intrinsic: [],
-            operations: [{ ...hostedRequirement, provider: { ...hostedRequirement.provider, schemaVersion } }],
-            schemaVersion: '1',
-          },
+          requirements: { coreCapabilities: [], intrinsic: [], operations: [declared], schemaVersion: '1' },
         },
-      }
-    : catalog;
+      };
 };
 
-const world = Effect.fn('CoreHostedOperationTest.world')(function* world(declaresHosted = true, schemaVersion = '1') {
+const world = Effect.fn('CoreHostedOperationTest.world')(function* world(
+  declared: typeof hostedRequirement | 'nothing' = hostedRequirement,
+) {
   yield* TestClock.setTime((issuedAt + 1) * 1000);
-  const snapshot = yield* makeCompositionSnapshot([catalogContract(declaresHosted, schemaVersion)]);
+  const snapshot = yield* makeCompositionSnapshot([catalogContract(declared)]);
   const { privateKey } = yield* Effect.promise(() => generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const privateJwk = yield* Effect.promise(() => exportJWK(privateKey));
   const jwk = {
@@ -203,8 +206,14 @@ const world = Effect.fn('CoreHostedOperationTest.world')(function* world(declare
       ),
       Effect.provide(makeActiveApplicationCompositionLayer(Effect.succeed(snapshot))),
     );
-  const receive = (token: string, options?: Parameters<typeof provideReceiver>[1]) =>
-    provideReceiver(authenticateHostedOperationPrincipal(Redacted.make(`Bearer ${token}`)), options);
+  const receive = (
+    token: string,
+    options: Parameters<typeof provideReceiver>[1] & { readonly served?: typeof servedAssetCurrent } = {},
+  ) =>
+    provideReceiver(
+      authenticateHostedOperationPrincipal(Redacted.make(`Bearer ${token}`), options.served ?? servedAssetCurrent),
+      options,
+    );
   return { catalogLoads, consumed, installed, issue, issueDirect, provideReceiver, receive };
 });
 
@@ -241,7 +250,7 @@ it.effect(
 
 it.effect('refuses a module whose own installed release does not declare the hosted operation', () =>
   Effect.gen(function* undeclared() {
-    const { consumed, issue, receive } = yield* world(false);
+    const { consumed, issue, receive } = yield* world('nothing');
     const { token } = yield* issue('shell-super-app');
     const refusal = yield* Effect.flip(receive(token));
     expect(Schema.is(ActionPrincipalScopeErrorSchema)(refusal)).toBe(true);
@@ -259,7 +268,10 @@ it.effect('binds the original Current read only for an exact requester-relaying 
     expect(binding.actorFor(new Proxy(assetCurrentRead, {}))).toBeUndefined();
     expect(assetCurrentRead.descriptor.accessActor?.callers).toEqual([]);
 
-    const wrongVersion = yield* world(true, '2');
+    const wrongVersion = yield* world({
+      ...hostedRequirement,
+      provider: { ...hostedRequirement.provider, schemaVersion: '2' },
+    });
     expect(coreHostedReadReceiverBindings(wrongVersion.installed).actorFor(assetCurrentRead)).toBeUndefined();
     const { token } = yield* wrongVersion.issue('shell-super-app');
     expect(Schema.is(ActionPrincipalScopeErrorSchema)(yield* Effect.flip(wrongVersion.receive(token)))).toBe(true);
@@ -275,6 +287,25 @@ it.effect('refuses a different installed caller release or composition after ass
       expect(consumed).toHaveLength(1);
     }
   }),
+);
+
+it.effect(
+  'would refuse an asset-current declaration at an endpoint serving another operation (no second hosted one exists)',
+  () =>
+    Effect.gen(function* otherHostedOperation() {
+      // The served side is hypothetical: Current is the only Core operation the Shell hosts for modules, and a manifest
+      // may name callers for no other. This pins that the check compares the entrypoint, so that a second hosted
+      // operation would not be reachable through the declaration of the first.
+      const { consumed, issue, receive } = yield* world();
+      const { token } = yield* issue('shell-super-app');
+      const refusal = yield* Effect.flip(
+        receive(token, {
+          served: { entrypointKey: 'core.media.api.asset-download', moduleId: 'core.media', schemaVersion: '1' },
+        }),
+      );
+      expect(Schema.is(ActionPrincipalScopeErrorSchema)(refusal)).toBe(true);
+      expect(consumed).toHaveLength(1);
+    }),
 );
 
 it.effect('answers an unavailable installed catalog as unavailable, never as an allow', () =>

@@ -3,7 +3,7 @@ import {
   AccessWorkloadBindingIdSchema,
   AccessWorkloadCompanyBindingIdSchema,
   readActiveWorkloadBindingHolders,
-  readSystemWorkloadEnrollmentHolders,
+  readSystemPrincipalWorkloadHolders,
   registerWorkloadBindingsIn,
   registerWorkloadCompanyBindingsIn,
   revokeWorkloadBindingIn,
@@ -181,7 +181,7 @@ const readWorkloadStates = (
   Effect.forEach(
     workloads,
     Effect.fnUntraced(function* readState({ companyScoped, workloadKey }) {
-      const systems = yield* readSystemWorkloadEnrollmentHolders(transaction, workloadKey).pipe(
+      const systems = yield* readSystemPrincipalWorkloadHolders(transaction, workloadKey).pipe(
         Effect.mapError(unavailable('The executor workload bindings could not be read')),
       );
       const company = companyScoped ? legalEntityId : undefined;
@@ -228,7 +228,7 @@ export const grantSymmyExecutorWorkloads = Effect.fn('SymmyExecutorWorkloads.gra
   if (workloads.length === 0) {
     return [];
   }
-  const executors = yield* readSystemWorkloadEnrollmentHolders(transaction, SYMMY_JOB_KEY).pipe(
+  const executors = yield* readSystemPrincipalWorkloadHolders(transaction, SYMMY_JOB_KEY).pipe(
     Effect.mapError(unavailable('The Symmy executor enrollment could not be read')),
   );
   const [executor, second] = executors;

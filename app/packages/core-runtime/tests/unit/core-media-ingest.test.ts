@@ -4,10 +4,17 @@ import { Hex } from 'effect/encoding';
 import { expect, it } from 'effect-rstest';
 
 import type { MediaByteSourceOffer } from '../../src/media/byte-source-contract.ts';
-import { MediaIngestUncertain, MediaIntegrityFailed } from '../../src/media/errors.ts';
+import {
+  MediaForbidden,
+  MediaIngestUncertain,
+  MediaIntegrityFailed,
+  mediaUnavailable,
+} from '../../src/media/errors.ts';
+import type { MediaUnavailable } from '../../src/media/errors.ts';
 import { confirmAssetRequest, ingestMediaBytes, parseContentLength } from '../../src/media/ingest.ts';
 import { TenantMediaAssetKeySchema, mediaAssetRefFor } from '../../src/media/identity.ts';
 import { ObjectStorage, ObjectStorageNetworkError } from '../../src/media/object-storage.ts';
+import { MediaByteSizeSchema, MediaContentSha256Schema } from '../../src/media/public-contract.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import type { ConfirmAssetResultSchema } from '../../src/media/upload-contract.ts';
 import type { MediaStoredObjectVerification } from '../../src/media/verification.ts';
@@ -72,6 +79,25 @@ const confirmOutcome = (
 const lengthOf = (stated: number | 'absent' | undefined): number | undefined =>
   stated === 'absent' ? undefined : (stated ?? content.byteLength);
 
+const sealedContent = Schema.decodeUnknownSync(
+  Schema.Struct({ byteSize: MediaByteSizeSchema, contentSha256: MediaContentSha256Schema }),
+)({ byteSize: content.byteLength, contentSha256: digestOf(content) });
+
+/** The sealed row's answer. */
+const followsSealedRow = Effect.succeed<ConfirmResult>({ ...sealedContent, mediaAssetRef, processingStatus: 'ready' });
+
+/** What the real confirm Action answers for a row past `uploaded`: it follows the row, whatever the evidence. */
+const followRow = (processingStatus: string): Effect.Effect<ConfirmResult, MediaIntegrityFailed | MediaUnavailable> => {
+  if (processingStatus === 'ready') {
+    return followsSealedRow;
+  }
+  return Effect.fail(
+    processingStatus === 'failed'
+      ? new MediaIntegrityFailed({ code: 'media_integrity_failed', reason: 'failed' })
+      : mediaUnavailable('The asset changed state while it was being confirmed'),
+  );
+};
+
 const setup = Effect.fn('IngestTest.setup')(function* setup() {
   const storage = yield* makeInMemoryObjectStorage();
   const confirms = yield* Ref.make<readonly MediaStoredObjectVerification['outcome'][]>([]);
@@ -87,19 +113,32 @@ const setup = Effect.fn('IngestTest.setup')(function* setup() {
       readonly body?: Stream.Stream<Uint8Array, unknown>;
       readonly contentLength?: number | 'absent';
       readonly principalId?: string;
+      /** The decision for a row past `uploaded`; a refusal stands for a caller without the confirm capability. */
+      readonly sealedDecision?: Effect.Effect<ConfirmResult, MediaForbidden>;
       readonly selectedLegalEntityId?: string | undefined;
       readonly storageOverride?: typeof storage.service;
     } = {},
-  ) =>
-    ingestMediaBytes({
+  ) => {
+    const sealedAnswer: Effect.Effect<ConfirmResult, MediaForbidden | MediaIntegrityFailed | MediaUnavailable> =
+      options.sealedDecision ?? followRow(options.asset?.processingStatus ?? 'uploaded');
+    return ingestMediaBytes({
       asset: options.asset ?? reserved(),
       body: options.body ?? pieces(content),
-      confirm,
+      confirm: (
+        verification,
+      ): Effect.Effect<
+        ConfirmResult,
+        MediaForbidden | MediaIngestUncertain | MediaIntegrityFailed | MediaUnavailable
+      > =>
+        (options.asset?.processingStatus ?? 'uploaded') === 'uploaded'
+          ? confirm(verification)
+          : Ref.update(confirms, (all) => [...all, verification.outcome]).pipe(Effect.andThen(sealedAnswer)),
       contentLength: lengthOf(options.contentLength),
       mediaAssetRef,
       principalId: options.principalId ?? reserving,
       selectedLegalEntityId: options.selectedLegalEntityId,
     }).pipe(Effect.provideService(ObjectStorage, options.storageOverride ?? storage.service));
+  };
   const callsOf = storage.calls.pipe(Effect.map((calls) => calls.map(({ operation }) => operation)));
   return { callsOf, confirms: Ref.get(confirms), ingest, storage };
 });
@@ -139,7 +178,7 @@ it.effect('refuses another principal before it reads a body byte, and reveals no
         principalId: stranger,
       }),
     );
-    expect(failureTag(exit)).toBe('MediaForbidden');
+    expect(failureTag(exit)).toBe('MediaAssetNotFound');
     expect(yield* Ref.get(pulled)).toBe(0);
     expect(yield* callsOf).toEqual([]);
     expect(yield* confirms).toEqual([]);
@@ -283,9 +322,9 @@ it.effect('answers a replay of the same bytes with the sealed identity and no se
     const sealed = reserved({ processingStatus: 'ready', sealedAt });
     const result = yield* ingest({ asset: sealed });
     expect(result).toMatchObject({ contentSha256: digestOf(content), processingStatus: 'ready' });
-    // The body was compared, nothing was written or read from the provider, and no confirm ran.
+    // The body was compared and nothing was written or read from the provider; the one effect is the decision.
     expect(yield* callsOf).toEqual([]);
-    expect(yield* confirms).toEqual([]);
+    expect(yield* confirms).toEqual(['unverifiable']);
   }),
 );
 
@@ -306,19 +345,19 @@ it.effect('is a conflict when a replay carries different bytes, and the sealed o
 const otherTenantId = '00000000-0000-4000-8000-000000000002';
 const closedStatuses = ['uploaded', 'ready', 'failed', 'scanning'] as const;
 
-it.effect('answers another principal of the same tenant the same refusal for every status, with no provider call', () =>
+it.effect('does not let another principal of the same tenant find the asset, whatever its status', () =>
   Effect.gen(function* statusOracle() {
     const { callsOf, confirms, ingest } = yield* setup();
     for (const processingStatus of closedStatuses) {
       const asset = reserved({ processingStatus, sealedAt: processingStatus === 'ready' ? sealedAt : null });
-      expect(failureTag(yield* Effect.exit(ingest({ asset, principalId: stranger })))).toBe('MediaForbidden');
+      expect(failureTag(yield* Effect.exit(ingest({ asset, principalId: stranger })))).toBe('MediaAssetNotFound');
     }
     // An unbound reservation has no principal to match, so nobody may send its bytes.
     expect(
       failureTag(
         yield* Effect.exit(ingest({ asset: reserved({ ingestedByPrincipalId: null }), principalId: stranger })),
       ),
-    ).toBe('MediaForbidden');
+    ).toBe('MediaAssetNotFound');
     expect(yield* callsOf).toEqual([]);
     expect(yield* confirms).toEqual([]);
   }),
@@ -337,7 +376,37 @@ it.effect('never writes for a sealed, failed or scanning asset, even for the pri
       'MediaNotReady',
     );
     expect(yield* callsOf).toEqual([]);
-    expect(yield* confirms).toEqual([]);
+    // Each asked for a decision on no evidence; nothing was verified or written.
+    expect(yield* confirms).toEqual(['unverifiable', 'unverifiable', 'unverifiable']);
+  }),
+);
+
+it.effect('decides a replay on a sealed asset again: without the confirm capability no body byte is read', () =>
+  Effect.gen(function* deniedReplay() {
+    const { callsOf, ingest } = yield* setup();
+    const pulled = yield* Ref.make(0);
+    const exit = yield* Effect.exit(
+      ingest({
+        asset: reserved({ processingStatus: 'ready', sealedAt }),
+        body: pieces(content).pipe(Stream.tap(() => Ref.update(pulled, (count) => count + 1))),
+        sealedDecision: Effect.fail(new MediaForbidden({ code: 'media_forbidden', reason: 'revoked' })),
+      }),
+    );
+    expect(failureTag(exit)).toBe('MediaForbidden');
+    expect(yield* Ref.get(pulled)).toBe(0);
+    expect(yield* callsOf).toEqual([]);
+  }),
+);
+
+it.effect('decides a request for a failed or scanning asset too, before it tells anything of the row', () =>
+  Effect.gen(function* deniedClosed() {
+    const { callsOf, ingest } = yield* setup();
+    const refused = Effect.fail(new MediaForbidden({ code: 'media_forbidden', reason: 'revoked' }));
+    for (const processingStatus of ['failed', 'scanning'] as const) {
+      const exit = yield* Effect.exit(ingest({ asset: reserved({ processingStatus }), sealedDecision: refused }));
+      expect(failureTag(exit)).toBe('MediaForbidden');
+    }
+    expect(yield* callsOf).toEqual([]);
   }),
 );
 

@@ -703,7 +703,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
           const human = yield* personaNamed(personas, 'human');
           const mediaAssetId = yield* reserve(harness, human, content, 'principals', storage);
           // Another person of the same tenant: refused before a byte is read, and nothing is stored.
-          expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'humanTwo' })).status).toBe(403);
+          expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'humanTwo' })).status).toBe(404);
           // Another tenant: the very answer of an absent asset.
           const foreign = yield* putBytes(address, mediaAssetId, { body: content, persona: 'foreign' });
           expect(foreign.status).toBe(404);
@@ -880,7 +880,7 @@ it.layer(Layer.mergeAll(NodeCrypto.layer, FetchHttpClient.layer, captureLogs), {
           const integration = yield* personaNamed(personas, 'integration');
           const mediaAssetId = yield* reserve(harness, integration, content, 'machine', storage);
           // A human of the same tenant is not the reserving principal, whatever they may hold.
-          expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(403);
+          expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'human' })).status).toBe(404);
           expect((yield* putBytes(address, mediaAssetId, { body: content, persona: 'integration' })).status).toBe(200);
           expect(yield* statusOfRow(harness, world.tenantId, mediaAssetId)).toBe('ready');
           expect((yield* harness.rowOf(world.tenantId, mediaAssetId))?.ingestion_source).toBe('integration');

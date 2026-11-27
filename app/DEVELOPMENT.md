@@ -69,6 +69,8 @@ There is no Action-provisioning command. `authorization:provision-current-action
 
 Sandbox preparation (`pnpm local:initialize`, run by `sandbox:new`) bootstraps the fixed development Tenant's access in one step through `bootstrapTenantAccess`: its scopes, the owner membership, the "Plný přístup" Role compiled from the pinned access catalog artifact (every capability of that catalog with every mode it declares), the owner's Assignment in every scope, and one Core compiler reconcile. It also registers the local Storefront workload binding. A capability that is not in that catalog is not covered; see [Granular Authorization](docs/architecture/AUTHORIZATION.md) for the gate, its outcomes and the Bootstrap and Novinky rules, and [Action Execution](docs/architecture/ACTIONS.md) for the Action carrier.
 
+Preparation does not enrol the `core.media.integrity` system Principal: Core creates it only through a governed Action of a running Shell. With the applications up and an active Application Composition source configured, run `mise exec -- pnpm local:enrol-integrity` once; see [Core Media](docs/architecture/CORE_MEDIA.md).
+
 Keep these results separate when checking a flow:
 
 1. **Preparation.** `pnpm local:initialize` succeeds; the bootstrap is idempotent, so rerunning it is a safe retry. Preparation success is not a permission check.

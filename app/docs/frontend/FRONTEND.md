@@ -70,6 +70,8 @@ Before creating UI:
 
 Never write plain CSS. Use the installed version of Tailwind CSS.
 
+The Shell also provides the kit's JavaScript: every kit subpath is a Module Federation singleton the Shell provides, and a module consumes it with no copy of its own (`createSharedRuntimeConfig` in `module-federation.shared.ts`), so every module renders with the Shell's one kit, its providers and its toast region.
+
 Keep domain-specific presentation inside its feature.
 
 ## Internationalization

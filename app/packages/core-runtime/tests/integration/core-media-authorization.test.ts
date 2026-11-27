@@ -171,7 +171,7 @@ const receiverBindings = makeCoreReadReceiverBindings([{ callers: ['catalog'], r
 const INGEST = 'core.media.ingest';
 const INTEGRITY_WORKLOAD = 'core.media.integrity';
 
-/** The catalog a bootstrap releases: the six real Core Media declarations, taken from the real descriptors. */
+/** The catalog a bootstrap releases: the seven real Core Media declarations, taken from the real descriptors. */
 const mediaModules: readonly AccessCatalogModule[] = [
   {
     descriptors: [
@@ -1056,7 +1056,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
   'core media authorization against SpiceDB and PostgreSQL',
   (suite) => {
     suite.effect(
-      'each capability is its own permission: the holder of one runs it and is refused every other, and a member, an admin and an owner without a role are refused all four',
+      'upload, confirm, metadata read and rename are separate permissions: the holder of one runs it and is refused the other three, and a member, an admin and an owner without a role are refused each',
       () =>
         withMediaWorld((world) =>
           Effect.gen(function* separateCapabilities() {
@@ -1138,21 +1138,23 @@ it.layer(suiteLayer, { excludeTestServices: true })(
         ),
     );
 
-    suite.effect('the bootstrapped owner holds all four capabilities and a whole upload runs end to end', () =>
-      withMediaWorld((world) =>
-        Effect.gen(function* ownerRunsAll() {
-          yield* seedMediaTenant(world);
-          const reserved = yield* reserve(world, OWNER, 'happy-reserve');
-          expect(reserved.processingStatus).toBe('uploaded');
-          const verification = yield* storeAndVerify(world, OWNER, reserved.mediaAssetRef);
-          const confirmed = yield* confirmAs(world, OWNER, reserved.mediaAssetRef, verification, 'happy-confirm');
-          expect(confirmed.processingStatus).toBe('ready');
-          const metadata = yield* readAs(world, OWNER, reserved.mediaAssetRef);
-          expect(metadata).toMatchObject({ displayFilename: 'Brochure.pdf', processingStatus: 'ready' });
-          yield* renameAs(world, OWNER, reserved.mediaAssetRef, 'happy-rename', { name: 'Final.pdf' });
-          expect((yield* rowOf(world, reserved.mediaAssetRef.resourceId))?.display_filename).toBe('Final.pdf');
-        }),
-      ),
+    suite.effect(
+      'the bootstrapped owner may upload, confirm, read metadata and rename: a whole upload runs end to end',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* ownerRunsAll() {
+            yield* seedMediaTenant(world);
+            const reserved = yield* reserve(world, OWNER, 'happy-reserve');
+            expect(reserved.processingStatus).toBe('uploaded');
+            const verification = yield* storeAndVerify(world, OWNER, reserved.mediaAssetRef);
+            const confirmed = yield* confirmAs(world, OWNER, reserved.mediaAssetRef, verification, 'happy-confirm');
+            expect(confirmed.processingStatus).toBe('ready');
+            const metadata = yield* readAs(world, OWNER, reserved.mediaAssetRef);
+            expect(metadata).toMatchObject({ displayFilename: 'Brochure.pdf', processingStatus: 'ready' });
+            yield* renameAs(world, OWNER, reserved.mediaAssetRef, 'happy-rename', { name: 'Final.pdf' });
+            expect((yield* rowOf(world, reserved.mediaAssetRef.resourceId))?.display_filename).toBe('Final.pdf');
+          }),
+        ),
     );
 
     suite.effect('a rename that may only be proposed needs approval and never runs, while a run grant does', () =>
@@ -1178,7 +1180,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
     );
 
     suite.effect(
-      'an engine that cannot be reached stops every capability: a retryable refusal, no handler effect, and the same grants run on the live engine',
+      'an engine that cannot be reached stops upload, confirm, rename and the metadata read: a retryable refusal, no handler effect, and the same grants run on the live engine',
       () =>
         withMediaWorld((world) =>
           Effect.gen(function* engineUnavailable() {
@@ -1286,7 +1288,8 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             });
             expect(released.outcome).toBe('ALLOWED');
 
-            // Ending the tenant's core.media installation stops all four capabilities for the very owner who held them.
+            // Ending the tenant's core.media installation stops upload, confirm, metadata read and rename for the very
+            // owner who held them.
             const reservedBefore = yield* reserve(world, OWNER, 'inst-reserve-live');
             const confirmVerification = yield* storeAndVerify(world, OWNER, reservedBefore.mediaAssetRef);
             yield* scenario.admin.unsafe(
@@ -1446,7 +1449,8 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             const byMachine = yield* seedAsset(world);
             const revoked = yield* seedAsset(world);
             const statusOf = (ref: MediaRef) => statusOfAsset(world, ref);
-            // A member without a role, and the holder of the other four capabilities, are refused: the gate's own reason.
+            // A member without a role, and the holder of upload, confirm, metadata and rename, are refused: the gate's
+            // own reason.
             for (const principalId of [PLAIN, UPLOAD_HOLDER]) {
               const refusal = yield* refusalOf(recordIntegrityAs(world, principalId, byPerson, `deny-${principalId}`));
               expect(reasonsOfAction(refusal)).toContain('deny.insufficient_grant');
@@ -1479,55 +1483,57 @@ it.layer(suiteLayer, { excludeTestServices: true })(
         ),
     );
 
-    suite.effect('an agent is refused every capability in this wave, even holding all four through a role', () =>
-      withMediaWorld((world) =>
-        Effect.gen(function* agentRefused() {
-          const seeded = yield* seedMediaTenant(world);
-          const { scenario } = world;
-          yield* insertRoleWithCells(scenario.admin, scenario.tenantId, {
-            capabilityKeys: [UPLOAD, CONFIRM, METADATA, RENAME],
-            catalogSnapshotId: seeded.bootstrapped.catalogSnapshotId,
-            createdBy: OWNER,
-            roleId: uid(900),
-            roleRevisionId: uid(901),
-            scopeId: seeded.tenantScope,
-          });
-          yield* insertMembership(scenario.admin, scenario.tenantId, {
-            agentId: AGENT,
-            kind: 'member',
-            recordedBy: OWNER,
-            scopeId: seeded.tenantScope,
-          });
-          yield* insertAssignment(scenario.admin, scenario.tenantId, {
-            agentId: AGENT,
-            assignedBy: OWNER,
-            incarnationId: uid(902),
-            roleId: uid(900),
-            roleRevisionId: uid(901),
-            scopeId: seeded.tenantScope,
-          });
-          yield* reconcile(scenario);
-          const ref = yield* seedAsset(world);
-          const reserved = yield* reserve(world, OWNER, 'agent-owner-reserve');
-          const verification = yield* storeAndVerify(world, OWNER, reserved.mediaAssetRef);
-          const before = yield* assetCount(world);
-          const upload = yield* refusalOf(reserve(world, AGENT, 'agent-upload'));
-          const rename = yield* refusalOf(renameAs(world, AGENT, ref, 'agent-rename'));
-          const confirm = yield* refusalOf(
-            confirmAs(world, AGENT, reserved.mediaAssetRef, verification, 'agent-confirm'),
-          );
-          const read = yield* attemptOf(readAs(world, AGENT, ref));
-          expect(reasonsOfAction(upload)).toContain('deny.agent_forbidden');
-          expect(reasonsOfAction(confirm)).toContain('deny.agent_forbidden');
-          expect((yield* rowOf(world, reserved.mediaAssetRef.resourceId))?.processing_status).toBe('uploaded');
-          expect(reasonsOfAction(rename)).toContain('deny.agent_forbidden');
-          expect(read).toMatchObject({ gateRefused: true, ran: false });
-          expect(yield* assetCount(world)).toBe(before);
-          expect((yield* rowOf(world, ref.resourceId))?.display_filename).toBe('Brochure.pdf');
-          // The negative control: the human who administers the same tenant runs the same capabilities.
-          expect((yield* attemptOf(readAs(world, OWNER, ref))).ran).toBe(true);
-        }),
-      ),
+    suite.effect(
+      'an agent is refused upload, confirm, metadata read and rename in this wave, even holding them through a role',
+      () =>
+        withMediaWorld((world) =>
+          Effect.gen(function* agentRefused() {
+            const seeded = yield* seedMediaTenant(world);
+            const { scenario } = world;
+            yield* insertRoleWithCells(scenario.admin, scenario.tenantId, {
+              capabilityKeys: [UPLOAD, CONFIRM, METADATA, RENAME],
+              catalogSnapshotId: seeded.bootstrapped.catalogSnapshotId,
+              createdBy: OWNER,
+              roleId: uid(900),
+              roleRevisionId: uid(901),
+              scopeId: seeded.tenantScope,
+            });
+            yield* insertMembership(scenario.admin, scenario.tenantId, {
+              agentId: AGENT,
+              kind: 'member',
+              recordedBy: OWNER,
+              scopeId: seeded.tenantScope,
+            });
+            yield* insertAssignment(scenario.admin, scenario.tenantId, {
+              agentId: AGENT,
+              assignedBy: OWNER,
+              incarnationId: uid(902),
+              roleId: uid(900),
+              roleRevisionId: uid(901),
+              scopeId: seeded.tenantScope,
+            });
+            yield* reconcile(scenario);
+            const ref = yield* seedAsset(world);
+            const reserved = yield* reserve(world, OWNER, 'agent-owner-reserve');
+            const verification = yield* storeAndVerify(world, OWNER, reserved.mediaAssetRef);
+            const before = yield* assetCount(world);
+            const upload = yield* refusalOf(reserve(world, AGENT, 'agent-upload'));
+            const rename = yield* refusalOf(renameAs(world, AGENT, ref, 'agent-rename'));
+            const confirm = yield* refusalOf(
+              confirmAs(world, AGENT, reserved.mediaAssetRef, verification, 'agent-confirm'),
+            );
+            const read = yield* attemptOf(readAs(world, AGENT, ref));
+            expect(reasonsOfAction(upload)).toContain('deny.agent_forbidden');
+            expect(reasonsOfAction(confirm)).toContain('deny.agent_forbidden');
+            expect((yield* rowOf(world, reserved.mediaAssetRef.resourceId))?.processing_status).toBe('uploaded');
+            expect(reasonsOfAction(rename)).toContain('deny.agent_forbidden');
+            expect(read).toMatchObject({ gateRefused: true, ran: false });
+            expect(yield* assetCount(world)).toBe(before);
+            expect((yield* rowOf(world, ref.resourceId))?.display_filename).toBe('Brochure.pdf');
+            // The negative control: the human who administers the same tenant runs the same capabilities.
+            expect((yield* attemptOf(readAs(world, OWNER, ref))).ran).toBe(true);
+          }),
+        ),
     );
 
     suite.effect(
@@ -1628,7 +1634,7 @@ it.layer(suiteLayer, { excludeTestServices: true })(
             });
             expect(decision.outcome).toBe('DENIED');
 
-            // The four capabilities declare an OPTIONAL legal entity, so the gate decides in the tenant context: a role held
+            // These capabilities declare an OPTIONAL legal entity, so the gate decides in the tenant context: a role held
             // only inside one company never authorizes them, whichever company the request names (or none).
             yield* grantOnly(world, seeded, {
               keys: [UPLOAD, METADATA, RENAME],
