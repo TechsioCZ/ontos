@@ -215,7 +215,14 @@ const ScheduleSchema = Schema.Struct({
       current: Schema.optionalKey(
         Schema.Struct({
           definition: Schema.Struct({
-            identityKey: Schema.Struct({ currencyCode: Schema.String, unitBasis: Schema.Unknown }),
+            // Every key of the identity: the grant names the exact key, and a decode keeps only the declared ones.
+            identityKey: Schema.Struct({
+              catalogSelection: Schema.Unknown,
+              commercialScope: Schema.Unknown,
+              currencyCode: Schema.String,
+              priceGroupSelector: Schema.Unknown,
+              unitBasis: Schema.Unknown,
+            }),
             revision: Schema.Struct({ revision: Schema.Unknown, revisionId: Schema.Unknown }),
           }),
           effectivePeriod: Schema.Struct({ effectiveFrom: Schema.String }),
