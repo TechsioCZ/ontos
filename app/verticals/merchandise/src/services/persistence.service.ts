@@ -22,7 +22,7 @@ import type {
 } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { Config, Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
+import { Config, Console, Effect, DateTime, Match, Option, Predicate, Result, Schema } from 'effect';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 
 import {
@@ -870,32 +870,8 @@ const holdsSku = (entry: Product, sku: string) =>
   sameSku(entry.sku, sku) ||
   (entry.variants ?? []).some((variant) => variant.sku !== undefined && sameSku(variant.sku, sku));
 
-/** Category ids minted only by the Symmy create route /catalog/products/batch (demo-catalog-identity.ts). */
-const SYMMY_ROUTE_CATEGORY_ID = /^symmy-[0-9a-f]{64}-[0-9a-f]{64}$/u;
-
-/**
- * The one plain row the old create-only Symmy route made for this source product: no provenance yet, filed in a
- * category that route minted, holding the source product's code or its only variant SKU, and the only holder. Such a
- * row is adopted (keeps its id) instead of duplicated; any other holder makes the upsert refuse.
- */
-const adoptableRouteRow = (
-  holders: readonly Product[],
-  value: CommandOf<'UpsertSourceProduct'>,
-): Product | undefined => {
-  const [only, ...others] = holders;
-  const [variant, ...moreVariants] = value.variants;
-  return only !== undefined &&
-    others.length === 0 &&
-    variant !== undefined &&
-    moreVariants.length === 0 &&
-    only.importedVia === undefined &&
-    (only.variants ?? []).length === 0 &&
-    only.categoryId !== undefined &&
-    SYMMY_ROUTE_CATEGORY_ID.test(only.categoryId) &&
-    (sameSku(only.sku, variant.sku) || sameSku(only.sku, value.erpCode))
-    ? only
-    : undefined;
-};
+/** A row the shop sells or may sell: neither archived nor deactivated. Only such a row takes a Symmy product's SKU. */
+const isLiveRow = (entry: Product) => entry.active && entry.demoArchive === undefined;
 
 /** The deterministic merchandise row of one main Catalog product imported through Symmy. */
 export const symmyProductIdOf = (catalogProductId: string) => `symmy-${catalogProductId}`;
@@ -908,6 +884,7 @@ const sourceUnitOf = (unit: string | undefined, fallback: Product['unit']): Prod
 /** The fields a Symmy import owns, compared to tell a replay (no write at all) from a real change. */
 const sourceOwnedKey = (product: Product) =>
   JSON.stringify([
+    product.importedVia,
     product.active,
     product.demoArchive !== undefined,
     product.published,
@@ -934,6 +911,116 @@ const sourceOwnedKey = (product: Product) =>
   ]);
 
 /**
+ * Links one Symmy product to the live shop product that already holds its code or a variant SKU (the same SKU is the
+ * same product): marks it imported through Symmy, maps the matched variant (or the plain product) to its Catalog
+ * Variant and writes only the ERP price and stock onto it. Name, texts, category, pictures, published state and the
+ * other variants stay as the shop has them; no row is created. Undefined when no variant pairs with the product.
+ */
+const linkSourceProduct = Effect.fn('Merchandise.linkSourceProduct')(function* linkSourceProduct(
+  state: MerchandiseState,
+  target: Product,
+  value: CommandOf<'UpsertSourceProduct'>,
+  input: MerchandiseCommandInput,
+) {
+  const only = value.variants.length === 1 ? value.variants[0] : undefined;
+  // A Symmy product of one variant is identified by its code as well as by its variant key.
+  const pairsWith = (sku: string | undefined, source: SourceVariantInput) =>
+    sku !== undefined && (sameSku(sku, source.sku) || (source === only && sameSku(sku, value.erpCode)));
+  const nativeVariants = target.variants ?? [];
+  const plain =
+    nativeVariants.length === 0 ? value.variants.find((source) => pairsWith(target.sku, source)) : undefined;
+  const pairs = value.variants.flatMap((source) => {
+    const native = nativeVariants.find((variant) => variant.id !== undefined && pairsWith(variant.sku, source));
+    return native?.id === undefined ? [] : [{ nativeId: native.id, source }];
+  });
+  if (plain === undefined && pairs.length === 0) {
+    return undefined;
+  }
+  const plainPrice = plain?.priceNetMinor ?? undefined;
+  const base = plainPrice === undefined ? target : yield* repriced(target, plainPrice, input);
+  const variants =
+    target.variants === undefined
+      ? undefined
+      : yield* Effect.forEach(
+          target.variants,
+          Effect.fn('Merchandise.linkVariant')(function* linkVariant(native: ProductVariant) {
+            const pair = pairs.find(({ nativeId }) => nativeId === native.id);
+            if (pair === undefined) {
+              return native;
+            }
+            const price = pair.source.priceNetMinor ?? undefined;
+            // A new price goes through the variant normalization (history, gross, scaled tiers) like a staff edit.
+            const { priceTiers: _tiers, ...untiered } = native;
+            void _tiers;
+            const [normalized] =
+              price === undefined || price === native.priceMinor
+                ? [native]
+                : yield* normalizeVariants(target, [{ ...untiered, priceMinor: price }], input);
+            return { ...(normalized ?? native), catalogVariantId: pair.source.catalogVariantId };
+          }),
+          { concurrency: 1 },
+        );
+  const stockOf = (source: SourceVariantInput) => (typeof source.stockOnHand === 'number' ? source.stockOnHand : undefined);
+  const targets = [
+    ...(plain === undefined ? [] : [{ onHand: stockOf(plain), variantId: undefined }]),
+    ...pairs.map(({ nativeId, source }) => ({ onHand: stockOf(source), variantId: nativeId })),
+  ];
+  const movements = yield* Effect.forEach(
+    targets,
+    Effect.fn('Merchandise.linkStock')(function* linkStock(
+      { onHand, variantId }: { readonly onHand: number | undefined; readonly variantId: ProductVariant['id'] },
+      index: number,
+    ) {
+      if (onHand === undefined) {
+        return [];
+      }
+      const current =
+        variantId === undefined
+          ? stockOnHandOf(state.movements, target.id)
+          : variantStockOf(state.movements, target.id, variantId);
+      const delta = normalizeQuantity(onHand - current);
+      if (delta === 0) {
+        return [];
+      }
+      const movement: StockMovement = {
+        at: input.now,
+        delta,
+        id: yield* movementIdOf(input.resourceId, index),
+        note: 'Symmy',
+        productId: target.id,
+        reason: 'ADJUSTMENT',
+        ...stockVariantFields(variantId),
+      };
+      return [movement];
+    }),
+    { concurrency: 1 },
+  ).pipe(Effect.map((lists) => lists.flat()));
+  const linked: Product = {
+    ...base,
+    catalogProductId: target.catalogProductId ?? value.catalogProductId,
+    erpCode: target.erpCode ?? value.erpCode,
+    importedVia: 'symmy',
+    stockTracked: target.stockTracked || targets.some(({ onHand }) => onHand !== undefined),
+    ...(plain === undefined ? {} : { catalogVariantId: plain.catalogVariantId }),
+    ...(variants === undefined ? {} : { variants }),
+  };
+  const entity = yield* entityIdOf(target.id);
+  if (movements.length === 0 && sourceOwnedKey(linked) === sourceOwnedKey(target)) {
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'UNCHANGED', productId: target.id },
+      state,
+    } satisfies SourceUpsertChange;
+  }
+  const next = withProduct(state, { ...linked, updatedAt: input.now });
+  return {
+    entityIds: [entity],
+    sourceUpsert: { outcome: 'UPDATED', productId: target.id },
+    state: movements.length === 0 ? next : { ...next, movements: [...next.movements, ...movements] },
+  } satisfies SourceUpsertChange;
+});
+
+/**
  * One Symmy product as an ordinary product row (see ApplyUpsertSourceProductCommandSchema). Symmy owns the name, code,
  * lifecycle, unit, price and stock; a description or picture is filled only while the row has none, so staff
  * enrichment stays. A missing or zero price never sells: the row stays unpublished until a price arrives.
@@ -944,30 +1031,34 @@ const upsertSourceProduct = Effect.fn('Merchandise.upsertSourceProduct')(functio
   input: MerchandiseCommandInput,
 ) {
   const symmyId = yield* mintId(ProductIdSchema, symmyProductIdOf(value.catalogProductId));
-  const linked = state.products.find(
-    (entry) =>
-      entry.id === symmyId || (entry.importedVia === 'symmy' && entry.catalogProductId === value.catalogProductId),
-  );
+  const existing = state.products.find((entry) => entry.id === symmyId);
   // Every other row holding the code or a source variant SKU (the working set loads them by the indexed SKU keys).
   const sourceSkus = [value.erpCode, ...value.variants.map((variant) => variant.sku)];
   const holders = state.products.filter(
-    (entry) => entry.id !== linked?.id && sourceSkus.some((sku) => holdsSku(entry, sku)),
+    (entry) => entry.id !== symmyId && sourceSkus.some((sku) => holdsSku(entry, sku)),
   );
-  const adopted = linked === undefined ? adoptableRouteRow(holders, value) : undefined;
-  const existing = linked ?? adopted;
   const id = existing?.id ?? symmyId;
   const entity = yield* entityIdOf(id);
-  const refused = (reason: NonNullable<SourceUpsertResult['reason']>): SourceUpsertChange => ({
-    entityIds: [entity],
-    sourceUpsert: { outcome: 'REFUSED', productId: id, reason },
-    state,
-  });
-  if (adopted === undefined && holders.length > 0) {
-    return refused(
-      holders.some((entry) => holdsSku(entry, value.erpCode))
-        ? 'CODE_HELD_BY_NATIVE_PRODUCT'
-        : 'SKU_HELD_BY_NATIVE_PRODUCT',
+  const reasonOf = (entries: readonly Product[]): NonNullable<SourceUpsertResult['reason']> =>
+    entries.some((entry) => holdsSku(entry, value.erpCode)) ? 'CODE_HELD_BY_NATIVE_PRODUCT' : 'SKU_HELD_BY_NATIVE_PRODUCT';
+  // The same SKU is the same product: the one live shop product holding it is linked (price and stock only).
+  const [target, ...otherTargets] = holders.filter(isLiveRow);
+  if (existing === undefined && target !== undefined && otherTargets.length === 0 && !target.id.startsWith('symmy-')) {
+    const link = yield* linkSourceProduct(state, target, value, input);
+    if (link !== undefined) {
+      return link;
+    }
+  }
+  if (holders.length > 0) {
+    yield* Console.warn(
+      `[merchandise-source-upsert] ${value.sourceRecordId} refused: ${reasonOf(holders)} held by ` +
+        holders.map((entry) => `${entry.id}${isLiveRow(entry) ? '' : ' (archived)'}`).join(', '),
     );
+    return {
+      entityIds: [entity],
+      sourceUpsert: { outcome: 'REFUSED', productId: id, reason: reasonOf(holders) },
+      state,
+    } satisfies SourceUpsertChange;
   }
   const single = value.variants.length === 1 ? value.variants[0] : undefined;
   const now = input.now;
@@ -2655,7 +2746,8 @@ export const workingSetRequestOf = (
         productIds: [symmyProductIdOf(value.catalogProductId)],
         productKeys: {
           sku: value.erpCode,
-          skus: value.variants.map((variant) => variant.sku),
+          // The code too: a Symmy product of one variant links the shop variant holding its code as SKU.
+          skus: [value.erpCode, ...value.variants.map((variant) => variant.sku)],
           slugPrefix: productSlugBase(value.name, value.erpCode),
         },
       }),

@@ -24,7 +24,7 @@ import type { ReadServiceFactory } from '@app/core-runtime';
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { Effect, Match, Option, Schema } from 'effect';
+import { Array as Arr, Effect, Match, Option, Schema } from 'effect';
 import {
   CustomerProfileSourceResponseSchema,
   CustomerProfileSourceReceiptSchema,
@@ -117,6 +117,8 @@ const sourcePageRoutine = defineScopedRoutine({
   schema: DATABASE_SCHEMA,
 });
 const routeNotAuthorized = 'The current route does not authorize this source Profile read';
+/** Items of one source Profile page proved at once: bounded below the per-role pool cap their owner reads draw on. */
+const SOURCE_PAGE_ITEM_CONCURRENCY = 8;
 const sourcePartiesRoutine = defineScopedRoutine({
   name: 'read_customer_profile_source_parties',
   ownerModuleKey: OWNER_MODULE_KEY,
@@ -450,6 +452,33 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       return { ...safe, icoAuthority: 'ORGANIZATION' as const };
     },
   );
+  /**
+   * Whether the Party owner still admits the item's Party as a current customer of the company. A Profile whose
+   * Party or Counterparty was archived, or whose customer role ended, is not current: a page leaves it out instead of
+   * failing for every other customer. `count` still counts it.
+   */
+  const partyStillCurrent = Effect.fn('CustomerProfileSourceRead.partyStillCurrent')(function* partyStillCurrent(
+    item: CustomerProfileSourceItem,
+  ) {
+    if (item.profile.subject.kind === 'RETAIL') {
+      yield* requireModuleOperation(requirements.party).pipe(Effect.mapError(unavailable));
+      const person = yield* proof
+        .retail(scope, item.partyRef, item.source, item.partySourceReference, requirements.party)
+        .pipe(Effect.mapError(unavailable));
+      return person.outcome === 'CURRENT_PARTY_RESOLVED';
+    }
+    yield* requireModuleOperation(requirements.counterparty).pipe(Effect.mapError(unavailable));
+    const counterparty = yield* proof
+      .counterparty(
+        scope,
+        item.profile.subject.counterpartyRef.resourceId,
+        item.source,
+        item.partySourceReference,
+        requirements.counterparty,
+      )
+      .pipe(Effect.mapError(unavailable));
+    return counterparty.outcome === 'ELIGIBLE';
+  });
   const projectCurrentItem = Effect.fn('CustomerProfileSourceRead.projectCurrent')(function* projectCurrent(
     item: CustomerProfileSourceItem,
     includeSourceAddresses: boolean,
@@ -636,9 +665,23 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const items =
         page.items.length === 0
           ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))
-          : yield* Effect.forEach(page.items, (item) => projectCurrentItem(item, includeSourceAddresses === true), {
-              concurrency: 1,
-            });
+          : Arr.getSomes(
+              yield* Effect.forEach(
+                page.items,
+                (item) =>
+                  projectCurrentItem(item, includeSourceAddresses === true).pipe(
+                    Effect.map(Option.some),
+                    Effect.catchTag('ReadHandlerUnavailable', (failure) =>
+                      partyStillCurrent(item).pipe(
+                        Effect.flatMap((current) => (current ? Effect.fail(failure) : Effect.succeedNone)),
+                      ),
+                    ),
+                  ),
+                // Each item's owner proofs are independent remote reads; one item after another a page of 25
+                // customers took 10-20 s and pushed GET /admin/customers past the 30 s HTTP budget. Order is kept.
+                { concurrency: SOURCE_PAGE_ITEM_CONCURRENCY },
+              ),
+            );
       return { ...page, items };
     }),
     readParties: Effect.fn('CustomerProfileSourceRead.readParties')(function* readParties(

@@ -12,7 +12,7 @@ import type { PartyPersistenceUnavailableError } from '../../shared/domain/ident
 import { parties, partyAliases, partyContactPoints, partyContactPointPurposes } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
 import { authorizePartyClientSourceReference } from './party-client-source-evidence.service.ts';
-import { lockTenantIdentityWrites } from './party-identifier-claim.service.ts';
+import { lockTenantIdentityReads } from './party-identifier-claim.service.ts';
 import { loadSourceCorrelatedParty } from './source-person-admission.service.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -38,7 +38,7 @@ export const readSourceProfileExport = Effect.fn('SourceProfileExport.read')(fun
     operation: 'PROFILE_EXPORT',
     target: { kind: 'PARTY', partyId: correlated.party.partyId },
   }).pipe(Effect.mapError(unavailable));
-  yield* lockTenantIdentityWrites(transaction, scope.tenantId);
+  yield* lockTenantIdentityReads(transaction, scope.tenantId);
   const [party] = yield* transaction
     .select({ firstName: parties.firstName, lastName: parties.lastName, businessName: parties.businessName })
     .from(parties)

@@ -111,7 +111,10 @@ export const readSymmyStockBatchFacts = Effect.fn('SymmyStockBatch.positionFacts
           if (reason === 'ITEM_NOT_PROVISIONED' || reason === 'POSITION_NOT_FOUND') {
             return Effect.fail(
               SymmyStockDependencyNotReadyProblemSchema.make({
-                detail: 'Wait for product stock provisioning to complete before retrying this row.',
+                detail:
+                  reason === 'ITEM_NOT_PROVISIONED'
+                    ? `No stock item has the key ${row.itemKey}. itemKey is the variant identifier (type variantId) sent in POST /products/batch: send that product first, wait until its job completes, then retry this row.`
+                    : 'Wait for product stock provisioning to complete before retrying this row.',
                 itemKey: row.itemKey,
                 locationKey: row.locationKey,
                 reason,

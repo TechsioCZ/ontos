@@ -606,11 +606,18 @@ const projectItems = <Items extends readonly SymmyItemOutcome[]>(items: Items) =
   }))(items);
 
 const validateCustomersBody = Schema.decodeUnknownEffect(Schema.toType(SymmyCustomersResponseSchema));
+/** Below the Node host's 30 s HTTP budget (SHELL_HTTP_BUDGET), which would answer a bare 500 instead. */
+const SYMMY_CUSTOMERS_READ_DEADLINE = '25 seconds';
 /** The customers read answers only the public body. Anything but a customers projection is unavailable, never an empty list. */
 const handleCustomersRead = handle(SymmyCustomersResponseSchema, (ingress, input: FixtureInput<FixtureRead>) =>
   ingress.dispatch
     .read(input)
     .pipe(
+      // A page that outlives its deadline answers the retryable 503 problem, never the host's bare 500 at 30 s.
+      Effect.timeoutOrElse({
+        duration: SYMMY_CUSTOMERS_READ_DEADLINE,
+        orElse: () => Effect.fail(symmyUnavailableProblem),
+      }),
       Effect.flatMap((result) =>
         'projection' in result && result.projection === 'customers'
           ? validateCustomersBody(mapSymmyCustomersProjection(result)).pipe(
