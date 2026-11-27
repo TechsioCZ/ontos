@@ -1234,7 +1234,14 @@ const sourceProductPresentation = (
     erpCode: value.erpCode,
     importedVia: 'symmy',
     name: value.name,
-    published: value.lifecycle === 'ACTIVE' && priced,
+    // Catalog makes only a product with one Variant ready for sale (symmy-product-plan.ts readinessIneligibleFor):
+    // one with several Variants stays DRAFT there whatever the ERP sends, so that DRAFT decides nothing and the
+    // shop's own publication (a staff step) stays. ACTIVE publishes, RETIRED archives, an unpriced row never sells.
+    published:
+      priced &&
+      (value.lifecycle === 'DRAFT' && value.variants.length > 1
+        ? repricedSingle.published === true
+        : value.lifecycle === 'ACTIVE'),
     sku: value.erpCode,
     stockTracked,
     unit: sourceUnitOf(single?.unit, repricedSingle.unit),
