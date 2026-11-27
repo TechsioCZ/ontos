@@ -314,7 +314,9 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   // The sidebar search is controlled: typed text reaches the query only through the renderer's change event.
   await waitForInteractiveAccountMenu(page);
   const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
-  await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('Unit 1');
+  await sidebar
+    .getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' })
+    .fill('Unit 1');
   await sidebar.getByRole('button', { exact: true, name: 'Search' }).click();
   await expect(page).toHaveURL(/\/en\/search\?q=Unit%201$/u);
 
@@ -447,9 +449,13 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
     await expect(page.getByRole('button', { exact: true, name: 'Reload page' })).toBeEnabled();
     await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
     await expect(sidebar).toBeVisible();
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
-    await expect(sidebar.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
+    await sidebar
+      .getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' })
+      .fill('still usable');
+    await expect(
+      sidebar.getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' }),
+    ).toHaveValue('still usable');
+    await sidebar.getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' }).clear();
     await waitForInteractiveAccountMenu(page);
   } finally {
     await restoreFault.evaluate((restore) => restore());
