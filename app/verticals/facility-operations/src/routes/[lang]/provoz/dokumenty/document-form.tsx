@@ -11,7 +11,6 @@ import {
   useDraftSave,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import {
   ChoiceField,
   FileField,
@@ -19,6 +18,7 @@ import {
   FormReact,
   FormRoot,
   RuledTextField,
+  TemplateChoiceField,
   TextAreaField,
   TextField,
   useAtomSet,
@@ -247,6 +247,11 @@ const makeDocumentForm = () =>
       .addField('noticePeriod', Schema.String)
       .addField('owner', Schema.String)
       .addField('parties', Schema.String)
+      .addField('pickContact', Schema.String)
+      .addField('pickContract', Schema.String)
+      .addField('pickInvoice', Schema.String)
+      .addField('pickProperty', Schema.String)
+      .addField('pickTask', Schema.String)
       .addField('subject', Schema.String)
       .addField('title', Schema.String)
       .addField('validFromInput', Schema.String)
@@ -265,6 +270,11 @@ const makeDocumentForm = () =>
         noticePeriod: TextField,
         owner: TextField,
         parties: TextAreaField,
+        pickContact: TemplateChoiceField,
+        pickContract: TemplateChoiceField,
+        pickInvoice: TemplateChoiceField,
+        pickProperty: TemplateChoiceField,
+        pickTask: TemplateChoiceField,
         subject: TextField,
         title: RuledTextField,
         validFromInput: TextField,
@@ -279,6 +289,9 @@ const documentCreateForm = makeDocumentForm();
 const documentEditForm = makeDocumentForm();
 type DocumentForm = typeof documentCreateForm;
 type DocumentValues = DocumentForm['schema']['Encoded'];
+
+/** The link pickers hold nothing: a pick adds its link at once and the picker is empty again. */
+const noPicks = { pickContact: '', pickContract: '', pickInvoice: '', pickProperty: '', pickTask: '' };
 
 const contractValuesOf = (contract: ContractDraft) => ({
   amountTerms: contract.amountTerms,
@@ -309,6 +322,7 @@ const contractFrom = (values: DocumentValues): ContractDraft => ({
 
 const editValuesOf = (draft: DocumentEditDraft): DocumentValues => ({
   ...contractValuesOf(draft.contract),
+  ...noPicks,
   amends: NONE,
   category: draft.category,
   description: draft.description,
@@ -327,6 +341,7 @@ const editDraftFrom = (values: DocumentValues): DocumentEditDraft => ({
 
 const createValuesOf = (initial: ReturnType<typeof initialDocumentForm>): DocumentValues => ({
   ...contractValuesOf(initial.contract),
+  ...noPicks,
   amends: initial.amends,
   category: initial.category,
   description: initial.description,
@@ -418,51 +433,68 @@ const DocumentLinkFields = ({
   readonly tasks: TaskOptionsState;
 }) => {
   const { t } = useModernI18n();
-  const setLinks = useAtomSet(form.getFieldAtoms(form.fields.links).setValue);
-  const onAddLink = (link: SubjectRef) => {
-    setLinks((current: readonly SubjectRef[]) =>
-      current.some((entry) => sameSubject(entry, link)) ? current : [...current, link],
-    );
+  const setValues = useAtomSet(form.setValues);
+  /** The subject a picker's choice stands for, when it is still offered. */
+  const subjectOf = (values: DocumentValues): SubjectRef | undefined => {
+    if (values.pickProperty !== '' && properties.status === 'ready') {
+      return properties.options.find((option) => option.value === values.pickProperty)?.ref;
+    }
+    if (values.pickTask !== '' && tasks.status === 'ready') {
+      return tasks.options.find((task) => task.id === values.pickTask);
+    }
+    if (values.pickContract !== '') {
+      const picked = linkableContracts.find((entry) => entry.id === values.pickContract);
+      return picked === undefined ? undefined : { id: picked.id, kind: 'document', label: picked.title };
+    }
+    if (values.pickContact !== '' && contacts.status === 'ready') {
+      return contacts.options.find((option) => option.id === values.pickContact);
+    }
+    if (values.pickInvoice !== '' && invoices.status === 'ready') {
+      return invoices.options.find((option) => option.id === values.pickInvoice);
+    }
+    return undefined;
   };
+  // A pick adds its subject as a link, once, and empties the picker again.
+  useAtomSubscribe(form.values, (next) => {
+    if (Option.isNone(next)) {
+      return;
+    }
+    const values = next.value;
+    if (
+      values.pickContact === '' &&
+      values.pickContract === '' &&
+      values.pickInvoice === '' &&
+      values.pickProperty === '' &&
+      values.pickTask === ''
+    ) {
+      return;
+    }
+    const link = subjectOf(values);
+    const links =
+      link === undefined || values.links.some((entry) => sameSubject(entry, link))
+        ? values.links
+        : [...values.links, link];
+    setValues({ ...values, ...noPicks, links });
+  });
   return (
     <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
       <legend className="px-50 font-semibold text-sm">{t(`${k}.fields.links`)}</legend>
       <p className="text-fg-secondary text-xs">{t(`${k}.create.linksHelp`)}</p>
       <form.links />
       {properties.status === 'ready' && (
-        <Select
-          items={properties.options.map((option) => ({
-            displayValue: option.ref.label,
-            label: option.ref.label,
-            value: option.value,
-          }))}
+        <form.pickProperty
+          items={properties.options.map((option) => ({ label: option.ref.label, value: option.value }))}
           label={t('facility-operations.property.pick')}
-          name="document-link-property"
-          onValueChange={({ value }) => {
-            const picked = properties.options.find((option) => option.value === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked.ref);
-            }
-          }}
           placeholder={t('facility-operations.property.pick')}
           size="md"
-          value={[]}
         />
       )}
       {tasks.status === 'ready' && tasks.options.length > 0 && (
-        <Select
-          items={tasks.options.map((task) => ({ displayValue: task.label, label: task.label, value: task.id }))}
+        <form.pickTask
+          items={tasks.options.map((task) => ({ label: task.label, value: task.id }))}
           label={t(`${k}.create.taskLink`)}
-          name="document-link-task"
-          onValueChange={({ value }) => {
-            const picked = tasks.options.find((task) => task.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked);
-            }
-          }}
           placeholder={t(`${k}.create.pickTask`)}
           size="md"
-          value={[]}
         />
       )}
       {tasks.status !== 'ready' && (
@@ -471,43 +503,19 @@ const DocumentLinkFields = ({
         </p>
       )}
       {linkableContracts.length > 0 && category !== 'amendment' && (
-        <Select
-          items={linkableContracts.map((entry) => ({
-            displayValue: entry.title,
-            label: entry.title,
-            value: entry.id,
-          }))}
+        <form.pickContract
+          items={linkableContracts.map((entry) => ({ label: entry.title, value: entry.id }))}
           label={t(`${k}.create.contractLink`)}
-          name="document-link-contract"
-          onValueChange={({ value }) => {
-            const picked = linkableContracts.find((entry) => entry.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink({ id: picked.id, kind: 'document', label: picked.title });
-            }
-          }}
           placeholder={t(`${k}.contract.pickOriginal`)}
           size="md"
-          value={[]}
         />
       )}
       {contacts.status === 'ready' && (
-        <Select
-          items={contacts.options.map((option) => ({
-            displayValue: option.label,
-            label: option.label,
-            value: option.id,
-          }))}
+        <form.pickContact
+          items={contacts.options.map((option) => ({ label: option.label, value: option.id }))}
           label={t(`${k}.create.tenant`)}
-          name="document-link-contact"
-          onValueChange={({ value }) => {
-            const picked = contacts.options.find((option) => option.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked);
-            }
-          }}
           placeholder={t(`${k}.create.pickContact`)}
           size="md"
-          value={[]}
         />
       )}
       {contacts.status !== 'ready' && (
@@ -516,23 +524,11 @@ const DocumentLinkFields = ({
         </p>
       )}
       {invoices.status === 'ready' && invoices.options.length > 0 && (
-        <Select
-          items={invoices.options.map((option) => ({
-            displayValue: option.label,
-            label: option.label,
-            value: option.id,
-          }))}
+        <form.pickInvoice
+          items={invoices.options.map((option) => ({ label: option.label, value: option.id }))}
           label={t(`${k}.create.invoiceLink`)}
-          name="document-link-invoice"
-          onValueChange={({ value }) => {
-            const picked = invoices.options.find((option) => option.id === value[0]);
-            if (picked !== undefined) {
-              onAddLink(picked);
-            }
-          }}
           placeholder={t(`${k}.create.pickInvoice`)}
           size="md"
-          value={[]}
         />
       )}
     </fieldset>
