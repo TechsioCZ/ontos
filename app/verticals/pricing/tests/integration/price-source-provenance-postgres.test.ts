@@ -836,20 +836,8 @@ it.live('lets the same source change its own Current Price at a bound exact key 
         }),
       ).toBe(true);
 
-      // Another source authority, and any caller that does not ask for it, still meet the bound key.
+      // A caller that does not ask for it still meets the bound key (another source: see the test below).
       const boundConflict = { outcome: 'CONFLICT', reason: 'EXACT_KEY_ALREADY_BOUND' };
-      expect(
-        yield* define(
-          sourceDefine({
-            actionInvocationId: 'e7600000-0000-4000-8000-000000000104',
-            amount: '130.000000000',
-            effectiveAt: '2026-09-30T10:00:00.000Z',
-            recordedAt: '2026-09-30T10:02:00.000Z',
-            sourceAssertionId: 'e7600000-0000-4000-8000-000000000114',
-            sourceAuthorityRef: 'other-price-owner',
-          }),
-        ),
-      ).toEqual(boundConflict);
       expect(
         yield* define(
           sourceDefine({
@@ -922,6 +910,126 @@ it.live('lets the same source change its own Current Price at a bound exact key 
       );
       // One Price: its first source revision, the superseding one, and the owner's retirement with its fact.
       expect(counts).toEqual([{ priceCount: 1, provenanceCount: 3, revisionCount: 3 }]);
+      return null;
+    }),
+  ),
+);
+
+it.live('takes a Price staff set back onto the ERP source when the ERP sends the same amount, then reuses it', () =>
+  Effect.scoped(
+    Effect.gen(function* otherSourceSameAmountTakeover() {
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+      yield* cleanup(admin);
+      yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
+
+      const define = (request: ReturnType<typeof sourceDefine>) =>
+        withPersistence(runtime, (persistence) => persistence.define(request.command));
+      const boundPriceId = 'e7600000-0000-4000-8000-000000000201';
+      const erpAssertionId = 'e7600000-0000-4000-8000-000000000211';
+      const staffAssertionId = 'e7600000-0000-4000-8000-000000000212';
+      const takeoverAssertionId = 'e7600000-0000-4000-8000-000000000213';
+
+      const first = yield* define(
+        sourceDefine({
+          actionInvocationId: boundPriceId,
+          amount: '7.330000000',
+          effectiveAt: '2026-09-27T10:00:00.000Z',
+          recordedAt: '2026-09-27T10:02:00.000Z',
+          sourceAssertionId: erpAssertionId,
+        }),
+      );
+      expect(first).toMatchObject({ outcome: 'CREATED' });
+
+      // The staff ERP editor, another source, sets a new amount: its fact supersedes the ERP's.
+      const staff = yield* define(
+        sourceDefine({
+          actionInvocationId: 'e7600000-0000-4000-8000-000000000202',
+          amount: '7.770000000',
+          effectiveAt: '2026-09-28T10:00:00.000Z',
+          recordedAt: '2026-09-28T10:02:00.000Z',
+          sourceAssertionId: staffAssertionId,
+          sourceAuthorityRef: 'other-price-owner',
+        }),
+      );
+      expect(staff).toMatchObject({
+        definition: { revision: { monetaryAmount: { amount: '7.770000000' }, revision: 2 } },
+        outcome: 'CREATED',
+        provenance: { evidence: { lineage: { supersededSourceAssertionId: erpAssertionId } } },
+      });
+
+      // The ERP then sends the amount the staff editor holds: one new revision, same amount, back on the ERP source.
+      const takeoverRequest = sourceDefine({
+        actionInvocationId: 'e7600000-0000-4000-8000-000000000203',
+        amount: '7.770000000',
+        effectiveAt: '2026-09-29T10:00:00.000Z',
+        recordedAt: '2026-09-29T10:02:00.000Z',
+        sourceAssertionId: takeoverAssertionId,
+      });
+      const takeover = yield* define(takeoverRequest);
+      expect(takeover).toMatchObject({
+        definition: {
+          priceRef: priceRef(boundPriceId),
+          revision: {
+            effectiveFrom: '2026-09-29T10:00:00.000Z',
+            monetaryAmount: { amount: '7.770000000', currencyCode: 'CZK' },
+            revision: 3,
+          },
+        },
+        outcome: 'CREATED',
+        provenance: {
+          evidence: {
+            lineage: { kind: 'SUPERSESSION', supersededSourceAssertionId: staffAssertionId },
+            sourceAssertion: { sourceAssertionId: takeoverAssertionId },
+          },
+          provenanceRef: takeoverAssertionId,
+        },
+      });
+      if (takeover.outcome !== 'CREATED') {
+        return yield* Effect.die('Expected the ERP to take the Price back');
+      }
+      expect(
+        acceptedPriceSourceProvenanceMatches({
+          definition: takeover.definition,
+          expectedEvidence: takeoverRequest.evidence,
+          provenance: takeover.provenance,
+        }),
+      ).toBe(true);
+
+      // A later unchanged ERP import is no change: it answers the ERP's own Current fact.
+      const unchanged = yield* define(
+        sourceDefine({
+          actionInvocationId: 'e7600000-0000-4000-8000-000000000204',
+          amount: '7.770000000',
+          effectiveAt: '2026-09-30T10:00:00.000Z',
+          recordedAt: '2026-09-30T10:02:00.000Z',
+          sourceAssertionId: 'e7600000-0000-4000-8000-000000000214',
+        }),
+      );
+      expect(unchanged).toMatchObject({
+        definition: { revision: takeover.definition.revision },
+        outcome: 'REUSED',
+        provenance: { provenanceRef: takeoverAssertionId },
+      });
+
+      const counts = yield* admin.execute<{
+        readonly current: string;
+        readonly provenanceCount: number;
+        readonly revisionCount: number;
+      }>(
+        sql`select
+              (select count(*)::integer from pricing.price_source_assertions
+                where tenant_id = ${tenantId}::uuid) as "provenanceCount",
+              (select count(*)::integer from pricing.price_revisions
+                where tenant_id = ${tenantId}::uuid and price_id = ${boundPriceId}::uuid) as "revisionCount",
+              (select assertion.source_authority_ref from pricing.price_source_assertions as assertion
+                where assertion.tenant_id = ${tenantId}::uuid
+                  and assertion.source_assertion_id = ${takeoverAssertionId}::uuid) as "current"`,
+        'objects',
+      );
+      // The ERP's first fact, the staff fact, the ERP's takeover; the unchanged import records nothing.
+      expect(counts).toEqual([{ current: 'pricing-owner', provenanceCount: 3, revisionCount: 3 }]);
       return null;
     }),
   ),
