@@ -125,6 +125,7 @@ export const CatalogContentPanel = ({
   const save = useProductTabSave<ContentDraft>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: contentPatchOf(value, product) }),
     isValid: (value) => !parametersInvalidOf(value.parameters) && !contentExtrasInvalid(value.extras),
+    keepAs: `content:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Obsah e-shopu uložen. Změnu uvidí zákazník po obnovení stránky.'),
     reset: (next) => {

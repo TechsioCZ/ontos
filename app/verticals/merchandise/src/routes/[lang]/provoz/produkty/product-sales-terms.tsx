@@ -234,6 +234,7 @@ export const SalesTermsPanel = ({
       patch: salesTermsPatchOf(value, confirmed, product),
     }),
     isValid: (value) => !salesTermsInvalid(value, product),
+    keepAs: `sales-terms:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Prodejní podmínky uloženy. Změnu uvidí zákazník po obnovení stránky.'),
     reset: setForm,

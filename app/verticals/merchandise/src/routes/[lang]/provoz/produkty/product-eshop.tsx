@@ -520,6 +520,7 @@ const useVariantsPanel = ({
   const save = useProductTabSave<readonly VariantDraft[]>({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
     isValid: (value) => !variantsInvalid(value),
+    keepAs: `variants:${product.id}`,
     onReload,
     onSaved: () => onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.'),
     reset: setDrafts,

@@ -4,8 +4,9 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect, Option, Schema } from 'effect';
-import { useState } from 'react';
+import { keepDraftOnReload, keptDraft } from '@app/shared-contracts';
+import { Effect, Equal, Option, Schema } from 'effect';
+import { useEffect, useState } from 'react';
 
 import { AddProductCategoryAssignmentPayloadSchema } from '../../shared/actions/add-product-category-assignment.ts';
 import { AssignSkuPayloadSchema } from '../../shared/actions/assign-sku.ts';
@@ -46,6 +47,7 @@ import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { requestId } from './browser-crypto.ts';
 import { ErpMediaSection } from './erp-media-section.tsx';
 import { productListData, variantFiguresData } from './page-data.ts';
+import { RELOAD_REQUIRED, ReloadRequiredNotice, stepFailure } from './reload-required-notice.tsx';
 
 type Lifecycle = ProductPageItem['lifecycle'];
 type CategoryName = ProductPageItem['categories'][number];
@@ -90,7 +92,40 @@ interface Problem {
   readonly _tag: string;
 }
 
-const describe = (step: string, problem: Problem): string => `${step}: ${problem._tag}`;
+const describe = (step: string, problem: Problem): string => stepFailure(step, problem);
+
+/** The name a reload that keeps drafts gives this product's dialog; the list reopens the dialog when one was kept. */
+export const erpProductKeepKey = (item: ProductPageItem) => `catalog:erp-product:${item.productRef.resourceId}`;
+
+/** What a reload keeps of the dialog: the draft, the product it was typed over and the categories created meanwhile. */
+interface KeptProductDraft {
+  readonly base: Draft;
+  readonly created: readonly CategoryName[];
+  readonly draft: Draft;
+}
+
+/**
+ * The user's changes of a kept draft over the product as it is now: a field the user left alone takes the current
+ * value, so a step that already went through before the reload is not sent again, and nothing typed is lost.
+ */
+const changesOver = (current: Draft, kept: KeptProductDraft): Draft => {
+  const pick = <K extends keyof Draft>(key: K): Draft[K] =>
+    Equal.equals(kept.draft[key], kept.base[key]) ? current[key] : kept.draft[key];
+  return {
+    categoryIds: pick('categoryIds'),
+    description: pick('description'),
+    lifecycle: pick('lifecycle'),
+    name: pick('name'),
+    reason: pick('reason'),
+    variants: Object.fromEntries(
+      Object.entries(current.variants).map(([id, variant]) => {
+        const typed = kept.draft.variants[id];
+        const was = kept.base.variants[id];
+        return [id, typed === undefined || was === undefined || Equal.equals(typed, was) ? variant : typed];
+      }),
+    ),
+  };
+};
 
 type Execute<P> = (
   payload: P,
@@ -328,9 +363,21 @@ export const ProductEditDialog = ({
   locale,
   onClose,
 }: ProductEditDialogProps) => {
-  const [draft, setDraft] = useState<Draft>(() => draftOf(item));
+  const keepKey = erpProductKeepKey(item);
+  const [kept] = useState(() => keptDraft<KeptProductDraft>(keepKey));
+  const [draft, setDraft] = useState<Draft>(() => (kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept)));
   const [newCategory, setNewCategory] = useState('');
-  const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>([]);
+  const [createdCategories, setCreatedCategories] = useState<readonly CategoryName[]>(() => kept?.created ?? []);
+  useEffect(
+    () =>
+      keepDraftOnReload(keepKey, () => {
+        const base = draftOf(item);
+        return Equal.equals(draft, base)
+          ? undefined
+          : ({ base, created: createdCategories, draft } satisfies KeptProductDraft);
+      }),
+    [createdCategories, draft, item, keepKey],
+  );
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -352,7 +399,11 @@ export const ProductEditDialog = ({
       onClose();
       return;
     }
-    setFailure(`Uložení se nezdařilo – ${message}. Ostatní změny před touto chybou byly uloženy.`);
+    setFailure(
+      message === RELOAD_REQUIRED
+        ? RELOAD_REQUIRED
+        : `Uložení se nezdařilo – ${message}. Ostatní změny před touto chybou byly uloženy.`,
+    );
   };
   const save = () => {
     if (draft.reason.trim() === '') {
@@ -395,7 +446,7 @@ export const ProductEditDialog = ({
         Effect.match({
           onFailure: (text: string) => {
             setCreating(false);
-            setFailure(`Kategorii se nepodařilo vytvořit – ${text}.`);
+            setFailure(text === RELOAD_REQUIRED ? text : `Kategorii se nepodařilo vytvořit – ${text}.`);
           },
           onSuccess: (result) => {
             setCreating(false);
@@ -597,7 +648,8 @@ export const ProductEditDialog = ({
         <p className="text-fg-secondary text-xs">
           Obrázek se ukládá hned po výběru souboru. Cenu a sklad upravíte u varianty (Cena a sklad).
         </p>
-        {failure !== null && (
+        {failure === RELOAD_REQUIRED && <ReloadRequiredNotice />}
+        {failure !== null && failure !== RELOAD_REQUIRED && (
           <StatusText showIcon status="error">
             {failure}
           </StatusText>

@@ -2,7 +2,7 @@ import { Deferred, Effect } from 'effect';
 import { TestClock } from 'effect/testing';
 import { describe, expect, it } from 'effect-rstest';
 import { draftPending, draftSavable, draftUnsaved, startDraftSave } from '../../src/draft-save.ts';
-import type { SaveOutcome } from '../../src/draft-save.ts';
+import type { DraftSaveOutcome } from '../../src/draft-save.ts';
 
 interface Draft {
   readonly name: string;
@@ -13,13 +13,13 @@ const draft = (name: string): Draft => ({ name });
 /** A controller whose saves wait until the test replies to them. */
 const setup = Effect.fnUntraced(function* setup() {
   const sent: string[] = [];
-  const replies: Deferred.Deferred<SaveOutcome>[] = [];
+  const replies: Deferred.Deferred<DraftSaveOutcome>[] = [];
   const options = {
     isValid: (value: Draft) => value.name.trim() !== '',
     save: (value: Draft) =>
       Effect.suspend(() => {
         sent.push(value.name);
-        const reply = Deferred.makeUnsafe<SaveOutcome>();
+        const reply = Deferred.makeUnsafe<DraftSaveOutcome>();
         replies.push(reply);
         return Deferred.await(reply);
       }),
@@ -27,7 +27,7 @@ const setup = Effect.fnUntraced(function* setup() {
   const controller = yield* startDraftSave(draft('Before'), options);
   /** What the hook's `adopt` does: a fresh controller from the server version. */
   const restart = (name: string) => startDraftSave(draft(name), options);
-  const reply = Effect.fnUntraced(function* answer(index: number, outcome: SaveOutcome) {
+  const reply = Effect.fnUntraced(function* answer(index: number, outcome: DraftSaveOutcome) {
     const pending = replies[index];
     expect(pending).toBeDefined();
     if (pending !== undefined) {
@@ -80,6 +80,25 @@ describe('explicit draft save', () => {
       expect(controller.status()).toBe('saved');
       controller.change(draft('After all'));
       expect(controller.status()).toBe('dirty');
+    }),
+  );
+
+  it.effect('keeps a draft a deploy left behind unsaved, offering the reload while it is typed on', () =>
+    Effect.gen(function* reloadRequired() {
+      const { controller, reply, sent } = yield* setup();
+      controller.change(draft('After'));
+      controller.save();
+      yield* reply(0, 'reload-required');
+      expect(controller.status()).toBe('reload-required');
+      expect(draftUnsaved(controller.status())).toBe(true);
+      expect(draftSavable(controller.status())).toBe(true);
+      controller.change(draft('After more'));
+      expect(controller.status()).toBe('reload-required');
+      // Uložit still sends it: the tab may have reached the new release meanwhile.
+      controller.save();
+      expect(sent).toEqual(['After', 'After more']);
+      yield* reply(1, 'saved');
+      expect(controller.status()).toBe('saved');
     }),
   );
 

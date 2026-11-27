@@ -160,7 +160,8 @@ export type {
   MicroVerticalOperationSource,
   MicroVerticalReadiness,
 } from '@modern-js/bff-effect/microvertical-api';
-export { makeOperationGateway, makeReferenceGatewayCredentials } from './operation-gateway.ts';
+export { makeOperationGateway, makeReferenceGatewayCredentials, releaseGone } from './operation-gateway.ts';
+export { hasKeptDraft, keepDraftOnReload, keptDraft, reloadKeepingDrafts } from './kept-drafts.ts';
 export { ReferenceGatewayCredentialsSchema, REFERENCE_GATEWAY_CREDENTIALS_HEADER } from './reference-gateway.ts';
 export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
 export {

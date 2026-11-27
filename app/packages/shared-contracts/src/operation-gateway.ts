@@ -81,6 +81,15 @@ const releaseChanged = (error: unknown): boolean => {
   return false;
 };
 
+/**
+ * The tab can no longer reach the release its document was built from: only a page reload loads the new one
+ * (`reloadKeepingDrafts` keeps the unsaved drafts across it).
+ */
+export const releaseGone = (error: unknown): boolean => {
+  const tag = fieldOf(error, '_tag');
+  return tag === 'DocumentCompositionRevisionError' || tag === 'GatewayReloadRequiredProblem';
+};
+
 /** Short outages while a deploy switches instances (the owner's permission check, the Shell issuer). */
 const transientlyUnavailable = (error: unknown): boolean =>
   fieldOf(error, 'code') === 'action_permission_check_failed' ||
@@ -118,12 +127,19 @@ const recoveryDelayMillis = (round: number) => (round === 0 ? 0 : 1500 * round);
 
 /**
  * Runs `once` and, when a deploy got in the way, adopts the new release and runs it again with the same inputs (the
- * caller's idempotency key included), so an open editor saves without a reload. Other failures pass through.
+ * caller's idempotency key included), so an open editor saves without a reload. When the new release still refuses
+ * the tab after every round, the call fails as one `DocumentCompositionRevisionError` (`releaseGone`), whichever
+ * refusal came last, so every editor offers the reload. Other failures pass through.
  */
 const recoveringAcrossDeploys = <Success, Failure>(once: Effect.Effect<Success, Failure>) => {
-  const recover = (error: Failure, round: number): Effect.Effect<Success, Failure> => {
-    if (round >= RECOVERY_ROUNDS || !('document' in globalThis)) {
+  const recover = (error: Failure, round: number): Effect.Effect<Success, Failure | DocumentCompositionRevisionError> => {
+    if (!('document' in globalThis)) {
       return Effect.fail(error);
+    }
+    if (round >= RECOVERY_ROUNDS) {
+      return Effect.fail(
+        releaseChanged(error) ? new DocumentCompositionRevisionError({ cause: error, reason: 'revision-mismatch' }) : error,
+      );
     }
     const retry = once.pipe(Effect.catch((error_: Failure) => recover(error_, round + 1)));
     if (releaseChanged(error)) {

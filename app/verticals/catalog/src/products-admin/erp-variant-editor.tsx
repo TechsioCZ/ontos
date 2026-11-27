@@ -19,8 +19,9 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
+import { keepDraftOnReload, keptDraft } from '@app/shared-contracts';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
@@ -30,6 +31,7 @@ import { readErpPriceGroups } from './erp-price-groups.ts';
 import type { ErpPriceGroup } from './erp-price-groups.ts';
 import { variantFiguresData } from './page-data.ts';
 import { onHandRequestOf, pricesRequestOf } from './products-model.ts';
+import { RELOAD_REQUIRED, ReloadRequiredNotice, stepFailure } from './reload-required-notice.tsx';
 
 const freshUuid = newUuid.pipe(Effect.mapError((failure) => `Nelze vytvořit identifikátor (${failure._tag})`));
 const requestId = newRequestId.pipe(Effect.mapError((failure) => `Nelze vytvořit identifikátor (${failure._tag})`));
@@ -55,7 +57,7 @@ const ProblemCodeSchema = Schema.Struct({ code: Schema.String });
 const describe = (step: string, problem: Problem): string => {
   const code = Schema.decodeUnknownOption(ProblemCodeSchema)(problem);
   const detail = Option.isSome(code) ? ` (${code.value.code})` : '';
-  return `${step}: ${problem._tag}${detail}`;
+  return stepFailure(step, problem, detail);
 };
 
 type Variant = ProductPageItem['variants'][number];
@@ -357,6 +359,19 @@ const writeStock = Effect.fn('ErpVariantEditor.writeStock')(function* stock(
       );
 });
 
+/** The name a reload that keeps drafts gives this Variant's dialog; the list reopens the dialog when one was kept. */
+export const erpVariantKeepKey = (variantId: string) => `catalog:erp-variant:${variantId}`;
+
+const DEFAULT_REASON = 'Úprava ceny a skladu v administraci';
+
+/** The figures the user changed in the dialog, kept across a reload; the others come from the owners again. */
+interface KeptFigures {
+  readonly amount?: string;
+  readonly groupAmounts?: Readonly<Record<string, string>>;
+  readonly reason?: string;
+  readonly stock?: string;
+}
+
 interface ErpVariantEditorProps {
   readonly item: ProductPageItem;
   readonly offer: ErpOffer;
@@ -370,13 +385,31 @@ interface Loaded {
   readonly stock: StockPage;
 }
 
+/** The figures the dialog opens with: what the owners answered for the price, each group price and the stock. */
+const loadedFigures = (value: Loaded) => {
+  const [answer] = value.stock.items;
+  return {
+    amount: value.price?.priceRevision.monetaryAmount.amount ?? '',
+    groupAmounts: Object.fromEntries(
+      value.groups.flatMap(({ group, price }) =>
+        price === undefined ? [] : [[group.priceGroupRef.resourceId, price.priceRevision.monetaryAmount.amount] as const],
+      ),
+    ),
+    stock: answer?.outcome === 'ON_HAND' ? answer.total.amount : '',
+  };
+};
+
 export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariantEditorProps) => {
   const variant = item.variants.find(({ variantRef }) => variantRef.resourceId === variantId);
+  const keepKey = erpVariantKeepKey(variantId);
+  const [kept] = useState(() => keptDraft<KeptFigures>(keepKey));
+  // Figures a reload kept go over the first figures the owners answer with, once.
+  const keptFigures = useRef(kept);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [amount, setAmount] = useState('');
   const [stock, setStock] = useState('');
   const [groupAmounts, setGroupAmounts] = useState<Readonly<Record<string, string>>>({});
-  const [reason, setReason] = useState('Úprava ceny a skladu v administraci');
+  const [reason, setReason] = useState(() => kept?.reason ?? DEFAULT_REASON);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   useEffect(() => {
@@ -395,24 +428,38 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
         Effect.match({
           onFailure: (text: string) => setFailure(text),
           onSuccess: (value) => {
+            const figures = loadedFigures(value);
+            const restored = keptFigures.current;
+            keptFigures.current = undefined;
             setLoaded(value);
-            setAmount(value.price?.priceRevision.monetaryAmount.amount ?? '');
-            setGroupAmounts(
-              Object.fromEntries(
-                value.groups.flatMap(({ group, price }) =>
-                  price === undefined
-                    ? []
-                    : [[group.priceGroupRef.resourceId, price.priceRevision.monetaryAmount.amount] as const],
-                ),
-              ),
-            );
-            const [answer] = value.stock.items;
-            setStock(answer?.outcome === 'ON_HAND' ? answer.total.amount : '');
+            setAmount(restored?.amount ?? figures.amount);
+            setGroupAmounts({ ...figures.groupAmounts, ...restored?.groupAmounts });
+            setStock(restored?.stock ?? figures.stock);
           },
         }),
       ),
     );
   }, [item, offer, variant]);
+  useEffect(
+    () =>
+      keepDraftOnReload(keepKey, () => {
+        if (loaded === null) {
+          return undefined;
+        }
+        const figures = loadedFigures(loaded);
+        const changedGroups = Object.fromEntries(
+          Object.entries(groupAmounts).filter(([id, typed]) => figures.groupAmounts[id] !== typed),
+        );
+        const changed: KeptFigures = {
+          ...(amount === figures.amount ? {} : { amount }),
+          ...(Object.keys(changedGroups).length === 0 ? {} : { groupAmounts: changedGroups }),
+          ...(reason === DEFAULT_REASON ? {} : { reason }),
+          ...(stock === figures.stock ? {} : { stock }),
+        };
+        return Object.keys(changed).length === 0 ? undefined : changed;
+      }),
+    [amount, groupAmounts, keepKey, loaded, reason, stock],
+  );
   const save = () => {
     if (loaded === null || variant === undefined) {
       return;
@@ -459,7 +506,7 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
         Effect.match({
           onFailure: (text: string) => {
             setBusy(false);
-            setFailure(`Uložení se nezdařilo – ${text}.`);
+            setFailure(text === RELOAD_REQUIRED ? text : `Uložení se nezdařilo – ${text}.`);
             variantFiguresData.invalidate();
           },
           onSuccess: () => {
@@ -577,7 +624,8 @@ export const ErpVariantEditor = ({ item, offer, onClose, variantId }: ErpVariant
             </label>
           </>
         )}
-        {failure !== null && (
+        {failure === RELOAD_REQUIRED && <ReloadRequiredNotice />}
+        {failure !== null && failure !== RELOAD_REQUIRED && (
           <StatusText showIcon status="error">
             {failure}
           </StatusText>

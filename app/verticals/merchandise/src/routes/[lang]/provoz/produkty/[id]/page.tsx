@@ -10,6 +10,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DocumentTitle, Toaster } from '@app/admin-ui';
+import { reloadKeepingDrafts } from '@app/shared-contracts';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../../runtime/page-data-hooks.ts';
 import {
@@ -112,8 +113,9 @@ const ProductDetailPageContent = ({ context, legalEntityId, routeParams, search 
   );
   const reloadRequired = failure === 'reload-required';
   const handleRetry = () => {
+    // Only a reload loads the release that replaced this tab's; the editors' unsaved drafts come back after it.
     if (reloadRequired) {
-      window.location.reload();
+      reloadKeepingDrafts();
       return;
     }
     handleReload();

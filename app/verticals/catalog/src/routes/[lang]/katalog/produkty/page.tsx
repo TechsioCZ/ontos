@@ -1,3 +1,4 @@
+import { hasKeptDraft, keepDraftOnReload, keptDraft } from '@app/shared-contracts';
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageData } from '@app/shared-contracts/page-data';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -23,8 +24,8 @@ import {
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
 import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
 import { erpStorefrontStatus } from '../../../../products-admin/erp-storefront-status.ts';
-import { ErpVariantEditor } from '../../../../products-admin/erp-variant-editor.tsx';
-import { ProductEditDialog } from '../../../../products-admin/product-edit-dialog.tsx';
+import { ErpVariantEditor, erpVariantKeepKey } from '../../../../products-admin/erp-variant-editor.tsx';
+import { ProductEditDialog, erpProductKeepKey } from '../../../../products-admin/product-edit-dialog.tsx';
 import type { ProductListInput, VariantFiguresInput } from '../../../../products-admin/page-data.ts';
 import {
   formatPrice,
@@ -119,7 +120,12 @@ const PriceText = ({ cell }: { readonly cell: PriceCell }) => {
 const VariantTable = ({ input }: { readonly input: VariantFiguresInput }) => {
   const { t } = useModernI18n();
   const figures = useData(variantFiguresData, input);
-  const [editing, setEditing] = useState<string | null>(null);
+  // After "Načíst novou verzi a obnovit úpravy" the Variant dialog that was open opens again with its figures.
+  const [editing, setEditing] = useState<string | null>(
+    () =>
+      input.item.variants.find(({ variantRef }) => hasKeptDraft(erpVariantKeepKey(variantRef.resourceId)))?.variantRef
+        .resourceId ?? null,
+  );
   if (figures.state === 'pending') {
     return <StatusText status="default">{t(`${key}.variants.loading`)}</StatusText>;
   }
@@ -198,8 +204,11 @@ const ProductRows = ({
   readonly offer: Option.Option<ErpOffer>;
 }) => {
   const { t } = useModernI18n();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(false);
+  // A dialog open before "Načíst novou verzi a obnovit úpravy" opens again with what was typed in it.
+  const [open, setOpen] = useState(() =>
+    item.variants.some(({ variantRef }) => hasKeptDraft(erpVariantKeepKey(variantRef.resourceId))),
+  );
+  const [editing, setEditing] = useState(() => hasKeptDraft(erpProductKeepKey(item)));
   const name = productName(item.localized);
   const toggle = () => setOpen((current) => !current);
   return (
@@ -367,12 +376,25 @@ const Pager = ({
   );
 };
 
+/** The list page a reload that keeps drafts comes back to, so the row of a kept dialog is on screen again. */
+const QUERY_KEEP_KEY = 'catalog:erp-products:query';
+
+interface ListQuery {
+  readonly offset: number;
+  readonly search: string;
+}
+
 const ProductsPageContent = (props: ProductsPageProps) => {
   const { language, t } = useModernI18n();
   const search = props.search ?? '';
   const offer = useErpOffer(search, props.context?.legalEntityId ?? '');
-  const [draft, setDraft] = useState('');
-  const [query, setQuery] = useState({ offset: 0, search: '' });
+  const [keptQuery] = useState(() => keptDraft<ListQuery>(QUERY_KEEP_KEY));
+  const [draft, setDraft] = useState(() => keptQuery?.search ?? '');
+  const [query, setQuery] = useState<ListQuery>(() => keptQuery ?? { offset: 0, search: '' });
+  useEffect(
+    () => keepDraftOnReload(QUERY_KEEP_KEY, () => (query.offset === 0 && query.search === '' ? undefined : query)),
+    [query],
+  );
   if (props.context === undefined) {
     return <EmptyState description={t(`${key}.noCompanyDescription`)} title={t(`${key}.noCompany`)} />;
   }
