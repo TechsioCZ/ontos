@@ -554,11 +554,11 @@ it.live("executes the real planner over this commit's reference graph: CI-only c
 
 it.live("executes the real planner over this commit's reference graph: what stage runs deploys every service", () =>
   Effect.gen(function* deliveredInputs() {
+    // stage-warmup.mts left this list with the proofs (6c6620eafb): stage no longer runs it.
     for (const changed of [
       WORKFLOW,
       'app/scripts/zerops/app-host.mts',
       'app/scripts/run-zerops-migrator.mjs',
-      'app/scripts/ops/stage-warmup.mts',
       'app/scripts/zerops/push-service.sh',
     ]) {
       const { plan } = yield* planWith(changing([changed]));

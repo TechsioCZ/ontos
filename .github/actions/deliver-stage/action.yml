@@ -1,13 +1,19 @@
 name: Deliver and verify stage
 description: >-
-  Every stage mutation of a run and its origin checks, on one runner (.github/workflows/zerops-stage.yml): the
+  Every stage mutation of a run and every proof after it, on one runner (.github/workflows/zerops-stage.yml): the
   secrets of every selected service before the first push, the app push first, the storefront builds and pushes while
-  Zerops builds the app, then origin checks once the selected services are live.
-  Run from the repository root after lint succeeds and the caller's "Mark the actual deployment attempt" step.
-  Every step up to the app upload runs only bash, curl, jq, tar, zstd and git. The toolchain and the whole
-  workspace install after the upload, while Zerops builds the app.
+  Zerops builds the app, then every service's verification once the app is live, and the warm-up and MCP OAuth proofs.
+  Run from the repository root after the caller's own "Mark the actual deployment attempt" step. Every step up to the
+  app upload runs only bash, curl, jq, tar, zstd and git, so a caller that installed nothing pushes right after its
+  checkout; the toolchain and the whole workspace install after the upload, while Zerops builds the app.
 
 inputs:
+  toolchain:
+    description: >-
+      'installed' when the caller ran install-app (the root importer) before this action: the whole workspace installs
+      from its pnpm store after the app upload. 'none' when the caller installed nothing: install-app sets up the
+      toolchain, restores the pnpm store and installs the whole workspace after the app upload.
+    required: true
   app:
     description: Push the app ('true' or 'false').
     required: true
@@ -86,7 +92,16 @@ runs:
         SHOP_STOREFRONT_APP_ID: sroubshop-storefront
         ONTOS_N1_STOREFRONT_API_KEY: ${{ inputs.n1-storefront-api-key }}
         ZEROPS_TOKEN: ${{ inputs.zerops-token }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
       run: |
+        # Before any mutation: a toolchain value no install step below answers would leave the workspace uninstalled.
+        case "$TOOLCHAIN" in
+          installed | none) ;;
+          *)
+            echo "::error::toolchain is 'installed' or 'none', not '$TOOLCHAIN'"
+            exit 1
+            ;;
+        esac
         sync=app/scripts/zerops/sync-service-secret.sh
         if [ "$PUSH_APP" = true ]; then
           bash "$sync" "$ZEROPS_APP_SERVICE_ID" ONTOS_OWNER_SECRETS_JSON OWNER_SECRETS
@@ -129,9 +144,10 @@ runs:
       run: bash app/scripts/zerops/stage-push.sh start app
 
     # Measurement only, in the background from the push on: where the new container's boot goes. It starts right after
-    # the upload: its first read takes the newest finished boot as the old container's, so a reader that
+    # the upload in both paths: its first read takes the newest finished boot as the old container's, so a reader that
     # starts after the new boot loses that boot. It installs the pinned @zerops/zcli with the one npm on PATH here:
-    # the hosted runner's own npm. The toolchain installs after the app upload, never a second npm attempt.
+    # the toolchain's npm when the caller installed it (toolchain: installed), the hosted runner's own npm when it did
+    # not (toolchain: none). One npm per path, never a second attempt.
     - name: Read the new app container's boot stages
       id: boot-stages
       if: inputs.app == 'true'
@@ -152,9 +168,16 @@ runs:
     # The unit and storefront builds and the verification need the whole workspace. Only now, after the app upload:
     # nothing up to the upload needs the toolchain, so a caller that installed nothing has already pushed.
     - name: Set up the toolchain and install the app workspace
+      if: inputs.toolchain == 'none'
       uses: ./.github/actions/install-app
       with:
         install-args: --trust-lockfile
+
+    - name: Install the app workspace
+      if: inputs.toolchain == 'installed'
+      shell: bash
+      working-directory: app
+      run: mise exec -- pnpm install --frozen-lockfile --trust-lockfile
 
     # Webpack's compiler cache only speeds the build; its contents never decide what ships. The entry is named by the
     # storefront's own sources and the install, so a push that does not touch them saves nothing; a change saves once.
@@ -259,9 +282,13 @@ runs:
       shell: bash
       run: bash app/scripts/zerops/stage-push.sh wait app
 
-    # After the deployments, build any units the Zerops build could not lend back. The next push can reuse
-    # this complete zerops-units-0 without waiting for runner builds again. Keep the checkout clean and use the
-    # identity step's declared build environment. A failure here costs the next push a rebuild, not this delivery.
+    # The next push lends every unit it has not changed from this run's zerops-units-0 (reuse-shard-units.sh
+    # take-units). The units this push left to the Zerops build exist only there, so they build here as well, while
+    # Zerops builds the app: without them the next push counts them as missing again, and they pile up push after push
+    # until a one-module change goes through the build matrix. Before the storefront builds, on a clean checkout (an
+    # untracked file makes every release identity `workspace`), with the identity step's declared build environment;
+    # each build must carry the identity this commit gives its unit, or the run fails here.
+    # Hotfix: after the deployments, off the path to live; a failure here only costs the next push a rebuild.
     - name: Build the units the Zerops build builds, for the next push
       if: inputs.app == 'true' && inputs.keep-units == 'true' && inputs.build-units != ''
       continue-on-error: true

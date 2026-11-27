@@ -330,10 +330,9 @@ it.effect('fails the verdict when the proofs never started, and refuses to start
 it.effect('installs the whole workspace once and bypasses pre-run verification for every pnpm command it runs', () =>
   Effect.gen(function* completeVerificationSetup() {
     const steps = yield* readDelivery;
-    const install = steps.find((step) => step.name === 'Set up the toolchain and install the app workspace');
-    expect(install?.uses).toBe('./.github/actions/install-app');
-    expect(install?.with?.['install-args']).toBe('--trust-lockfile');
-    expect(install?.if).toBeUndefined();
+    expect(steps.find((step) => step.name === 'Install the app workspace')?.run).toBe(
+      'mise exec -- pnpm install --frozen-lockfile --trust-lockfile',
+    );
     for (const step of steps) {
       for (const invocation of (step.run ?? '').matchAll(/mise exec -- pnpm (?<arguments>[^\n]+)/gu)) {
         if (invocation.groups?.arguments?.startsWith('install ') === true) {
