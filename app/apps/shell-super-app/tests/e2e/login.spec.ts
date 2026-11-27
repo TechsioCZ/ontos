@@ -147,7 +147,9 @@ test('renders the exact anonymous English and Czech home states', async ({ page 
       expect(page.getByRole('checkbox')).toHaveCount(0),
       expect(page.locator('header[aria-label]')).toHaveCount(0),
       expect(page.getByRole('complementary')).toHaveCount(0),
-      expect(page.getByRole('region')).toHaveCount(0),
+      // The only region is the kit's empty toast region, which the Shell mounts once for every page and module.
+      expect(page.getByRole('region')).toHaveCount(1),
+      expect(page.locator('[role="region"][id^="toast-group:"]')).toHaveCount(1),
     ]);
   };
   await expectAnonymousHome('en', 'Login');
