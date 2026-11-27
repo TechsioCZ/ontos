@@ -1,10 +1,10 @@
+import { ChoiceField, EntryTextField, FormBuilder, FormReact, FormRoot, useAtomValue } from '@app/core-runtime/ui/form';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import {
   AgentBatchKeySchema,
   AgentItemKeySchema,
@@ -29,7 +29,7 @@ import { Url } from 'effect/http';
 import type { HttpClient } from 'effect/http';
 import type { ComponentProps } from 'react';
 
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
 import {
   agentMutationIntent,
@@ -46,6 +46,25 @@ type Decision = AgentDecideRequest['decision'];
 type ReviewIntent =
   | { readonly kind: 'decide'; readonly request: AgentMutationIntent<AgentDecideRequest> }
   | { readonly kind: 'revert'; readonly request: AgentMutationIntent<AgentRevertRequest> };
+
+/** The module the queue shows; `""` is every module. It applies at once, so the form never submits. */
+const queueModuleForm = FormReact.make(FormBuilder.empty.addField('moduleKey', Schema.String), {
+  fields: { moduleKey: ChoiceField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const moduleKeyValue = queueModuleForm.getFieldAtoms(queueModuleForm.fields.moduleKey).value;
+
+/**
+ * The reviewer's note per batch, keyed by batch key; the decision buttons send it, so the form never submits.
+ * Every batch card renders its own entry of the one form.
+ */
+const batchNotesForm = FormReact.make(
+  FormBuilder.empty.addField('notes', Schema.Record(Schema.String, Schema.String)),
+  { fields: { notes: EntryTextField }, onSubmit: () => Effect.void, runtime: browserAtomRuntime },
+);
+const notesValue = batchNotesForm.getFieldAtoms(batchNotesForm.fields.notes).value;
+const noNotes: Readonly<Record<string, string>> = {};
 
 /** Neutral outline for settled items; the theme's secondary badge is the brand green and reads as success. */
 const itemBadgeVariants = {
@@ -267,11 +286,11 @@ const BatchCard = ({
   readonly targetItemKey: string | undefined;
 }) => {
   const { t } = useModernI18n();
-  const [note, setNote] = useState('');
+  const notes = Option.getOrElse(useAtomValue(notesValue), () => noNotes);
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = batch.items.filter((item) => item.status === 'pending');
   const decidable = pending.filter((item) => item.canDecide);
-  const trimmedNote = note.trim();
+  const trimmedNote = (notes[batch.key] ?? '').trim();
   const decide = (keys: readonly string[], decision: Decision) => onDecide(batch, keys, decision, trimmedNote);
   // Modules with their own AI change engine declare the page that shows these batches too.
   const { modulePage } = batch;
@@ -304,14 +323,19 @@ const BatchCard = ({
         </div>
         {decidable.length > 0 && (
           <>
-            <FormInput
-              id={`note-${batch.key}`}
-              label={t('shell.agentPlatform.approvals.note')}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder={t('shell.agentPlatform.approvals.notePlaceholder')}
-              size="sm"
-              value={note}
-            />
+            <FormRoot
+              defaultValues={{ notes: noNotes }}
+              form={batchNotesForm}
+              translateMessage={(message) => t(message)}
+            >
+              <batchNotesForm.notes
+                entry={batch.key}
+                id={`note-${batch.key}`}
+                label={t('shell.agentPlatform.approvals.note')}
+                placeholder={t('shell.agentPlatform.approvals.notePlaceholder')}
+                size="sm"
+              />
+            </FormRoot>
             <div className="ai-review-actions">
               <Button
                 disabled={busy}
@@ -611,16 +635,12 @@ const useReviewTarget = (
 
 const QueueFilters = ({
   filter,
-  moduleFilter,
   modules,
   onFilter,
-  onModuleFilter,
 }: {
   readonly filter: 'all' | 'pending';
-  readonly moduleFilter: string;
   readonly modules: NonNullable<AgentQueueResponse['modules']>;
   readonly onFilter: (filter: 'all' | 'pending') => void;
-  readonly onModuleFilter: (moduleKey: string) => void;
 }) => {
   const { t } = useModernI18n();
   return (
@@ -643,17 +663,16 @@ const QueueFilters = ({
       >
         Všechny dávky
       </Button>
-      <label>
-        <span>Modul</span>
-        <select onChange={(event) => onModuleFilter(event.target.value)} value={moduleFilter}>
-          <option value="">Všechny moduly</option>
-          {modules.map((module) => (
-            <option key={module.moduleKey} value={module.moduleKey}>
-              {module.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <FormRoot defaultValues={{ moduleKey: '' }} form={queueModuleForm} translateMessage={(message) => t(message)}>
+        <queueModuleForm.moduleKey
+          items={[
+            { label: 'Všechny moduly', value: '' },
+            ...modules.map((module) => ({ label: module.label, value: module.moduleKey })),
+          ]}
+          label="Modul"
+          placeholder="Všechny moduly"
+        />
+      </FormRoot>
     </fieldset>
   );
 };
@@ -666,7 +685,7 @@ const ApprovalsQueue = ({
   readonly targetKey: string | undefined;
 }) => {
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'pending'>('pending');
-  const [moduleFilter, setModuleFilter] = useState('');
+  const moduleFilter = Option.getOrElse(useAtomValue(moduleKeyValue), () => '');
   const [browse, setBrowse] = useState(false);
   // A direct review link includes settled batches without resetting React state from an effect.
   const filter = !browse && targetKey !== undefined ? 'all' : selectedFilter;
@@ -751,13 +770,11 @@ const ApprovalsQueue = ({
       )}
       <QueueFilters
         filter={filter}
-        moduleFilter={moduleFilter}
         modules={moduleOptions}
         onFilter={(next) => {
           setBrowse(true);
           setSelectedFilter(next);
         }}
-        onModuleFilter={setModuleFilter}
       />
       <ReviewStatus actions={actions} />
       {missingTarget && (
@@ -802,5 +819,12 @@ export const ApprovalsPanel = () => {
     Schema.decodeOption(AgentReviewSearchQuerySchema)(Url.urlParams(new URL(searchStr, 'https://shell.invalid/'))),
     () => ({}),
   );
-  return <ApprovalsQueue targetItemKey={itemKeyFromSearch(search)} targetKey={batchKeyFromSearch(search)} />;
+  // The queue's filter and notes outlive the queue's loading states, which unmount their controls.
+  return (
+    <>
+      <queueModuleForm.KeepAlive />
+      <batchNotesForm.KeepAlive />
+      <ApprovalsQueue targetItemKey={itemKeyFromSearch(search)} targetKey={batchKeyFromSearch(search)} />
+    </>
+  );
 };

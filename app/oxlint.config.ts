@@ -1062,23 +1062,6 @@ export default defineConfig({
       // effect-form port: paths not yet migrated. Each port step removes the paths it moves onto
       // @app/core-runtime/ui/form, so the rule applies there.
       files: [
-        'apps/shell-super-app/src/credential-form.ts',
-        'apps/shell-super-app/src/demo-guide/demo-guide-panel.tsx',
-        'apps/shell-super-app/src/routes/*/pripojit/page.tsx',
-        'apps/shell-super-app/src/routes/*/profile/connected-apps-edit-panel.tsx',
-        'apps/shell-super-app/src/routes/*/set-password/page.tsx',
-        'apps/shell-super-app/src/routes/*/sprava/pripojene-aplikace/connections-admin-panel.tsx',
-        'apps/shell-super-app/src/routes/access-admin/people/people-view.tsx',
-        'apps/shell-super-app/src/routes/agent-platform/activity-panel.tsx',
-        'apps/shell-super-app/src/routes/agent-platform/approvals-panel.tsx',
-        'apps/shell-super-app/src/routes/people/agent-api-keys.tsx',
-        'apps/shell-super-app/src/routes/people/agent-editor-panel.tsx',
-        'apps/shell-super-app/src/routes/people/agent-operators-block.tsx',
-        'apps/shell-super-app/src/routes/people/integrations-section.tsx',
-        'apps/shell-super-app/src/routes/people/invite-person-button.tsx',
-        'apps/shell-super-app/src/routes/people/people-panel.tsx',
-        'apps/shell-super-app/src/routes/people/people-table.tsx',
-        'apps/shell-super-app/src/routes/people/person-role-editor.tsx',
         'verticals/catalog/src/**',
         'verticals/commerce-market-catalog/src/**',
         'verticals/crm/src/**',

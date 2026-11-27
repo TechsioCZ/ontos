@@ -14,7 +14,6 @@ import {
   setDemoGuideOpen,
   setDemoGuideProgress,
   summarizeGuideProgress,
-  toggleStep,
 } from '../../../src/demo-guide/demo-guide-store.ts';
 import type { DemoGuide } from '../../../src/demo-guide/demo-guide-types.ts';
 
@@ -47,11 +46,6 @@ it('reads progress only from a JSON array of strings', () => {
   expect(parseGuideProgress('["a","b"]')).toEqual(['a', 'b']);
   expect(parseGuideProgress('not json')).toEqual([]);
   expect(parseGuideProgress('[1]')).toEqual([]);
-});
-
-it('toggles a step on and off', () => {
-  expect(toggleStep(['a'], 'b')).toEqual(['a', 'b']);
-  expect(toggleStep(['a', 'b'], 'a')).toEqual(['b']);
 });
 
 it('keeps the stored width within bounds', () => {

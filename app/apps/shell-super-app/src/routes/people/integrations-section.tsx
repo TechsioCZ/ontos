@@ -3,26 +3,39 @@
 // tenant-managed and run through the same native, audited key Actions as an agent's, so issue, rotation, pause and
 // revocation work alike. An issue or rotation may register a key value the partner already holds instead of a
 // generated one; Better Auth stores it exactly like a key it generated.
-import { dialogCloseLabel } from '@app/admin-ui';
-import { FormInput } from '@app/admin-ui/form-controls';
+import { dialogCloseLabel, requiredLabelFor } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FormReact,
+  FormRoot,
+  FormRootError,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { CONNECTOR_PARTNERS, connectorPartnerKinds } from '@app/shared-contracts/integrations/connector-partners';
-import type { ConnectorPartnerKind } from '@app/shared-contracts/integrations/connector-partners';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Schema, Struct } from 'effect';
 import { constVoid } from 'effect/Function';
+import { AsyncResult } from 'effect/reactivity';
 import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 
-import { ShellPolicyConflictProblemSchema, ShellTargetForbiddenProblemSchema } from '../../../shared/browser-api.ts';
+import {
+  CreateNonHumanPrincipalPayloadSchema,
+  ShellPolicyConflictProblemSchema,
+  ShellTargetForbiddenProblemSchema,
+} from '../../../shared/browser-api.ts';
 import type { ManagedApiKeyListResponse, ShellIntegrationComponent } from '../../../shared/browser-api.ts';
 import { createNonHumanPrincipal, listManagedApiKeys } from '../../api/auth-client.ts';
 import type { IdentityClientError } from '../../api/auth-client.ts';
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ManagedKeyDetail } from './agent-api-keys.tsx';
 import { IntegrationPartnerComponent } from './integration-partner-component.tsx';
 import { integrationEntries } from './integrations-model.ts';
@@ -92,6 +105,53 @@ const useIntegrations = () => {
   return { entries, failure, load };
 };
 
+/** Why the Shell did not create the integration: the message key of the form-level error, if any. */
+class CreateIntegrationRefused extends Schema.TaggedError<CreateIntegrationRefused>()('CreateIntegrationRefused', {
+  /** `blank` is a name of only spaces: nothing is sent and nothing is said, as the create button is disabled for it. */
+  reason: Schema.Literals(['blank', 'conflict', 'failed']),
+}) {}
+
+const [, integrationPayload] = CreateNonHumanPrincipalPayloadSchema.members;
+const defaultPartner = connectorPartnerKinds[0] ?? 'symmy';
+
+const createIntegration = Effect.fn('IntegrationsSection.createIntegration')(function* createIntegration(input: {
+  readonly displayName: string;
+  readonly integrationKind: string;
+}) {
+  const displayName = input.displayName.trim();
+  if (displayName.length === 0) {
+    return yield* new CreateIntegrationRefused({ reason: 'blank' });
+  }
+  const payload = yield* Schema.decodeUnknownEffect(integrationPayload)({
+    displayName,
+    integrationKind: input.integrationKind,
+    kind: 'integration',
+  }).pipe(Effect.catchTag('SchemaError', () => Effect.fail(new CreateIntegrationRefused({ reason: 'failed' }))));
+  const token = yield* newRequestToken;
+  return yield* createNonHumanPrincipal(payload, { idempotencyKey: token }).pipe(
+    Effect.timeout(readTimeout),
+    Effect.mapError(
+      (problem) =>
+        new CreateIntegrationRefused({
+          reason: Schema.is(ShellPolicyConflictProblemSchema)(problem) ? 'conflict' : 'failed',
+        }),
+    ),
+  );
+});
+
+/** A new integration of one connector partner; its name starts as the partner's and follows a change of partner. */
+const createIntegrationForm = FormReact.make(
+  fromPayload(integrationPayload.mapFields(Struct.pick(['displayName']))).addField('integrationKind', Schema.String),
+  {
+    fields: { displayName: TextField, integrationKind: ChoiceField },
+    onSubmit: (_submit, { decoded }) => createIntegration(decoded),
+    runtime: browserAtomRuntime,
+    submitErrors: ({ reason }) => (reason === 'blank' ? [] : [{ message: `${keysCopyKey}.${reason}`, path: '' }]),
+  },
+);
+const integrationName = createIntegrationForm.getFieldAtoms(createIntegrationForm.fields.displayName);
+const integrationKind = createIntegrationForm.getFieldAtoms(createIntegrationForm.fields.integrationKind).value;
+
 const CreateIntegrationDialog = ({
   onClose,
   onCreated,
@@ -99,53 +159,37 @@ const CreateIntegrationDialog = ({
   readonly onClose: () => void;
   readonly onCreated: () => void;
 }) => {
-  const { t } = useModernI18n();
-  const [partner, setPartner] = useState<ConnectorPartnerKind>(connectorPartnerKinds[0] ?? 'symmy');
-  const [name, setName] = useState<string>(CONNECTOR_PARTNERS[partner].label);
-  const [state, setState] = useState<'conflict' | 'failed' | 'idle' | 'saving'>('idle');
+  const { language, t } = useModernI18n();
+  const submit = useAtomSet(createIntegrationForm.submit);
+  const saving = useAtomValue(createIntegrationForm.submit).waiting;
+  const name = Option.getOrElse(useAtomValue(integrationName.value), () => '');
+  const setName = useAtomSet(integrationName.setValue);
   const choices = connectorPartnerKinds.map((kind) => ({ label: CONNECTOR_PARTNERS[kind].label, value: kind }));
-  const save = () => {
-    const displayName = name.trim();
-    if (displayName.length === 0 || state === 'saving') {
-      return;
+  useAtomSubscribe(
+    integrationKind,
+    (chosen) => {
+      const kind = connectorPartnerKinds.find((candidate) => Option.contains(chosen, candidate));
+      if (kind !== undefined) {
+        setName(CONNECTOR_PARTNERS[kind].label);
+      }
+    },
+    { immediate: false },
+  );
+  useAtomSubscribe(createIntegrationForm.submit, (result) => {
+    if (AsyncResult.isSuccess(result) && !result.waiting) {
+      onCreated();
     }
-    setState('saving');
-    browserRuntime.runFork(
-      newRequestToken.pipe(
-        Effect.flatMap((token) =>
-          createNonHumanPrincipal(
-            { displayName, integrationKind: partner, kind: 'integration' },
-            { idempotencyKey: token },
-          ),
-        ),
-        Effect.timeout(readTimeout),
-        Effect.match({
-          onFailure: (problem) =>
-            setState(Schema.is(ShellPolicyConflictProblemSchema)(problem) ? 'conflict' : 'failed'),
-          onSuccess: () => {
-            setState('idle');
-            onCreated();
-          },
-        }),
-      ),
-    );
-  };
+  });
   return (
     <Dialog
       actions={
         <>
-          <Button
-            appearance="outline"
-            disabled={state === 'saving'}
-            onClick={onClose}
-            severity="secondary"
-            type="button"
-          >
+          <Button appearance="outline" disabled={saving} onClick={onClose} severity="secondary" type="button">
             {t(`${keysCopyKey}.cancel`)}
           </Button>
           <Button
-            disabled={state === 'saving' || name.trim().length === 0}
-            onClick={save}
+            disabled={saving || name.trim().length === 0}
+            onClick={() => submit()}
             severity="primary"
             type="button"
           >
@@ -157,58 +201,34 @@ const CreateIntegrationDialog = ({
       closeOnInteractOutside={false}
       description={t(`${copyKey}.createDescription`)}
       onOpenChange={(details) => {
-        if (!details.open && state !== 'saving') {
+        if (!details.open && !saving) {
           onClose();
         }
       }}
       open
       title={t(`${copyKey}.create`)}
     >
-      <div className="flex flex-col gap-200">
-        <Select
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={{ displayName: CONNECTOR_PARTNERS[defaultPartner].label, integrationKind: defaultPartner }}
+        form={createIntegrationForm}
+        translateMessage={t}
+      >
+        <createIntegrationForm.integrationKind
           items={choices}
-          onValueChange={(details) => {
-            const [chosen] = details.value;
-            const kind = connectorPartnerKinds.find((candidate) => candidate === chosen);
-            if (kind !== undefined) {
-              setPartner(kind);
-              setName(CONNECTOR_PARTNERS[kind].label);
-            }
-          }}
-          value={[partner]}
-        >
-          <Select.Label>{t(`${copyKey}.partner`)}</Select.Label>
-          <Select.Control>
-            <Select.Trigger>
-              <Select.ValueText placeholder={t(`${copyKey}.partner`)} />
-            </Select.Trigger>
-          </Select.Control>
-          <Select.Positioner>
-            <Select.Content>
-              {choices.map((item) => (
-                <Select.Item item={item} key={item.value}>
-                  <Select.ItemText>{item.label}</Select.ItemText>
-                  <Select.ItemIndicator />
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Positioner>
-        </Select>
-        <FormInput
+          label={t(`${copyKey}.partner`)}
+          placeholder={t(`${copyKey}.partner`)}
+        />
+        <createIntegrationForm.displayName
           autoComplete="off"
           label={t(`${copyKey}.name`)}
           maxLength={200}
           name="integrationName"
-          onChange={(event) => setName(event.target.value)}
           required
-          value={name}
+          requiredLabel={requiredLabelFor(language)}
         />
-        {(state === 'failed' || state === 'conflict') && (
-          <StatusText showIcon status="error">
-            {t(`${keysCopyKey}.${state}`)}
-          </StatusText>
-        )}
-      </div>
+        <FormRootError form={createIntegrationForm} />
+      </FormRoot>
     </Dialog>
   );
 };

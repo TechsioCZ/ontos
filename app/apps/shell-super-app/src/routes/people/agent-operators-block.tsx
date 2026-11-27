@@ -11,16 +11,25 @@ import {
 import type { DraftSaveResult } from '@app/admin-ui';
 import type { AgentEntity, PrincipalRef } from '@app/shared-contracts/agent-access';
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  MemberCheckboxField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import type { HttpClient } from 'effect/http';
-import { useState } from 'react';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useRef, useState } from 'react';
 import { saveAgentOperators } from './agent-entities-client.ts';
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 
 const connectionsKey = 'shell.agents.connections';
 const PEOPLE_ERROR_KEY = 'shell.agents.errors';
@@ -29,6 +38,19 @@ const sameIds = (left: readonly string[], right: readonly string[]) => {
   const rightIds = new Set(right);
   return left.length === right.length && left.every((id) => rightIds.has(id));
 };
+
+/**
+ * The people ticked for one agent; every agent card has its own. Ticking changes only this form: the block's Uložit
+ * sends it, so the form itself is never submitted.
+ */
+const operatorsFormOf = Atom.family((_agentPrincipalId: string) => {
+  const form = FormReact.make(FormBuilder.empty.addField('operatorPrincipalIds', Schema.Array(Schema.String)), {
+    fields: { operatorPrincipalIds: MemberCheckboxField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  });
+  return { form, ticks: form.getFieldAtoms(form.fields.operatorPrincipalIds) };
+});
 
 export interface OperatorsBlockProps {
   readonly agent: AgentEntity;
@@ -88,8 +110,32 @@ export const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }:
       ),
     server: agent.operators.map((operator) => operator.principalId),
   });
-  const selected = record.draft;
-  const selectedSet = new Set(selected);
+  const { form: operatorsForm, ticks } = operatorsFormOf(agent.principalId);
+  const ticked = useAtomValue(ticks.value);
+  const setTicked = useAtomSet(ticks.setValue);
+  const { draft, setDraft } = record;
+  // The ticks are the draft: a tick changes it at once.
+  useAtomSubscribe(
+    ticks.value,
+    (next) => {
+      if (Option.isSome(next)) {
+        setDraft(next.value);
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also moves without a tick (a server refresh, Zahodit změny, the latest version): the ticks follow it.
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    if (Option.exists(ticked, (ids) => !sameIds(ids, draft))) {
+      setTicked(draft);
+    }
+  }, [draft, setTicked, ticked]);
+  const selected = draft;
   const cut = cutConnections(agent, record.confirmed, selected);
   const cutNames = [
     ...new Set(
@@ -106,12 +152,6 @@ export const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }:
     onDiscard: record.discard,
   });
 
-  const toggle = (principalId: string, checked: boolean) =>
-    record.setDraft((current) =>
-      checked
-        ? [...current.filter((id) => id !== principalId), principalId]
-        : current.filter((id) => id !== principalId),
-    );
   const handleConfirmedSave = () => {
     setConfirming(false);
     record.save();
@@ -129,18 +169,21 @@ export const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }:
     <section className="flex min-w-0 flex-col gap-150">
       <h3 className="font-semibold text-sm">{t(`${connectionsKey}.operators.title`)}</h3>
       <p className="text-fg-secondary text-xs">{t(`${connectionsKey}.operators.hint`, { company })}</p>
-      <div className="flex flex-col gap-100">
+      <FormRoot
+        className="flex flex-col gap-100"
+        defaultValues={{ operatorPrincipalIds: draft }}
+        form={operatorsForm}
+        translateMessage={t}
+      >
         {members.map((member) => (
-          <FormCheckbox
-            checked={selectedSet.has(member.principalId)}
+          <operatorsForm.operatorPrincipalIds
             id={`agent-operator-${agent.principalId}-${member.principalId}`}
             key={member.principalId}
             label={member.displayName}
-            onCheckedChange={(checked) => toggle(member.principalId, checked)}
-            size="sm"
+            member={member.principalId}
           />
         ))}
-      </div>
+      </FormRoot>
       {selected.length === 0 && <p className="text-fg-secondary text-xs">{t(`${connectionsKey}.operators.empty`)}</p>}
       <SaveBar
         error={serverError}

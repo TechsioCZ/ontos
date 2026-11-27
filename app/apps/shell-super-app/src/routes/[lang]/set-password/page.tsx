@@ -1,64 +1,76 @@
+import { requiredLabelFor } from '@app/admin-ui';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  FormRootError,
+  SubmitButton,
+  TextField,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Effect, Option, Redacted, Schema } from 'effect';
-import { useState } from 'react';
+import { AsyncResult } from 'effect/reactivity';
 
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
-import { submitCredentialForm } from '../../../credential-form.ts';
+import { browserAtomRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import {
   InvitationPasswordSchema,
   InvitationTokenSchema,
   setInvitationPassword,
 } from '../../people/invitation-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
-import { useHydrated } from '../../use-hydrated.ts';
 
 const SearchSchema = Schema.Struct({ token: InvitationTokenSchema });
+/** The password the invitation endpoint accepts, refused in the page's own words. */
+const PasswordSchema = Schema.String.check(
+  Schema.makeFilter(Schema.is(InvitationPasswordSchema), { message: 'Zvolte heslo o délce 8 až 128 znaků.' }),
+);
+
+/** The invitation endpoint refused the password or its answer could not be read; `reason` is the Czech copy. */
+class PasswordNotSet extends Schema.TaggedError<PasswordNotSet>()('PasswordNotSet', { reason: Schema.String }) {}
+
+/**
+ * The one-use invitation token from the link and the password typed twice. The password is redacted once
+ * decoded; a refusal is the form's own error, shown until the next attempt. The invitation copy is Czech only.
+ */
+const setPasswordForm = FormReact.make(
+  FormBuilder.empty
+    .addField('confirmation', Schema.String)
+    .addField('password', Schema.RedactedFromValue(PasswordSchema))
+    .addField('token', InvitationTokenSchema)
+    .refine(
+      ({ confirmation, password }) =>
+        confirmation === Redacted.value(password) || { issue: 'Hesla se neshodují.', path: ['confirmation'] },
+    ),
+  {
+    fields: { confirmation: TextField, password: TextField, token: TextField },
+    // Once the password is set, the one-use secret does not stay in the navigation history.
+    onSubmit: (_submit, { decoded }) =>
+      setInvitationPassword(decoded.token, decoded.password).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.status === 'failed'
+            ? Effect.fail(new PasswordNotSet({ reason: outcome.message }))
+            : Effect.sync(() => window.history.replaceState(window.history.state, '', window.location.pathname)),
+        ),
+      ),
+    runtime: browserAtomRuntime,
+    submitErrors: ({ reason }) => [{ message: reason, path: '' as const }],
+  },
+);
+
+const untranslated = (message: string) => message;
+
 const SetPasswordPage = () => {
   const { language, t } = useModernI18n();
-  const hydrated = useHydrated();
   const token = useRouterState({
     select: (state) => Option.getOrUndefined(Schema.decodeUnknownOption(SearchSchema)(state.location.search))?.token,
   });
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState('');
-  const submit = (form: FormData) => {
-    if (busy || done || token === undefined) {
-      return;
-    }
-    const password = Schema.decodeUnknownOption(InvitationPasswordSchema)(form.get('password'));
-    if (Option.isNone(password)) {
-      setError('Zvolte heslo o délce 8 až 128 znaků.');
-      return;
-    }
-    if (form.get('confirmation') !== password.value) {
-      setError('Hesla se neshodují.');
-      return;
-    }
-    setBusy(true);
-    setError('');
-    void browserRuntime.runPromise(
-      setInvitationPassword(token, Redacted.make(password.value)).pipe(
-        Effect.andThen((outcome) =>
-          Effect.sync(() => {
-            setBusy(false);
-            if (outcome.status === 'failed') {
-              setError(outcome.message);
-              return;
-            }
-            setDone(true);
-            // Do not retain the one-use secret in navigation history after successful consumption.
-            window.history.replaceState(window.history.state, '', window.location.pathname);
-          }),
-        ),
-      ),
-    );
-  };
+  const submitted = useAtomValue(setPasswordForm.submit);
+  const done = AsyncResult.isSuccess(submitted) && !submitted.waiting;
+  const requiredLabel = requiredLabelFor(language);
   return (
     <>
       <UltramodernRouteHead />
@@ -80,45 +92,43 @@ const SetPasswordPage = () => {
             </StatusText>
           )}
           {!done && token !== undefined && (
-            <form
-              action={`/${language}/login`}
-              className="grid gap-200"
-              method="post"
-              onSubmit={(event) => submitCredentialForm(event, hydrated, submit)}
-            >
+            <>
               <p>
                 Zvolte vlastní heslo. Tento jednorázový odkaz nikomu nepřeposílejte. Nastavení hesla nepřiděluje role
                 ani neaktivuje členství ve firmě.
               </p>
-              <FormInput
-                autoComplete="new-password"
-                disabled={busy}
-                label={t('shell.invitation.newPassword')}
-                maxLength={128}
-                minLength={8}
-                name="password"
-                required
-                type="password"
-              />
-              <FormInput
-                autoComplete="new-password"
-                disabled={busy}
-                label={t('shell.invitation.confirmPassword')}
-                maxLength={128}
-                minLength={8}
-                name="confirmation"
-                required
-                type="password"
-              />
-              {error === '' ? null : (
-                <StatusText role="alert" status="error">
-                  {error}
-                </StatusText>
-              )}
-              <Button disabled={!hydrated || busy} severity="primary" type="submit">
-                {busy ? 'Nastavuji heslo…' : 'Nastavit heslo'}
-              </Button>
-            </form>
+              {/* The fields render once the form starts in the browser, so the server render holds nothing to post. */}
+              <FormRoot
+                className="grid gap-200"
+                defaultValues={{ confirmation: '', password: '', token }}
+                form={setPasswordForm}
+                key={token}
+                translateMessage={untranslated}
+              >
+                <setPasswordForm.password
+                  autoComplete="new-password"
+                  label={t('shell.invitation.newPassword')}
+                  maxLength={128}
+                  minLength={8}
+                  required
+                  requiredLabel={requiredLabel}
+                  type="password"
+                />
+                <setPasswordForm.confirmation
+                  autoComplete="new-password"
+                  label={t('shell.invitation.confirmPassword')}
+                  maxLength={128}
+                  minLength={8}
+                  required
+                  requiredLabel={requiredLabel}
+                  type="password"
+                />
+                <FormRootError form={setPasswordForm} />
+                <SubmitButton loadingText="Nastavuji heslo…" severity="primary">
+                  Nastavit heslo
+                </SubmitButton>
+              </FormRoot>
+            </>
           )}
         </section>
       </main>
