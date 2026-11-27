@@ -27,6 +27,7 @@ import { formatDelta } from './products-format.ts';
 import { useCommandFailure } from './product-form-labels.ts';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { mergeKeyedDrafts } from './product-draft-merge.ts';
 import type { ProductVariantDestination } from './product-variant-destination.ts';
 import { DEFAULT_TAX_CLASSIFICATION, classificationChoice, useTaxLabels } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
@@ -40,6 +41,7 @@ import {
   priceTiersOf,
   tierDraftsOf,
   tierRowsInvalid,
+  variantTiersShown,
 } from './product-sales-terms-draft.ts';
 
 const availabilityPresentation = {
@@ -90,6 +92,7 @@ const EMPTY_VARIANT_DETAILS: VariantDetailDraft = {
   sourceUnit: '',
   tiers: [],
   tiersEdited: false,
+  tiersMinimumText: '',
   unit: '',
   weightGramsText: '',
 };
@@ -115,6 +118,7 @@ const variantDetailsOf = (variant: ProductVariant): VariantDetailDraft => ({
   sourceUnit: variant.sourceUnit ?? '',
   tiers: tierDraftsOf(variant.priceTiers),
   tiersEdited: false,
+  tiersMinimumText: optionalText(variant.minimumQuantity),
   unit: variant.unit ?? '',
   weightGramsText: variant.weightGrams === undefined || variant.weightGrams === 0 ? '' : String(variant.weightGrams),
 });
@@ -358,16 +362,26 @@ const weightInvalid = (text: string) => {
 
 const optionalQuantityInvalid = (text: string) => text.trim() !== '' && parseQuantityText(text) === null;
 
+/** The draft with the tier rows it saves: rows that followed a changed minimum are sent like edited ones. */
+const withShownTiers = <Draft extends VariantDetailDraft>(draft: Draft): Draft => {
+  const tiers = variantTiersShown(draft);
+  return tiers === draft.tiers ? draft : { ...draft, tiers, tiersEdited: true };
+};
+
 /** Whether the detail fields of a variant cannot be saved. */
-const variantDetailsInvalid = (draft: VariantDetailDraft) =>
-  // Imported parameters may carry an empty value; only a value without a name blocks the save.
-  draft.parameters.some((parameter) => parameter.label.trim() === '' && parameter.value.trim() !== '') ||
-  optionalQuantityInvalid(draft.minimumQuantityText) ||
-  optionalQuantityInvalid(draft.packageQuantityText) ||
-  (draft.tiersEdited && tierRowsInvalid(draft.tiers, parseQuantityText(draft.minimumQuantityText) ?? 1)) ||
-  weightInvalid(draft.weightGramsText) ||
-  (draft.originalPriceText.trim() !== '' && parseCzkText(draft.originalPriceText) === null) ||
-  draft.description.trim().length > 2000;
+const variantDetailsInvalid = (draft: VariantDetailDraft) => {
+  const saved = withShownTiers(draft);
+  return (
+    // Imported parameters may carry an empty value; only a value without a name blocks the save.
+    draft.parameters.some((parameter) => parameter.label.trim() === '' && parameter.value.trim() !== '') ||
+    optionalQuantityInvalid(draft.minimumQuantityText) ||
+    optionalQuantityInvalid(draft.packageQuantityText) ||
+    (saved.tiersEdited && tierRowsInvalid(saved.tiers, parseQuantityText(draft.minimumQuantityText) ?? 1)) ||
+    weightInvalid(draft.weightGramsText) ||
+    (draft.originalPriceText.trim() !== '' && parseCzkText(draft.originalPriceText) === null) ||
+    draft.description.trim().length > 2000
+  );
+};
 
 const variantErrorsOf = (drafts: readonly VariantDraft[]) =>
   drafts.map((draft) => ({
@@ -469,11 +483,12 @@ const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): Pr
     // Edited tiers are sent as typed, so the row that repeats the old price follows the new one (the server rescales
     // only tiers it is not sent).
     const oldPrice = original?.priceMinor;
+    const saved = withShownTiers(draft);
     const details =
-      draft.tiersEdited && oldPrice !== undefined && oldPrice > 0 && oldPrice !== priceMinor
+      saved.tiersEdited && oldPrice !== undefined && oldPrice > 0 && oldPrice !== priceMinor
         ? {
-            ...draft,
-            tiers: draft.tiers.map((tier) =>
+            ...saved,
+            tiers: saved.tiers.map((tier) =>
               parseCzkText(tier.netText) === oldPrice
                 ? {
                     ...tier,
@@ -483,7 +498,7 @@ const variantsOf = (drafts: readonly VariantDraft[], product: ProductRecord): Pr
                 : tier,
             ),
           }
-        : draft;
+        : saved;
     const variant = {
       ...withVariantDetails(kept, details),
       active: draft.active,
@@ -521,6 +536,8 @@ const useVariantsPanel = ({
     commandOf: (value) => ({ _tag: 'UpdateProduct', id: product.id, patch: { variants: variantsOf(value, product) } }),
     isValid: (value) => !variantsInvalid(value),
     keepAs: `variants:${product.id}`,
+    // Two operators edit different variants of one product: each variant merges on its own.
+    merge: mergeKeyedDrafts,
     onReload,
     onSaved: () => onCommitted('Varianty uloženy. Nové ceny uvidí zákazník v e-shopu po obnovení stránky.'),
     reset: setDrafts,

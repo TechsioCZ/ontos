@@ -54,6 +54,69 @@ export const tierRowsInvalid = (tiers: readonly TierDraft[], minimum: number | n
     );
   });
 
+/**
+ * The tier rows as they sell at `minimum` when they were written for the minimum `writtenFor`: a raised minimum moves
+ * the rows below it up to it, and the rows it then starts on merge into the one that started highest (its price is what
+ * the new minimum buys); a lowered minimum takes the rows that started at the old one down with it. The same list when
+ * nothing moves, so the operator's own rows below the minimum still show their error.
+ */
+export const tiersAtMinimum = (
+  tiers: readonly TierDraft[],
+  writtenFor: number | null,
+  minimum: number | null,
+): readonly TierDraft[] => {
+  if (writtenFor === null || minimum === null || writtenFor === minimum) {
+    return tiers;
+  }
+  const at = (tier: TierDraft) => ({ ...tier, minimumText: String(minimum) });
+  if (minimum < writtenFor) {
+    return tiers.some((tier) => parseQuantityText(tier.minimumText) === writtenFor)
+      ? tiers.map((tier) => (parseQuantityText(tier.minimumText) === writtenFor ? at(tier) : tier))
+      : tiers;
+  }
+  const reached = tiers.flatMap((tier) => {
+    const from = parseQuantityText(tier.minimumText);
+    return from !== null && from <= minimum ? [{ from, tier }] : [];
+  });
+  const [first] = reached;
+  if (first === undefined || reached.every((row) => row.from === minimum)) {
+    return tiers;
+  }
+  let top = first;
+  for (const row of reached) {
+    top = row.from >= top.from ? row : top;
+  }
+  return tiers.flatMap((tier) => {
+    if (tier === first.tier) {
+      return [at(top.tier)];
+    }
+    return reached.some((row) => row.tier === tier) ? [] : [tier];
+  });
+};
+
+/** A variant's order minimum as typed: empty is 1; null for invalid text. */
+export const variantMinimumOf = (text: string): number | null => (text.trim() === '' ? 1 : parseQuantityText(text));
+
+/** A variant's tier rows as they sell at its typed minimum ({@link tiersAtMinimum}); moved rows are saved. */
+export const variantTiersShown = (draft: {
+  readonly minimumQuantityText: string;
+  readonly tiers: readonly TierDraft[];
+  readonly tiersMinimumText: string;
+}): readonly TierDraft[] =>
+  tiersAtMinimum(draft.tiers, variantMinimumOf(draft.tiersMinimumText), variantMinimumOf(draft.minimumQuantityText));
+
+/** What the operator is told when the rows follow a changed minimum ({@link tiersAtMinimum}); null when none moved. */
+export const tiersAtMinimumNote = (
+  written: readonly TierDraft[],
+  shown: readonly TierDraft[],
+  minimum: number | null,
+): string | null =>
+  shown === written || minimum === null
+    ? null
+    : `Množstevní ceny se posunuly na minimální odběr ${minimum}${
+        shown.length < written.length ? '; ze sloučených platí cena od nejvyššího množství' : ''
+      }. Uloží se tak, jak jsou zobrazené.`;
+
 /** The tiers a valid draft saves, ascending by quantity. */
 export const priceTiersOf = (tiers: readonly TierDraft[]): PriceTiers =>
   tiers

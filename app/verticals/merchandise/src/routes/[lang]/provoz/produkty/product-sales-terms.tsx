@@ -18,6 +18,8 @@ import {
   sameTiers,
   tierDraftsOf,
   tierRowsInvalid,
+  tiersAtMinimum,
+  tiersAtMinimumNote,
 } from './product-sales-terms-draft.ts';
 import type { TierDraft } from './product-sales-terms-draft.ts';
 import { fieldError } from './product-form-validation.ts';
@@ -135,6 +137,8 @@ interface SalesTermsDraft {
   readonly packageText: string;
   readonly sourceUnit: string;
   readonly tiers: readonly TierDraft[];
+  /** The minimum `tiers` were written for: the rows follow a minimum changed since ({@link tiersAtMinimum}). */
+  readonly tiersMinimumText: string;
 }
 
 const salesTermsDraftOf = (product: ProductRecord): SalesTermsDraft => ({
@@ -147,7 +151,12 @@ const salesTermsDraftOf = (product: ProductRecord): SalesTermsDraft => ({
     product.packageQuantity === undefined || product.packageQuantity <= 0 ? '' : String(product.packageQuantity),
   sourceUnit: product.sourceUnit ?? '',
   tiers: tierDraftsOf(product.priceTiers),
+  tiersMinimumText: String(product.minimumQuantity ?? 1),
 });
+
+/** The tier rows the draft saves: its rows as they sell at its minimum. */
+const shownTiersOf = (draft: SalesTermsDraft): readonly TierDraft[] =>
+  tiersAtMinimum(draft.tiers, parseQuantityText(draft.tiersMinimumText), parseQuantityText(draft.minimumText));
 
 const hasRealVariants = (product: ProductRecord) => (product.variantRecords ?? []).length > 0;
 
@@ -165,7 +174,7 @@ const salesTermsInvalid = (draft: SalesTermsDraft, product: ProductRecord): bool
   return (
     minimum === null ||
     (draft.packageText.trim() !== '' && parseQuantityText(draft.packageText) === null) ||
-    tierRowsInvalid(draft.tiers, minimum)
+    tierRowsInvalid(shownTiersOf(draft), minimum)
   );
 };
 
@@ -199,8 +208,8 @@ const salesTermsPatchOf = (
   if (packageQuantity !== null && packageQuantity !== (parseQuantityText(confirmed.packageText) ?? 0)) {
     patch.packageQuantity = packageQuantity;
   }
-  const tiers = priceTiersOf(draft.tiers);
-  if (!sameTiers(tiers, priceTiersOf(confirmed.tiers))) {
+  const tiers = priceTiersOf(shownTiersOf(draft));
+  if (!sameTiers(tiers, priceTiersOf(shownTiersOf(confirmed)))) {
     patch.priceTiers = tiers;
   }
   return patch;
@@ -252,6 +261,8 @@ export const SalesTermsPanel = ({
     DateTime.nowUnsafe(),
   )?.ratePercent;
   const invalid = salesTermsInvalid(form, product);
+  const shownTiers = shownTiersOf(form);
+  const tiersNote = tiersAtMinimumNote(form.tiers, shownTiers, minimum);
   return (
     <div className="flex flex-col gap-250">
       <SectionCard title="Prodejní podmínky v e-shopu">
@@ -313,15 +324,18 @@ export const SalesTermsPanel = ({
         )}
       </SectionCard>
       {variants ? null : (
-        <SectionCard title={`Množstevní ceny (${form.tiers.length})`}>
+        <SectionCard title={`Množstevní ceny (${shownTiers.length})`}>
           <PriceTierRows
             disabled={disabled}
             idPrefix="product"
             minimum={minimum}
-            onChange={(tiers) => set({ tiers })}
-            tiers={form.tiers}
+            onChange={(tiers) =>
+              set({ tiers, tiersMinimumText: minimum === null ? form.tiersMinimumText : form.minimumText })
+            }
+            tiers={shownTiers}
             vatRate={vatRate}
           />
+          {tiersNote === null ? null : <p className="mt-150 text-fg-secondary text-sm">{tiersNote}</p>}
         </SectionCard>
       )}
       {invalid ? (

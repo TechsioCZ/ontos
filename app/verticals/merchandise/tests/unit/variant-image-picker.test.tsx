@@ -26,6 +26,7 @@ const draft: VariantDetailDraft = {
   sourceUnit: '',
   tiers: [],
   tiersEdited: false,
+  tiersMinimumText: '',
   unit: '',
   weightGramsText: '',
 };

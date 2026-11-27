@@ -15,7 +15,13 @@ import { useVariantPhotoUpload } from './product-image-gallery-draft.ts';
 import { ACCEPTED_IMAGE_TYPES, MAX_SOURCE_IMAGE_BYTES } from './product-image-prepare.ts';
 import { useImageSource } from './product-image-source.ts';
 import { PriceTierRows } from './product-sales-terms.tsx';
-import { nextTierKey, parseQuantityText } from './product-sales-terms-draft.ts';
+import {
+  nextTierKey,
+  parseQuantityText,
+  tiersAtMinimumNote,
+  variantMinimumOf,
+  variantTiersShown,
+} from './product-sales-terms-draft.ts';
 import type { TierDraft } from './product-sales-terms-draft.ts';
 
 export interface VariantParameterDraft {
@@ -44,6 +50,8 @@ export interface VariantDetailDraft {
   readonly sourceUnit: string;
   readonly tiers: readonly TierDraft[];
   readonly tiersEdited: boolean;
+  /** The minimum `tiers` were written for: the rows follow a minimum changed since ({@link variantTiersShown}). */
+  readonly tiersMinimumText: string;
   readonly unit: string;
   readonly weightGramsText: string;
 }
@@ -239,6 +247,8 @@ export const VariantDetailEditor = ({
     nextParameterKey = Math.max(nextParameterKey, parameter.key + 1);
   }
   const minimum = parseQuantityText(draft.minimumQuantityText);
+  const tiers = variantTiersShown(draft);
+  const tiersNote = tiersAtMinimumNote(draft.tiers, tiers, variantMinimumOf(draft.minimumQuantityText));
   return (
     <div className="flex flex-col gap-200 p-200">
       <div className="flex flex-col gap-100">
@@ -437,10 +447,20 @@ export const VariantDetailEditor = ({
           disabled={disabled}
           idPrefix={idPrefix}
           minimum={minimum ?? 1}
-          onChange={(tiers) => onChange({ tiers, tiersEdited: true })}
-          tiers={draft.tiers}
+          onChange={(next) =>
+            onChange({
+              tiers: next,
+              tiersEdited: true,
+              tiersMinimumText:
+                variantMinimumOf(draft.minimumQuantityText) === null
+                  ? draft.tiersMinimumText
+                  : draft.minimumQuantityText,
+            })
+          }
+          tiers={tiers}
           vatRate={vatRate}
         />
+        {tiersNote === null ? null : <p className="text-fg-secondary text-xs">{tiersNote}</p>}
         {draft.tiers.length > 0 && nextTierKey(draft.tiers) > 0 && !draft.tiersEdited ? (
           <p className="text-fg-secondary text-xs">Při změně ceny varianty se množstevní ceny přepočítají.</p>
         ) : null}
