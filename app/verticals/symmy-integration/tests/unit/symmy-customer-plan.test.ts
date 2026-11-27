@@ -348,7 +348,7 @@ describe('Symmy customer plan from the public rows', () => {
     }),
   );
 
-  it.effect('writes the ICO of an organization to its profile and keeps the other identifiers on the Party', () =>
+  it.effect('writes the ICO of an organization to its profile and reports the DIČ Party does not take', () =>
     Effect.gen(function* plansIdentifiers() {
       const plan = Option.getOrThrow(
         yield* build(
@@ -363,16 +363,15 @@ describe('Symmy customer plan from the public rows', () => {
         ),
       );
       const [item] = plan.items;
-      expect(item?.unsupportedBranches).toBeUndefined();
+      // Party's organization source creation takes no official identifier: the DIČ is reported, never dropped silently.
+      expect(item?.unsupportedBranches).toEqual([{ branchKey: 'identifier', kind: 'IdentifierHint' }]);
       expect(item?.effects.map(({ effectKey }) => effectKey)).toEqual([
         'party-create',
         'counterparty-onboard',
         'counterparty-profile',
         'ico-set',
       ]);
-      expect(item?.effects[0]?.intent).toMatchObject({
-        payload: { candidate: { officialIdentifiers: [{ identifierType: 'CZ_DIC', value: 'CZ27082440' }] } },
-      });
+      expect(item?.effects[0]?.intent).toMatchObject({ payload: { candidate: { officialIdentifiers: [] } } });
       const ico = item?.effects[3];
       expect(ico?.dependsOn).toEqual(['counterparty-profile']);
       expect(ico?.operation).toMatchObject(operations.ico);

@@ -137,8 +137,9 @@ const profileSubject = (facts: ItemFacts, kind: 'COUNTERPARTY' | 'RETAIL') => ({
 });
 
 const partyCreateIntent = (facts: ItemFacts, row: SymmyCustomerRow) => {
-  // Party refuses the non-ICO identifiers (a DIČ) as unavailable, so the job retried for hours and blocked every
-  // release drain. The ICO reaches the profile below; the Party candidate carries none.
+  // Party's organization source creation takes no official identifier (a DIČ made it refuse the job as unavailable,
+  // so the job retried for hours and blocked every release drain). The ICO reaches the profile below; every other
+  // identifier is reported as unsupported on the item (`identifiersUnwritten`).
   const identifiers: typeof row.officialIdentifiers = [];
   const evidence = {
     kind: 'CLIENT_SOURCE_ASSERTION',
@@ -299,9 +300,10 @@ const contactItem = (
   sourceOccurrenceId: facts.occurrenceId,
 });
 
-const icoUnwritten = (facts: ItemFacts, row: SymmyCustomerRow) =>
-  row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO') &&
-  !(facts.context.icoEnrolled && Option.isSome(organizationIco(row)));
+const identifiersUnwritten = (facts: ItemFacts, row: SymmyCustomerRow) =>
+  row.officialIdentifiers.some(({ identifierType }) => identifierType !== 'ICO') ||
+  (row.officialIdentifiers.some(({ identifierType }) => identifierType === 'ICO') &&
+    !(facts.context.icoEnrolled && Option.isSome(organizationIco(row))));
 
 const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) => ({
   effects: [
@@ -315,11 +317,12 @@ const customerItem = (facts: ItemFacts, row: SymmyCustomerRow, itemKey: string) 
   itemKey,
   source: itemSource(facts),
   sourceOccurrenceId: facts.occurrenceId,
-  // An ICO the item does not write is reported instead of dropped: a person's ICO, two different ICOs of one
-  // organization, or an organization of a route that does not enroll the company ICO change.
+  // An identifier the item does not write is reported instead of dropped: any identifier but the ICO (a DIČ), a
+  // person's ICO, two different ICOs of one organization, or an organization of a route that does not enroll the
+  // company ICO change.
   ...present(
     'unsupportedBranches',
-    icoUnwritten(facts, row) ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }] : undefined,
+    identifiersUnwritten(facts, row) ? [{ branchKey: 'identifier', kind: 'IdentifierHint' }] : undefined,
   ),
 });
 

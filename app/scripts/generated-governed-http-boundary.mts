@@ -5606,18 +5606,21 @@ const hasMatchingModuleApiSlots = (
       const slug = key.slice(0, -'-action'.length);
       const apiValue = `${toPascalCase(key)}Api`;
       const action = toCamelCase(key);
-      const contract = sources.get(`${ownerPath}/shared/apis/${key}.ts`);
+      const contractFile = `${ownerPath}/shared/apis/${key}.ts`;
+      const contract = sources.get(contractFile);
       const operation = operationEntries?.filter((candidate) => objectProperty(candidate, 'apiKey') === `'${key}'`);
       const claim = operation?.length === 1 ? operation[0] : undefined;
       return (
         contract !== undefined &&
-        hasGeneratedSourceHeader(
-          contract,
-          `${ACTION_HTTP_HEADER}// @ontos-action-http-owner ${moduleId}\n// @ontos-action-http-slug ${slug}\n`,
-        ) &&
-        [HTTP_API_CONTRACT_MODULE, '@modern-js/bff-effect/effect-client'].some((module) =>
-          hasContractImports(contract, { HttpApi: module, HttpApiEndpoint: module, HttpApiGroup: module }),
-        ) &&
+        // The owner's generated contract, or a closed re-export of the same generated contract its contract package publishes.
+        (hasPublishedGeneratedActionContractShim(sources, contractFile, contract) ||
+          (hasGeneratedSourceHeader(
+            contract,
+            `${ACTION_HTTP_HEADER}// @ontos-action-http-owner ${moduleId}\n// @ontos-action-http-slug ${slug}\n`,
+          ) &&
+            [HTTP_API_CONTRACT_MODULE, '@modern-js/bff-effect/effect-client'].some((module) =>
+              hasContractImports(contract, { HttpApi: module, HttpApiEndpoint: module, HttpApiGroup: module }),
+            ))) &&
         (entry === `'${key}': ${apiValue}` || entry === `${key}: ${apiValue}`) &&
         hasExactValueImport(manifest, apiValue, `./shared/apis/${key}.ts`) &&
         hasExactValueImport(manifest, action, `./src/actions/${slug}.action.ts`) &&
