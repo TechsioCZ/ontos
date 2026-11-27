@@ -334,8 +334,13 @@ const personalized = (
       : match?.kind !== "multiple" && match?.onlyVariant !== undefined
         ? { ...match, onlyVariant: repriced(match.onlyVariant) }
         : match;
+  // „Vaše cena“ of a card is the price of the one variant it stands for; a group card shows the price per variant.
   const shown =
-    match?.kind === "single" ? variants.find((variant) => variant.id === match.variant.id) : cheapest;
+    match?.kind === "single"
+      ? variants.find((variant) => variant.id === match.variant.id)
+      : variants.length === 1
+        ? variants[0]
+        : undefined;
   const { originalPriceMinor: _original, customerPrice: _customer, searchMatch: _match, ...rest } = product;
   void _original;
   void _customer;
