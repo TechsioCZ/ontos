@@ -13,7 +13,7 @@ import type { ProductPageItem } from '../../shared/apis/product-page.ts';
 import { executeProductPage } from '../api/product-page-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { requestId } from './browser-crypto.ts';
-import { encodeErpOffer } from './erp-offer.ts';
+import { encodeErpOffer, readCompanyErpOffer } from './erp-offer.ts';
 import type { ErpOffer } from './erp-offer.ts';
 import { ALL_PRODUCT_LIFECYCLES, onHandRequestOf, PRODUCT_PAGE_SIZE, pricesRequestOf } from './products-model.ts';
 import type { ReadOutcome, VariantFigures } from './products-model.ts';
@@ -50,6 +50,17 @@ export const productListData = definePageData({
     Schema.decodeUnknownEffect(ProductPageRequestSchema)(productPageRequestOf(input)).pipe(
       Effect.flatMap((request) => requestId.pipe(Effect.flatMap((id) => executeProductPage(request, id)))),
     ),
+  runtime: browserRuntime,
+});
+
+/** The signed-in company's ERP offer (`readCompanyErpOffer`); a session without a company has none. */
+export const companyErpOfferData = definePageData({
+  changesFrom: ['pricing', 'symmy-integration'],
+  key: (legalEntityId: string) => encodeURIComponent(legalEntityId),
+  load: (legalEntityId: string) =>
+    legalEntityId === ''
+      ? Effect.succeed(Option.none<ErpOffer>())
+      : requestId.pipe(Effect.flatMap(readCompanyErpOffer)),
   runtime: browserRuntime,
 });
 

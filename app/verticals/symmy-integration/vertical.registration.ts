@@ -11,6 +11,7 @@ export const symmyIntegrationRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'symmy-company-routes': () => import('./src/api/symmy-company-routes-client.ts'),
+      'symmy-company-stock-source': () => import('./src/api/symmy-company-stock-source-client.ts'),
       'symmy-job-privacy-execution': () => import('./src/api/symmy-job-privacy-execution-client.ts'),
       'symmy-job-status': () => import('./src/api/symmy-job-status-client.ts'),
       'symmy-route-context': () => import('./src/api/symmy-route-context-client.ts'),

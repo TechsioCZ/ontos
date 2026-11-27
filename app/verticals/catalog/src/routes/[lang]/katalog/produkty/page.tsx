@@ -14,16 +14,10 @@ import type { ReactNode } from 'react';
 
 import type { ProductPageItem } from '../../../../../shared/apis/product-page.ts';
 import { catalogI18nResources } from '../../../../i18n/resources';
-import {
-  catalogLocaleFromSearch,
-  companyErpOffer,
-  erpOfferFromSearch,
-  rememberedErpOffer,
-  rememberErpOffer,
-} from '../../../../products-admin/erp-offer.ts';
+import { catalogLocaleFromSearch, erpOfferFromSearch } from '../../../../products-admin/erp-offer.ts';
 import type { ErpOffer } from '../../../../products-admin/erp-offer.ts';
 import { ErpCategoriesSection } from '../../../../products-admin/erp-categories-section.tsx';
-import { productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
+import { companyErpOfferData, productListData, variantFiguresData } from '../../../../products-admin/page-data.ts';
 import { erpStorefrontStatus } from '../../../../products-admin/erp-storefront-status.ts';
 import { ErpVariantEditor, erpVariantKeepKey } from '../../../../products-admin/erp-variant-editor.tsx';
 import { ProductEditDialog, erpProductKeepKey } from '../../../../products-admin/product-edit-dialog.tsx';
@@ -54,11 +48,14 @@ const firstPage = (props: ProductsPageProps): ProductListInput | undefined =>
         search: '',
       };
 
-/** The Shell prepares the first page of products before it reveals the page. */
-export const preloadPage = modulePagePreload((props) => {
-  const input = firstPage(props);
-  return input === undefined ? Effect.void : productListData.preload(input);
-});
+/** The Shell prepares the first page of products and the company's ERP offer before it reveals the page. */
+export const preloadPage = modulePagePreload(
+  (props) => {
+    const input = firstPage(props);
+    return input === undefined ? Effect.void : productListData.preload(input);
+  },
+  (props) => (props.context === undefined ? Effect.void : companyErpOfferData.preload(props.context.legalEntityId)),
+);
 
 const useData = <I, A, E>(store: Pick<PageData<I, A, E>, 'ensure' | 'snapshot' | 'subscribe'>, input: I) => {
   const snapshot = useSyncExternalStore(
@@ -70,21 +67,14 @@ const useData = <I, A, E>(store: Pick<PageData<I, A, E>, 'ensure' | 'snapshot' |
   return snapshot;
 };
 
-/** The offer the URL names, remembered in this browser; else the company's storefront offer; else the last remembered one. */
+/** The offer the URL names in full; else the signed-in company's own ERP offer, read from its owners' data. */
 const useErpOffer = (search: string, legalEntityId: string): Option.Option<ErpOffer> => {
+  const company = useData(companyErpOfferData, legalEntityId);
   const named = erpOfferFromSearch(search);
-  const [remembered, setRemembered] = useState(Option.none<ErpOffer>);
-  useEffect(() => {
-    Option.match(erpOfferFromSearch(search), {
-      onNone: () => setRemembered(rememberedErpOffer()),
-      onSome: rememberErpOffer,
-    });
-  }, [search]);
   if (Option.isSome(named)) {
     return named;
   }
-  const company = companyErpOffer(legalEntityId);
-  return Option.isSome(company) ? company : remembered;
+  return company.state === 'ready' ? company.value : Option.none();
 };
 
 /** Says what is missing; the same layout as the Shell's empty states. */
@@ -223,7 +213,7 @@ const ProductRows = ({
         </Table.Cell>
         <Table.Cell>{item.variants.length}</Table.Cell>
         <Table.Cell>
-          {Option.match(erpStorefrontStatus(item, legalEntityId), {
+          {Option.match(erpStorefrontStatus(item, offer), {
             onNone: () => '—',
             onSome: (status) => (
               <span
@@ -261,8 +251,8 @@ const ProductRows = ({
             <ProductEditDialog
               categories={categories}
               item={item}
-              legalEntityId={legalEntityId}
               locale={locale}
+              offer={offer}
               onClose={() => setEditing(false)}
             />
           )}
@@ -297,10 +287,12 @@ const ProductsList = ({
   if (page.value.items.length === 0) {
     return <EmptyState description={t(`${key}.emptyDescription`)} title={t(`${key}.empty`)} />;
   }
+  // The listed products' Categories and every ACTIVE one of the Tenant, so a Category no product holds yet (or one
+  // just renamed) can be chosen in Upravit too.
   const pageCategories = [
     ...new Map(
-      page.value.items.flatMap(({ categories }) =>
-        categories.map((category) => [category.categoryRef.resourceId, category] as const),
+      [...page.value.items.flatMap(({ categories }) => categories), ...(page.value.categories ?? [])].map(
+        ({ categoryRef, name }) => [categoryRef.resourceId, { categoryRef, name }] as const,
       ),
     ).values(),
   ];

@@ -30,6 +30,7 @@ import { definePriceAction } from './src/actions/define-price.action.ts';
 import { DefinePriceActionApi } from './shared/apis/define-price-action.ts';
 import { ExactPriceResolutionApi } from './shared/apis/exact-price-resolution.ts';
 import { exactPriceResolutionRead } from './src/api/exact-price-resolution.read.ts';
+import { ExternalPriceSourceScopesApi } from './shared/apis/external-price-source-scopes.ts';
 import { grantExternalPriceSourceAuthorityAction } from './src/actions/grant-external-price-source-authority.action.ts';
 import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
 import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
@@ -138,6 +139,7 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
       'current-supported-currencies': CurrentSupportedCurrenciesApi,
       'define-price-action': DefinePriceActionApi,
       'exact-price-resolution': ExactPriceResolutionApi,
+      'external-price-source-scopes': ExternalPriceSourceScopesApi,
       'owner-action-approvals': OwnerActionApprovalApi,
       'price-definition': PriceDefinitionApi,
       'price-group-source-prices': PriceGroupSourcePricesApi,

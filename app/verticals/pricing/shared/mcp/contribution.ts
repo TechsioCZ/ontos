@@ -135,6 +135,8 @@ export const pricingMcpContribution = defineOntosMcpContribution({
         en: 'Price definition',
       },
     },
+    // The ERP product editor's own price scope; never a general agent tool.
+    'external-price-source-scopes': OntosMcpHidden,
     // Owner-to-owner or enrolled source-workload integration read; never a general agent tool.
     'price-group-source-prices': OntosMcpHidden,
     'price-result-lookup': 'hidden',

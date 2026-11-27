@@ -18,6 +18,7 @@ import { SymmyRouteContextApi } from './apis/symmy-route-context.ts';
 import { SymmySourceOrganizationFactsApi } from './apis/symmy-source-organization-facts.ts';
 import { SymmySyncAdmissionApi } from './apis/symmy-sync-admission.ts';
 import { SymmyCompanyRoutesApi } from './apis/symmy-company-routes.ts';
+import { SymmyCompanyStockSourceApi } from './apis/symmy-company-stock-source.ts';
 // </generated-governed-http-api-imports>
 
 export const symmyIntegrationMarkerSchema = Schema.Struct({
@@ -52,6 +53,7 @@ export const symmyIntegrationApi = HttpApi.make('SymmyIntegrationApi')
   .addHttpApi(SymmySourceOrganizationFactsApi)
   .addHttpApi(SymmySyncAdmissionApi)
   .addHttpApi(SymmyCompanyRoutesApi)
+  .addHttpApi(SymmyCompanyStockSourceApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

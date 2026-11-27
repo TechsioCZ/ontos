@@ -12,6 +12,8 @@ import { executeSymmyRetentionAction } from './src/actions/execute-symmy-retenti
 import { manageSymmyRoutesAction } from './src/actions/manage-symmy-routes.action.ts';
 import { SymmyCompanyRoutesApi } from './shared/apis/symmy-company-routes.ts';
 import { symmyCompanyRoutesRead } from './src/api/symmy-company-routes.read.ts';
+import { SymmyCompanyStockSourceApi } from './shared/apis/symmy-company-stock-source.ts';
+import { symmyCompanyStockSourceRead } from './src/api/symmy-company-stock-source.read.ts';
 import { SymmyJobPrivacyExecutionApi } from './shared/apis/symmy-job-privacy-execution.ts';
 import { symmyJobPrivacyExecutionRead } from './src/api/symmy-job-privacy-execution.read.ts';
 import { SymmyJobStatusApi } from './shared/apis/symmy-job-status.ts';
@@ -207,6 +209,7 @@ export const symmyIntegrationRuntimeManifest: VerticalRuntimeRegistrationInput['
     api: {
       // <generated-module-manifest-apis>
       'symmy-company-routes': SymmyCompanyRoutesApi,
+      'symmy-company-stock-source': SymmyCompanyStockSourceApi,
       'symmy-job-privacy-execution': SymmyJobPrivacyExecutionApi,
       'symmy-job-status': SymmyJobStatusApi,
       'symmy-route-context': SymmyRouteContextApi,
@@ -346,6 +349,7 @@ export const symmyIntegrationRuntimeDeclaration: VerticalRuntimeRegistrationInpu
   reads: [
     // <generated-module-registration-reads>
     symmyCompanyRoutesRead,
+    symmyCompanyStockSourceRead,
     symmyJobPrivacyExecutionRead,
     symmyJobStatusRead,
     symmyRouteContextRead,

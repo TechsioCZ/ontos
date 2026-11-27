@@ -189,7 +189,8 @@ export const ERP_EDITOR_TENANT_CAPABILITIES: readonly string[] = [
   'commerce.catalog.product-category-assignment.add',
   'commerce.catalog.product-category-assignment.remove',
   'commerce.catalog.product-category.create',
-  // erp-categories-section.tsx: an empty category is retired.
+  // erp-categories-section.tsx: a category is renamed, and an empty one is retired.
+  'commerce.catalog.product-category.rename',
   'commerce.catalog.product-category.retire',
   'commerce.catalog.variant-axes.govern',
   'commerce.catalog.variant-combination.confirm',
@@ -213,6 +214,9 @@ export const ERP_EDITOR_COMPANY_CAPABILITIES: readonly string[] = [
   // The page and its navigation entry, as the Shell's company module target asks them.
   'commerce.catalog.products.view',
   'commerce.catalog.navigation-products.read',
+  // erp-offer.ts: the company's ERP offer, from its standing price source policy and its Symmy stock source.
+  'commerce.pricing.external-price-source-scopes.read',
+  'integration.symmy.symmy-company-stock-source.read',
   // erp-media-section.tsx: the current image and its preview.
   'commerce.catalog.catalog-media-current.read',
   'commerce.catalog.api-catalog-media-content.read',

@@ -28,6 +28,7 @@ import { RetireProductPayloadSchema } from '../../shared/actions/retire-product.
 import { RetireVariantPayloadSchema } from '../../shared/actions/retire-variant.ts';
 import { UpdateProductPayloadSchema } from '../../shared/actions/update-product.ts';
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
+import type { ErpOffer } from './erp-offer.ts';
 import { erpStorefrontStatus } from './erp-storefront-status.ts';
 import { executeAddProductCategoryAssignment } from '../api/add-product-category-assignment-action-client.ts';
 import { executeAssignSku } from '../api/assign-sku-action-client.ts';
@@ -346,23 +347,17 @@ const saveSteps = (item: ProductPageItem, draft: Draft, locale: string, known: r
 const fieldClass = 'w-full rounded-md border border-border-primary bg-base px-150 py-100 text-sm';
 
 interface ProductEditDialogProps {
-  /** Categories the page knows by name (this product's and the other listed products'). */
+  /** Categories the page knows by name (the tenant's ACTIVE ones and the listed products'). */
   readonly categories: readonly CategoryName[];
   readonly item: ProductPageItem;
-  /** The signed-in company, whose e-shop the storefront status is for. */
-  readonly legalEntityId?: string;
+  /** The signed-in company's ERP offer; its e-shop shows ERP products exactly when it has one. */
+  readonly offer: Option.Option<ErpOffer>;
   /** The locale the list reads, so the text revision the dialog sends matches. */
   readonly locale: string;
   readonly onClose: () => void;
 }
 
-export const ProductEditDialog = ({
-  categories,
-  item,
-  legalEntityId = '',
-  locale,
-  onClose,
-}: ProductEditDialogProps) => {
+export const ProductEditDialog = ({ categories, item, locale, offer, onClose }: ProductEditDialogProps) => {
   const keepKey = erpProductKeepKey(item);
   const [kept] = useState(() => keptDraft<KeptProductDraft>(keepKey));
   const [draft, setDraft] = useState<Draft>(() => (kept === undefined ? draftOf(item) : changesOver(draftOf(item), kept)));
@@ -498,7 +493,7 @@ export const ProductEditDialog = ({
       title={title}
     >
       <div className="flex flex-col gap-200">
-        {Option.match(erpStorefrontStatus(item, legalEntityId), {
+        {Option.match(erpStorefrontStatus(item, offer), {
           onNone: () => null,
           onSome: (status) => (
             <div

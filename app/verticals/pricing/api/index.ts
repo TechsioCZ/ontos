@@ -84,6 +84,7 @@ import { manageProductPricesBulkActionApiLive } from './manage-product-prices-bu
 import { manageQuantityTierActionApiLive } from './manage-quantity-tier-action-server.ts';
 import { manageQuotationActionApiLive } from './manage-quotation-action-server.ts';
 import { manageZeroFloorAuthorizationActionApiLive } from './manage-zero-floor-authorization-action-server.ts';
+import { externalPriceSourceScopesReadApiLive } from './external-price-source-scopes-read-server.ts';
 import { priceDefinitionReadApiLive } from './price-definition-read-server.ts';
 import { priceGroupSourcePricesReadApiLive } from './price-group-source-prices-read-server.ts';
 import { priceResultLookupReadApiLive } from './price-result-lookup-read-server.ts';
@@ -269,6 +270,7 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   manageQuantityTierActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageQuotationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   manageZeroFloorAuthorizationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  externalPriceSourceScopesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   priceDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   priceGroupSourcePricesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   priceResultLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

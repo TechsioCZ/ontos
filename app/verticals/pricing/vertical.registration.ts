@@ -32,6 +32,7 @@ import { priceScheduleRead } from './src/api/price-schedule.read.ts';
 import { quantityTierResultLookupRead } from './src/api/quantity-tier-result-lookup.read.ts';
 import { quotationResultLookupRead } from './src/api/quotation-result-lookup.read.ts';
 import { priceGroupSourcePricesRead } from './src/api/price-group-source-prices.read.ts';
+import { externalPriceSourceScopesRead } from './src/api/external-price-source-scopes.read.ts';
 import { priceSourceResultLookupRead } from './src/api/price-source-result-lookup.read.ts';
 import { quotationVerificationRead } from './src/api/quotation-verification.read.ts';
 import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
@@ -73,6 +74,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
       'current-pricing-decision': () => import('@app/pricing-contracts/current-pricing-decision/client'),
       'current-supported-currencies': () => import('@app/pricing-contracts/current-supported-currencies/client'),
       'exact-price-resolution': () => import('./src/api/exact-price-resolution-client.ts'),
+      'external-price-source-scopes': () => import('./src/api/external-price-source-scopes-client.ts'),
       'owner-action-approvals': () => import('@app/core-runtime/access/approvals/owner-api'),
       'price-definition': () => import('@app/pricing-contracts/price-definition/client'),
       'price-group-source-prices': () => import('./src/api/price-group-source-prices-client.ts'),
@@ -126,6 +128,7 @@ export const pricingRegistration = defineVerticalRuntimeRegistration({
     quantityTierResultLookupRead,
     quotationResultLookupRead,
     priceGroupSourcePricesRead,
+    externalPriceSourceScopesRead,
     priceSourceResultLookupRead,
     quotationVerificationRead,
     zeroFloorAuthorizationResultLookupRead,

@@ -4,7 +4,7 @@
 // page and is found by the header search and the search results page; a Variant without a price shows „Cena na dotaz“.
 import { Option } from 'effect';
 import type { ProductPageItem } from '../../shared/apis/product-page.ts';
-import { companyErpOffer } from './erp-offer.ts';
+import type { ErpOffer } from './erp-offer.ts';
 
 declare const ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT: string | undefined;
 const akrosOrigin = (() => {
@@ -22,12 +22,12 @@ export interface ErpStorefrontStatus {
   readonly visible: boolean;
 }
 
-/** None for a company whose e-shop does not sell ERP products. */
+/** None for a company whose e-shop does not sell ERP products: one without an ERP offer. */
 export const erpStorefrontStatus = (
   item: ProductPageItem,
-  legalEntityId: string,
+  offer: Option.Option<ErpOffer>,
 ): Option.Option<ErpStorefrontStatus> => {
-  if (Option.isNone(companyErpOffer(legalEntityId))) {
+  if (Option.isNone(offer)) {
     return Option.none();
   }
   const reasons: { fix: string; why: string }[] = [];

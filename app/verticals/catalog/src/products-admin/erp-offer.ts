@@ -1,5 +1,8 @@
 import { CustomerConfigurationIdSchema } from '@app/inventory/launch-scope';
-import { Option, Schema } from 'effect';
+import { makeOperationGateway } from '@app/shared-contracts';
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { Effect, Option, Redacted, Schema } from 'effect';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 /** The Commerce Market the ERP prices were imported for (Pricing's stable market text). */
 const ErpOfferMarketIdSchema = Schema.String.check(
@@ -15,7 +18,8 @@ const ErpOfferUnitIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.br
  * The ERP offer a staff member views the imported products under: the Inventory Customer Configuration whose stock
  * figures are shown and the exact Price key scope Symmy's price route imported its prices with (Channel, Commerce
  * Market, currency and Unit basis). The same fields as the storefront's ONTOS_STOREFRONT_ERP_OFFER; the page takes
- * them from its URL query and remembers the last complete offer in this browser.
+ * them from the signed-in company's own data (`readCompanyErpOffer`), or from its URL query when that names a
+ * complete offer.
  */
 export const ErpOfferSchema = Schema.Struct({
   channelId: Schema.Literals(['B2C', 'B2B']),
@@ -45,41 +49,90 @@ export const erpOfferFromSearch = (search: string): Option.Option<ErpOffer> => {
 
 const OfferJsonSchema = Schema.fromJsonString(ErpOfferSchema);
 
-/** The offer as the text the browser remembers it by; it is a valid offer, so it always encodes. */
+/** The offer as one text (a page data key); it is a valid offer, so it always encodes. */
 export const encodeErpOffer = (offer: ErpOffer): string =>
   Option.getOrElse(Schema.encodeOption(OfferJsonSchema)(offer), () => '');
 
-export const decodeStoredErpOffer = (stored: string | null): Option.Option<ErpOffer> =>
-  stored === null ? Option.none() : Schema.decodeUnknownOption(OfferJsonSchema)(stored);
+const EmptyPayloadSchema = Schema.Struct({});
 
-const offerStorageKey = 'ontos.catalog.products.erp-offer';
+/** Pricing's standing price source scopes of the selected company (`commerce.pricing.api.external-price-source-scopes`). */
+const PricingScopesApi = HttpApi.make('ErpOfferPricingApi').add(
+  HttpApiGroup.make('scopes').add(
+    HttpApiEndpoint.post('read', '/reads/external-price-source-scopes', {
+      payload: EmptyPayloadSchema,
+      success: Schema.Struct({
+        scopes: Schema.Array(
+          Schema.Struct({
+            channelId: Schema.String,
+            currencyCode: Schema.String,
+            marketId: Schema.String,
+            unitId: Schema.String,
+            unitQuantity: Schema.String,
+          }),
+        ),
+      }),
+    }),
+  ),
+);
+
+/** Symmy's stock source of the selected company (`integration.symmy.api.symmy-company-stock-source`). */
+const SymmyStockSourceApi = HttpApi.make('ErpOfferSymmyApi').add(
+  HttpApiGroup.make('stock').add(
+    HttpApiEndpoint.post('read', '/reads/symmy-company-stock-source', {
+      payload: EmptyPayloadSchema,
+      success: Schema.Struct({ customerConfigurationIds: Schema.Array(Schema.String) }),
+    }),
+  ),
+);
+
+const pricingGateway = makeOperationGateway('pricing');
+const symmyGateway = makeOperationGateway('symmy-integration');
+
+const pricingScopes = (requestCorrelation: string) =>
+  pricingGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    makeGovernedEffectBffClient(
+      {
+        api: PricingScopesApi,
+        credential: Redacted.make(credential),
+        defaultApiPrefix: '/pricing-api',
+        requestCorrelation,
+      },
+      { baseUrl: apiBaseUrl, compositionRevision },
+    ).pipe(Effect.flatMap((client) => client.scopes.read({ payload: {} }))),
+  );
+
+const stockSources = (requestCorrelation: string) =>
+  symmyGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    makeGovernedEffectBffClient(
+      {
+        api: SymmyStockSourceApi,
+        credential: Redacted.make(credential),
+        defaultApiPrefix: '/symmy-integration-api',
+        requestCorrelation,
+      },
+      { baseUrl: apiBaseUrl, compositionRevision },
+    ).pipe(Effect.flatMap((client) => client.stock.read({ payload: {} }))),
+  );
 
 /**
- * The ERP offer each company's storefront sells under, the same as the storefront's ONTOS_STOREFRONT_ERP_OFFERS
- * (app/zerops.yaml), so staff see ERP price and stock without naming the offer in the address.
+ * The ERP offer of the signed-in company, from its owners' data: the one standing base price source scope Pricing
+ * holds for it and the one Inventory Customer Configuration its Symmy routes resolve stock in. None when either is
+ * missing or ambiguous (nothing is guessed), or when the company has no access to them.
  */
-const akrosCompanyId = 'c0c78a3e-6e2a-57e0-9d0d-86253499fee7';
-const akrosStorefrontOffer = {
-  channelId: 'B2C',
-  currencyCode: 'CZK',
-  customerConfigurationId: 'akros',
-  marketId: 'e57c614d-3911-5a52-941e-29168b1db5e4',
-  unitId: '43d5c797-2b36-4877-85ad-caac3a674d9c',
-  unitQuantity: '1',
-};
-
-/** The offer the signed-in company's storefront sells under, or none. */
-export const companyErpOffer = (legalEntityId: string): Option.Option<ErpOffer> =>
-  legalEntityId === akrosCompanyId ? decodeOffer(akrosStorefrontOffer) : Option.none();
-
-/** The last complete offer this browser was opened with. Browser only. */
-export const rememberedErpOffer = (): Option.Option<ErpOffer> =>
-  decodeStoredErpOffer(globalThis.localStorage.getItem(offerStorageKey));
-
-/** Remembers a complete offer so the navigation entry opens the page with it. Browser only. */
-export const rememberErpOffer = (offer: ErpOffer): void => {
-  globalThis.localStorage.setItem(offerStorageKey, encodeErpOffer(offer));
-};
+export const readCompanyErpOffer = (requestCorrelation: string) =>
+  Effect.all([pricingScopes(requestCorrelation), stockSources(requestCorrelation)], { concurrency: 2 }).pipe(
+    Effect.map(([{ scopes }, { customerConfigurationIds }]) => {
+      const [scope, ...otherScopes] = scopes;
+      const [customerConfigurationId, ...otherSources] = customerConfigurationIds;
+      return scope === undefined ||
+        customerConfigurationId === undefined ||
+        otherScopes.length > 0 ||
+        otherSources.length > 0
+        ? Option.none<ErpOffer>()
+        : decodeOffer({ ...scope, customerConfigurationId });
+    }),
+    Effect.orElseSucceed(() => Option.none<ErpOffer>()),
+  );
 
 /**
  * The locale the product texts are paged in: the URL's `locale`, else `cs`. Catalog answers a text only in the exact
