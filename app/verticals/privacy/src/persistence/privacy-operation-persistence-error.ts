@@ -88,6 +88,10 @@ const privacyConflictConstraints = new Set([
   'privacy_dsr_substantive_decisions_invocation_uk',
   'privacy_dsr_responses_scope_id_uk',
   'privacy_dsr_responses_invocation_uk',
+  'privacy_source_authorizations_scope_id_uk',
+  'privacy_source_authorizations_invocation_uk',
+  'privacy_source_authorizations_active_route_uk',
+  'privacy_source_admissions_source_uk',
 ]);
 
 export const privacyOperationPersistenceFailureCode = (cause: unknown): PrivacyOperationPersistenceError['code'] =>

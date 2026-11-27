@@ -212,6 +212,8 @@ import { SavedAddressSourceReceiptApi } from './shared/apis/saved-address-source
 import { savedAddressSourceReceiptRead } from './src/api/saved-address-source-receipt.read.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
+import { SourceProfileSubjectApi } from './shared/apis/source-profile-subject.ts';
+import { sourceProfileSubjectRead } from './src/api/source-profile-subject.read.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
 import { suspendCustomerProfileAction } from './src/actions/suspend-customer-profile.action.ts';
@@ -460,6 +462,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'saved-address-detail': SavedAddressDetailApi,
       'saved-address-list': SavedAddressListApi,
       'saved-address-source-receipt': SavedAddressSourceReceiptApi,
+      'source-profile-subject': SourceProfileSubjectApi,
       'update-customer-group-action': UpdateCustomerGroupActionApi,
       'update-saved-address-action': UpdateSavedAddressActionApi,
       'verify-effective-customer-group-membership-set-v1': VerifyEffectiveCustomerGroupMembershipSetV1Api,
@@ -667,6 +670,11 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
         apiKey: 'saved-address-source-receipt',
         operationKey: 'savedAddressSourceReceipt.execute',
         registration: savedAddressSourceReceiptRead,
+      },
+      {
+        apiKey: 'source-profile-subject',
+        operationKey: 'sourceProfileSubject.execute',
+        registration: sourceProfileSubjectRead,
       },
       {
         apiKey: 'update-customer-group-action',

@@ -67,6 +67,7 @@ const trustedInputs: ResolvePrivacyEligibilityInputsInput = {
   },
 };
 const services = (input = trustedInputs): SourceProcessingEligibilityServices => ({
+  authorizations: () => Effect.succeed([]),
   contexts: [fixture.context],
   protections: () =>
     Effect.succeed({ items: [], sourceSubjectRefs: [fixture.context.intendedScope.subjectRef.resourceId] }),
@@ -76,6 +77,7 @@ const services = (input = trustedInputs): SourceProcessingEligibilityServices =>
     listApplicabilityPolicies: () => Effect.succeed([fixture.policy]),
     resolveEligibilityInputs: () => Effect.succeed({ authoritativeReferences: [], input, policyRevisions: [] }),
   },
+  resolveSubject: () => Effect.succeed(Option.none()),
   subjectExists: () => Effect.succeed(true),
 });
 const run = (value = services(), request: SourceProcessingEligibilityRequest = fixture.request) =>

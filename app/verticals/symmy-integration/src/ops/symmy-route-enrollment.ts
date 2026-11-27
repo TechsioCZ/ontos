@@ -147,7 +147,7 @@ type SourceFamily = typeof SourceFamilySchema.Type;
 export interface SymmyRouteInventory {
   /** How the route admits work: a durable job, a synchronous admission, or none (a read). */
   readonly admission: 'job' | 'read' | 'sync';
-  readonly admissionReads?: readonly SymmyRouteAdmissionRead[];
+  readonly admissionOperations?: readonly SymmyRouteAdmissionRead[];
   /** The route reads or writes a company's data and is unusable without one. */
   readonly companyRequired?: boolean;
   /** The complete owner plans of which the route enrolls at least one, each serving a request alone. */
@@ -194,6 +194,10 @@ const shellRead = (moduleId: string, entrypointKey: string, required = false): S
   schemaVersion: '1',
 });
 const read = (entrypointKey: string): SymmyRouteCallRef => ({ entrypointKey, schemaVersion: '1' });
+const customerIntakeOperations = [
+  { ...read('privacy.core.api.source-processing-eligibility'), moduleId: 'privacy.core' },
+  { entrypointKey: 'privacy.core.admit-source-processing-subject', moduleId: 'privacy.core', schemaVersion: '1' },
+];
 const catalogSourceProducts = read('commerce.catalog.api.catalog-source-products');
 const priceGroupAssociations = read('pricing.price-group-catalog.api.price-group-source-associations');
 /** The Customer Group operations the synchronous admission and the membership adapter call; no plan builder names them. */
@@ -288,6 +292,8 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     'customerGroupCustomersBatch',
     {
       admission: 'job',
+      admissionOperations: customerIntakeOperations,
+      companyRequired: true,
       family: 'customerGroups',
       operations: [
         executor(customerGroupOperation('commerce.customer-context.apply-customer-group-membership-source'), {
@@ -317,7 +323,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
     'customersBatch',
     {
       admission: 'job',
-      admissionReads: [{ ...read('privacy.core.api.source-processing-eligibility'), moduleId: 'privacy.core' }],
+      admissionOperations: customerIntakeOperations,
       companyRequired: true,
       completePlans: [
         [createPartyOperation, retailProfileOperation],

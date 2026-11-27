@@ -24,6 +24,7 @@ const privacyMcpContributionWith = (
         title: { cs: 'Přidat verzi účelu zpracování', en: 'Add a processing purpose version' },
       },
       // Owner-to-owner source-module bind of a pre-verification subject (#1406 D.8); never a general agent tool.
+      'admit-source-processing-subject': OntosMcpHidden,
       'assign-dsr-resolver': {
         title: { cs: 'Přiřadit řešitele žádosti subjektu údajů', en: 'Assign a data subject request resolver' },
       },
@@ -36,6 +37,8 @@ const privacyMcpContributionWith = (
       },
       'bind-pre-verification-subject': OntosMcpHidden,
       'consent-self-service': consentSelfService,
+      'create-source-processing-authorization': OntosMcpHidden,
+      'end-source-processing-authorization': OntosMcpHidden,
       // Production installs no DSR intake receipt authority; every invocation fails until it is wired.
       'create-dsr-case': OntosMcpHidden,
       'create-notice-version': {

@@ -25,6 +25,12 @@ import { symmyIntegrationRegisteredWorkloadCalls } from './src/registered-worklo
 import { symmyExecutionRegistration } from './src/services/symmy-worker-identity.service.ts';
 
 const privacyModuleId = 'privacy.core' as const;
+const admitSymmyJobKey = 'integration.symmy.admit-symmy-job';
+const personalCustomerSourceIntake = {
+  condition: 'integration.symmy.condition.personal-customer-source-intake',
+  entrypointKey: admitSymmyJobKey,
+  evidence: ['integration.symmy.evidence.qualified-customer-source'],
+} as const;
 const ownerOperationProviders = [
   {
     moduleId: 'commerce.tax',
@@ -191,11 +197,7 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     implementedAs: 'ultramodern_microvertical',
     kind: 'business_module',
   },
-  originatorActions: [
-    'integration.symmy.admit-symmy-job',
-    'integration.symmy.admit-symmy-sync',
-    'privacy.core.dispatch-privacy-measure',
-  ],
+  originatorActions: [admitSymmyJobKey, 'integration.symmy.admit-symmy-sync', 'privacy.core.dispatch-privacy-measure'],
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
@@ -286,12 +288,19 @@ export const symmyIntegrationManifest: OntosModuleManifestInput = defineOntosMod
     operations: [
       ...ownerOperationRequirements,
       {
-        condition: 'integration.symmy.condition.personal-customer-source-intake',
-        entrypointKey: 'integration.symmy.admit-symmy-job',
-        evidence: ['integration.symmy.evidence.qualified-customer-source'],
+        ...personalCustomerSourceIntake,
         key: 'integration.symmy.requirement.customer-intake-privacy',
         provider: {
           entrypointKey: 'privacy.core.api.source-processing-eligibility',
+          moduleId: privacyModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        ...personalCustomerSourceIntake,
+        key: 'integration.symmy.requirement.customer-intake-subject-admission',
+        provider: {
+          entrypointKey: 'privacy.core.admit-source-processing-subject',
           moduleId: privacyModuleId,
           schemaVersion: '1',
         },

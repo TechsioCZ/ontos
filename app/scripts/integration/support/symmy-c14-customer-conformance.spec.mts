@@ -8,7 +8,6 @@ import { enrollCustomerProfileSourceReaderNativeFixture } from '@app/commerce-cu
 import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
 import { CreatePartyResultSchema } from '@app/party-registry/api';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
-import { SourceProcessingContextSchema } from '@app/privacy/api';
 import {
   seedCommittedProfileSourceProcessingNativeFixture,
   seedSourceProcessingNativeFixture,
@@ -507,7 +506,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       routeRef: sourceRouteId,
     };
     const flatSource = { ...sourceIdentity, occurrenceId, recordId };
-    const privacy = yield* seedSourceProcessingNativeFixture({
+    yield* seedSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: [
         customerIntakeContext(integration.principalId, flatSource, null),
@@ -703,9 +702,6 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         { ...sourceIdentity, authMethod: 'system', principalId: systemId, tenantId },
         { ...sourceIdentity, authMethod: 'api_key', principalId: integration.principalId, tenantId },
       ]),
-      ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-        Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-      )(privacy.contexts),
       ONTOS_SHELL_GATEWAY_BASE_URL: `${shell.baseUrl}/shell-super-app-api`,
       ONTOS_SYMMY_JOB_RETENTION_POLICIES: yield* json([
         {
@@ -976,7 +972,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     ];
     const readContexts = readbackContexts(scope, flatSource);
     // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
-    const sourceReadback = yield* seedSourceProcessingNativeFixture({
+    yield* seedSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: roundTripContexts.filter(({ request }) => request.target === null),
       contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_CUSTOMER_INTAKE',
@@ -1039,27 +1035,6 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           where tenant_id=${tenantId} and idempotency_key=${readOnlyWriteKey}`;
       expect(readOnlyWrites).toEqual({ count: 0 });
     }
-    const privacyRuntime = ownerRuntimes.get('privacy');
-    if (privacyRuntime === undefined) {
-      return yield* unavailable('The actual Privacy receiver is required for the independent DATA policy phase');
-    }
-    yield* privacyRuntime.receiver.child.kill();
-    yield* privacyRuntime.receiver.child.exitCode;
-    const restartedPrivacy = yield* startProductOwner({
-      artifacts: privacyRuntime.artifacts,
-      contract: privacyRuntime.contract,
-      environment: {
-        ...environment,
-        ONTOS_GATEWAY_MODULE_API_KEY: privacyRuntime.moduleKey,
-        ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-          Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-        )([...privacy.contexts, ...sourceReadback.contexts, ...dataPrivacy.contexts]),
-      },
-      port: privacyRuntime.port,
-      prefix: privacyApiPrefix,
-    });
-    ownerDiagnostics.set('privacy', restartedPrivacy.diagnostic);
-    ownerRuntimes.set('privacy', { ...privacyRuntime, receiver: restartedPrivacy });
     yield* Effect.logInfo(
       'INTERNAL_C14 historical native receipt admitted separate DATA policies between independent jobs',
     );
@@ -1166,7 +1141,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       occurrenceId: customerOccurrenceId(secondKey, customerItemKey),
       recordId: secondRecordId,
     };
-    const secondCreation = yield* seedSourceProcessingNativeFixture({
+    yield* seedSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: customerContexts(scope, secondKey, [{ kind: 'created', recordId: secondRecordId }]),
       contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_SECOND_CUSTOMER_CONTRACT',
@@ -1177,33 +1152,8 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       meaning: 'Independent current internal policy permits creating the second named person and its Retail profile',
       tenantId,
     });
-    const restartPrivacy = (contexts: readonly (typeof privacy.contexts)[number][]) =>
-      Effect.gen(function* restartPrivacyWith() {
-        const current = ownerRuntimes.get('privacy');
-        if (current === undefined) {
-          return yield* unavailable('The actual Privacy receiver is required for the second customer');
-        }
-        yield* current.receiver.child.kill();
-        yield* current.receiver.child.exitCode;
-        const restarted = yield* startProductOwner({
-          artifacts: current.artifacts,
-          contract: current.contract,
-          environment: {
-            ...environment,
-            ONTOS_GATEWAY_MODULE_API_KEY: current.moduleKey,
-            ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-              Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-            )(contexts),
-          },
-          port: current.port,
-          prefix: privacyApiPrefix,
-        });
-        ownerDiagnostics.set('privacy', restarted.diagnostic);
-        ownerRuntimes.set('privacy', { ...current, receiver: restarted });
-        return yield* Effect.void;
-      });
     // The first customer's binding moved to its newest observation, which the profile read now names.
-    const roundTripReadback = yield* seedCommittedProfileSourceProcessingNativeFixture({
+    yield* seedCommittedProfileSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: readbackContexts(scope, roundTripSource).filter(
         ({ request }) => request.operation === 'customer-profile-source.read',
@@ -1217,13 +1167,6 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       profileReceipt: yield* acquireReceiptTransport(),
       tenantId,
     });
-    const priorPrivacy = [
-      ...privacy.contexts,
-      ...sourceReadback.contexts,
-      ...dataPrivacy.contexts,
-      ...roundTripReadback.contexts,
-    ];
-    yield* restartPrivacy([...priorPrivacy, ...secondCreation.contexts]);
     const secondAccepted = yield* submitFor(
       secondKey,
       customersBody({ customerId: secondRecordId, firstName: 'Grace', kind: 'PERSON', lastName: 'Hopper' }),
@@ -1297,7 +1240,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       shellGatewayBaseUrl: environment.ONTOS_SHELL_GATEWAY_BASE_URL,
       tenantId,
     });
-    const secondReadback = yield* seedCommittedProfileSourceProcessingNativeFixture({
+    yield* seedCommittedProfileSourceProcessingNativeFixture({
       connections: isolated.connections,
       contexts: readbackContexts(
         { ...scope, partyId: secondParty.partyRef.resourceId, profileId: secondProfile.profileRef.resourceId },
@@ -1312,7 +1255,6 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       profileReceipt: secondTransport,
       tenantId,
     });
-    yield* restartPrivacy([...priorPrivacy, ...secondCreation.contexts, ...secondReadback.contexts]);
     // The Party owner holds the contact of the second customer; the search reaches it through the same Privacy export.
     yield* admin`insert into party.party_contact_points(tenant_id,party_id,contact_point_type,display_value,normalized_value,normalization_version,privacy_classification,valid_from,provenance_source,provenance_method,accepted_by_action_invocation_id,accepted_by_principal_id,policy_version)
           values(${tenantId},${secondParty.partyRef.resourceId},'EMAIL','Grace.Hopper@Example.test','grace.hopper@example.test','email.v1','PERSONAL','2020-01-01T00:00:00Z','internal-fixture','DECLARATION',${Option.getOrThrow(secondPartyEffect.owner_invocation_id)},${systemId},'fixture')`;

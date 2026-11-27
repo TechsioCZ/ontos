@@ -14,6 +14,7 @@ import { Schema } from 'effect';
 
 import type { ConsentDecision } from './privacy-consent-decision.ts';
 import {
+  SourceRouteProcessingOperation,
   PrivacyApplicabilityAuthoritySchema,
   PrivacyApplicabilityEligibilityAuthorityResultSchema,
   PrivacyApplicabilityScopeSchema,
@@ -56,6 +57,13 @@ export const PrivacyInterventionStatusSchema = Schema.Literals(['ACTIVE', 'RESOL
 const privacyApplicabilityAuthorityEquivalent = Schema.toEquivalence(PrivacyApplicabilityAuthoritySchema);
 const privacyApplicabilityScopeEquivalent = Schema.toEquivalence(PrivacyApplicabilityScopeSchema);
 const privacySubjectRefEquivalent = Schema.toEquivalence(PrivacySubjectRefSchema);
+
+/**
+ * The operation of a standing source-route scope. Its Applicability Decision is made for the route template and names
+ * no Privacy subject; each checked use still carries its own resolved subject.
+ */
+export { SourceRouteProcessingOperation } from './privacy-applicability.ts';
+
 export const PrivacyInputCurrentnessSchema = Schema.Struct({
   authoritative: Schema.Boolean,
   observedAt: PrivacyIsoTimestampSchema,
@@ -221,7 +229,7 @@ const exactIntendedApplicabilityFacts = (scope: IntendedProcessingScope): Readon
   new Map([
     ['CATEGORY', scope.dataCategoryRefs],
     ['CONTROLLER_SCOPE', [scope.controllerRef]],
-    ['PRIVACY_SUBJECT', [scope.subjectRef.resourceId]],
+    ['PRIVACY_SUBJECT', scope.operation === SourceRouteProcessingOperation ? [] : [scope.subjectRef.resourceId]],
     ['PROCESSING_PURPOSE', [scope.purposeRef]],
     ['PROCESSING_PURPOSE_VERSION', [scope.purposeVersionId]],
     ['RECIPIENT', scope.recipientRefs],

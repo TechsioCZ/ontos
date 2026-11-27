@@ -8,7 +8,6 @@ import { seedCustomerGroupSourceAuthority } from '@app/commerce-customer-context
 import { observeCustomerGroupSourceNativeFixture } from '@app/commerce-customer-context/testing/customer-group-source-observation';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
-import { SourceProcessingContextSchema } from '@app/privacy/api';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
 import { seedCommittedProfileSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
@@ -295,8 +294,21 @@ it.live(
         };
         const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           connections: isolated.connections,
-          contexts: [source, { ...source, occurrenceId: removalOccurrenceId }].flatMap((exactSource) =>
-            (['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
+          contexts: [source, { ...source, occurrenceId: removalOccurrenceId }].flatMap((exactSource) => [
+            {
+              authMethod: 'api_key',
+              principalId: integration.principalId,
+              request: {
+                consumerModuleId: 'integration.symmy' as const,
+                operation: 'CUSTOMER_SOURCE_INTAKE',
+                source: exactSource,
+                target: {
+                  kind: 'RETAIL_CUSTOMER_PROFILE' as const,
+                  resourceId: fixture.profileReceipt.profileRef.resourceId,
+                },
+              },
+            },
+            ...(['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
               authMethod: 'system' as const,
               principalId: systemId,
               request: {
@@ -309,7 +321,7 @@ it.live(
                 },
               },
             })),
-          ),
+          ]),
           contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_MEMBERSHIP_DATA_CONTRACT',
           controllerRef: 'internal:membership-conformance',
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
@@ -321,12 +333,7 @@ it.live(
         });
         expect(dataPrivacy.personAdmission.partyRef).toEqual(fixture.partyReceipt.partyRef);
         expect(dataPrivacy.profileReceipt.result.profileRef).toEqual(fixture.profileReceipt.profileRef);
-        yield* restartOwner(fixture, 'privacy', {
-          ...environment,
-          ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: yield* Schema.encodeEffect(
-            Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-          )([...fixture.privacy.contexts, ...dataPrivacy.contexts]),
-        });
+        yield* restartOwner(fixture, 'privacy', environment);
         const memberPlan = yield* makeInternalMembershipPlan({
           effectiveAt: DateTime.formatIso(yield* DateTime.now),
           groupRef: group.value.groupRef,

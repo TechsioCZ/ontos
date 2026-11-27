@@ -10,6 +10,7 @@
     "./actions/bind-pre-verification-subject": "./shared/actions/bind-pre-verification-subject.ts",
     "./api/measure-execution-eligibility": "./shared/apis/measure-execution-eligibility.ts",
     "./api/record-owner-execution-outcome-action": "./shared/apis/record-owner-execution-outcome-action.ts",
+    "./api/admit-source-processing-subject-action": "./shared/apis/admit-source-processing-subject-action.ts",
     "./api/organization-business-applicability": "./shared/apis/organization-business-applicability.ts",
     "./api/organization-business-applicability/client": "./src/api/organization-business-applicability-client.ts",
     "./api/organization-profile-ico-applicability": "./shared/apis/organization-profile-ico-applicability.ts",

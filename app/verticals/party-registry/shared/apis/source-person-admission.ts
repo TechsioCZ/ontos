@@ -14,6 +14,8 @@ export const SourcePersonAdmissionReferenceSchema = Schema.Struct({
   occurrenceId: SourceRecordIdentitySchema,
 });
 export const SourcePersonAdmissionRequestSchema = Schema.Struct({
+  /** When given, Party attests this contact belongs to the same current source person. No contact value is disclosed. */
+  contactPointId: Schema.optionalKey(PartyRefSchema.fields.resourceId),
   partyRef: PartyRefSchema,
   sourceReference: SourcePersonAdmissionReferenceSchema,
 });

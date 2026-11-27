@@ -55,10 +55,12 @@ const servicesIn = (
     const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
     const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
     const services: SourceProcessingEligibilityServices = {
+      authorizations: () => Effect.succeed([]),
       contexts,
       protections: (subjectRef, request) => readSourceProtections(transaction, scope, subjectRef, request),
       purposes,
       repository,
+      resolveSubject: () => Effect.succeed(Option.none()),
       subjectExists: (subjectRef, request, targetAdmission) =>
         Effect.gen(function* subjectMatches() {
           const [row] = yield* transaction

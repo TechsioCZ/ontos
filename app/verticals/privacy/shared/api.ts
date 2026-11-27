@@ -10,6 +10,7 @@ import { identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { AcknowledgePrivacyNoticeActionApi } from './apis/acknowledge-privacy-notice-action.ts';
 import { AddProcessingPurposeVersionActionApi } from './apis/add-processing-purpose-version-action.ts';
+import { AdmitSourceProcessingSubjectActionApi } from './apis/admit-source-processing-subject-action.ts';
 import { ApplicabilityDecisionsApi } from './apis/applicability-decisions.ts';
 import { AssignDsrResolverActionApi } from './apis/assign-dsr-resolver-action.ts';
 import { AssignLegalBasisActionApi } from './apis/assign-legal-basis-action.ts';
@@ -21,9 +22,11 @@ import { CreateNoticeVersionActionApi } from './apis/create-notice-version-actio
 import { CreatePrivacySubjectActionApi } from './apis/create-privacy-subject-action.ts';
 import { CreateProcessingActivityActionApi } from './apis/create-processing-activity-action.ts';
 import { CreateProcessingPurposeActionApi } from './apis/create-processing-purpose-action.ts';
+import { CreateSourceProcessingAuthorizationActionApi } from './apis/create-source-processing-authorization-action.ts';
 import { CurrentConsentApi } from './apis/current-consent.ts';
 import { DispatchPrivacyMeasureActionApi } from './apis/dispatch-privacy-measure-action.ts';
 import { DsrCasesApi } from './apis/dsr-cases.ts';
+import { EndSourceProcessingAuthorizationActionApi } from './apis/end-source-processing-authorization-action.ts';
 import { EnqueueRetentionEvaluationActionApi } from './apis/enqueue-retention-evaluation-action.ts';
 import { EvaluateProcessingEligibilityActionApi } from './apis/evaluate-processing-eligibility-action.ts';
 import { IssueDsrDeliveryAccessActionApi } from './apis/issue-dsr-delivery-access-action.ts';
@@ -268,6 +271,7 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(AcknowledgePrivacyNoticeActionApi)
   .addHttpApi(AddProcessingPurposeVersionActionApi)
+  .addHttpApi(AdmitSourceProcessingSubjectActionApi)
   .addHttpApi(ApplicabilityDecisionsApi)
   .addHttpApi(AssignDsrResolverActionApi)
   .addHttpApi(AssignLegalBasisActionApi)
@@ -279,9 +283,11 @@ export const privacyApi = HttpApi.make('PrivacyApi')
   .addHttpApi(CreatePrivacySubjectActionApi)
   .addHttpApi(CreateProcessingActivityActionApi)
   .addHttpApi(CreateProcessingPurposeActionApi)
+  .addHttpApi(CreateSourceProcessingAuthorizationActionApi)
   .addHttpApi(CurrentConsentApi)
   .addHttpApi(DispatchPrivacyMeasureActionApi)
   .addHttpApi(DsrCasesApi)
+  .addHttpApi(EndSourceProcessingAuthorizationActionApi)
   .addHttpApi(EnqueueRetentionEvaluationActionApi)
   .addHttpApi(EvaluateProcessingEligibilityActionApi)
   .addHttpApi(IssueDsrDeliveryAccessActionApi)

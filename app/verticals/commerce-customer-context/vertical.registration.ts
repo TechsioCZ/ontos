@@ -133,6 +133,7 @@ import { savedAddressListRead } from './src/api/saved-address-list.read.ts';
 import { savedAddressSourceReceiptRead } from './src/api/saved-address-source-receipt.read.ts';
 import { setDefaultBillingAddressAction } from './src/actions/set-default-billing-address.action.ts';
 import { setDefaultDeliveryDestinationAction } from './src/actions/set-default-delivery-destination.action.ts';
+import { sourceProfileSubjectRead } from './src/api/source-profile-subject.read.ts';
 import { startPortalEnrollmentAction } from './src/actions/start-portal-enrollment.action.ts';
 import { submitPortalAuthCommunicationRequestWorker } from './src/workers/submit-portal-auth-communication-request.worker.ts';
 import { submitPurchaseApprovalRequestAction } from './src/actions/submit-purchase-approval-request.action.ts';
@@ -313,6 +314,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'saved-address-detail': () => import('./src/api/saved-address-detail-client.ts'),
       'saved-address-list': () => import('./src/api/saved-address-list-client.ts'),
       'saved-address-source-receipt': () => import('./src/api/saved-address-source-receipt-client.ts'),
+      'source-profile-subject': () => import('./src/api/source-profile-subject-client.ts'),
       'verify-effective-customer-group-membership-set-v1': () =>
         import('./src/api/verify-effective-customer-group-membership-set-v1-client.ts'),
       'verify-retail-purchasing-subject-current-v1': () =>
@@ -404,6 +406,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     pricingPurchaseContextVerificationRead,
     purchaseCurrencyResolutionRead,
     savedAddressSourceReceiptRead,
+    sourceProfileSubjectRead,
     verifyEffectiveCustomerGroupMembershipSetV1Read,
     // </generated-module-registration-reads>
   ],

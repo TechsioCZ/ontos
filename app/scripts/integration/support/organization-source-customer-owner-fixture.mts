@@ -39,7 +39,6 @@ import { OrganizationBusinessSourceIntentSchema } from '@app/privacy/api/organiz
 import { executeRecordPrivacyApplicabilityWithAuthorization } from '@app/privacy/api/client';
 import { seedOrganizationBusinessSourceNativeFixture } from '@app/privacy/testing/organization-business-source-native';
 import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
-import { SourceProcessingContextSchema } from '@app/privacy/domain/source-processing-context';
 import type { SourceProcessingEligibilityRequest } from '@app/privacy-contracts/source-processing-eligibility';
 import { makeApiKeyGatewayNativeFixture } from '@app/shell-super-app/testing/api-key-gateway-native';
 import {
@@ -597,13 +596,12 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
     } as const;
     const runtimes = new Map<string, Effect.Success<ReturnType<typeof startProductOwner>>>();
     const artifacts = new Map<string, Effect.Success<ReturnType<typeof buildProductOwner>>>();
-    const intakeContexts: (typeof SourceProcessingContextSchema.Type)[] = [];
     const seedIntake = Effect.fn('OrganizationSourceCustomerOwner.seedIntake')(function* seedIntake(
       sourceOccurrenceId: string,
       target: NonNullable<SourceProcessingEligibilityRequest['target']>,
       uses: readonly NonNullable<SourceProcessingEligibilityRequest['organizationBusinessUse']>[],
     ) {
-      const seeded = yield* seedSourceProcessingNativeFixture({
+      yield* seedSourceProcessingNativeFixture({
         connections: isolated.connections,
         contexts: uses.map((organizationBusinessUse) => {
           const base = customerIntakeContext(
@@ -621,7 +619,6 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         meaning: 'Explicit internal staging for this current canonical company and qualified source record',
         tenantId,
       });
-      intakeContexts.push(...seeded.contexts);
     });
     const start = Effect.fn('OrganizationSourceCustomerOwner.start')(function* start(
       app: (typeof appIds)[number],
@@ -644,12 +641,6 @@ export const makeOrganizationSourceCustomerOwnerFixture = Effect.fn('Organizatio
         yield* previous.child.exitCode;
       }
       const ownerEnvironment = { ...environment, ...extra, ONTOS_GATEWAY_MODULE_API_KEY: moduleKey };
-      if (app === 'privacy') {
-        const encodedIntakeContexts = yield* Schema.encodeEffect(
-          Schema.fromJsonString(Schema.Array(SourceProcessingContextSchema)),
-        )(intakeContexts);
-        Object.assign(ownerEnvironment, { ONTOS_PRIVACY_SOURCE_PROCESSING_CONTEXTS: encodedIntakeContexts });
-      }
       const runtime = yield* startProductOwner({
         artifacts: artifact,
         contract,
