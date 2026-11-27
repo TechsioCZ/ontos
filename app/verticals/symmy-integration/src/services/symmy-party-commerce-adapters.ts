@@ -1585,7 +1585,10 @@ const currentOrganizationIcoTarget = Effect.fn('SymmyPartyCommerceAdapters.curre
       Match.tag(
         'CURRENT',
         (value) =>
-          value.item.icoAuthority === 'ORGANIZATION' &&
+          // Under source-sync processing (AKROS) the owner names no ICO classification; its own company ICO Action
+          // still decides the write, so only the personal classification is refused here.
+          (value.item.icoAuthority === 'ORGANIZATION' ||
+            (value.item.icoAuthority === undefined && value.item.sourceProcessingMode === 'SOURCE_SYNC')) &&
           value.item.partyRef.tenantId === payload.profileRef.tenantId &&
           value.item.profile.subject.kind === 'COUNTERPARTY' &&
           value.item.profile.profileRef.kind === 'COUNTERPARTY' &&
