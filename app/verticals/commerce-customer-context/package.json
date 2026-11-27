@@ -311,6 +311,9 @@
     "appId": "commerce-customer-context",
     "topology": "../../topology/reference-topology.json",
     "apiRuntime": "effect",
+    "backendFederation": {
+      "containerMinify": "whitespace-syntax"
+    },
     "ontosModule": {
       "contractPath": "/.well-known/ontos-module-manifest.json",
       "manifest": "./vertical.manifest.ts",
