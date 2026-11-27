@@ -22,7 +22,7 @@ import {
 } from '../../../../shared/browser-api.ts';
 import { loader } from '../../../../src/routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/resource-page-model.ts';
 import { resetSessionScope } from '../../../../src/routes/session-scope.ts';
-import { adaSignedIn, makeShellBff, signedInShellReads } from '../../../support/shell-bff-double.ts';
+import { adaSignedIn, businessThemeRead, makeShellBff, signedInShellReads } from '../../../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../../../support/shell-bff-double.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 
@@ -255,6 +255,7 @@ const ReadApi = HttpApi.make('resourceLoaderReads')
   .add(HttpApiGroup.make('composition').add(contract.composition.endpoints.shellComposition))
   .add(HttpApiGroup.make('legalEntities').add(contract.legalEntities.endpoints.availableLegalEntities))
   .add(HttpApiGroup.make('tenants').add(contract.tenants.endpoints.availableTenants))
+  .add(contract.coreReadTenantTheme)
   .prefix(shellAuthenticationApiContract.apiPrefix);
 const readHandlers = Layer.mergeAll(
   HttpApiBuilder.group(ReadApi, 'authentication', (group) => group.handle('currentSession', reads.currentSession)),
@@ -266,6 +267,9 @@ const readHandlers = Layer.mergeAll(
     group.handle('availableLegalEntities', reads.availableLegalEntities),
   ),
   HttpApiBuilder.group(ReadApi, 'tenants', (group) => group.handle('availableTenants', reads.availableTenants)),
+  HttpApiBuilder.group(ReadApi, 'coreReadTenantTheme', (group) =>
+    group.handle('executeTenantTheme', () => Effect.succeed(businessThemeRead)),
+  ),
 );
 const transportFailureNetwork = browserNetwork(
   serveApi(ReadApi, readHandlers),

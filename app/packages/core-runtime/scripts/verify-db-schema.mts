@@ -42,6 +42,8 @@ import {
   searchProjectionRebuilds,
   tenantModuleStateChanges,
   tenantModuleStates,
+  tenantThemeAttachments,
+  tenantThemes,
   tenants,
   workerCheckpoints,
 } from '../src/db/schema.ts';
@@ -762,6 +764,7 @@ const EXPECTED_COMPOSITE_CONSTRAINTS = [
   'core_search_index_entries_tenant_legal_entity_fk',
   'core_search_label_refresh_jobs_tenant_legal_entity_fk',
   'core_search_label_source_revisions_tenant_legal_entity_fk',
+  'core_tenant_theme_attachments_theme_fk',
 ].toSorted();
 
 const EXPECTED_AUTH_CONSTRAINTS = [
@@ -1025,6 +1028,8 @@ export const verifyCoreDatabaseSchema = (enrollment: DatabaseIdentityEnrollment)
       tenantModuleStates,
       actionInvocations,
       tenantModuleStateChanges,
+      tenantThemes,
+      tenantThemeAttachments,
       auditEvents,
       dataAccessEvents,
       domainEvents,
