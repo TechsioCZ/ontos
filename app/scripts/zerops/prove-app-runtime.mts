@@ -266,8 +266,11 @@ const resolveRelative = (resolutions: Resolutions, from: string, specifier: stri
     return resolved;
   });
 
-/** The bare and relative specifiers, and the workspace paths, one source line names. */
-const lineReferences = (line: string) => ({
+/** A comment line (`//`, `/*` or a block comment's `*` line) names files for people; a runtime file never starts one. */
+const COMMENT_LINE = /^\s*(?:\/\/|\/\*|\*)/u;
+
+/** The bare and relative specifiers, and the workspace paths, one source line names; a comment line names none. */
+const lineReferences = (line: string) => (COMMENT_LINE.test(line) ? { paths: [], specifiers: [] } : {
   paths: [...line.matchAll(WORKSPACE_PATH)].map((match) => match.groups?.value ?? ''),
   specifiers: SPECIFIERS.flatMap((pattern) => [...line.matchAll(pattern)].map((match) => match.groups?.value ?? '')),
 });
