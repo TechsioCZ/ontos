@@ -125,7 +125,8 @@ it.effect('leaves route content free of global user-perceivable UI', () =>
     yield* renderLayout();
 
     expect((yield* Effect.promise(() => screen.findByRole('main'))).textContent).toBe('Current route');
-    expect(screen.queryByRole('region')).toBeNull();
+    // The kit's one toast region waits, empty, for toasts from the Shell or any module.
+    expect(screen.getByRole('region').id).toMatch(/^toast-group:/u);
     expect(document.body.textContent?.trim()).toBe('Current route');
   }),
 );
