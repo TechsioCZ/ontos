@@ -17,7 +17,7 @@ CREATE TABLE "core"."tenant_themes" (
 	CONSTRAINT "core_tenant_themes_pk" PRIMARY KEY("tenant_id","theme_key"),
 	CONSTRAINT "core_tenant_themes_key_ck" CHECK (length("theme_key") <= 64 and "theme_key" ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'),
 	CONSTRAINT "core_tenant_themes_label_ck" CHECK (length("label") between 1 and 120),
-	CONSTRAINT "core_tenant_themes_modes_ck" CHECK (array_ndims("modes") = 1 and cardinality("modes") between 1 and 2 and "modes" <@ array['light', 'dark']::text[])
+	CONSTRAINT "core_tenant_themes_modes_ck" CHECK (array_ndims("modes") = 1 and "modes" <@ array['light', 'dark']::text[] and (cardinality("modes") = 1 or (cardinality("modes") = 2 and "modes" @> array['light', 'dark']::text[])))
 );
 --> statement-breakpoint
 ALTER TABLE "core"."tenant_themes" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint

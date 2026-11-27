@@ -24,6 +24,28 @@ export class TenantThemeKit extends Context.Service<TenantThemeKit, TenantThemeK
   '@app/core-runtime/themes/definition/TenantThemeKit',
 ) {}
 
+const hasNul = (text: string) => text.includes('\u0000');
+
+/** Every name and string value of a record that holds a NUL character, as `path.name`. */
+const recordNulIssues = (path: string, record: Readonly<Record<string, string>>): string[] =>
+  Object.entries(record).flatMap(([name, value]) => [
+    ...(hasNul(name) ? [`${path}: a name must not contain a NUL character`] : []),
+    ...(hasNul(value) ? [`${path}.${name}: must not contain a NUL character`] : []),
+  ]);
+
+/*
+ * What keeps a theme from being stored: PostgreSQL text and jsonb hold no NUL character, and the kit lets one through
+ * in a label or a component default. A theme with one is invalid, never a store outage.
+ */
+export const tenantThemeStorageIssues = ({ defaults, label, tokens }: TenantThemeDefinition): string[] => [
+  ...(hasNul(label) ? ['label: must not contain a NUL character'] : []),
+  ...recordNulIssues('tokens', tokens),
+  ...Object.entries(defaults?.components ?? {}).flatMap(([name, component]) => [
+    ...(hasNul(name) ? ['defaults.components: a name must not contain a NUL character'] : []),
+    ...recordNulIssues(`defaults.components.${name}`, component),
+  ]),
+];
+
 const encodeTheme = Schema.encodeEffect(Schema.fromJsonString(TenantThemeDefinitionSchema));
 
 /** A record with its keys in code-point order. */
