@@ -52,6 +52,7 @@ import { ALL_CATEGORIES, DEFAULT_SORT, SORTS, sortSelectItems } from './select-i
 import { selectItem } from '../../../../ui/select-item.ts';
 import type { ProductsTableStatus } from './products-table.tsx';
 import { ProductsTable } from './products-table.tsx';
+import { ProductSourceTabs } from './product-source-tabs.tsx';
 
 const merchandiseI18nResources = {
   cs: { merchandise: csResource },
@@ -406,6 +407,8 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
           description={k('description')}
           title={k('title')}
         />
+
+        <ProductSourceTabs />
 
         <ProductStats indicators={ready?.indicators} label={k} />
 

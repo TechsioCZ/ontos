@@ -2,6 +2,7 @@ import { hasKeptDraft, keepDraftOnReload, keptDraft } from '@app/shared-contract
 import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps, PageData } from '@app/shared-contracts/page-data';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
@@ -396,6 +397,35 @@ interface ListQuery {
   readonly search: string;
 }
 
+const tabClass = 'border-b-2 px-150 py-100 text-sm no-underline';
+
+/**
+ * "Sortiment | Z ERP" at the top of the one "Produkty" screen: this page is its ERP side; the company's own products
+ * (demo.merchandise, /provoz/produkty) are the other side, under the same navigation entry "Produkty".
+ */
+const ProductSourceTabs = ({ language }: { readonly language: string }) => {
+  const { t } = useModernI18n();
+  const navigate = useNavigate();
+  const href = `/${language}/provoz/produkty`;
+  return (
+    <nav aria-label={t(`${key}.sources.label`)} className="flex gap-100 border-border-primary border-b">
+      <a
+        className={`${tabClass} border-transparent text-fg-secondary hover:text-fg-primary`}
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          void navigate({ to: href });
+        }}
+      >
+        {t(`${key}.sources.own`)}
+      </a>
+      <span aria-current="page" className={`${tabClass} border-primary font-semibold text-fg-primary`}>
+        {t(`${key}.sources.erp`)}
+      </span>
+    </nav>
+  );
+};
+
 const ProductsPageContent = (props: ProductsPageProps) => {
   const { language, t } = useModernI18n();
   const search = props.search ?? '';
@@ -422,8 +452,8 @@ const ProductsPageContent = (props: ProductsPageProps) => {
       <header className="flex flex-col gap-100">
         <h1 className="font-semibold text-xl">{t(`${key}.title`)}</h1>
         <p className="max-w-prose text-fg-secondary text-sm">{t(`${key}.intro`)}</p>
-        <Link href={`/${language ?? 'cs'}/provoz/produkty`}>{t(`${key}.editorLink`)}</Link>
       </header>
+      <ProductSourceTabs language={language ?? 'cs'} />
       <section className="flex flex-col gap-200 rounded-lg border border-border-primary p-250">
         <form
           className="flex flex-wrap items-end gap-150"
