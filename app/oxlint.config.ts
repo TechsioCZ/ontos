@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -186,6 +188,10 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
 // The one UI import surface of OntOS UI source. When the CoreSDK re-exports the kit, this becomes the CoreSDK UI
 // entry and '@techsio/ui-kit' moves to the bypass list; nothing else changes. See docs/frontend/FRONTEND.md.
 const uiSurface = '@techsio/ui-kit';
+// The one stylesheet the Shell loads for every module; a module's classes must be rules in it.
+const uiSurfaceStylesheet = createRequire(new URL('apps/shell-super-app/package.json', import.meta.url)).resolve(
+  `${uiSurface}/styles.css`,
+);
 const uiSurfaceBypass = [
   '@ark-ui/*',
   '@base-ui-components/*',
@@ -222,7 +228,7 @@ const uiSurfaceBypass = [
 
 // Module UI is built from the kit only; see tools/oxlint/effect-native/README.md#ui-kit-rules.
 const uiKitRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
-  'effect-native/ui-kit-class-in-kit-stylesheet': ['error', { stylesheet: `${uiSurface}/styles.css` }],
+  'effect-native/ui-kit-class-in-kit-stylesheet': ['error', { stylesheet: uiSurfaceStylesheet }],
   'effect-native/ui-kit-import-through-surface': ['error', { bypass: uiSurfaceBypass, surface: uiSurface }],
   'effect-native/ui-kit-no-colour-literal': 'error',
   'effect-native/ui-kit-no-inline-style': 'error',

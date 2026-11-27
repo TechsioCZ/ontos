@@ -9,12 +9,12 @@
  * template text anywhere inside its expression (ternaries, arrays, helper calls), that the kit stylesheet does not
  * define. Tokens next to a template substitution are partial and skipped. `group`, `peer` and their named forms
  * (`group/row`) are markers without rules of their own and are allowed.
- * Reported (`noStylesheet`, once per file): the `stylesheet` option does not resolve from the file, so the
- * module does not depend on the kit whose classes it writes.
+ * Reported (`noStylesheet`, once per file): the `stylesheet` option does not resolve.
  *
  * The Shell runs no Tailwind of its own either, so the same holds for it.
  *
- * Options: `stylesheet` (module specifier, resolved from the linted file), `includePaths`. Scope: `apps/**`,
+ * Options: `stylesheet` (the host's stylesheet: an absolute path, or a specifier resolved from the linted file),
+ * `includePaths`. Scope: `apps/**`,
  * `verticals/**` and `packages/**`, tests excluded. Report-only: no fixer, no suggestion.
  */
 import { readFileSync } from 'node:fs';
@@ -77,7 +77,7 @@ export const rule = defineRule({
     ],
     messages: {
       noStylesheet:
-        '{{stylesheet}} does not resolve from this module: a module that writes kit classes depends on the kit.',
+        '{{stylesheet}} does not resolve, so no class can be checked against the stylesheet the host loads.',
       unknownClass:
         '"{{value}}" is not in the kit stylesheet, so nothing styles it: use a kit component or a class the kit defines, or add what is missing to the kit.',
     },
