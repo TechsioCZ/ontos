@@ -21,7 +21,7 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { DataTableProps, DataTableRowAction, TanstackTable } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
-import { useReducer, useState } from 'react';
+import { useState } from 'react';
 import type { ApplyCommandResult } from '../../../../../shared/actions/apply-command.ts';
 import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -40,7 +40,7 @@ import type { DialogState, Target } from './pipeline-dialog-host.tsx';
 import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from './pipeline-dialog-host.tsx';
 import { PipelineDetailPage } from './pipeline-detail-page.tsx';
 import { PipelineDetailPanel } from './pipeline-detail-panel.tsx';
-import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
+import { PipelineFilters, PipelineStats, usePipelineFilters } from './pipeline-filters.tsx';
 import { applyPipelineCommand, applyPipelineCommandIfUnchanged } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import { containsFolded, pipelineConflictKey, skipTally, sortNewestFirst } from './pipeline-model.ts';
@@ -342,20 +342,6 @@ const buildLookups = ({
   tagsBySubject,
 });
 
-type PipelineViewFilters = Parameters<typeof hasActiveFilters>[0];
-const emptyViewFilters: PipelineViewFilters = {
-  customerFilter: '',
-  ownerFilter: '',
-  search: '',
-  stageFilter: '',
-  tagFilter: null,
-  unassignedOnly: false,
-};
-const reduceViewFilters = (current: PipelineViewFilters, patch: Partial<PipelineViewFilters>): PipelineViewFilters => ({
-  ...current,
-  ...patch,
-});
-
 /** `Přeskočeno: 2 (uzavřené: 1, beze změny: 1)`, or nothing when every requested id changed. */
 const skippedText = (tally: SkipTally, t: ReturnType<typeof useModernI18n>['t']): string | undefined => {
   const reasons = [
@@ -572,17 +558,9 @@ const RecordsPageContent = ({
   const toaster = useToast();
   const { customers, employees, products } = usePipelineReferences();
   const [tagVersion, setTagVersion] = useState(0);
-  const [filters, updateFilters] = useReducer(reduceViewFilters, {
-    ...emptyViewFilters,
-    customerFilter: initialPartyId ?? '',
-  });
-  const { customerFilter, ownerFilter, search, stageFilter, tagFilter, unassignedOnly } = filters;
-  const setSearch = (next: string) => updateFilters({ search: next });
-  const setStageFilter = (next: OpportunityStage | '') => updateFilters({ stageFilter: next });
-  const setOwnerFilter = (next: EmployeeId | '') => updateFilters({ ownerFilter: next });
-  const setCustomerFilter = (next: PartyId | '') => updateFilters({ customerFilter: next });
-  const setTagFilter = (next: TagId | null) => updateFilters({ tagFilter: next });
-  const setUnassignedOnly = (next: boolean) => updateFilters({ unassignedOnly: next });
+  // The filter form holds the filters.
+  const { clear: clearFilters, values: filterValues, view: viewFilters } = usePipelineFilters(initialPartyId);
+  const { customerFilter, ownerFilter, search, stageFilter, tagFilter, unassignedOnly } = viewFilters;
   const [selection, setSelection] = useState<Selection>({});
   const [dialog, setDialog] = useState<DialogState>();
   const [detailId, setDetailId] = useState<string | undefined>(initialOpportunityId);
@@ -616,8 +594,6 @@ const RecordsPageContent = ({
   const { customerById } = lookups;
   const unknownCustomer = t(`${K}.create.unknownCustomer`);
   const customerLabel = (partyId: string) => customerById.get(partyId)?.name ?? unknownCustomer;
-
-  const clearFilters = () => updateFilters(emptyViewFilters);
 
   const openDialog = (next: DialogState) => {
     setDialogError(undefined);
@@ -766,22 +742,7 @@ const RecordsPageContent = ({
 
           <PipelineStats indicators={response?.indicators} />
 
-          <PipelineFilters
-            customer={customerFilter}
-            customers={customers}
-            employees={activeEmployees}
-            onCustomer={setCustomerFilter}
-            onOwner={setOwnerFilter}
-            onSearch={setSearch}
-            onStage={setStageFilter}
-            onTag={setTagFilter}
-            onUnassignedOnly={setUnassignedOnly}
-            owner={ownerFilter}
-            search={search}
-            stage={stageFilter}
-            tag={tagFilter}
-            unassignedOnly={unassignedOnly}
-          />
+          <PipelineFilters customers={customers} employees={activeEmployees} filters={filterValues} />
           {tagState?.status === 'error' && (
             <StatusText showIcon status="error">
               {t(`${K}.filters.tagFailed`)}

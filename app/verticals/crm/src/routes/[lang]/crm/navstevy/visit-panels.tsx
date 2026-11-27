@@ -1,18 +1,32 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { DateTime, Option } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import type { Atom } from 'effect/reactivity';
 import { assignableSalespeople } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.tsx';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // AREA: visits — owned by the crm-visits lane. Side panels: record a visit, correct it (with history), detail.
-import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
+import { DetailList, SidePanel, comboboxTranslations, requiredLabelFor, surfaceTileClassName } from '@app/admin-ui';
+import {
+  CheckboxField,
+  ChoiceField,
+  ComboboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RadioField,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { Field } from '@app/core-runtime/ui/form';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox, FormInput, FormTextarea, RadioGroup } from '@app/admin-ui/form-controls';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { useState } from 'react';
+import { useEffect } from 'react';
+import type { FC } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { visitKinds } from '../../../../../shared/domain/visits.ts';
@@ -36,23 +50,158 @@ const RESIZE_LABEL = 'Změnit šířku panelu (šipky vlevo a vpravo)';
 
 export type Submit = CrmCommandSubmit;
 
-export interface VisitDraft {
-  readonly addToPlan: boolean;
-  readonly clientId: string;
-  readonly date: string;
-  readonly kind: VisitKind;
-  readonly nextStep: string;
-  readonly nextStepDate: NonNullable<Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }>['nextStepDate']>;
-  readonly note: string;
-  readonly result: string;
-  readonly salespersonId: string;
-  readonly time: string;
+/** A client picked in a visit or plan form; `""` is none. */
+export const ClientPickSchema = Schema.String.check(
+  Schema.makeFilter((clientId: string) => clientId !== '', { message: 'Vyberte klienta.' }),
+);
+
+/**
+ * A visit as typed in every visit form: the Prague day and time apart (an empty time is midnight), the kind and the
+ * salesperson as picked (`""` is the client's assigned salesperson). The checks carry the messages the fields show.
+ */
+/** The day of a visit; an empty time is midnight. */
+const VisitDateSchema = Schema.String.check(
+  Schema.makeFilter((date: string) => isoFromLocal(date, '') !== undefined, { message: 'Vyplňte datum a čas.' }),
+);
+const VisitResultSchema = Schema.String.check(
+  Schema.makeFilter((result: string) => result.trim() !== '', { message: 'Vyplňte krátký výsledek jednání.' }),
+);
+
+/** The schema of each field every visit form has. */
+interface VisitFieldSchemas {
+  readonly clientId: typeof ClientPickSchema;
+  readonly date: typeof VisitDateSchema;
+  readonly kind: Schema.String;
+  readonly nextStep: Schema.String;
+  readonly nextStepDate: Schema.String;
+  readonly note: Schema.String;
+  readonly result: typeof VisitResultSchema;
+  readonly salespersonId: Schema.String;
+  readonly time: Schema.String;
 }
+
+/** The fields every visit form has. */
+type VisitFormFields = {
+  readonly [Key in keyof VisitFieldSchemas]: Field.FieldDef<Key, VisitFieldSchemas[Key]>;
+};
+
+/**
+ * A visit as typed in every visit form: the Prague day and time apart, the kind as picked and the salesperson as
+ * picked (`""` is the client's assigned one).
+ */
+export type VisitDraft = Field.EncodedFromFields<VisitFormFields>;
+
+/**
+ * The fields every visit form has, checked with the messages they show; a form adds its own (add to plan, reason,
+ * outcome) to these.
+ */
+export const visitFields: FormBuilder.FormBuilder<VisitFormFields, never> = FormBuilder.empty
+  .addField('clientId', ClientPickSchema)
+  .addField('date', VisitDateSchema)
+  .addField('kind', Schema.String)
+  .addField('nextStep', Schema.String)
+  .addField('nextStepDate', Schema.String)
+  .addField('note', Schema.String)
+  .addField('result', VisitResultSchema)
+  .addField('salespersonId', Schema.String)
+  .addField('time', Schema.String);
+
+/** The kit controls of the visit fields. */
+interface VisitControls {
+  readonly clientId: typeof ComboboxField;
+  readonly date: typeof TextField;
+  readonly kind: typeof RadioField;
+  readonly nextStep: typeof TextField;
+  readonly nextStepDate: typeof TextField;
+  readonly note: typeof TextAreaField;
+  readonly result: typeof TextField;
+  readonly salespersonId: typeof ChoiceField;
+  readonly time: typeof TextField;
+}
+
+/** The kit controls of the visit fields; each visit form adds the controls of its own fields. */
+export const visitControls: VisitControls = {
+  clientId: ComboboxField,
+  date: TextField,
+  kind: RadioField,
+  nextStep: TextField,
+  nextStepDate: TextField,
+  note: TextAreaField,
+  result: TextField,
+  salespersonId: ChoiceField,
+  time: TextField,
+};
+
+interface Choice {
+  readonly label: string;
+  readonly value: string;
+}
+
+/**
+ * The visit fields of a visit form, as `VisitFields` renders them. A form built from `visitFields` with the
+ * `visitControls` has them, whatever else it holds.
+ */
+export interface VisitFieldsForm {
+  readonly clientId: FC<{
+    clearable: boolean;
+    helpText: string;
+    items: Choice[];
+    label: string;
+    noResultsMessage: string;
+    placeholder: string;
+    required: boolean;
+    requiredLabel: string;
+    size: 'sm';
+    translations: typeof comboboxTranslations;
+  }>;
+  readonly date: FC<{
+    id: string;
+    label: string;
+    max: string;
+    name: string;
+    required: boolean;
+    requiredLabel: string;
+    size: 'sm';
+    type: 'date';
+  }>;
+  readonly kind: FC<{ items: readonly Choice[]; label: string }>;
+  readonly nextStep: FC<{ autoComplete: 'off'; id: string; label: string; name: string; size: 'sm' }>;
+  readonly nextStepDate: FC<{ id: string; label: string; name: string; size: 'sm'; type: 'date' }>;
+  readonly note: FC<{ id: string; label: string; maxLength: number; name: string; rows: number; size: 'sm' }>;
+  readonly result: FC<{
+    autoComplete: 'off';
+    helpText: string;
+    id: string;
+    label: string;
+    maxLength: number;
+    name: string;
+    required: boolean;
+    requiredLabel: string;
+    size: 'sm';
+  }>;
+  readonly salespersonId: FC<{ items: Choice[]; label: string; placeholder: string }>;
+  readonly time: FC<{
+    id: string;
+    label: string;
+    name: string;
+    required: boolean;
+    requiredLabel: string;
+    size: 'sm';
+    type: 'time';
+  }>;
+}
+
+/** The kind a draft names, when it is one. */
+export const visitKindOf = (kind: string): Option.Option<VisitKind> =>
+  Option.fromUndefinedOr(visitKinds.find((candidate) => candidate === kind));
+
+/** The label of the kind a draft names. */
+export const visitKindLabel = (kind: string): string =>
+  Option.match(visitKindOf(kind), { onNone: () => kind, onSome: (known) => visitKindMeta[known].label });
 
 export const emptyVisitDraft = (records: RecordsResponse, clientId = '', kind: VisitKind = 'visit'): VisitDraft => {
   const now = localInputs(records.now);
   return {
-    addToPlan: true,
     clientId,
     date: now.date,
     kind,
@@ -65,154 +214,144 @@ export const emptyVisitDraft = (records: RecordsResponse, clientId = '', kind: V
   };
 };
 
-const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
+/** The parts of a built form whose field messages follow the save bar. */
+interface MessagesForm {
+  readonly isDirty: Atom.Atom<boolean>;
+  readonly reset: Atom.Writable<void, void>;
+  readonly validate: Atom.AtomResultFn<void, void>;
+  readonly validationCount: Atom.Atom<number>;
+}
+
+/**
+ * Field messages show once the draft is changed and invalid, the same moment the save bar says so, and hide again
+ * once the form is back at the values it opened with.
+ */
+export const useMessagesWhileInvalid = (form: MessagesForm, invalid: boolean) => {
+  const validate = useAtomSet(form.validate);
+  const reset = useAtomSet(form.reset);
+  const checked = useAtomValue(form.validationCount) > 0;
+  const changed = useAtomValue(form.isDirty);
+  useEffect(() => {
+    if (invalid) {
+      validate();
+    } else if (checked && !changed) {
+      reset();
+    }
+  }, [changed, checked, invalid, reset, validate]);
+};
+
+/** Translates a field message; the visit messages are Czech copy, shown as they are. */
+export const useMessageTranslator = () => {
+  const { t } = useModernI18n();
+  return (message: string) => t(message, { defaultValue: message });
+};
 
 /** Fields shared by "record" and "correct" (and by completing a planned contact). */
 export const VisitFields = ({
-  draft,
+  form,
   idPrefix,
-  onChange,
   records,
   showClient,
   showNextStep = true,
   showSalesperson,
-  submitted,
 }: {
-  readonly draft: VisitDraft;
+  readonly form: VisitFieldsForm;
   readonly idPrefix: string;
-  readonly onChange: (patch: Partial<VisitDraft>) => void;
   readonly records: RecordsResponse;
   readonly showClient: boolean;
   readonly showNextStep?: boolean;
   readonly showSalesperson: boolean;
-  readonly submitted: boolean;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const requiredLabel = requiredLabelFor(language);
   const clients = writableClients(records);
   const today = localInputs(records.now).date;
-  const resultError = submitted && draft.result.trim() === '' ? 'Vyplňte krátký výsledek jednání.' : undefined;
-  const dateError =
-    submitted && isoFromLocal(draft.date, draft.time) === undefined ? 'Vyplňte datum a čas.' : undefined;
   return (
     <>
       {showClient && (
-        <Combobox
+        <form.clientId
           clearable={false}
-          helpText={submitted && draft.clientId === '' ? 'Vyberte klienta.' : 'Jen klienti, ke kterým smíte zapisovat.'}
+          helpText="Jen klienti, ke kterým smíte zapisovat."
           items={clients.map((client) => ({ label: client.name, value: client.id }))}
           label={t('crm.ciClientsVisits.fields.client')}
           noResultsMessage="Žádný klient neodpovídá"
-          onChange={(values) => onChange({ clientId: firstValue(values) ?? '' })}
           placeholder={t('crm.ciClientsVisits.visits.clientPlaceholder')}
           required
+          requiredLabel={requiredLabel}
           size="sm"
           translations={comboboxTranslations}
-          validateStatus={submitted && draft.clientId === '' ? 'error' : 'default'}
-          value={draft.clientId === '' ? [] : [draft.clientId]}
         />
       )}
-      <RadioGroup
-        onValueChange={(next) => {
-          const kind = visitKinds.find((candidate) => candidate === next);
-          if (kind !== undefined) {
-            onChange({ kind });
-          }
-        }}
-        size="sm"
-        value={draft.kind}
-      >
-        <RadioGroup.Label>Typ kontaktu</RadioGroup.Label>
-        <RadioGroup.ItemGroup className="flex flex-wrap gap-x-300 gap-y-100">
-          {visitKinds.map((kind) => (
-            <RadioGroup.Item key={kind} value={kind}>
-              <RadioGroup.ItemHiddenInput />
-              <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{visitKindMeta[kind].label}</RadioGroup.ItemText>
-            </RadioGroup.Item>
-          ))}
-        </RadioGroup.ItemGroup>
-      </RadioGroup>
+      <form.kind
+        items={visitKinds.map((kind) => ({ label: visitKindMeta[kind].label, value: kind }))}
+        label="Typ kontaktu"
+      />
       <div className="grid grid-cols-2 gap-150">
-        <FormInput
-          helpText={dateError}
+        <form.date
           id={`${idPrefix}-date`}
           label={t('crm.ciClientsVisits.fields.date')}
           max={today}
           name="date"
-          onChange={(event) => onChange({ date: event.target.value })}
           required
+          requiredLabel={requiredLabel}
           size="sm"
           type="date"
-          validateStatus={dateError === undefined ? 'default' : 'error'}
-          value={draft.date}
         />
-        <FormInput
+        <form.time
           id={`${idPrefix}-time`}
           label={t('crm.ciClientsVisits.fields.time')}
           name="time"
-          onChange={(event) => onChange({ time: event.target.value })}
           required
+          requiredLabel={requiredLabel}
           size="sm"
           type="time"
-          value={draft.time}
         />
       </div>
       {showSalesperson && (
-        <SelectTemplate
+        <form.salespersonId
           items={[
             { label: 'Podle přidělení klienta', value: '' },
             ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
           ]}
           label={t('crm.ciClientsVisits.fields.salesperson')}
-          name="salesperson"
-          onValueChange={(details) => onChange({ salespersonId: details.value[0] ?? '' })}
-          size="sm"
-          value={[draft.salespersonId]}
+          placeholder="Podle přidělení klienta"
         />
       )}
-      <FormInput
+      <form.result
         autoComplete="off"
-        helpText={resultError ?? 'Jedna věta: s čím jednání skončilo.'}
+        helpText="Jedna věta: s čím jednání skončilo."
         id={`${idPrefix}-result`}
         label={t('crm.ciClientsVisits.visits.result')}
         maxLength={200}
         name="result"
-        onChange={(event) => onChange({ result: event.target.value })}
         required
+        requiredLabel={requiredLabel}
         size="sm"
-        validateStatus={resultError === undefined ? 'default' : 'error'}
-        value={draft.result}
       />
-      <FormTextarea
+      <form.note
         id={`${idPrefix}-note`}
         label={t('crm.ciClientsVisits.fields.note')}
         maxLength={4000}
         name="note"
-        onChange={(event) => onChange({ note: event.target.value })}
         rows={3}
         size="sm"
-        value={draft.note}
       />
       {showNextStep && (
         <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
           <span className="font-medium text-sm">Další krok (volitelně)</span>
-          <FormInput
+          <form.nextStep
             autoComplete="off"
             id={`${idPrefix}-next-step`}
             label={t('crm.ciClientsVisits.visits.nextStep')}
             name="nextStep"
-            onChange={(event) => onChange({ nextStep: event.target.value })}
             size="sm"
-            value={draft.nextStep}
           />
-          <FormInput
+          <form.nextStepDate
             id={`${idPrefix}-next-date`}
             label={t('crm.ciClientsVisits.fields.dueDate')}
             name="nextStepDate"
-            onChange={(event) => onChange({ nextStepDate: event.target.value })}
             size="sm"
             type="date"
-            value={draft.nextStepDate}
           />
         </div>
       )}
@@ -220,21 +359,25 @@ export const VisitFields = ({
   );
 };
 
+/** A visit as the record forms hold it: the visit and whether its next step also goes into the plan. */
+export type RecordVisitDraft = VisitDraft & { readonly addToPlan: boolean };
+
 /** The RecordVisit command of a complete draft; none while the client, result or time is missing. */
 export const recordVisitCommandOf = (
-  draft: VisitDraft,
+  draft: RecordVisitDraft,
   clientId: string,
   writeAll: boolean,
 ): Option.Option<CrmCommandInput> => {
   const occurredAt = isoFromLocal(draft.date, draft.time);
-  if (clientId === '' || draft.result.trim() === '' || occurredAt === undefined) {
+  const kind = visitKindOf(draft.kind);
+  if (clientId === '' || draft.result.trim() === '' || occurredAt === undefined || Option.isNone(kind)) {
     return Option.none();
   }
   const nextStep = draft.nextStep.trim();
   const command: Extract<CrmCommandInput, { readonly _tag: 'RecordVisit' }> = {
     _tag: 'RecordVisit',
     clientId,
-    kind: draft.kind,
+    kind: kind.value,
     occurredAt,
     result: draft.result.trim(),
   };
@@ -253,6 +396,13 @@ export const recordVisitCommandOf = (
   return Option.some(command);
 };
 
+/** Recording a visit in the side panel. Enter never sends the record: only Uložit does, through the panel's one save. */
+const recordVisitForm = FormReact.make(visitFields.addField('addToPlan', Schema.Boolean), {
+  fields: { ...visitControls, addToPlan: CheckboxField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
 /** Record a new visit / call / video / e-mail (C02). `clientId` fixes the client (client card). */
 export const RecordVisitPanel = ({
   clientId,
@@ -269,15 +419,16 @@ export const RecordVisitPanel = ({
 }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [draft, setDraft] = useState<VisitDraft>(() => emptyVisitDraft(records, clientId));
-  const patch = (next: Partial<VisitDraft>) => setDraft((current) => ({ ...current, ...next }));
-  const form = useCrmFormSave<VisitDraft>({
+  const translate = useMessageTranslator();
+  const opened: RecordVisitDraft = { ...emptyVisitDraft(records, clientId), addToPlan: true };
+  const draft = Option.getOrElse(useAtomValue(recordVisitForm.values), () => opened);
+  const form = useCrmFormSave<RecordVisitDraft>({
     command: (value) => recordVisitCommandOf(value, clientId ?? value.clientId, records.viewer.writeAll),
     failureText: (message) => czechError(message, 'Záznam se nepodařilo uložit.'),
     onSaved: (value) => {
       toaster.create({
         description: value.nextStepDate !== '' && value.addToPlan ? 'Další krok je v plánu K oslovení.' : undefined,
-        title: `${visitKindMeta[value.kind].label} zapsán(a)`,
+        title: `${visitKindLabel(value.kind)} zapsán(a)`,
         type: 'success',
       });
       onOpenChange(false);
@@ -285,6 +436,7 @@ export const RecordVisitPanel = ({
     submit,
     value: draft,
   });
+  useMessagesWhileInvalid(recordVisitForm, form.record.status === 'invalid');
   const close = () => onOpenChange(false);
   return (
     <SidePanel
@@ -301,27 +453,26 @@ export const RecordVisitPanel = ({
       size="lg"
       title={t('crm.ciClientsVisits.visits.recordVisit')}
     >
-      {/* Enter never sends the record: only Uložit does. */}
-      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+      <FormRoot
+        className="flex flex-col gap-200 py-200"
+        defaultValues={opened}
+        form={recordVisitForm}
+        translateMessage={translate}
+      >
         <VisitFields
-          draft={draft}
+          form={recordVisitForm}
           idPrefix="crm-visit-new"
-          onChange={patch}
           records={records}
           showClient={clientId === undefined}
           showSalesperson={records.viewer.writeAll}
-          submitted={form.record.status === 'invalid'}
         />
         {draft.nextStepDate !== '' && (
-          <FormCheckbox
-            checked={draft.addToPlan}
+          <recordVisitForm.addToPlan
             id="crm-visit-new-plan"
             label={t('crm.ciClientsVisits.visits.addNextStepToMyPlan')}
-            onCheckedChange={(checked) => patch({ addToPlan: checked })}
-            size="sm"
           />
         )}
-      </form>
+      </FormRoot>
     </SidePanel>
   );
 };
@@ -329,7 +480,6 @@ export const RecordVisitPanel = ({
 const initialVisitDraft = (target: Visit): VisitDraft => {
   const local = localInputs(target.occurredAt);
   return {
-    addToPlan: false,
     clientId: target.clientId,
     date: local.date,
     kind: target.kind,
@@ -343,10 +493,7 @@ const initialVisitDraft = (target: Visit): VisitDraft => {
 };
 
 /** A correction as typed: the corrected fields and why. */
-interface CorrectionDraft {
-  readonly reason: string;
-  readonly visit: VisitDraft;
-}
+type CorrectionDraft = VisitDraft & { readonly reason: string };
 
 const correctedFields: readonly (keyof VisitDraft)[] = [
   'kind',
@@ -359,17 +506,17 @@ const correctedFields: readonly (keyof VisitDraft)[] = [
 ];
 
 /** The CorrectVisit command with only the changed fields; none while nothing changed or result and time are missing. */
-const correctionCommandOf = (value: CorrectionDraft, target: Visit): Option.Option<CrmCommandInput> => {
-  const { visit: draft } = value;
+const correctionCommandOf = (draft: CorrectionDraft, target: Visit): Option.Option<CrmCommandInput> => {
   const original = initialVisitDraft(target);
   const occurredAt = isoFromLocal(draft.date, draft.time);
+  const kind = visitKindOf(draft.kind);
   const changed = (field: keyof VisitDraft) => draft[field] !== original[field];
-  if (draft.result.trim() === '' || occurredAt === undefined || !correctedFields.some(changed)) {
+  if (draft.result.trim() === '' || occurredAt === undefined || Option.isNone(kind) || !correctedFields.some(changed)) {
     return Option.none();
   }
   const command: CrmCommandInput = { _tag: 'CorrectVisit', visitId: target.id };
   if (changed('kind')) {
-    Object.assign(command, { kind: draft.kind });
+    Object.assign(command, { kind: kind.value });
   }
   if (changed('date') || changed('time')) {
     Object.assign(command, { occurredAt });
@@ -386,11 +533,18 @@ const correctionCommandOf = (value: CorrectionDraft, target: Visit): Option.Opti
   if (changed('nextStepDate')) {
     Object.assign(command, { nextStepDate: draft.nextStepDate });
   }
-  if (value.reason.trim() !== '') {
-    Object.assign(command, { reason: value.reason.trim() });
+  if (draft.reason.trim() !== '') {
+    Object.assign(command, { reason: draft.reason.trim() });
   }
   return Option.some(command);
 };
+
+/** The correction of one visit. Enter never sends it: only Uložit does. */
+const correctVisitForm = FormReact.make(visitFields.addField('reason', Schema.String), {
+  fields: { ...visitControls, reason: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
 
 const CorrectVisitForm = ({
   onClose,
@@ -405,7 +559,9 @@ const CorrectVisitForm = ({
 }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [draft, setDraft] = useState<CorrectionDraft>(() => ({ reason: '', visit: initialVisitDraft(visit) }));
+  const translate = useMessageTranslator();
+  const opened: CorrectionDraft = { ...initialVisitDraft(visit), reason: '' };
+  const draft = Option.getOrElse(useAtomValue(correctVisitForm.values), () => opened);
   const form = useCrmFormSave<CorrectionDraft>({
     command: (value) => correctionCommandOf(value, visit),
     failureText: (message) => czechError(message, 'Opravu se nepodařilo uložit.'),
@@ -420,6 +576,7 @@ const CorrectVisitForm = ({
     submit,
     value: draft,
   });
+  useMessagesWhileInvalid(correctVisitForm, form.record.status === 'invalid');
   return (
     <SidePanel
       actions={<CrmFormSaveActions form={form} onCancel={onClose} />}
@@ -435,34 +592,31 @@ const CorrectVisitForm = ({
       size="lg"
       title={t('crm.ciClientsVisits.visits.correctRecord')}
     >
-      {/* Enter never sends the correction: only Uložit does. */}
-      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+      <FormRoot
+        className="flex flex-col gap-200 py-200"
+        defaultValues={opened}
+        form={correctVisitForm}
+        translateMessage={translate}
+      >
         <StatusText showIcon size="sm" status="default">
           Oprava záznam nepřepíše: původní hodnota, autor a čas opravy zůstanou v historii.
         </StatusText>
         <VisitFields
-          draft={draft.visit}
+          form={correctVisitForm}
           idPrefix="crm-visit-fix"
-          onChange={(patch) => setDraft((current) => ({ ...current, visit: { ...current.visit, ...patch } }))}
           records={records}
           showClient={false}
           showSalesperson={false}
-          submitted
         />
-        <FormInput
+        <correctVisitForm.reason
           autoComplete="off"
           id="crm-visit-fix-reason"
           label={t('crm.ciClientsVisits.visits.correctionReason')}
           name="reason"
-          onChange={(event) => {
-            const reason = event.target.value;
-            setDraft((current) => ({ ...current, reason }));
-          }}
           placeholder={t('crm.ciClientsVisits.visits.correctionExample')}
           size="sm"
-          value={draft.reason}
         />
-      </form>
+      </FormRoot>
     </SidePanel>
   );
 };

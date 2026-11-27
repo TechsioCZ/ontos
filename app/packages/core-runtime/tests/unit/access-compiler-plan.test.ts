@@ -505,6 +505,32 @@ it('names one record inside its tenant, scope and module, never by the bare reco
   expect(objectId).not.toBe('invoice-1');
 });
 
+it('keeps a cell of a capability retired along declared lineage inert: neither refused nor projected', () => {
+  // The newest release split CAP_NOTE away into CAP_PAY; "Plný přístup" still holds its CAP_NOTE cell (a follow never
+  // removes one), and the tenant must still reconcile.
+  const planned = compile(
+    {
+      roleRevisions: [
+        revision({
+          cells: [cell({ capabilityKey: CAP_NOTE, mode: 'run' }), cell({ capabilityKey: CAP_PAY, mode: 'run' })],
+        }),
+      ],
+    },
+    {
+      catalogEntries: [
+        { ...partyEntry(CAP_PAY), amountInput: 'payload.amountMinor', lineage: { splitFrom: CAP_NOTE } },
+      ],
+    },
+  );
+  const objects = new Set(
+    planned.units.flatMap(({ relationships }) =>
+      relationships.flatMap(({ resourceId, subject }) => [resourceId, subject.objectId]),
+    ),
+  );
+  expect(objects.has(capabilityObjectId(TENANT, SCOPE, CAP_PAY))).toBe(true);
+  expect(objects.has(capabilityObjectId(TENANT, SCOPE, CAP_NOTE))).toBe(false);
+});
+
 it('refuses a cell the pinned catalog entry does not declare (M5)', () => {
   const onlyPay = { catalogEntries: [{ ...partyEntry(CAP_PAY), amountInput: 'payload.amountMinor' }] };
   // A key outside the pinned snapshot is never granted, whatever the revision says.

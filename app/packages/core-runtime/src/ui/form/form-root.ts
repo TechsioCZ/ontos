@@ -33,6 +33,11 @@ interface RootForm<Values> {
 
 type RootFormProps<Values> = Omit<FormHTMLAttributes<HTMLFormElement>, 'action' | 'onSubmit' | 'children'> & {
   /**
+   * Where a browser posts the form before hydration (with `method="post"`): a plain URL, never a React action.
+   * After hydration the form submits through effect-form only.
+   */
+  readonly action?: string;
+  /**
    * True while the form must not submit at all, such as after a commit whose outcome is unknown:
    * the controls and the submit button are disabled and Enter submits nothing.
    */

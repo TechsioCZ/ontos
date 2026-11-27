@@ -1,26 +1,41 @@
 import { committedResult } from '../../../api/action-result.ts';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
-import { selectItem } from '../../../ui/select-item.ts';
 import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import type { Types } from 'effect';
+import { ActivityCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import type { ActivityCommand, ApplyCommandPayload } from '../../../../shared/actions/apply-command.ts';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { withNativeLabels } from '@app/admin-ui/select-template';
-import { DateTime, Effect, Match, Option, Predicate, Random, Schema } from 'effect';
+import {
+  ChoiceField,
+  ClearableChoiceField,
+  FormReact,
+  FormRoot,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Match, Option, Predicate, Random, Schema, Struct } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import {
+  SaveBar,
+  UnsavedChangesDialog,
+  requiredLabelFor,
+  saveLabelsFor,
+  useDraftSave,
+  useUnsavedChangesGuard,
+} from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { constVoid } from 'effect/Function';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { executeRecords } from '../../../api/records-consumer.ts';
@@ -115,6 +130,37 @@ const sameActivity = (left: ActivityDraft, right: ActivityDraft) =>
 const withoutContact = (draft: ActivityDraft): ActivityDraft => ({ ...draft, counterpartyRef: null });
 
 /**
+ * The activity form: the summary and its checks come from the RecordActivity command; the contact search, the chosen
+ * contact (by id, `""` for none) and the follow-up task (`""` for none) are the form's own. Uložit records the
+ * activity through the draft save below; the form never submits it, so Enter records nothing.
+ */
+const activityForm = FormReact.make(
+  fromPayload(ActivityCommandSchema.mapFields(Struct.pick(['summary'])))
+    .addField('counterpartyId', Schema.String)
+    .addField('query', Schema.String)
+    .addField('taskId', Schema.String),
+  {
+    fields: { counterpartyId: ClearableChoiceField, query: TextField, summary: TextField, taskId: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type ActivityValues = typeof activityForm.schema.Encoded;
+
+/** The empty form: what the page opens with. */
+const blankValues: ActivityValues = { counterpartyId: '', query: '', summary: '', taskId: '' };
+
+const counterpartyField = activityForm.getFieldAtoms(activityForm.fields.counterpartyId);
+const summaryField = activityForm.getFieldAtoms(activityForm.fields.summary);
+
+/**
+ * The chosen contact's id as a plain string. It changes only when the choice does: the field's own value atom reports
+ * every change of the form.
+ */
+const chosenContactId = counterpartyField.value.pipe(Atom.map(Option.getOrElse(() => '')));
+
+/**
  * The one request this form sent whose outcome is still unknown: no answer came, or one that cannot say whether the
  * owner recorded it (a transport failure, 5xx, a commit the owner has not resolved). A retry of the same activity
  * sends exactly this request again, with its command, expected revision and idempotency key, whatever the list has
@@ -185,27 +231,35 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     );
   const loadFailure = snapshot.state === 'failed' ? failureText(snapshot.error) : '';
   const tasksFailure = canWrite && tasksSnapshot.state === 'failed' ? failureText(tasksSnapshot.error) : '';
-  // The activity as typed: only Uložit sends it.
-  const [draft, setDraft] = useState<ActivityDraft>(blankActivity);
-  const { summary, taskId } = draft;
-  const counterpartyId = draft.counterpartyRef === null ? [] : [draft.counterpartyRef.resourceId];
-  const setSummary = (next: string) => setDraft((current) => ({ ...current, summary: next }));
-  const setTaskId = (next: readonly string[]) => setDraft((current) => ({ ...current, taskId: next }));
-  const [query, setQuery] = useState('');
+  // The activity as typed lives in the form: only Uložit sends it.
+  const values = Option.getOrElse(useAtomValue(activityForm.values), () => blankValues);
+  const { query } = values;
+  const setCounterpartyId = useAtomSet(counterpartyField.setValue);
+  const setSummary = useAtomSet(summaryField.setValue);
   /** The latest search's hits: what the picker offers besides the chosen contact. */
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
   /** The chosen contact as the directory last described it: the one contact the form keeps beyond the latest hits. */
   const [contact, setContact] = useState<Counterparty | null>(null);
-  const chosen = contact !== null && contact.ref.resourceId === draft.counterpartyRef?.resourceId ? contact : null;
+  const chosenId = useAtomValue(chosenContactId);
+  // The chosen contact as the latest search describes it, else as the form kept it: a newer name replaces the kept one,
+  // and a search that omits the contact keeps it chosen and labelled.
+  const described =
+    counterparties.find((item) => item.ref.resourceId === chosenId) ??
+    (contact !== null && contact.ref.resourceId === chosenId ? contact : null);
+  if (described !== contact) {
+    setContact(described);
+  }
+  const chosen = described;
   // The picker's items are its complete collection: the latest search's hits plus the chosen contact they omit.
   const contactChoices =
     chosen === null || counterparties.some((item) => item.ref.resourceId === chosen.ref.resourceId)
       ? counterparties
       : [chosen, ...counterparties];
-  const setCounterpartyId = (next: readonly string[]) => {
-    const picked = contactChoices.find((item) => item.ref.resourceId === next[0]) ?? null;
-    setContact(picked);
-    setDraft((current) => ({ ...current, counterpartyRef: picked?.ref ?? null }));
+  /** The activity the form would record: the chosen contact's reference, the follow-up task and the summary. */
+  const draft: ActivityDraft = {
+    counterpartyRef: chosen?.ref ?? null,
+    summary: values.summary,
+    taskId: values.taskId === '' ? [] : [values.taskId],
   };
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
@@ -345,9 +399,9 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     record.save();
     record.afterSave((status, confirmed) => {
       if (status === 'saved') {
-        const next = nextActivity(confirmed);
-        setDraft(next);
-        record.adopt(next);
+        // The form shows the recorded activity, so only its summary empties.
+        setSummary('');
+        record.adopt(nextActivity(confirmed));
       }
     });
   };
@@ -367,7 +421,7 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     setSearchFailure('');
     setContact(null);
     setCard(undefined);
-    setDraft(withoutContact);
+    setCounterpartyId('');
     record.revise(withoutContact);
     setMessage(
       Predicate.hasProperty(error, 'status') && error.status === 401 ? t(`${key}.signedOut`) : t(`${key}.forbidden`),
@@ -385,9 +439,8 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     }
   };
   const searchFound = (result: Counterparties) => {
+    // A newer answer about the chosen contact replaces the kept one as the page renders it.
     setCounterparties(result);
-    // A newer answer about the chosen contact replaces the kept one, so a later search that omits it shows its name.
-    setContact((current) => result.find((item) => item.ref.resourceId === current?.ref.resourceId) ?? current);
     setSearchFailure('');
     setPending(false);
   };
@@ -401,12 +454,11 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
       ),
     );
   };
-  const partyItems = contactChoices.map((item) => selectItem(item.ref.resourceId, contactName(item)));
-  const taskItems = tasks.map((item) => selectItem(item.ref.resourceId, item.title));
+  const partyItems = contactChoices.map((item) => ({ label: contactName(item), value: item.ref.resourceId }));
+  const taskItems = tasks.map((item) => ({ label: item.title, value: item.ref.resourceId }));
   return {
     card,
     clearContactLabel: t(`${key}.clearContact`, { name: chosen === null ? '' : contactName(chosen) }),
-    counterpartyId,
     findCounterparty,
     guard,
     key,
@@ -421,14 +473,8 @@ const useRelationshipsRecords = (input: ActivitiesInput) => {
     retry,
     save,
     searchFailure,
-    setCounterpartyId,
-    setQuery,
-    setSummary,
-    setTaskId,
     showCard,
-    summary,
     t,
-    taskId,
     taskItems,
   };
 };
@@ -437,7 +483,6 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
   const {
     card,
     clearContactLabel,
-    counterpartyId,
     findCounterparty,
     guard,
     key,
@@ -452,14 +497,8 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
     retry,
     save,
     searchFailure,
-    setCounterpartyId,
-    setQuery,
-    setSummary,
-    setTaskId,
     showCard,
-    summary,
     t,
-    taskId,
     taskItems,
   } = useRelationshipsRecords(input);
   return (
@@ -592,22 +631,18 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                 </article>
               )}
               {records.canWrite && (
-                <form
+                <FormRoot
                   className={`rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5 ${card === undefined ? 'lg:col-span-2' : ''}`}
-                  // Enter never records the activity: only Uložit does.
-                  onSubmit={(event) => event.preventDefault()}
+                  defaultValues={blankValues}
+                  form={activityForm}
+                  translateMessage={(text) => t(text, { defaultValue: text })}
                 >
                   <h2 className="text-xl font-semibold">{t(`${key}.record`)}</h2>
                   <div className="grid items-start gap-4 md:grid-cols-2">
                     <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base space-y-4 p-4">
                       <div className="flex flex-wrap items-end gap-3">
                         <div className="min-w-0 flex-1">
-                          <FormInput
-                            id="counterparty-query"
-                            label={t(`${key}.query`)}
-                            onChange={(event) => setQuery(event.target.value)}
-                            value={query}
-                          />
+                          <activityForm.query id="counterparty-query" label={t(`${key}.query`)} />
                         </div>
                         <Button
                           appearance="outline"
@@ -620,59 +655,28 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           {t(`${key}.find`)}
                         </Button>
                       </div>
-                      <Select
-                        items={withNativeLabels(partyItems)}
-                        onValueChange={({ value }) => setCounterpartyId(value)}
-                        value={[...counterpartyId]}
-                      >
-                        <Select.Label>{t(`${key}.contact`)}</Select.Label>
-                        <Select.Control>
-                          <Select.Trigger>
-                            <Select.ValueText placeholder={t(`${key}.choose`)} />
-                          </Select.Trigger>
-                          <Select.ClearTrigger aria-label={clearContactLabel} />
-                        </Select.Control>
-                        {searchFailure !== '' && (
-                          <Select.StatusText status="warning">{searchFailure}</Select.StatusText>
-                        )}
-                        <Select.Positioner>
-                          <Select.Content>
-                            {partyItems.map((item) => (
-                              <Select.Item item={item} key={item.value}>
-                                <Select.ItemText>{item.label}</Select.ItemText>
-                              </Select.Item>
-                            ))}
-                          </Select.Content>
-                        </Select.Positioner>
-                      </Select>
+                      <activityForm.counterpartyId
+                        clearLabel={() => clearContactLabel}
+                        items={partyItems}
+                        label={t(`${key}.contact`)}
+                        placeholder={t(`${key}.choose`)}
+                        warning={searchFailure}
+                      />
                     </div>
                     <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base space-y-4 p-4">
-                      <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={[...taskId]}>
-                        <Select.Label>{t(`${key}.followUp`)}</Select.Label>
-                        <Select.Control>
-                          <Select.Trigger>
-                            <Select.ValueText placeholder={t(`${key}.choose`)} />
-                          </Select.Trigger>
-                        </Select.Control>
-                        <Select.Positioner>
-                          <Select.Content>
-                            {taskItems.map((item) => (
-                              <Select.Item item={item} key={item.value}>
-                                <Select.ItemText>{item.label}</Select.ItemText>
-                              </Select.Item>
-                            ))}
-                          </Select.Content>
-                        </Select.Positioner>
-                      </Select>
+                      <activityForm.taskId
+                        items={taskItems}
+                        label={t(`${key}.followUp`)}
+                        placeholder={t(`${key}.choose`)}
+                      />
                     </div>
                   </div>
-                  <FormInput
+                  <activityForm.summary
                     id="activity-summary"
                     label={t(`${key}.summary`)}
                     maxLength={2000}
-                    onChange={(event) => setSummary(event.target.value)}
                     required
-                    value={summary}
+                    requiredLabel={requiredLabelFor(language)}
                   />
                   <div className="border-t border-border-primary/60 pt-4">
                     <SaveBar
@@ -684,7 +688,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                     />
                   </div>
                   <UnsavedChangesDialog labels={saveLabelsFor(language)} prompt={guard.prompt} />
-                </form>
+                </FormRoot>
               )}
             </div>
           </>

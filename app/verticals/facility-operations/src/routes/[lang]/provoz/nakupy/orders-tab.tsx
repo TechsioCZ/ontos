@@ -1,14 +1,14 @@
 import { optionalField } from '../../../../../shared/domain/common.ts';
 import { Effect, Result, Schema } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // S06: purchase orders list + detail panel (lines with delivered/remaining, deliveries, invoices, history).
-import { DetailList, SectionCard, SidePanel, formatDate, surfaceTileClassName } from '@app/admin-ui';
+import { DetailList, SectionCard, SidePanel, formatDate, requiredLabelFor, surfaceTileClassName } from '@app/admin-ui';
+import { Field, FormBuilder, FormReact, FormRoot, TextAreaField, TextField } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
@@ -18,6 +18,7 @@ import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { CommentThread } from '../../../../ui/comment-thread.tsx';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
+import { PurchaseLineIdSchema } from '../../../../../shared/domain/purchasing.ts';
 import type { PurchaseOrder, PurchasingState } from '../../../../../shared/domain/purchasing.ts';
 import {
   OPEN_ORDER_STATUSES,
@@ -45,6 +46,8 @@ import { TextLink } from './stock-tab.tsx';
 import { FinanceInvoiceLink, useIncomingInvoiceLinks } from './finance-links.tsx';
 import { InvoiceDraftForm } from './invoice-draft-form.tsx';
 import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
+import { ListSwitch, useListSwitch } from '../../../../ui/list-switch.tsx';
 
 const noteLabelKey = 'facility-operations.common.note';
 const cancelLabelKey = 'facility-operations.common.cancel';
@@ -155,7 +158,7 @@ export const OrdersTab = ({
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const lookup = lookupOf(state);
-  const [openOnly, setOpenOnly] = useState(false);
+  const openOnly = useListSwitch('ordersOpenOnly');
   const financeLinks = useIncomingInvoiceLinks(financeRefresh);
   const rows = state.orders
     .filter((order) => !openOnly || OPEN_ORDER_STATUSES.has(order.status) || order.status === 'draft')
@@ -191,9 +194,7 @@ export const OrdersTab = ({
   ];
   return (
     <div className="flex flex-col gap-200">
-      <Switch checked={openOnly} onCheckedChange={setOpenOnly}>
-        {k('filters.openOrders')}
-      </Switch>
+      <ListSwitch name="ordersOpenOnly">{k('filters.openOrders')}</ListSwitch>
       <OrderLookupContext value={lookup}>
         <OrderQuotesContext value={state.quotes}>
           <OrderFinanceContext value={financeLinks}>
@@ -222,6 +223,57 @@ const prepareInvoiceAction = 'prepare-invoice';
 const OrderActionSchema = Schema.Literals(['receive', 'invoice', prepareInvoiceAction, 'close', 'cancel']);
 type OrderAction = typeof OrderActionSchema.Type;
 
+// The order's forms only hold their values: Uložit or the form's own button sends them, so Enter sends nothing. The
+// panel shows one of them at a time, so each form is mounted once.
+
+/** The note of a close or a cancel. */
+const noteForm = FormReact.make(FormBuilder.empty.addField('note', Schema.String), {
+  fields: { note: TextAreaField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const emptyNote = { note: '' };
+
+/** One received order line: what came now, and its batch or serial numbers. */
+const ReceiptLineSchema = Schema.Struct({
+  batch: Schema.String,
+  lineId: PurchaseLineIdSchema,
+  quantity: Schema.String,
+  serials: Schema.String,
+});
+
+/** The receipt of a delivery; one entry per order line that still has a remainder. */
+const receiveForm = FormReact.make(
+  FormBuilder.empty
+    .addField('date', Schema.String)
+    .addField('deliveryNote', Schema.String)
+    .addField(Field.makeArrayField('lines', ReceiptLineSchema)),
+  {
+    fields: {
+      date: TextField,
+      deliveryNote: TextField,
+      lines: { batch: TextField, lineId: TextField, quantity: TextField, serials: TextAreaField },
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** The supplier invoice linked to the order. */
+const invoiceLinkForm = FormReact.make(
+  FormBuilder.empty
+    .addField('amount', Schema.String)
+    .addField('date', Schema.String)
+    .addField('note', Schema.String)
+    .addField('number', Schema.String),
+  {
+    fields: { amount: TextField, date: TextField, note: TextField, number: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const emptyInvoiceLink = { amount: '', date: '', note: '', number: '' };
+
 const NoteForm = ({
   busy,
   onCancel,
@@ -237,8 +289,9 @@ const NoteForm = ({
   readonly submitLabel: string;
   readonly title: string;
 }) => {
-  const { t } = useModernI18n();
-  const [note, setNote] = useState('');
+  const { language, t } = useModernI18n();
+  const shown = useFormValues(noteForm, emptyNote);
+  const { note } = shown.values;
   const [missing, setMissing] = useState(false);
   return (
     <SectionCard title={title}>
@@ -247,14 +300,16 @@ const NoteForm = ({
           {t('facility-operations.common.required')}
         </StatusText>
       )}
-      <FormTextarea
-        id="order-note"
-        label={t(noteLabelKey)}
-        onChange={(event) => setNote(event.target.value)}
-        required={required}
-        rows={2}
-        value={note}
-      />
+      <FormRoot defaultValues={emptyNote} form={noteForm} translateMessage={(message) => t(message)}>
+        {shown.ready}
+        <noteForm.note
+          id="order-note"
+          label={t(noteLabelKey)}
+          required={required}
+          requiredLabel={requiredLabelFor(language)}
+          rows={2}
+        />
+      </FormRoot>
       <div className="flex justify-end gap-100">
         <Button appearance="outline" onClick={onCancel} severity="secondary" size="sm">
           {t(cancelLabelKey)}
@@ -368,17 +423,22 @@ export const ReceiveForm = ({
   readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toast = useToast();
   const lookup = lookupOf(state);
   const open = order.lines.filter((line) => lineRemaining(line) > 0);
-  const [date, setDate] = useState(todayIso);
-  const [deliveryNote, setDeliveryNote] = useState('');
-  const [quantities, setQuantities] = useState<Record<string, string>>(() =>
-    Object.fromEntries(open.map((line) => [line.id, String(lineRemaining(line))])),
-  );
-  const [batches, setBatches] = useState<Record<string, string>>({});
-  const [serials, setSerials] = useState<Record<string, string>>({});
+  const opened = {
+    date: todayIso(),
+    deliveryNote: '',
+    lines: open.map((line) => ({ batch: '', lineId: line.id, quantity: String(lineRemaining(line)), serials: '' })),
+  };
+  const shown = useFormValues(receiveForm, opened);
+  const { date, deliveryNote } = shown.values;
+  const entries = (pick: (line: (typeof shown.values.lines)[number]) => string) =>
+    Object.fromEntries(shown.values.lines.map((line) => [line.lineId, pick(line)]));
+  const quantities = entries((line) => line.quantity);
+  const batches = entries((line) => line.batch);
+  const serials = entries((line) => line.serials);
   const [error, setError] = useState<string | undefined>();
   // The receipt is recorded on Uložit only; the remaining quantities it opens with can be received as they are.
   const form = useFormSave({
@@ -409,72 +469,68 @@ export const ReceiveForm = ({
           {error}
         </StatusText>
       )}
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          id="receive-date"
-          label={k('fields.date')}
-          onChange={(event) => setDate(event.target.value)}
-          required
-          type="date"
-          value={date}
-        />
-        <FormInput
-          id="receive-note"
-          label={k('fields.deliveryNote')}
-          maxLength={64}
-          onChange={(event) => setDeliveryNote(event.target.value)}
-          value={deliveryNote}
-        />
-      </div>
-      <div className="flex flex-col gap-150">
-        {open.map((line) => {
-          const item = lookup.item(line.itemId);
-          return (
-            <div
-              className={`${surfaceTileClassName} grid grid-cols-1 gap-100 p-150 sm:grid-cols-[2fr_1fr]`}
-              key={line.id}
-            >
-              <div className="flex flex-col justify-center">
-                <span className="font-medium text-sm">{line.description}</span>
-                <span className="text-fg-secondary text-xs">
-                  {k('orders.remainingOf', {
-                    ordered: line.quantity,
-                    remaining: lineRemaining(line),
-                    unit: item?.unit ?? '',
-                  })}
-                </span>
-              </div>
-              <FormInput
-                id={`receive-qty-${line.id}`}
-                inputMode="numeric"
-                label={k('fields.receivedNow')}
-                onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))}
-                size="sm"
-                value={quantities[line.id] ?? ''}
-              />
-              {item?.tracking === 'batch' && (
-                <FormInput
-                  id={`receive-batch-${line.id}`}
-                  label={k('fields.batch')}
-                  onChange={(event) => setBatches((current) => ({ ...current, [line.id]: event.target.value }))}
-                  size="sm"
-                  value={batches[line.id] ?? ''}
-                />
-              )}
-              {item?.tracking === 'serial' && (
-                <FormTextarea
-                  helpText={k('movement.serialHelp')}
-                  id={`receive-serials-${line.id}`}
-                  label={k('fields.serialNumbers')}
-                  onChange={(event) => setSerials((current) => ({ ...current, [line.id]: event.target.value }))}
-                  rows={2}
-                  value={serials[line.id] ?? ''}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={receiveForm}
+        key={order.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+          <receiveForm.date
+            id="receive-date"
+            label={k('fields.date')}
+            required
+            requiredLabel={requiredLabelFor(language)}
+            type="date"
+          />
+          <receiveForm.deliveryNote id="receive-note" label={k('fields.deliveryNote')} maxLength={64} />
+        </div>
+        <div className="flex flex-col gap-150">
+          {shown.values.lines.map((entry, index) => {
+            // A line received in full since the form opened is not offered any more.
+            const line = open.find((candidate) => candidate.id === entry.lineId);
+            if (line === undefined) {
+              return null;
+            }
+            const item = lookup.item(line.itemId);
+            return (
+              <receiveForm.lines.Item index={index} key={line.id}>
+                <div className={`${surfaceTileClassName} grid grid-cols-1 gap-100 p-150 sm:grid-cols-[2fr_1fr]`}>
+                  <div className="flex flex-col justify-center">
+                    <span className="font-medium text-sm">{line.description}</span>
+                    <span className="text-fg-secondary text-xs">
+                      {k('orders.remainingOf', {
+                        ordered: line.quantity,
+                        remaining: lineRemaining(line),
+                        unit: item?.unit ?? '',
+                      })}
+                    </span>
+                  </div>
+                  <receiveForm.lines.quantity
+                    id={`receive-qty-${line.id}`}
+                    inputMode="numeric"
+                    label={k('fields.receivedNow')}
+                    size="sm"
+                  />
+                  {item?.tracking === 'batch' && (
+                    <receiveForm.lines.batch id={`receive-batch-${line.id}`} label={k('fields.batch')} size="sm" />
+                  )}
+                  {item?.tracking === 'serial' && (
+                    <receiveForm.lines.serials
+                      helpText={k('movement.serialHelp')}
+                      id={`receive-serials-${line.id}`}
+                      label={k('fields.serialNumbers')}
+                      rows={2}
+                    />
+                  )}
+                </div>
+              </receiveForm.lines.Item>
+            );
+          })}
+        </div>
+      </FormRoot>
       <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>
   );
@@ -533,12 +589,10 @@ export const InvoiceForm = ({
   readonly run: RunCommand;
 }) => {
   const k = usePurchasingT();
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toast = useToast();
-  const [number, setNumber] = useState('');
-  const [date, setDate] = useState('');
-  const [amount, setAmount] = useState('');
-  const [note, setNote] = useState('');
+  const shown = useFormValues(invoiceLinkForm, emptyInvoiceLink);
+  const { amount, date, note, number } = shown.values;
   const [error, setError] = useState<string | undefined>();
   // The invoice is linked on Uložit only.
   const form = useFormSave({
@@ -552,37 +606,27 @@ export const InvoiceForm = ({
           {error}
         </StatusText>
       )}
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
-        <FormInput
-          id="invoice-number"
-          label={k('fields.invoiceNumber')}
-          maxLength={64}
-          onChange={(event) => setNumber(event.target.value)}
-          required
-          value={number}
-        />
-        <FormInput
-          id="invoice-date"
-          label={k('fields.invoiceDate')}
-          onChange={(event) => setDate(event.target.value)}
-          type="date"
-          value={date}
-        />
-        <FormInput
-          id="invoice-amount"
-          inputMode="decimal"
-          label={k('fields.invoiceAmount')}
-          onChange={(event) => setAmount(event.target.value)}
-          value={amount}
-        />
-      </div>
-      <FormInput
-        id="invoice-note"
-        label={t(noteLabelKey)}
-        maxLength={300}
-        onChange={(event) => setNote(event.target.value)}
-        value={note}
-      />
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={emptyInvoiceLink}
+        form={invoiceLinkForm}
+        key={order.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
+          <invoiceLinkForm.number
+            id="invoice-number"
+            label={k('fields.invoiceNumber')}
+            maxLength={64}
+            required
+            requiredLabel={requiredLabelFor(language)}
+          />
+          <invoiceLinkForm.date id="invoice-date" label={k('fields.invoiceDate')} type="date" />
+          <invoiceLinkForm.amount id="invoice-amount" inputMode="decimal" label={k('fields.invoiceAmount')} />
+        </div>
+        <invoiceLinkForm.note id="invoice-note" label={t(noteLabelKey)} maxLength={300} />
+      </FormRoot>
       <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>
   );

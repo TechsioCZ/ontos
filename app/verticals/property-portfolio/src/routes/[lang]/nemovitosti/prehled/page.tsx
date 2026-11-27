@@ -4,18 +4,17 @@ import { executeRecords as executeFinance } from '@app/finance-billing/clients/r
 import { executeRecords as executeOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
 import { surfaceCardClassName, surfaceTileClassName } from '@app/admin-ui';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { Breadcrumb } from '@techsio/ui-kit/molecules/breadcrumb';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { Effect, Match, Random, Record as EffectRecord } from 'effect';
+import { CheckboxField, FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
+import { Effect, Match, Option, Random, Record as EffectRecord, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { executeRecords as executeProperty } from '../../../../api/records-client';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/property-portfolio.json';
 import enResource from '../../../../../locales/en/property-portfolio.json';
@@ -47,6 +46,7 @@ import type {
 const overviewClass = 'grid min-w-0 gap-6 max-[480px]:gap-4';
 const headingClass = 'flex flex-wrap items-start justify-between gap-4';
 const stackClass = 'grid min-w-0 gap-2';
+const eyebrowClass = 'text-[11px] font-[650] tracking-[0.1em] uppercase text-fg-secondary';
 const titleClass = 'text-[28px] font-[650] tracking-tight max-[480px]:text-[24px]';
 const sectionTitleClass = 'text-[18px] font-semibold';
 const mutedClass = 'text-[13px] leading-[1.6] text-fg-secondary';
@@ -569,36 +569,42 @@ const OverviewAgenda = ({
   </section>
 );
 
+/** The search over the agendas: every change of the text or the box searches again, nothing is submitted. */
+const overviewSearchForm = FormReact.make(
+  FormBuilder.empty.addField('includeClosed', Schema.Boolean).addField('query', Schema.String),
+  {
+    fields: { includeClosed: CheckboxField, query: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const emptyOverviewSearch: typeof overviewSearchForm.schema.Encoded = { includeClosed: false, query: '' };
+const overviewSearch = overviewSearchForm.values.pipe(Atom.map(Option.getOrElse(() => emptyOverviewSearch)));
+
 const OverviewSearch = ({
   hits,
-  includeClosed,
   query,
-  setIncludeClosed,
-  setQuery,
 }: {
   readonly hits: ReturnType<typeof searchRentalOverview>;
-  readonly includeClosed: boolean;
   readonly query: string;
-  readonly setIncludeClosed: (value: boolean) => void;
-  readonly setQuery: (query: string) => void;
 }) => {
   const { t } = useModernI18n();
   return (
     <section className={panelClass}>
       <h2 className={sectionTitleClass}>Najít v nemovitostech</h2>
-      <FormInput
-        label="Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol"
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={t('property-portfolio.overview.searchPlaceholder')}
-        type="search"
-        value={query}
-      />
-      <FormCheckbox
-        checked={includeClosed}
-        label="Zahrnout ukončené a archivované"
-        onCheckedChange={setIncludeClosed}
-        size="sm"
-      />
+      <FormRoot
+        className="grid min-w-0 gap-4"
+        defaultValues={emptyOverviewSearch}
+        form={overviewSearchForm}
+        translateMessage={(message) => t(message)}
+      >
+        <overviewSearchForm.query
+          label="Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol"
+          placeholder={t('property-portfolio.overview.searchPlaceholder')}
+          type="search"
+        />
+        <overviewSearchForm.includeClosed label="Zahrnout ukončené a archivované" />
+      </FormRoot>
       {hits.map((hit) => (
         <Link className={attentionClass} href={hit.href} key={hit.id} size="current">
           <strong className={`justify-self-start ${attentionLabelClass}`}>
@@ -644,8 +650,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   }, [legalEntityId]);
   const sources: OverviewSources | undefined = snapshot.state === 'ready' ? snapshot.value : undefined;
   const loading = snapshot.state === 'pending' || snapshot.refreshing;
-  const [query, setQuery] = useState('');
-  const [includeClosed, setIncludeClosed] = useState(false);
+  const { includeClosed, query } = useAtomValue(overviewSearch);
   const [selection, setSelection] = useState('');
   const today = pragueToday();
   const portfolio = overviewPortfolio(sources, today);
@@ -678,20 +683,12 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   return (
     <>
       <UltramodernRouteHead />
+      {/* The search keeps what was typed while its panel is briefly gone, such as during a reload of the agendas. */}
+      <overviewSearchForm.KeepAlive />
       <section aria-busy={loading} aria-labelledby="overview-heading" className={overviewClass}>
         <header className={headingClass}>
           <div className={stackClass}>
-            <Breadcrumb aria-label={t('property-portfolio.overview.breadcrumb')} size="sm">
-              <Breadcrumb.List>
-                <Breadcrumb.Item>
-                  <Breadcrumb.Link href={href('nemovitosti')}>{t('property-portfolio.title')}</Breadcrumb.Link>
-                </Breadcrumb.Item>
-                <Breadcrumb.Separator />
-                <Breadcrumb.Item>
-                  <Breadcrumb.CurrentLink>{t('property-portfolio.pages.overview.title')}</Breadcrumb.CurrentLink>
-                </Breadcrumb.Item>
-              </Breadcrumb.List>
-            </Breadcrumb>
+            <span className={eyebrowClass}>SPRÁVA NEMOVITOSTÍ</span>
             <h1 className={titleClass} id="overview-heading">
               Vaše nemovitosti v souvislostech
             </h1>
@@ -743,13 +740,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
               </aside>
             </div>
             <OverviewAgenda agenda={agenda} agendaLabel={agendaLabel} href={href} lang={lang} />
-            <OverviewSearch
-              hits={hits}
-              includeClosed={includeClosed}
-              query={query}
-              setIncludeClosed={setIncludeClosed}
-              setQuery={setQuery}
-            />
+            <OverviewSearch hits={hits} query={query} />
             <footer
               aria-label={t('property-portfolio.overview.sourceAvailability')}
               className="flex flex-wrap gap-x-4 gap-y-2"

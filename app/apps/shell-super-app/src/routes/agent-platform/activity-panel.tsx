@@ -1,3 +1,4 @@
+import { ChoiceField, FormBuilder, FormReact, FormRoot, useAtomValue } from '@app/core-runtime/ui/form';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -17,11 +18,11 @@ import type {
   AgentPageCursor,
 } from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
-import { Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import type { ComponentProps, ReactNode } from 'react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
 import { formatAgentTime } from './agent-platform-client.ts';
 import { DEFAULT_ACTIVITY_REQUEST, agentActivityData } from './platform-page-data.ts';
@@ -30,6 +31,24 @@ type BadgeVariant = NonNullable<ComponentProps<typeof Badge>['severity']>;
 const ActivityFilterKind = Schema.Union([Schema.Literal(''), AgentActivityKindSchema]);
 
 const activityKinds: readonly AgentActivityKind[] = ['read', 'write', 'denied', 'failed', 'proposal', 'decision'];
+
+/** The activity filters; each choice applies at once, so the form never submits. `""` is every agent, module or result. */
+const activityFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('agent', Schema.String)
+    .addField('kind', Schema.String)
+    .addField('moduleKey', Schema.String),
+  {
+    fields: { agent: ChoiceField, kind: ChoiceField, moduleKey: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noFilter = { agent: '', kind: '', moduleKey: '' };
+const kindChoices = [
+  { label: 'Vše', value: '' },
+  ...activityKinds.map((value) => ({ label: agentActivityKindLabel[value], value })),
+];
 
 const kindBadgeVariant = {
   decision: 'neutral',
@@ -100,9 +119,11 @@ const activityRequest = (
 
 export const ActivityPanel = () => {
   const { t } = useModernI18n();
-  const [agent, setAgent] = useState('');
-  const [moduleKey, setModuleKey] = useState('');
-  const [kind, setKind] = useState<'' | AgentActivityKind>('');
+  const filters = Option.getOrElse(useAtomValue(activityFilterForm.values), () => noFilter);
+  const { agent, moduleKey } = filters;
+  const kind = Schema.decodeUnknownOption(ActivityFilterKind)(filters.kind).pipe(
+    Option.getOrElse((): '' | AgentActivityKind => ''),
+  );
   const filterKey = [agent, moduleKey, kind].join('|');
   const [page, setPage] = useState<{ readonly cursor: AgentPageCursor; readonly filter: string }>();
   const cursor = page?.filter === filterKey ? page.cursor : undefined;
@@ -149,46 +170,30 @@ export const ActivityPanel = () => {
       <p className="text-fg-secondary text-sm">
         Každé čtení, zápis, odmítnutí i návrh AI agentů v modulech, ve kterých schvalujete jejich změny.
       </p>
-      <div className="agent-filters">
-        <label>
-          <span>Agent</span>
-          <select onChange={(event) => setAgent(event.target.value)} value={agent}>
-            <option value="">Všichni agenti</option>
-            {options.agents.map((entry) => (
-              <option key={entry.principalId} value={entry.principalId}>
-                {entry.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Modul</span>
-          <select onChange={(event) => setModuleKey(event.target.value)} value={moduleKey}>
-            <option value="">Všechny moduly</option>
-            {options.modules.map((entry) => (
-              <option key={entry.moduleKey} value={entry.moduleKey}>
-                {entry.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Výsledek</span>
-          <select
-            onChange={(event) =>
-              setKind(Option.getOrElse(Schema.decodeUnknownOption(ActivityFilterKind)(event.target.value), () => ''))
-            }
-            value={kind}
-          >
-            <option value="">Vše</option>
-            {activityKinds.map((value) => (
-              <option key={value} value={value}>
-                {agentActivityKindLabel[value]}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <FormRoot
+        className="agent-filters"
+        defaultValues={noFilter}
+        form={activityFilterForm}
+        translateMessage={(message) => t(message)}
+      >
+        <activityFilterForm.agent
+          items={[
+            { label: 'Všichni agenti', value: '' },
+            ...options.agents.map((entry) => ({ label: entry.name, value: entry.principalId })),
+          ]}
+          label="Agent"
+          placeholder="Všichni agenti"
+        />
+        <activityFilterForm.moduleKey
+          items={[
+            { label: 'Všechny moduly', value: '' },
+            ...options.modules.map((entry) => ({ label: entry.label, value: entry.moduleKey })),
+          ]}
+          label="Modul"
+          placeholder="Všechny moduly"
+        />
+        <activityFilterForm.kind items={kindChoices} label="Výsledek" placeholder="Vše" />
+      </FormRoot>
       {state.state === 'pending' && <ModulePageSkeleton />}
       {state.state === 'failed' && (
         <>

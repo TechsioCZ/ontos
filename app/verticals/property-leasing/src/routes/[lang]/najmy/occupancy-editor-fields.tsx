@@ -1,70 +1,125 @@
-// The fields of the lease and stay form. They change the draft only; the form's Save button sends it.
-import { comboboxTranslations } from '@app/admin-ui';
-import { withNativeLabels } from '@app/admin-ui/select-template';
+// The fields of the lease and stay form. They change the form only; the form's Save button sends its draft.
+import { comboboxTranslations, requiredLabelFor } from '@app/admin-ui';
+import {
+  ChoiceField,
+  ClearableChoiceField,
+  ComboboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { FieldChoice } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { Combobox, FormInput } from '@app/admin-ui/form-controls';
-import { Select } from '@techsio/ui-kit/molecules/select';
+import { Effect, Option, Schema } from 'effect';
+import type { ReactNode } from 'react';
+import { browserAtomRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import type { OccupancyDraft } from './editor-state.ts';
 
-export interface Choice {
-  readonly label: string;
-  readonly value: string;
-}
-
-type Change = (field: keyof OccupancyDraft, value: string) => void;
+export type Choice = FieldChoice;
 
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
 
 /**
- * One single-choice select; an empty `value` means nothing chosen. With `clearLabel` the choice can be cleared; it
- * names the chosen item. `warning` describes the picker, such as a search for its items that failed.
+ * The lease and stay form: the draft its Save button sends, and the guest search box, which only looks parties up.
+ * Enter submits nothing: only Uložit sends the draft.
  */
-export const ChoiceSelect = ({
-  clearLabel,
-  items,
-  label,
-  onChange,
-  value,
-  warning,
+const occupancyForm = FormReact.make(
+  FormBuilder.empty
+    .addField('customerId', Schema.String)
+    .addField('endDate', Schema.String)
+    .addField('guestId', Schema.String)
+    .addField('guestQuery', Schema.String)
+    .addField('peopleCount', Schema.String)
+    .addField('rentMonthly', Schema.String)
+    .addField('rentPaymentDay', Schema.String)
+    .addField('rentService', Schema.String)
+    .addField('startDate', Schema.String)
+    .addField('stayNote', Schema.String)
+    .addField('unitId', Schema.String),
+  {
+    fields: {
+      customerId: ComboboxField,
+      endDate: TextField,
+      guestId: ClearableChoiceField,
+      guestQuery: TextField,
+      peopleCount: TextField,
+      rentMonthly: TextField,
+      rentPaymentDay: TextField,
+      rentService: TextField,
+      startDate: TextField,
+      stayNote: TextField,
+      unitId: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** What the form holds: the draft and the guest search box. */
+export interface OccupancyValues extends OccupancyDraft {
+  readonly guestQuery: string;
+}
+
+/** The form's values for `draft`, with the guest search box as typed. */
+export const occupancyValuesOf = (draft: OccupancyDraft, guestQuery: string): OccupancyValues => ({
+  ...draft,
+  guestQuery,
+});
+
+/** The draft the form's values stand for: everything but the guest search box. */
+export const occupancyDraftOf = (values: OccupancyValues): OccupancyDraft => ({
+  customerId: values.customerId,
+  endDate: values.endDate,
+  guestId: values.guestId,
+  peopleCount: values.peopleCount,
+  rentMonthly: values.rentMonthly,
+  rentPaymentDay: values.rentPaymentDay,
+  rentService: values.rentService,
+  startDate: values.startDate,
+  stayNote: values.stayNote,
+  unitId: values.unitId,
+});
+
+/**
+ * The lease and stay form around its fields: it opens with `opened` and an empty guest search box. Its children render
+ * once this mount initialized the form.
+ */
+export const OccupancyFormRoot = ({
+  children,
+  className,
+  opened,
 }: {
-  readonly clearLabel?: (chosen: string) => string;
-  readonly items: readonly Choice[];
-  readonly label: string;
-  readonly onChange: (value: string) => void;
-  readonly value: string;
-  readonly warning?: string | undefined;
+  readonly children: ReactNode;
+  readonly className: string;
+  readonly opened: OccupancyDraft;
 }) => {
   const { t } = useModernI18n();
   return (
-    <Select
-      items={withNativeLabels(items.map((item) => ({ label: item.label, value: item.value })))}
-      onValueChange={({ value: chosen }) => onChange(chosen[0] ?? '')}
-      value={value.length > 0 ? [value] : []}
+    <FormRoot
+      className={className}
+      defaultValues={occupancyValuesOf(opened, '')}
+      form={occupancyForm}
+      translateMessage={(message) => t(message)}
     >
-      <Select.Label>{label}</Select.Label>
-      <Select.Control>
-        <Select.Trigger>
-          <Select.ValueText placeholder={t(LABEL_CHOOSE)} />
-        </Select.Trigger>
-        {clearLabel !== undefined && (
-          <Select.ClearTrigger aria-label={clearLabel(items.find((item) => item.value === value)?.label ?? '')} />
-        )}
-      </Select.Control>
-      {warning !== undefined && <Select.StatusText status="warning">{warning}</Select.StatusText>}
-      <Select.Positioner>
-        <Select.Content>
-          {items.map((item) => (
-            <Select.Item item={{ label: item.label, value: item.value }} key={item.value}>
-              <Select.ItemText>{item.label}</Select.ItemText>
-              <Select.ItemIndicator />
-            </Select.Item>
-          ))}
-        </Select.Content>
-      </Select.Positioner>
-    </Select>
+      {children}
+    </FormRoot>
   );
+};
+
+/** The form's values; None until a form initialized them. */
+export const useOccupancyValues = (): Option.Option<OccupancyValues> => useAtomValue(occupancyForm.values);
+
+/** Puts values into the form. */
+export const useSetOccupancyValues = (): ((values: OccupancyValues) => void) => useAtomSet(occupancyForm.setValues);
+
+export const UnitField = ({ items }: { readonly items: readonly Choice[] }) => {
+  const { t } = useModernI18n();
+  return <occupancyForm.unitId items={items} label={t('property-leasing.demo.unit')} placeholder={t(LABEL_CHOOSE)} />;
 };
 
 /**
@@ -79,20 +134,12 @@ export interface CustomerPicker {
   readonly open: boolean;
 }
 
-export const CustomerField = ({
-  customers,
-  draft,
-  onChange,
-}: {
-  readonly customers: CustomerPicker;
-  readonly draft: OccupancyDraft;
-  readonly onChange: Change;
-}) => {
+export const CustomerField = ({ customers }: { readonly customers: CustomerPicker }) => {
   const { language, t } = useModernI18n();
   const handleOpenChange = customers.onOpenChange;
   return (
     <div className="space-y-2" onFocus={() => handleOpenChange(true)}>
-      <Combobox
+      <occupancyForm.customerId
         clearable
         footer={customers.empty ? t('property-leasing.demo.customersEmpty') : undefined}
         items={[...customers.items]}
@@ -101,12 +148,10 @@ export const CustomerField = ({
         loadingMessage={t('property-leasing.demo.customersLoading')}
         name="customer"
         noResultsMessage={t('property-leasing.demo.customersEmpty')}
-        onChange={(value) => onChange('customerId', (Array.isArray(value) ? value[0] : value) ?? '')}
         onOpenChange={handleOpenChange}
         open={customers.open}
         placeholder={t('property-leasing.demo.customerPlaceholder')}
         translations={comboboxTranslations}
-        value={draft.customerId.length > 0 ? [draft.customerId] : []}
       />
       <LinkButton appearance="ghost" href={`/${language}/prodej/zakaznici`} severity="secondary" size="sm">
         {t('property-leasing.demo.newCustomerInRegistry')}
@@ -115,56 +160,38 @@ export const CustomerField = ({
   );
 };
 
-export const PeriodFields = ({ draft, onChange }: { readonly draft: OccupancyDraft; readonly onChange: Change }) => {
+export const PeriodFields = () => {
   const { t } = useModernI18n();
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      <FormInput
-        id="occupancy-start-date"
-        label={t('property-leasing.demo.startDate')}
-        onChange={(event) => onChange('startDate', event.target.value)}
-        type="date"
-        value={draft.startDate}
-      />
-      <FormInput
-        id="occupancy-end-date"
-        label={t('property-leasing.demo.endDate')}
-        onChange={(event) => onChange('endDate', event.target.value)}
-        type="date"
-        value={draft.endDate}
-      />
+      <occupancyForm.startDate id="occupancy-start-date" label={t('property-leasing.demo.startDate')} type="date" />
+      <occupancyForm.endDate id="occupancy-end-date" label={t('property-leasing.demo.endDate')} type="date" />
     </div>
   );
 };
 
-export const RentFields = ({ draft, onChange }: { readonly draft: OccupancyDraft; readonly onChange: Change }) => {
+export const RentFields = () => {
   const { t } = useModernI18n();
   return (
     <section className="space-y-3">
       <h3 className="text-sm font-semibold">{t('property-leasing.rent.title')}</h3>
       <div className="grid gap-4 md:grid-cols-3">
-        <FormInput
+        <occupancyForm.rentMonthly
           id="occupancy-rent-monthly"
           inputMode="decimal"
           label={t('property-leasing.rent.monthlyRentInput')}
-          onChange={(event) => onChange('rentMonthly', event.target.value)}
-          value={draft.rentMonthly}
         />
-        <FormInput
+        <occupancyForm.rentService
           id="occupancy-rent-service"
           inputMode="decimal"
           label={t('property-leasing.rent.serviceChargesInput')}
-          onChange={(event) => onChange('rentService', event.target.value)}
-          value={draft.rentService}
         />
-        <FormInput
+        <occupancyForm.rentPaymentDay
           id="occupancy-rent-payment-day"
           label={t('property-leasing.rent.paymentDayInput')}
           max={31}
           min={1}
-          onChange={(event) => onChange('rentPaymentDay', event.target.value)}
           type="number"
-          value={draft.rentPaymentDay}
         />
       </div>
     </section>
@@ -176,63 +203,72 @@ export interface GuestSearch {
   readonly busy: boolean;
   /** Why the latest search found nothing to offer, when it failed. */
   readonly failure?: string | undefined;
+  /** What the latest search found. */
   readonly items: readonly Choice[];
-  readonly onQueryChange: (query: string) => void;
-  readonly onSearch: () => void;
-  readonly query: string;
+  /** The guest the person chose that the latest search omits. */
+  readonly kept: Option.Option<Choice>;
+  /** The person chose a guest, or cleared the choice (`""`). */
+  readonly onChoose: (guestId: string) => void;
+  /** Looks up the parties matching the typed query. */
+  readonly onSearch: (query: string) => void;
 }
 
+/**
+ * The guests the stay form offers: the latest search's hits, and the chosen guest they omit while it is still the one
+ * chosen. The picker treats them as its complete collection.
+ */
+const guestItemsOf = (guests: GuestSearch, guestId: string): readonly Choice[] =>
+  Option.match(guests.kept.pipe(Option.filter((kept) => kept.value === guestId)), {
+    onNone: () => guests.items,
+    onSome: (kept) => [kept, ...guests.items],
+  });
+
 export const StayFields = ({
-  draft,
+  guestId,
   guests,
-  onChange,
+  query,
 }: {
-  readonly draft: OccupancyDraft;
+  readonly guestId: string;
   readonly guests: GuestSearch;
-  readonly onChange: Change;
+  readonly query: string;
 }) => {
-  const { t } = useModernI18n();
-  const handleSearch = guests.onSearch;
+  const { language, t } = useModernI18n();
+  const handleChoose = guests.onChoose;
   return (
     <section className="space-y-4">
       <p className="text-sm text-fg-secondary">{t('property-leasing.booking.manualHint')}</p>
       <div className="flex items-end gap-2">
         <div className="min-w-0 flex-1">
-          <FormInput
-            id="booking-guest-query"
-            label={t('property-leasing.demo.guestSearch')}
-            onChange={(event) => guests.onQueryChange(event.target.value)}
-            value={guests.query}
-          />
+          <occupancyForm.guestQuery id="booking-guest-query" label={t('property-leasing.demo.guestSearch')} />
         </div>
-        <Button appearance="outline" disabled={guests.busy} onClick={handleSearch} severity="secondary" size="sm">
+        <Button
+          appearance="outline"
+          disabled={guests.busy}
+          onClick={() => guests.onSearch(query)}
+          severity="secondary"
+          size="sm"
+          type="button"
+        >
           {t('property-leasing.demo.search')}
         </Button>
       </div>
-      <ChoiceSelect
+      <occupancyForm.guestId
         clearLabel={(name) => t('property-leasing.demo.clearGuest', { name })}
-        items={guests.items}
+        items={guestItemsOf(guests, guestId)}
         label={t('property-leasing.demo.guest')}
-        onChange={(value) => onChange('guestId', value)}
-        value={draft.guestId}
+        onChoose={handleChoose}
+        placeholder={t(LABEL_CHOOSE)}
         warning={guests.failure}
       />
-      <FormInput
+      <occupancyForm.peopleCount
         id="stay-people-count"
         label={t('property-leasing.booking.peopleCount')}
         min={1}
-        onChange={(event) => onChange('peopleCount', event.target.value)}
         required
+        requiredLabel={requiredLabelFor(language)}
         type="number"
-        value={draft.peopleCount}
       />
-      <FormInput
-        id="stay-note"
-        label={t('property-leasing.booking.note')}
-        maxLength={500}
-        onChange={(event) => onChange('stayNote', event.target.value)}
-        value={draft.stayNote}
-      />
+      <occupancyForm.stayNote id="stay-note" label={t('property-leasing.booking.note')} maxLength={500} />
     </section>
   );
 };

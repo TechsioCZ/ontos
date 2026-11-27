@@ -16,17 +16,22 @@ import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { associateStorefrontActionSchemaErrorLive } from '../../api/associate-storefront-action-problems.ts';
 import { createMarketActionSchemaErrorLive } from '../../api/create-market-action-problems.ts';
 import { reviseMarketDefinitionActionSchemaErrorLive } from '../../api/revise-market-definition-action-problems.ts';
+import { suspendMarketActionSchemaErrorLive } from '../../api/suspend-market-action-problems.ts';
 import { AssociateStorefrontResultSchema } from '../../shared/actions/associate-storefront.ts';
 import { CreateMarketResultSchema } from '../../shared/actions/create-market.ts';
 import { ReviseMarketDefinitionResultSchema } from '../../shared/actions/revise-market-definition.ts';
+import { SuspendMarketResultSchema } from '../../shared/actions/suspend-market.ts';
+import { MarketAdministrationStateSchema } from '../../shared/apis/market-administration.ts';
 import { AssociateStorefrontActionApi } from '../../shared/apis/associate-storefront-action.ts';
 import type { AssociateStorefrontPayloadSchema } from '../../shared/apis/associate-storefront-action.ts';
 import { CreateMarketActionApi } from '../../shared/apis/create-market-action.ts';
 import type { CreateMarketPayloadSchema } from '../../shared/apis/create-market-action.ts';
 import { ReviseMarketDefinitionActionApi } from '../../shared/apis/revise-market-definition-action.ts';
 import type { ReviseMarketDefinitionPayloadSchema } from '../../shared/apis/revise-market-definition-action.ts';
+import { SuspendMarketActionApi } from '../../shared/apis/suspend-market-action.ts';
+import type { SuspendMarketPayloadSchema } from '../../shared/apis/suspend-market-action.ts';
 import { MarketDefinitionSchema } from '../../shared/market-contracts.ts';
-import { EditMarketDialog } from '../../src/market-admin/market-dialogs.tsx';
+import { EditMarketDialog, LifecycleDialog } from '../../src/market-admin/market-dialogs.tsx';
 import { NewMarketDialog } from '../../src/market-admin/new-market-dialog.tsx';
 import type { NewMarketDialogProps } from '../../src/market-admin/new-market-dialog.tsx';
 import { StorefrontsSection } from '../../src/market-admin/storefronts-section.tsx';
@@ -104,7 +109,24 @@ const storefront = Schema.decodeUnknownSync(StorefrontApplicationSummarySchema)(
   },
 });
 
+const administration = Schema.decodeUnknownSync(MarketAdministrationStateSchema)({
+  canAdminister: true,
+  currentDefinitionRevisionRef: market.definitionRevisionRef,
+  marketRef: market.marketRef,
+  revision: 1,
+});
+
+const suspendedResult = Schema.decodeUnknownSync(SuspendMarketResultSchema)({
+  changed: true,
+  definitionRevisionRef: market.definitionRevisionRef,
+  lifecycle: 'SUSPENDED',
+  marketRef: market.marketRef,
+  revision: 2,
+});
+
 const revisions: (typeof ReviseMarketDefinitionPayloadSchema.Encoded)[] = [];
+const suspensions: (typeof SuspendMarketPayloadSchema.Encoded)[] = [];
+const SuspensionApi = SuspendMarketActionApi.prefix('/commerce-market-catalog-api');
 const creations: (typeof CreateMarketPayloadSchema.Encoded)[] = [];
 const associations: (typeof AssociateStorefrontPayloadSchema.Encoded)[] = [];
 const RevisionApi = ReviseMarketDefinitionActionApi.prefix('/commerce-market-catalog-api');
@@ -122,6 +144,17 @@ const network = browserNetwork(
         }),
       ),
     ).pipe(Layer.provide(reviseMarketDefinitionActionSchemaErrorLive)),
+  ),
+  serveApi(
+    SuspensionApi,
+    HttpApiBuilder.group(SuspensionApi, 'suspendMarketAction', (group) =>
+      group.handle('execute', ({ payload }) =>
+        Effect.sync(() => {
+          suspensions.push(payload);
+          return suspendedResult;
+        }),
+      ),
+    ).pipe(Layer.provide(suspendMarketActionSchemaErrorLive)),
   ),
   serveApi(
     CreationApi,
@@ -172,6 +205,7 @@ const isOpen = (text: string) => buttons(text).length > 0;
 
 beforeEach(() => {
   revisions.length = 0;
+  suspensions.length = 0;
   creations.length = 0;
   associations.length = 0;
 });
@@ -230,6 +264,51 @@ describe('edit market dialog', () => {
       expect(closed).toHaveLength(0);
       yield* networkIdle;
       expect(revisions.length).toBe(0);
+    }).pipe(Effect.provide(network)),
+  );
+});
+
+const suspendDialog = (onDone: (message: string) => void) => (
+  <LifecycleDialog
+    action="suspend"
+    market={market}
+    onAwaitingApproval={constVoid}
+    onClose={constVoid}
+    onDone={onDone}
+    state={administration}
+  />
+);
+
+describe('suspend market dialog', () => {
+  it.live('a missing reason names the field and sends nothing', () =>
+    Effect.gen(function* suspendNeedsReason() {
+      yield* pinTestDocument;
+      yield* mountInRoute(suspendDialog(constVoid));
+      expect(fieldById('suspend-market-reason').value).toBe(keyOf('detail.lifecycle.suspendReason'));
+      yield* typeInto('suspend-market-reason', '  ');
+      yield* clickButton(keyOf('detail.lifecycle.suspendConfirm'));
+      yield* networkIdle;
+      expect(suspensions.length).toBe(0);
+      expect(document.body.textContent).toContain(keyOf('form.reasonError'));
+    }).pipe(Effect.provide(network)),
+  );
+
+  it.live('confirming suspends the market once with the reason and reports it', () =>
+    Effect.gen(function* suspendOnce() {
+      yield* pinTestDocument;
+      const done: string[] = [];
+      yield* mountInRoute(
+        suspendDialog((message) => {
+          done.push(message);
+        }),
+      );
+      yield* typeInto('suspend-market-reason', ' Inventura ');
+      yield* clickButton(keyOf('detail.lifecycle.suspendConfirm'));
+      yield* waitUntil(() => done.length > 0);
+      yield* networkIdle;
+      expect(suspensions).toHaveLength(1);
+      expect(suspensions[0]).toMatchObject({ expectedRevision: 1, reason: 'Inventura' });
+      expect(done).toEqual([czech('commerce-market-catalog.detail.lifecycle.suspended', { code: market.marketCode })]);
     }).pipe(Effect.provide(network)),
   );
 });

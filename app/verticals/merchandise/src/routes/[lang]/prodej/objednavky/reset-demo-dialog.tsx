@@ -4,14 +4,25 @@ import { dialogCloseLabel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { Effect } from 'effect';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomSet, useAtomValue } from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { isRevisionConflict, resetDemoData } from './orders-records.ts';
 
 const CONFIRMATION = 'OBNOVIT';
 const DEFAULT_REASON = 'Obnovení ukázky před další prezentací';
+
+/** The audit reason and the typed confirmation. The dialog's button sends them; the form itself is never submitted. */
+const resetDemoForm = FormReact.make(
+  FormBuilder.empty.addField('confirmation', Schema.String).addField('reason', Schema.String),
+  {
+    fields: { confirmation: TextField, reason: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const opening = { confirmation: '', reason: DEFAULT_REASON };
 
 interface ResetDemoDialogProps {
   readonly onDismiss: () => void;
@@ -20,21 +31,16 @@ interface ResetDemoDialogProps {
   readonly revision: number;
 }
 
-/**
- * Administrators of the e-shop demo company only. Replaces the company's catalog, categories, stock and orders with the predictable demo
- * baseline (six sample orders). The server scopes the write to the signed-in company; nothing else changes.
- */
-export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDemoDialogProps) => {
+const ResetDemoContent = ({ onDismiss, onReset, open, revision }: ResetDemoDialogProps) => {
   const { t } = useModernI18n();
-  const [typed, setTyped] = useState('');
-  const [reason, setReason] = useState(DEFAULT_REASON);
+  const { confirmation: typed, reason } = Option.getOrElse(useAtomValue(resetDemoForm.values), () => opening);
+  const setValues = useAtomSet(resetDemoForm.setValues);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const confirmed = typed.trim().toUpperCase() === CONFIRMATION;
   const reasonValid = reason.trim().length >= 5;
   const close = () => {
-    setTyped('');
-    setReason(DEFAULT_REASON);
+    setValues(opening);
     setError(null);
     onDismiss();
   };
@@ -58,8 +64,7 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
           },
           onSuccess: () => {
             setBusy(false);
-            setTyped('');
-            setReason(DEFAULT_REASON);
+            setValues(opening);
             onReset('Ukázková data e-shopu jsou obnovená do výchozího stavu.');
           },
         }),
@@ -99,25 +104,34 @@ export const ResetDemoDialog = ({ onDismiss, onReset, open, revision }: ResetDem
       title={t('merchandise.ui.resetAkrosDemo')}
     >
       <div className="flex flex-col gap-200">
-        <FormInput
+        <resetDemoForm.reason
           id="reset-demo-reason"
           label={t('merchandise.ui.auditReason')}
           maxLength={500}
           name="reason"
-          onChange={(event) => setReason(event.target.value)}
-          value={reason}
-          {...(reasonValid ? {} : { helpText: 'Napište alespoň 5 znaků.', validateStatus: 'error' as const })}
+          {...(reasonValid ? {} : { helpText: 'Napište alespoň 5 znaků.', invalid: true })}
         />
-        <FormInput
+        <resetDemoForm.confirmation
           autoComplete="off"
           id="reset-demo-confirmation"
           label={`Pro potvrzení napište ${CONFIRMATION}`}
           name="confirmation"
-          onChange={(event) => setTyped(event.target.value)}
-          value={typed}
         />
         {error !== null && <StatusText status="error">{error}</StatusText>}
       </div>
     </Dialog>
+  );
+};
+
+/**
+ * Administrators of the e-shop demo company only. Replaces the company's catalog, categories, stock and orders with the predictable demo
+ * baseline (six sample orders). The server scopes the write to the signed-in company; nothing else changes.
+ */
+export const ResetDemoDialog = (props: ResetDemoDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot className="contents" defaultValues={opening} form={resetDemoForm} translateMessage={t}>
+      <ResetDemoContent {...props} />
+    </FormRoot>
   );
 };

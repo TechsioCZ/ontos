@@ -7,31 +7,99 @@ import {
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormNumericInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { formatDateTime } from '@app/admin-ui';
-import { DateTime, Effect } from 'effect';
-import { useRef, useState } from 'react';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  NumberTextSchema,
+  NumericField,
+  TextField,
+  unrenderedField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { keepDraftOnReload, keptDraft } from '@app/shared-contracts';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { LedgerMovement, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { QUANTITY_FORMAT } from '../../../../form-number.ts';
 import { loadOlderMovements, runCommand } from './products-api.ts';
 import { writeThroughSymmyVariant } from './symmy-write-through.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { formatDelta, formatQuantity } from './products-format.ts';
-import { PRODUCT_LIMITS, fieldError, focusFirstInvalid, tooLongMessage } from './product-form-validation.ts';
+import { PRODUCT_LIMITS, fieldVerdict, focusFirstInvalid, tooLongMessage } from './product-form-validation.ts';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
-import { EMPTY_MOVEMENT_DRAFT } from './product-movement-draft.ts';
+import { EMPTY_MOVEMENT_DRAFT, isMovementDraftDirty, ManualReasonSchema } from './product-movement-draft.ts';
 import type { ManualReason, MovementDraft } from './product-movement-draft.ts';
+import { VariantIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 
 type VariantRow = NonNullable<ProductRecord['variantRecords']>[number];
 const NO_VARIANTS: readonly VariantRow[] = [];
 const variantLabel = (variant: VariantRow) => `${variant.name} (${variant.sku})`;
-const MANUAL_REASONS: readonly ManualReason[] = ['RECEIPT', 'ISSUE', 'ADJUSTMENT'];
+const MANUAL_REASONS: readonly ManualReason[] = ManualReasonSchema.literals;
+
+/**
+ * The stock movement being typed on the product page. Its button records it; Enter in a field does not, so the form
+ * itself is never submitted. The reason and the variant are picked in selects that write the form's fields.
+ */
+const movementForm = FormReact.make(
+  FormBuilder.empty
+    .addField('note', Schema.String)
+    .addField('quantity', NumberTextSchema)
+    .addField('reason', ManualReasonSchema)
+    .addField('variantId', Schema.OptionFromUndefinedOr(VariantIdSchema)),
+  {
+    // The reason and the variant are picked in selects that write these fields.
+    fields: {
+      note: TextField,
+      quantity: NumericField,
+      reason: unrenderedField<ManualReason>(),
+      variantId: unrenderedField<string | undefined>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type MovementValues = typeof movementForm.schema.Encoded;
+
+const movementValuesOf = (draft: MovementDraft): MovementValues => ({
+  note: draft.note,
+  quantity: { number: draft.quantity, text: draft.quantityText },
+  reason: draft.reason,
+  variantId: draft.variantId,
+});
+
+const movementDraftOf = (values: MovementValues): MovementDraft => ({
+  note: values.note,
+  quantity: values.quantity.number,
+  quantityText: values.quantity.text,
+  reason: values.reason,
+  variantId: values.variantId,
+});
+
+const movementDraft = movementForm.values.pipe(
+  Atom.map(Option.match({ onNone: () => EMPTY_MOVEMENT_DRAFT, onSome: movementDraftOf })),
+);
+const movementDraftDirty = movementDraft.pipe(Atom.map(isMovementDraftDirty));
+
+/**
+ * The page's view of the movement form: whether it holds an unsent movement, and how to drop it. A movement is its
+ * own command with its own button; leaving the page would lose it all the same, so the page's guard asks about it.
+ */
+export const useMovementDraft = () => {
+  const setValues = useAtomSet(movementForm.setValues);
+  return {
+    dirty: useAtomValue(movementDraftDirty),
+    discard: () => setValues(movementValuesOf(EMPTY_MOVEMENT_DRAFT)),
+  };
+};
 
 const movementVariant = {
   ADJUSTMENT: 'warning',
@@ -177,49 +245,48 @@ const quantityErrorKey = (reason: ManualReason, quantity: number, stockOnHand: n
   return normalizeQuantity(stockOnHand + signedDelta(reason, quantity)) < 0 ? 'validation.stock' : undefined;
 };
 
-/**
- * Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed.
- * The form stays open after a save, so it sends the newer of the page revision and the one its own
- * last command returned; a second movement before the page reload finishes is not a false conflict.
- */
-export const MovementForm = ({
-  draft,
-  onCommitted,
-  onDraftChange,
-  onReload,
-  productId,
-  revision,
-  stockOnHand,
-  symmyTarget,
-  variants = NO_VARIANTS,
-}: {
-  readonly draft: MovementDraft;
+interface MovementFormProps {
   readonly onCommitted: (message: string) => void;
-  readonly onDraftChange: (patch: Partial<MovementDraft>) => void;
   readonly onReload: () => void;
   readonly productId: ProductRecord['id'];
   readonly revision: number;
   readonly stockOnHand: number;
   /** A Symmy product: the Pricing/Inventory variant the new on-hand is written to first, so Symmy reads it back. */
   readonly symmyTarget?:
-    | ((variantId: string | undefined) => { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined)
+    | ((
+        variantId: string | undefined,
+      ) => { readonly catalogProductId: string; readonly catalogVariantId: string } | undefined)
     | undefined;
   readonly variants?: readonly VariantRow[] | undefined;
-}) => {
+}
+
+const MovementFields = ({
+  onCommitted,
+  onReload,
+  productId,
+  revision,
+  stockOnHand,
+  symmyTarget,
+  variants = NO_VARIANTS,
+}: MovementFormProps) => {
   const { t } = useModernI18n();
   const k = useProductLabel();
   const failure = useCommandFailure();
-  const { note, quantity, quantityText, reason, variantId } = draft;
+  const draft = useAtomValue(movementDraft);
+  const setValues = useAtomSet(movementForm.setValues);
+  const setReasonField = useAtomSet(movementForm.getFieldAtoms(movementForm.fields.reason).setValue);
+  const setVariantField = useAtomSet(movementForm.getFieldAtoms(movementForm.fields.variantId).setValue);
+  // A half-filled stock movement comes back after "Načíst novou verzi a obnovit úpravy" like the forms' drafts.
+  const keepKey = `merchandise:product-movement:${productId}`;
+  useEffect(
+    () => keepDraftOnReload(keepKey, () => (isMovementDraftDirty(draft) ? draft : undefined)),
+    [draft, keepKey],
+  );
+  const { note, quantity, reason, variantId } = draft;
   const needsVariant = variants.length > 0;
   const variant = variants.find((entry) => entry.id === variantId);
   const variantMissing = needsVariant && variant === undefined;
   const available = needsVariant ? (variant?.stockOnHand ?? 0) : stockOnHand;
-  const setReason = (value: ManualReason) => {
-    onDraftChange({ reason: value });
-  };
-  const setNote = (value: string) => {
-    onDraftChange({ note: value });
-  };
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -264,10 +331,11 @@ export const MovementForm = ({
           return;
         }
         savedRevision.current = outcome.revision;
-        onDraftChange(EMPTY_MOVEMENT_DRAFT);
+        setValues(movementValuesOf(EMPTY_MOVEMENT_DRAFT));
         setSubmitted(false);
         const recorded = k('messages.movementRecorded');
-        const message = corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`;
+        const message =
+          corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`;
         setDone(message);
         onCommitted(message);
       });
@@ -285,7 +353,13 @@ export const MovementForm = ({
         record(expected);
         return;
       }
-      const sync = { _tag: 'RecordStockMovement', delta: correction, note: 'Srovnání se stavem skladu v ERP', productId, reason: 'ADJUSTMENT' } satisfies MerchandiseCommand;
+      const sync = {
+        _tag: 'RecordStockMovement',
+        delta: correction,
+        note: 'Srovnání se stavem skladu v ERP',
+        productId,
+        reason: 'ADJUSTMENT',
+      } satisfies MerchandiseCommand;
       runCommand(variant === undefined ? sync : { ...sync, variantId: variant.id }, expected, (outcome) => {
         if (!outcome.ok) {
           setBusy(false);
@@ -320,13 +394,7 @@ export const MovementForm = ({
   };
 
   return (
-    <form
-      className="flex flex-col gap-200 border-border-primary border-t pt-200"
-      // Enter in a field does not record the movement; only its button does.
-      onSubmit={(event) => {
-        event.preventDefault();
-      }}
-    >
+    <>
       <h3 className="font-semibold text-md">{k('movements.recordTitle')}</h3>
       {serverError !== null && (
         <StatusText showIcon status="error">
@@ -349,7 +417,7 @@ export const MovementForm = ({
             name="movementVariant"
             onValueChange={(details) => {
               const [next] = details.value;
-              onDraftChange({ variantId: variants.some((entry) => entry.id === next) ? next : undefined });
+              setVariantField(variants.find((entry) => entry.id === next)?.id);
             }}
             placeholder={t('merchandise.ui.selectVariant')}
             value={variantId === undefined ? [] : [variantId]}
@@ -374,43 +442,34 @@ export const MovementForm = ({
             const [next] = details.value;
             const picked = MANUAL_REASONS.find((value) => value === next);
             if (picked !== undefined) {
-              setReason(picked);
+              setReasonField(picked);
             }
           }}
           placeholder={k('selectPlaceholder')}
           value={[reason]}
         />
         {/* Real bounds for the ARIA range, without clamping on blur: an out-of-range quantity stays visible to validation. */}
-        <FormNumericInput
+        <movementForm.quantity
           clampValueOnBlur={false}
           formatOptions={QUANTITY_FORMAT}
+          hideValueMax
           id="movement-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
           max={MAX_QUANTITY}
           min={isAdjustment ? -Math.min(available, MAX_QUANTITY) : MIN_STOCK_QUANTITY}
           name="movementQuantity"
-          onValueChange={(details) => {
-            onDraftChange({ quantity: details.valueAsNumber, quantityText: details.value });
-          }}
           step={1}
-          value={quantityText}
-          {...fieldError(submitted, errorKey === undefined ? undefined : k(errorKey))}
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-valuemax={undefined} />
-          </NumericInput.Control>
-        </FormNumericInput>
+          {...fieldVerdict(submitted, errorKey === undefined ? undefined : k(errorKey))}
+        />
       </div>
       {isAdjustment && <p className="text-fg-secondary text-xs">{k('movements.quantityHint')}</p>}
-      <FormInput
+      <movementForm.note
         autoComplete="off"
         id="movement-note"
         label={k('fields.note')}
         name="movementNote"
-        onChange={(event) => setNote(event.target.value)}
-        value={note}
-        {...fieldError(submitted, noteError)}
+        {...fieldVerdict(submitted, noteError)}
       />
       <div className="flex justify-end">
         <Button
@@ -424,6 +483,27 @@ export const MovementForm = ({
           {k('movements.submit')}
         </Button>
       </div>
-    </form>
+    </>
+  );
+};
+
+/**
+ * Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed.
+ * The form stays open after a save, so it sends the newer of the page revision and the one its own
+ * last command returned; a second movement before the page reload finishes is not a false conflict.
+ */
+export const MovementForm = (props: MovementFormProps) => {
+  const { t } = useModernI18n();
+  // The movement a reload kept for this product opens unsent, as typed.
+  const kept = keptDraft<MovementDraft>(`merchandise:product-movement:${props.productId}`);
+  return (
+    <FormRoot
+      className="flex flex-col gap-200 border-border-primary border-t pt-200"
+      defaultValues={movementValuesOf({ ...EMPTY_MOVEMENT_DRAFT, ...kept })}
+      form={movementForm}
+      translateMessage={t}
+    >
+      <MovementFields {...props} />
+    </FormRoot>
   );
 };

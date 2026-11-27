@@ -152,11 +152,6 @@ export const draftFromConnection = (c: ConnectionSummary): EditDraft => ({
   writePolicy: c.writePolicy,
 });
 
-export const setModuleChoice = (draft: EditDraft, moduleId: string, choice: ModuleChoice): EditDraft => ({
-  ...draft,
-  modules: { ...draft.modules, [moduleId]: choice },
-});
-
 const policyOrder = ['read_only', 'approval', 'direct'] satisfies readonly AgentWritePolicy[];
 
 const policyRank = { approval: 1, direct: 2, read_only: 0 } satisfies Record<AgentWritePolicy, number>;

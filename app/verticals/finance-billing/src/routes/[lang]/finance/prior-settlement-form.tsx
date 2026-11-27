@@ -3,17 +3,34 @@
 // started from (someone else's newer one is a conflict with "Načíst aktuální verzi"); leaving with input asks first.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { formatDate, formatMoney } from '@app/admin-ui';
+import { CheckboxField, EntryTextField, FormBuilder, FormReact, FormRoot, TextField } from '@app/core-runtime/ui/form';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Schema } from 'effect';
-import { useState } from 'react';
+import { Effect, Schema } from 'effect';
 import type { Invoice } from '../../../../shared/apis/records.ts';
+import { financeBrowserAtomRuntime } from '../../../runtime/browser.ts';
 import { FinanceFormDialog, useFinanceFormSave } from './finance-form-save.tsx';
+import { useFormDraft } from './finance-form-draft.tsx';
 import { minorToInput, parseAmountMinor } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 
 const P = 'finance-billing.financeUi.settlement';
+
+/**
+ * The typed amount per earlier invoice (resource id; empty means not taken into account), the note, and the person's
+ * check of the amounts, which every save requires and which is not part of what is saved. Uložit sends the draft
+ * through the save bar, so the form only holds it.
+ */
+const settlementForm = FormReact.make(
+  FormBuilder.empty
+    .addField('amounts', Schema.Record(Schema.String, Schema.String))
+    .addField('checked', Schema.Boolean)
+    .addField('note', Schema.String),
+  {
+    fields: { amounts: EntryTextField, checked: CheckboxField, note: TextField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
 
 export interface SettlementDraft {
   /** The typed amount per earlier invoice (resource id); empty means not taken into account. */
@@ -73,9 +90,9 @@ export interface PriorSettlementFormProps {
 export const PriorSettlementForm = ({ available, candidates, invoice, onClose, vm }: PriorSettlementFormProps) => {
   const { t } = useModernI18n();
   const initial = settlementDraftOf(invoice);
-  const [draft, setDraft] = useState(initial);
-  /** The person checked the amounts; required for every save, not part of what is saved. */
-  const [checked, setChecked] = useState(false);
+  const opened = { ...initial, checked: false };
+  const values = useFormDraft(settlementForm, opened);
+  const { checked, ...draft } = values.draft;
   const problemOf = (value: SettlementDraft): SettlementProblem | undefined => {
     const entries = entriesOf(value, candidates);
     if (entries.some((entry) => entry.amountMinor <= 0)) {
@@ -98,7 +115,8 @@ export const PriorSettlementForm = ({ available, candidates, invoice, onClose, v
     initial,
     isValid: (value) => problemOf(value) === undefined,
     onClose,
-    reset: setDraft,
+    // Going back to a version keeps whether the person checked the amounts.
+    reset: (value) => values.reset({ ...value, checked }),
     send: (value) => {
       const entries = entriesOf(value, candidates);
       const command: FinanceCommandDraft<'SetPriorSettlement'> = {
@@ -133,7 +151,8 @@ export const PriorSettlementForm = ({ available, candidates, invoice, onClose, v
       form={form}
       title={t(`${P}.title`)}
     >
-      <div className="flex flex-col gap-150">
+      <FormRoot className="flex flex-col gap-150" defaultValues={opened} form={settlementForm} translateMessage={t}>
+        {values.ready}
         {problem !== undefined && (
           <StatusText showIcon size="sm" status="warning">
             {t(`${P}.${problem}`)}
@@ -163,41 +182,19 @@ export const PriorSettlementForm = ({ available, candidates, invoice, onClose, v
                   })}
                 </span>
               </span>
-              <FormInput
+              <settlementForm.amounts
+                entry={entry.ref.resourceId}
                 id={`prior-${entry.ref.resourceId}`}
                 inputMode="decimal"
                 label={t(`${P}.amount`)}
-                onChange={(event) => {
-                  const { value } = event.target;
-                  setDraft((current) => ({
-                    ...current,
-                    amounts: { ...current.amounts, [entry.ref.resourceId]: value },
-                  }));
-                }}
                 size="sm"
-                value={draft.amounts[entry.ref.resourceId] ?? ''}
               />
             </div>
           ))
         )}
-        <FormInput
-          id="prior-note"
-          label={t(`${P}.note`)}
-          onChange={(event) => {
-            const { value } = event.target;
-            setDraft((current) => ({ ...current, note: value }));
-          }}
-          size="sm"
-          value={draft.note}
-        />
-        <FormCheckbox
-          checked={checked}
-          id="prior-confirm"
-          label={t(`${P}.confirm`)}
-          onCheckedChange={setChecked}
-          size="sm"
-        />
-      </div>
+        <settlementForm.note id="prior-note" label={t(`${P}.note`)} size="sm" />
+        <settlementForm.checked id="prior-confirm" label={t(`${P}.confirm`)} />
+      </FormRoot>
     </FinanceFormDialog>
   );
 };

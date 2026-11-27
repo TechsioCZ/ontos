@@ -1,7 +1,8 @@
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 // Doplnění (rule-based), Pohyby (ledger + issues by month + serial lookup), Nabídky, Dodavatelé. ops-purchasing lane.
 import {
   DetailList,
@@ -13,17 +14,24 @@ import {
   formatDate,
   formatNumber,
 } from '@app/admin-ui';
+import {
+  BareTextField,
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TemplateChoiceField,
+  TextField,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { PurchasingState, Supplier, SupplierQuote } from '../../../../../shared/domain/purchasing.ts';
@@ -163,6 +171,17 @@ export const ReplenishTab = ({
 };
 
 // ── Pohyby ────────────────────────────────────────────────────────────────────────────────────────────────────────
+/** The filters over the movement ledger; they act as they change, so Enter sends nothing. */
+const movementFilterForm = FormReact.make(
+  FormBuilder.empty.addField('kind', Schema.String).addField('search', Schema.String),
+  {
+    fields: { kind: TemplateChoiceField, search: BareTextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noMovementFilters = { kind: 'all', search: '' };
+
 export const MovementsTab = ({
   me,
   onOpenOrder,
@@ -173,9 +192,9 @@ export const MovementsTab = ({
   readonly state: PurchasingState;
 }) => {
   const k = usePurchasingT();
+  const { t } = useModernI18n();
   const lookup = lookupOf(state);
-  const [search, setSearch] = useState('');
-  const [kind, setKind] = useState('all');
+  const { kind, search } = Option.getOrElse(useAtomValue(movementFilterForm.values), () => noMovementFilters);
   const query = foldSearchText(search.trim());
   const rows = state.movements
     .filter((movement) => {
@@ -227,34 +246,29 @@ export const MovementsTab = ({
           })}
         </div>
       </SectionCard>
-      <div className="flex flex-wrap items-end gap-200">
+      <FormRoot
+        className="flex flex-wrap items-end gap-200"
+        defaultValues={noMovementFilters}
+        form={movementFilterForm}
+        translateMessage={(message) => t(message)}
+      >
         <div className="w-full max-w-sm">
-          <Input
-            aria-label={k('movements.search')}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={k('movements.search')}
-            size="sm"
-            value={search}
-          />
+          <movementFilterForm.search aria-label={k('movements.search')} placeholder={k('movements.search')} size="sm" />
         </div>
         <div className="w-full max-w-xs">
-          <Select
+          <movementFilterForm.kind
             items={['all', 'receipt', 'issue', 'transfer', 'adjustment'].map((value) => ({
-              displayValue: value === 'all' ? k('movements.allKinds') : k(`movementKind.${value}`),
               label: value === 'all' ? k('movements.allKinds') : k(`movementKind.${value}`),
               value,
             }))}
             label={k('fields.kind')}
             labelProps={{ className: 'sr-only' }}
-            name="movement-kind"
-            onValueChange={({ value }) => setKind(value[0] ?? 'all')}
             placeholder={k('placeholders.option')}
             size="sm"
-            value={[kind]}
           />
         </div>
         <span className="text-fg-secondary text-sm">{k('movements.count', { count: rows.length })}</span>
-      </div>
+      </FormRoot>
       <div className="overflow-x-auto">
         <MovementTable lookup={lookup} me={me} movements={rows} onOpenOrder={onOpenOrder} showItem />
       </div>
@@ -408,6 +422,19 @@ export const QuotesTab = ({
   );
 };
 
+/**
+ * The order a received quote becomes. Uložit sends it through the form save, so Enter sends nothing. One quote panel is
+ * open at a time.
+ */
+const quoteToOrderForm = FormReact.make(
+  FormBuilder.empty.addField('expectedDate', Schema.String).addField('warehouseId', Schema.String),
+  {
+    fields: { expectedDate: TextField, warehouseId: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
 interface SubmitOrderFromQuoteInput {
   readonly expectedDate: IsoDate;
   readonly k: ReturnType<typeof usePurchasingT>;
@@ -493,8 +520,9 @@ export const QuoteToOrderForm = ({
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const toast = useToast();
-  const [warehouseId, setWarehouseId] = useState(state.warehouses[0]?.id ?? '');
-  const [expectedDate, setExpectedDate] = useState('');
+  const opened = { expectedDate: '', warehouseId: state.warehouses[0]?.id ?? '' };
+  const shown = useFormValues(quoteToOrderForm, opened);
+  const { expectedDate, warehouseId } = shown.values;
   const [rejecting, setRejecting] = useState(false);
   const [busy, setBusy] = useState(false);
   // The order is created on Uložit only; the warehouse it opens with can be used as it is.
@@ -502,34 +530,27 @@ export const QuoteToOrderForm = ({
     savableAtOnce: true,
     submit: () =>
       submitOrderFromQuote({ expectedDate, k, onOpenOrder, quote, run, setError, state, t, toast, warehouseId }),
-    value: { expectedDate, warehouseId },
+    value: shown.values,
   });
   const reject = () => submitQuoteRejection({ k, quote, run, setBusy, setError, setRejecting, t, toast });
   return (
     <SectionCard title={k('quotes.toOrderTitle')}>
       <p className="text-fg-secondary text-sm">{k('quotes.toOrderHint')}</p>
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <Select
-          items={state.warehouses.map((entry) => ({
-            displayValue: entry.name,
-            label: entry.name,
-            value: entry.id,
-          }))}
+      <FormRoot
+        className="grid grid-cols-1 gap-200 sm:grid-cols-2"
+        defaultValues={opened}
+        form={quoteToOrderForm}
+        key={quote.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <quoteToOrderForm.warehouseId
+          items={state.warehouses.map((entry) => ({ label: entry.name, value: entry.id }))}
           label={k('fields.deliverTo')}
-          name="quote-warehouse"
-          onValueChange={({ value }) => setWarehouseId(value[0] ?? warehouseId)}
           placeholder={k('placeholders.warehouse')}
-          size="md"
-          value={[warehouseId]}
         />
-        <FormInput
-          id="quote-expected"
-          label={k('fields.expectedDate')}
-          onChange={(event) => setExpectedDate(event.target.value)}
-          type="date"
-          value={expectedDate}
-        />
-      </div>
+        <quoteToOrderForm.expectedDate id="quote-expected" label={k('fields.expectedDate')} type="date" />
+      </FormRoot>
       {rejecting ? (
         <div className="flex flex-wrap justify-end gap-100">
           <span className="self-center text-sm">{k('quotes.rejectConfirm')}</span>

@@ -1,18 +1,25 @@
 // Facility operations — Dokumenty a smlouvy (S12) + Interní zprávy (S14). OWNED BY THE `documents` LANE (ops-documents).
 // Data: useAgendaRecords(['documents']); commands: shared/commands/documents.ts; files via FileUpload + records read.
 import { EmptyState, PageHeader, SectionCard, StatCard, StatRow, foldSearchText } from '@app/admin-ui';
+import {
+  BareTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TemplateChoiceField,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { Input } from '@techsio/ui-kit/atoms/input';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Result, Schema } from 'effect';
+import { Effect, Option, Result, Schema } from 'effect';
 import { useState } from 'react';
 import type { DocumentRecord, SubjectRef } from '../../../../../shared/domain/documents.ts';
 import { documentLinks } from '../../../../../shared/domain/documents.ts';
@@ -42,7 +49,7 @@ import {
 } from '../../../../ui/finance-files.tsx';
 import type { FinanceFileRow } from '../../../../ui/finance-files.tsx';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { changedOn, documentSortKey, DocumentsSearchSchema, selectionForSearch } from './documents-route-state.ts';
 import { DocumentDetailPanel } from './document-detail.tsx';
 import { DocumentFormPanel, documentFormKey } from './document-form.tsx';
@@ -58,6 +65,30 @@ import {
 
 const k = 'facility-operations.documents';
 const ALL = '__all__';
+
+/** The filters over the documents list; they act as they change, so Enter sends nothing. */
+const documentFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('category', Schema.String)
+    .addField('changedFrom', Schema.String)
+    .addField('changedTo', Schema.String)
+    .addField('link', Schema.String)
+    .addField('owner', Schema.String)
+    .addField('query', Schema.String),
+  {
+    fields: {
+      category: TemplateChoiceField,
+      changedFrom: TextField,
+      changedTo: TextField,
+      link: TemplateChoiceField,
+      owner: TemplateChoiceField,
+      query: BareTextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noDocumentFilters = { category: ALL, changedFrom: '', changedTo: '', link: ALL, owner: ALL, query: '' };
 const channels = ['provoz', 'vedeni', 'technika'] as const;
 const tabs = ['all', 'contracts', 'deadlines', 'messages'] as const;
 const TabSchema = Schema.Literals(tabs);
@@ -231,12 +262,9 @@ const useDocumentsModel = () => {
   const today = todayInPrague();
 
   const [tab, setTab] = useState<Tab>('all');
-  const [query, setQuery] = useState('');
-  const [category, setCategory] = useState(ALL);
-  const [link, setLink] = useState(ALL);
-  const [owner, setOwner] = useState(ALL);
-  const [changedFrom, setChangedFrom] = useState('');
-  const [changedTo, setChangedTo] = useState('');
+  const filterValues = Option.getOrElse(useAtomValue(documentFilterForm.values), () => noDocumentFilters);
+  const { category, changedFrom, changedTo, link, owner, query } = filterValues;
+  const setFilters = useAtomSet(documentFilterForm.setValues);
   const [selection, setSelection] = useState(() => selectionForSearch(undefined, searchStr, requestedDocument));
   if (selection.searchKey !== searchStr) {
     setSelection(selectionForSearch(selection, searchStr, requestedDocument));
@@ -353,15 +381,10 @@ const useDocumentsModel = () => {
     requestedTaskId,
     retry,
     searchResult,
-    setCategory,
-    setChangedFrom,
-    setChangedTo,
     setChannel,
+    setFilters,
     setForm,
-    setLink,
     setOpenId,
-    setOwner,
-    setQuery,
     setTab,
     tab,
     tasks,
@@ -375,119 +398,81 @@ type DocumentsModel = ReturnType<typeof useDocumentsModel>;
 const DocumentsFilters = ({ model }: { readonly model: DocumentsModel }) => {
   const { t } = useModernI18n();
   const categoryLabel = useCategoryLabel();
-  const {
-    category,
-    changedFrom,
-    changedTo,
-    filtersActive,
-    link,
-    linkOptions,
-    owner,
-    owners,
-    query,
-    setCategory,
-    setChangedFrom,
-    setChangedTo,
-    setLink,
-    setOwner,
-    setQuery,
-  } = model;
+  const { filtersActive, linkOptions, owners, setFilters } = model;
   return (
-    <div className="flex flex-wrap items-end gap-150">
-      <Input
+    <FormRoot
+      className="flex flex-wrap items-end gap-150"
+      defaultValues={noDocumentFilters}
+      form={documentFilterForm}
+      translateMessage={(message) => t(message)}
+    >
+      <documentFilterForm.query
         aria-label={t(`${k}.filters.search`)}
         className="w-80"
-        onChange={(event) => setQuery(event.target.value)}
         placeholder={t(`${k}.filters.search`)}
         size="sm"
         type="search"
-        value={query}
       />
       <div className="w-56">
-        <Select
+        <documentFilterForm.category
           items={[
-            {
-              displayValue: t(`${k}.filters.allCategories`),
-              label: t(`${k}.filters.allCategories`),
-              value: ALL,
-            },
-            ...documentCategories.map((value) => ({
-              displayValue: categoryLabel(value),
-              label: categoryLabel(value),
-              value,
-            })),
+            { label: t(`${k}.filters.allCategories`), value: ALL },
+            ...documentCategories.map((value) => ({ label: categoryLabel(value), value })),
           ]}
           label={t(`${k}.filters.category`)}
-          name="documents-category-filter"
-          onValueChange={({ value }) => setCategory(value[0] ?? ALL)}
           size="sm"
-          value={[category]}
         />
       </div>
       <div className="w-56">
-        <Select
+        <documentFilterForm.owner
           items={[
-            { displayValue: t(`${k}.filters.allOwners`), label: t(`${k}.filters.allOwners`), value: ALL },
-            ...owners.map((name) => ({ displayValue: name, label: name, value: name })),
+            { label: t(`${k}.filters.allOwners`), value: ALL },
+            ...owners.map((name) => ({ label: name, value: name })),
           ]}
           label={t(`${k}.filters.owner`)}
-          name="documents-owner-filter"
-          onValueChange={({ value }) => setOwner(value[0] ?? ALL)}
           size="sm"
-          value={[owner]}
         />
       </div>
       <div className="w-40">
-        <FormInput
+        <documentFilterForm.changedFrom
           id="documents-changed-from"
           label={t(`${k}.filters.changedFrom`)}
-          onChange={(event) => setChangedFrom(event.target.value)}
           size="sm"
           type="date"
-          value={changedFrom}
         />
       </div>
       <div className="w-40">
-        <FormInput
+        <documentFilterForm.changedTo
           id="documents-changed-to"
           label={t(`${k}.filters.changedTo`)}
-          onChange={(event) => setChangedTo(event.target.value)}
           size="sm"
           type="date"
-          value={changedTo}
         />
       </div>
       <div className="w-72">
-        <Select
+        <documentFilterForm.link
           items={[
-            { displayValue: t(`${k}.filters.allLinks`), label: t(`${k}.filters.allLinks`), value: ALL },
-            ...linkOptions.map(([value, entry]) => ({ displayValue: entry.label, label: entry.label, value })),
+            { label: t(`${k}.filters.allLinks`), value: ALL },
+            ...linkOptions.map(([value, entry]) => ({ label: entry.label, value })),
           ]}
           label={t(`${k}.filters.link`)}
-          name="documents-link-filter"
-          onValueChange={({ value }) => setLink(value[0] ?? ALL)}
           size="sm"
-          value={[link]}
         />
       </div>
       {filtersActive && (
         <Button
           appearance="ghost"
           onClick={() => {
-            setQuery('');
-            setCategory(ALL);
-            setLink(ALL);
-            setOwner(ALL);
-            setChangedFrom('');
-            setChangedTo('');
+            setFilters(noDocumentFilters);
           }}
           severity="secondary"
           size="sm"
+          type="button"
         >
           {t(`${k}.filters.clear`)}
         </Button>
       )}
-    </div>
+    </FormRoot>
   );
 };
 

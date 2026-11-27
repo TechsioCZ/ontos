@@ -1,14 +1,21 @@
 // Manual pairing / re-pairing of one imported order with a reason (C04-03). Candidates are suggestions only.
 // Picking and typing change only the draft; the shared Save button ("Uložit", last in the footer) sends one
 // PairOrder command, and leaving with unsaved input asks Uložit / Zahodit změny / Zůstat.
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import { requiredLabelFor } from '@app/admin-ui';
+import {
+  CheckboxField,
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormTextarea } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Option } from 'effect';
-import { useState } from 'react';
+import { Effect, Option, Schema } from 'effect';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { ImportedOrder } from '../../../../../shared/domain/imports.ts';
@@ -16,13 +23,37 @@ import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.ts
 import type { CrmFormSave } from '../../../../crm/form-save.tsx';
 import { salespersonName } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { NOT_PROVIDED, clientLabel, orderTitle } from './order-model.ts';
 
+/** A pairing as typed. */
 export interface PairingDraft {
+  /** Approve the source customer link with the pairing. */
   readonly approve: boolean;
+  /** The target client; `""` until picked. */
   readonly clientId: string;
   readonly reason: string;
 }
+
+/** Enter never sends a pairing: only Uložit does. */
+const makePairingForm = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('approve', Schema.Boolean)
+      .addField('clientId', Schema.String)
+      .addField('reason', Schema.String),
+    {
+      fields: { approve: CheckboxField, clientId: ChoiceField, reason: TextAreaField },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+
+/** Where a pairing form is: the pairing side panel, or inline in an order's detail. Both can be on screen at once. */
+const PairingPlaceSchema = Schema.Literals(['inline', 'panel']);
+type PairingPlace = typeof PairingPlaceSchema.Type;
+const pairingForms = { inline: makePairingForm(), panel: makePairingForm() };
+type PairingInstance = (typeof pairingForms)['panel'];
 
 /** PairOrder of a complete draft; none while no client is chosen or the reason is shorter than three characters. */
 export const pairingCommandOf = (order: ImportedOrder, draft: PairingDraft): Option.Option<CrmCommandInput> => {
@@ -44,25 +75,23 @@ export const pairingCommandOf = (order: ImportedOrder, draft: PairingDraft): Opt
 export interface PairingFormState {
   readonly draft: PairingDraft;
   readonly form: CrmFormSave<PairingDraft>;
-  readonly patch: (next: Partial<PairingDraft>) => void;
+  /** The values the form opens with. */
+  readonly opened: PairingDraft;
+  /** Which pairing form the fields render. */
+  readonly place: PairingPlace;
 }
 
-/** Draft and save of the pairing of `order`; `onSaved` runs after the toast of a successful save. */
-export const usePairingForm = ({
-  onSaved,
-  order,
-  submit,
-}: {
+interface PairingOptions {
   readonly onSaved: () => void;
   readonly order: ImportedOrder;
   readonly submit: CrmCommandSubmit;
-}): PairingFormState => {
+}
+
+const usePairing = (place: PairingPlace, { onSaved, order, submit }: PairingOptions): PairingFormState => {
   const toaster = useToast();
-  const [draft, setDraft] = useState<PairingDraft>(() => ({
-    approve: false,
-    clientId: order.candidates?.[0]?.clientId ?? '',
-    reason: '',
-  }));
+  const instance = pairingForms[place];
+  const opened: PairingDraft = { approve: false, clientId: order.candidates?.[0]?.clientId ?? '', reason: '' };
+  const draft = Option.getOrElse(useAtomValue(instance.values), () => opened);
   const form = useCrmFormSave<PairingDraft>({
     command: (value) => pairingCommandOf(order, value),
     failureText: (message) => message ?? 'Uložení se nezdařilo',
@@ -76,7 +105,53 @@ export const usePairingForm = ({
     submit,
     value: draft,
   });
-  return { draft, form, patch: (next) => setDraft((current) => ({ ...current, ...next })) };
+  return { draft, form, opened, place };
+};
+
+/** Draft and save of the pairing of `order` in its side panel; `onSaved` runs after the toast of a successful save. */
+export const usePairingForm = (options: PairingOptions): PairingFormState => usePairing('panel', options);
+
+const CandidateChoices = ({
+  instance,
+  order,
+  picked,
+  records,
+}: {
+  readonly instance: PairingInstance;
+  readonly order: ImportedOrder;
+  readonly picked: string;
+  readonly records: RecordsResponse;
+}) => {
+  const pick = useAtomSet(instance.getFieldAtoms(instance.fields.clientId).setValue);
+  const candidates = order.candidates ?? [];
+  return candidates.length === 0 ? null : (
+    <div className="flex flex-col gap-100 rounded-lg bg-bg-light-warning-base p-150">
+      <span className="font-medium text-sm">Možní kandidáti – nepotvrzeno</span>
+      <span className="text-fg-secondary text-xs">
+        Shoda IČO, e-mailu nebo názvu není důkaz identity. Systém je sám nepřiřadí; vyberte klienta až po ověření.
+      </span>
+      <div className="flex flex-wrap gap-100">
+        {candidates.map((candidate) => (
+          <Button
+            className={`flex flex-col items-start gap-50 rounded-lg border px-150 py-100 text-left text-sm ${picked === candidate.clientId ? 'border-primary bg-surface' : 'border-border-primary bg-base'}`}
+            composition
+            key={candidate.clientId}
+            onClick={() => pick(candidate.clientId)}
+            size="current"
+            unstyled
+          >
+            <span className="flex items-center gap-50 font-medium">
+              {picked === candidate.clientId && (
+                <span aria-hidden="true" className="token-icon-availability-status-available size-200 text-success" />
+              )}
+              {clientLabel(records, candidate.clientId) ?? NOT_PROVIDED}
+            </span>
+            <span className="text-fg-secondary text-xs">{candidate.reason}</span>
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
 };
 
 /** The fields of the pairing form. Enter never sends it: only Uložit does. */
@@ -89,8 +164,9 @@ export const PairingFields = ({
   readonly records: RecordsResponse;
   readonly state: PairingFormState;
 }) => {
-  const { t } = useModernI18n();
-  const { draft, patch } = state;
+  const { language, t } = useModernI18n();
+  const { draft, opened, place } = state;
+  const instance = pairingForms[place];
   const linkExists =
     order.externalCustomerId !== undefined &&
     records.state.imports.customerLinks.some(
@@ -99,73 +175,39 @@ export const PairingFields = ({
   const clients = records.state.clients.items
     .filter((client) => client.status === 'active' && client.id !== order.clientId)
     .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'));
-  const candidates = order.candidates ?? [];
   return (
-    <form className="flex flex-col gap-150" onSubmit={(event) => event.preventDefault()}>
-      {candidates.length > 0 && (
-        <div className="flex flex-col gap-100 rounded-lg bg-bg-light-warning-base p-150">
-          <span className="font-medium text-sm">Možní kandidáti – nepotvrzeno</span>
-          <span className="text-fg-secondary text-xs">
-            Shoda IČO, e-mailu nebo názvu není důkaz identity. Systém je sám nepřiřadí; vyberte klienta až po ověření.
-          </span>
-          <div className="flex flex-wrap gap-100">
-            {candidates.map((candidate) => (
-              <Button
-                className={`flex flex-col items-start gap-50 rounded-lg border px-150 py-100 text-left text-sm ${draft.clientId === candidate.clientId ? 'border-primary bg-surface' : 'border-border-primary bg-base'}`}
-                composition
-                key={candidate.clientId}
-                onClick={() => patch({ clientId: candidate.clientId })}
-                size="current"
-                unstyled
-              >
-                <span className="flex items-center gap-50 font-medium">
-                  {draft.clientId === candidate.clientId && (
-                    <span
-                      aria-hidden="true"
-                      className="token-icon-availability-status-available size-200 text-success"
-                    />
-                  )}
-                  {clientLabel(records, candidate.clientId) ?? NOT_PROVIDED}
-                </span>
-                <span className="text-fg-secondary text-xs">{candidate.reason}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-      )}
-      <SelectTemplate
+    <FormRoot
+      className="flex flex-col gap-150"
+      defaultValues={opened}
+      form={instance}
+      translateMessage={(message) => t(message, { defaultValue: message })}
+    >
+      <CandidateChoices instance={instance} order={order} picked={draft.clientId} records={records} />
+      <instance.clientId
         items={clients.map((client) => ({
           label: `${client.name} · ${salespersonName(records, client.ownerSalespersonId) ?? 'nepřiděleno'}`,
           value: client.id,
         }))}
         label={t('crm.ciWorkflow.targetClient')}
-        name="pairing-client"
-        onValueChange={(details) => patch({ clientId: details.value[0] ?? '' })}
         placeholder={t('crm.ciWorkflow.selectClient')}
-        size="sm"
-        value={draft.clientId === '' ? [] : [draft.clientId]}
       />
-      <FormTextarea
+      <instance.reason
         autoComplete="off"
         id={`pairing-reason-${order.id}`}
         label={t('crm.ciWorkflow.pairingReason')}
         maxLength={2000}
-        onChange={(event) => patch({ reason: event.target.value })}
         required
+        requiredLabel={requiredLabelFor(language)}
         rows={2}
         size="sm"
-        value={draft.reason}
       />
       {order.externalCustomerId !== undefined && !linkExists && (
-        <FormCheckbox
-          checked={draft.approve}
+        <instance.approve
           id={`pairing-approve-${order.id}`}
           label={`Schválit vazbu: ${order.customerName ?? orderTitle(order)} (${order.source}) patří tomuto klientovi – další objednávky se napárují samy`}
-          onCheckedChange={(checked) => patch({ approve: checked })}
-          size="sm"
         />
       )}
-    </form>
+    </FormRoot>
   );
 };
 
@@ -185,7 +227,7 @@ export const PairingForm = ({
   readonly records: RecordsResponse;
   readonly submit: CrmCommandSubmit;
 }) => {
-  const state = usePairingForm({ onSaved, order, submit });
+  const state = usePairing('inline', { onSaved, order, submit });
   return (
     <div className="flex flex-col gap-150" data-testid={`crm-pairing-form-${order.id}`}>
       <PairingFields order={order} records={records} state={state} />

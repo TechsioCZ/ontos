@@ -5,10 +5,21 @@ import { MarketAffectedUseAssessmentRequestSchema } from '@app/customer-market-r
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
 import { useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  FormRootError,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { DateTime, Effect, Fiber, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Option, Schema } from 'effect';
+import { AsyncResult, Atom } from 'effect/reactivity';
 import { useEffect, useState } from 'react';
 import type { MarketLifecycleResult } from '../../shared/action-contracts.ts';
 import { ActivateMarketPayloadSchema } from '../../shared/actions/activate-market.ts';
@@ -20,19 +31,50 @@ import { executeActivateMarket } from '../api/activate-market-action-client.ts';
 import { executeRetireMarket } from '../api/retire-market-action-client.ts';
 import { executeReviseMarketDefinition } from '../api/revise-market-definition-action-client.ts';
 import { executeSuspendMarket } from '../api/suspend-market-action-client.ts';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import type { CurrentMarket } from './eshops-model.ts';
-import { DefinitionFields, ReasonField } from './market-fields.tsx';
-import { definitionFormOf, definitionIssues, reasonValid, reviseMarketInput } from './market-form.ts';
-import type { MarketDefinitionForm } from './market-form.ts';
+import {
+  DefinitionFields,
+  LiveChecks,
+  definitionControls,
+  definitionFields,
+  useOpenedValues,
+} from './market-fields.tsx';
+import { ReasonInputSchema, definitionFormOf, reasonValid, reviseMarketInput } from './market-form.ts';
 import { confirmsMarketCode, retirementImpactOf } from './market-detail-model.ts';
 import type { RetirementImpact } from './market-detail-model.ts';
 import { DialogFrame, FormDialogFrame } from './dialog-frame.tsx';
 import { failureText, useMarketText } from './market-ui.tsx';
-import { marketActionEffect, requestId, runMarketAction, writeFailure } from './page-data.ts';
-import type { WriteFailure, WriteOutcome } from './page-data.ts';
+import { marketActionEffect, requestId, writeFailure, WriteFailureSchema } from './page-data.ts';
+import type { WriteFailure } from './page-data.ts';
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
+
+/** The Action refused the change, or could not be reached: nothing changed, the dialog names why. */
+class MarketChangeRefused extends Schema.TaggedError<MarketChangeRefused>()('MarketChangeRefused', {
+  reason: WriteFailureSchema,
+}) {}
+
+/** The refusal is the dialog's own error, under its fields. */
+const refusalErrors = ({ reason }: MarketChangeRefused) => [{ message: `failures.${reason}`, path: '' as const }];
+
+/** Sends one Market Action under a fresh idempotency key; a refusal fails the form's submit. */
+const sendMarketAction = <P, A, E extends { readonly _tag: string }, D extends { readonly _tag: string }>(
+  payload: Effect.Effect<P, D>,
+  execute: Parameters<typeof marketActionEffect<P, A, E, D>>[1],
+) =>
+  marketActionEffect(payload, execute).pipe(
+    Effect.flatMap((outcome) =>
+      outcome.ok ? Effect.succeed(outcome.value) : Effect.fail(new MarketChangeRefused({ reason: outcome.reason })),
+    ),
+  );
+
+/** The dialog the open form belongs to; a module-level form reads it when it submits. */
+const openTarget = <Target,>(target: Atom.Atom<Option.Option<Target>>, get: Atom.FnContext) =>
+  Option.match(get(target), {
+    onNone: () => Effect.die('The market dialog submitted before it was opened.'),
+    onSome: Effect.succeed,
+  });
 
 interface MarketDialogProps {
   readonly market: CurrentMarket;
@@ -42,11 +84,19 @@ interface MarketDialogProps {
   readonly onDone: (message: string) => void;
 }
 
-/** The draft of the edit dialog: the definition as the form shows it, and the reason the revision is written with. */
-interface EditDraft {
-  readonly form: MarketDefinitionForm;
-  readonly reason: string;
-}
+/**
+ * The edit form: the definition as the form shows it, and the reason the revision is written with. Typing changes only
+ * the form; the dialog's Uložit sends it through the save bar, so the form itself is never submitted.
+ */
+const editMarketForm = FormReact.make(definitionFields.addField('reason', ReasonInputSchema), {
+  fields: { ...definitionControls, reason: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+type EditMarketValues = typeof editMarketForm.schema.Encoded;
+
+const isRevisable = Schema.is(editMarketForm.schema);
 
 /**
  * Edits the definition of a market in a new revision. Typing changes only the dialog's draft; its one Save sends the
@@ -54,17 +104,19 @@ interface EditDraft {
  */
 export const EditMarketDialog = ({ market, onAwaitingApproval, onClose, onDone }: MarketDialogProps) => {
   const { text } = useMarketText();
-  const [draft, setDraft] = useState<EditDraft>(() => ({ form: definitionFormOf(market), reason: '' }));
+  const opened: EditMarketValues = { ...definitionFormOf(market), reason: '' };
+  const { ready, values } = useOpenedValues(editMarketForm.values, opened);
+  const setValues = useAtomSet(editMarketForm.setValues);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
-  const record = useDraftSave<EditDraft, never>({
-    isValid: (value) => definitionIssues(value.form).length === 0 && reasonValid(value.reason),
+  const record = useDraftSave<EditMarketValues, never>({
+    isValid: isRevisable,
     runtime: browserRuntime,
     save: (value) =>
       marketActionEffect(
         DateTime.now.pipe(
           Effect.flatMap((now) =>
             Schema.decodeUnknownEffect(ReviseMarketDefinitionPayloadSchema)(
-              reviseMarketInput({ current: market, form: value.form, now, reason: value.reason }),
+              reviseMarketInput({ current: market, form: value, now, reason: value.reason }),
             ),
           ),
         ),
@@ -83,17 +135,15 @@ export const EditMarketDialog = ({ market, onAwaitingApproval, onClose, onDone }
           return 'saved';
         }),
       ),
-    value: draft,
+    value: values,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({
     draft: record,
     navigation: blocker,
-    onDiscard: () => setDraft(record.confirmed),
+    onDiscard: () => setValues(record.confirmed),
   });
   const handleSave = record.save;
-  const issues = definitionIssues(draft.form);
-  const showIssues = record.status === 'invalid';
   return (
     <FormDialogFrame
       description={text('detail.editDialog.description')}
@@ -104,21 +154,18 @@ export const EditMarketDialog = ({ market, onAwaitingApproval, onClose, onDone }
       status={record.status}
       title={text('detail.editDialog.title', { code: market.marketCode })}
     >
-      <DefinitionFields
-        codeEditable={false}
-        form={draft.form}
-        issues={issues}
-        onChange={(form) => setDraft((current) => ({ ...current, form }))}
-        prefix="edit-market"
-        showIssues={showIssues}
-      />
-      <ReasonField
-        id="edit-market-reason"
-        label={text('form.reason')}
-        onChange={(reason) => setDraft((current) => ({ ...current, reason }))}
-        showIssue={showIssues && !reasonValid(draft.reason)}
-        value={draft.reason}
-      />
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={editMarketForm}
+        translateMessage={(message) => text(message)}
+      >
+        {ready}
+        {/* Validation messages appear once the draft is invalid. */}
+        <LiveChecks checking={record.status === 'invalid'} form={editMarketForm} />
+        <DefinitionFields codeEditable={false} form={editMarketForm} prefix="edit-market" />
+        <editMarketForm.reason id="edit-market-reason" label={text('form.reason')} maxLength={500} name="reason" />
+      </FormRoot>
     </FormDialogFrame>
   );
 };
@@ -137,6 +184,37 @@ const lifecycleInput = (state: MarketAdministrationState, reason: string, effect
   reason: reason.trim(),
 });
 
+/** The market the open Aktivovat / Pozastavit dialog changes, and which of the two it does. */
+const lifecycleTarget = Atom.make(
+  Option.none<{ readonly action: LifecycleDialogProps['action']; readonly state: MarketAdministrationState }>(),
+).pipe(Atom.keepAlive);
+
+const changeLifecycle = Effect.fn('LifecycleDialog.send')(function* changeLifecycle(
+  reason: string,
+  get: Atom.FnContext,
+) {
+  const { action, state } = yield* openTarget(lifecycleTarget, get);
+  const now = yield* DateTime.now;
+  if (action === 'activate') {
+    return yield* sendMarketAction(
+      Schema.decodeUnknownEffect(ActivateMarketPayloadSchema)(lifecycleInput(state, reason, now)),
+      executeActivateMarket,
+    );
+  }
+  return yield* sendMarketAction(
+    Schema.decodeUnknownEffect(SuspendMarketPayloadSchema)(lifecycleInput(state, reason, now)),
+    executeSuspendMarket,
+  );
+});
+
+/** Aktivovat / Pozastavit: the reason the change is recorded with; the dialog's confirm button submits it. */
+const lifecycleForm = FormReact.make(FormBuilder.empty.addField('reason', ReasonInputSchema), {
+  fields: { reason: TextField },
+  onSubmit: (_submit, { decoded, get }) => changeLifecycle(decoded.reason, get),
+  runtime: browserAtomRuntime,
+  submitErrors: refusalErrors,
+});
+
 export const LifecycleDialog = ({
   action,
   market,
@@ -146,73 +224,56 @@ export const LifecycleDialog = ({
   state,
 }: LifecycleDialogProps) => {
   const { text } = useMarketText();
-  const [reason, setReason] = useState(() => text(`detail.lifecycle.${action}Reason`));
-  const [showIssues, setShowIssues] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<WriteFailure | null>(null);
-  const done = (outcome: WriteOutcome<object>) => {
-    setBusy(false);
-    if (outcome.ok && isProposal(outcome.value)) {
-      onAwaitingApproval();
-      return;
-    }
-    if (outcome.ok) {
+  const opened = { reason: text(`detail.lifecycle.${action}Reason`) };
+  const setTarget = useAtomSet(lifecycleTarget);
+  useEffect(() => {
+    setTarget(Option.some({ action, state }));
+  }, [action, setTarget, state]);
+  const submit = useAtomSet(lifecycleForm.submit);
+  const busy = useAtomValue(lifecycleForm.submit).waiting;
+  useAtomSubscribe(
+    lifecycleForm.submit,
+    (result) => {
+      if (!AsyncResult.isSuccess(result) || result.waiting) {
+        return;
+      }
+      if (isProposal(result.value)) {
+        onAwaitingApproval();
+        return;
+      }
       onDone(
         text(action === 'activate' ? 'detail.lifecycle.activated' : 'detail.lifecycle.suspended', {
           code: market.marketCode,
         }),
       );
-      return;
-    }
-    setFailure(outcome.reason);
-  };
-  const submit = () => {
-    if (!reasonValid(reason)) {
-      setShowIssues(true);
-      return;
-    }
-    setBusy(true);
-    setFailure(null);
-    if (action === 'activate') {
-      runMarketAction(
-        DateTime.now.pipe(
-          Effect.flatMap((now) =>
-            Schema.decodeUnknownEffect(ActivateMarketPayloadSchema)(lifecycleInput(state, reason, now)),
-          ),
-        ),
-        executeActivateMarket,
-        done,
-      );
-      return;
-    }
-    runMarketAction(
-      DateTime.now.pipe(
-        Effect.flatMap((now) =>
-          Schema.decodeUnknownEffect(SuspendMarketPayloadSchema)(lifecycleInput(state, reason, now)),
-        ),
-      ),
-      executeSuspendMarket,
-      done,
-    );
-  };
+    },
+    { immediate: false },
+  );
   return (
     <DialogFrame
       busy={busy}
       confirmLabel={text(`detail.lifecycle.${action}Confirm`)}
       confirmVariant={action === 'suspend' ? 'danger' : 'primary'}
       description={text(`detail.lifecycle.${action}Description`)}
-      failure={failure}
+      failure={null}
       onClose={onClose}
-      onConfirm={submit}
+      onConfirm={() => submit()}
       title={text(`detail.lifecycle.${action}Title`, { code: market.marketCode })}
     >
-      <ReasonField
-        id={`${action}-market-reason`}
-        label={text('form.reason')}
-        onChange={setReason}
-        showIssue={showIssues}
-        value={reason}
-      />
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={lifecycleForm}
+        translateMessage={(message) => text(message)}
+      >
+        <lifecycleForm.reason
+          id={`${action}-market-reason`}
+          label={text('form.reason')}
+          maxLength={500}
+          name="reason"
+        />
+        <FormRootError form={lifecycleForm} />
+      </FormRoot>
     </DialogFrame>
   );
 };
@@ -243,6 +304,47 @@ const loadImpact = (state: MarketAdministrationState) =>
     }),
   );
 
+/**
+ * The retirement form: the market code typed as confirmation and the reason. `marketCode` is the code it must match;
+ * it is never shown.
+ */
+const RetireInputSchema = Schema.Struct({
+  confirmMarketCode: Schema.String,
+  marketCode: Schema.String,
+  reason: Schema.String,
+}).check(
+  Schema.makeFilter(
+    (values: { readonly confirmMarketCode: string; readonly marketCode: string; readonly reason: string }) => {
+      const issues = [
+        ...(confirmsMarketCode(values.confirmMarketCode, values.marketCode)
+          ? []
+          : [{ issue: 'detail.retire.typeCode', path: ['confirmMarketCode'] }]),
+        ...(reasonValid(values.reason) ? [] : [{ issue: 'form.reasonError', path: ['reason'] }]),
+      ];
+      return issues.length === 0 || issues;
+    },
+  ),
+);
+
+/** The market state the open Vyřadit dialog retires. */
+const retireTarget = Atom.make(Option.none<MarketAdministrationState>()).pipe(Atom.keepAlive);
+
+const retireMarket = Effect.fn('RetireDialog.send')(function* retireMarket(reason: string, get: Atom.FnContext) {
+  const state = yield* openTarget(retireTarget, get);
+  const now = yield* DateTime.now;
+  return yield* sendMarketAction(
+    Schema.decodeUnknownEffect(RetireMarketPayloadSchema)(lifecycleInput(state, reason, now)),
+    executeRetireMarket,
+  );
+});
+
+const retireForm = FormReact.make(fromPayload(RetireInputSchema), {
+  fields: { confirmMarketCode: TextField, marketCode: TextField, reason: TextField },
+  onSubmit: (_submit, { decoded, get }) => retireMarket(decoded.reason, get),
+  runtime: browserAtomRuntime,
+  submitErrors: refusalErrors,
+});
+
 interface RetireDialogProps extends MarketDialogProps {
   /** The native result the Action returned: the Market's new lifecycle state, or a committed settlement still pending. */
   readonly onRequested: (result: MarketLifecycleResult) => void;
@@ -252,57 +354,43 @@ interface RetireDialogProps extends MarketDialogProps {
 export const RetireDialog = ({ market, onAwaitingApproval, onClose, onRequested, state }: RetireDialogProps) => {
   const { text } = useMarketText();
   const [impact, setImpact] = useState<ImpactState>({ kind: 'loading' });
-  const [typed, setTyped] = useState('');
-  const [reason, setReason] = useState('');
-  const [showIssues, setShowIssues] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<WriteFailure | null>(null);
+  const opened = { confirmMarketCode: '', marketCode: market.marketCode, reason: '' };
   useEffect(() => {
     const fiber = browserRuntime.runFork(loadImpact(state).pipe(Effect.map(setImpact)));
     return () => {
       browserRuntime.runFork(Fiber.interrupt(fiber));
     };
   }, [state]);
-  const confirmed = confirmsMarketCode(typed, market.marketCode);
-  const submit = () => {
-    if (!confirmed || !reasonValid(reason)) {
-      setShowIssues(true);
-      return;
-    }
-    setBusy(true);
-    setFailure(null);
-    runMarketAction(
-      DateTime.now.pipe(
-        Effect.flatMap((now) =>
-          Schema.decodeUnknownEffect(RetireMarketPayloadSchema)(lifecycleInput(state, reason, now)),
-        ),
-      ),
-      executeRetireMarket,
-      (outcome) => {
-        setBusy(false);
-        if (outcome.ok) {
-          const result = outcome.value;
-          if (isProposal(result)) {
-            // Parked for approval: no retirement intent exists until someone approves it.
-            onAwaitingApproval();
-            return;
-          }
-          onRequested(result);
-          return;
-        }
-        setFailure(outcome.reason);
-      },
-    );
-  };
+  const setTarget = useAtomSet(retireTarget);
+  useEffect(() => {
+    setTarget(Option.some(state));
+  }, [setTarget, state]);
+  const submit = useAtomSet(retireForm.submit);
+  const busy = useAtomValue(retireForm.submit).waiting;
+  useAtomSubscribe(
+    retireForm.submit,
+    (result) => {
+      if (!AsyncResult.isSuccess(result) || result.waiting) {
+        return;
+      }
+      if (isProposal(result.value)) {
+        // Parked for approval: no retirement intent exists until someone approves it.
+        onAwaitingApproval();
+        return;
+      }
+      onRequested(result.value);
+    },
+    { immediate: false },
+  );
   return (
     <DialogFrame
       busy={busy}
       confirmLabel={text('detail.retire.confirm')}
       confirmVariant="danger"
       description={text('detail.retire.description')}
-      failure={failure}
+      failure={null}
       onClose={onClose}
-      onConfirm={submit}
+      onConfirm={() => submit()}
       title={text('detail.retire.title', { code: market.marketCode })}
     >
       <StatusText showIcon status={impact.kind === 'ready' && impact.blocking > 0 ? 'warning' : 'default'}>
@@ -319,22 +407,27 @@ export const RetireDialog = ({ market, onAwaitingApproval, onClose, onRequested,
             ? text('detail.retire.impactBlocked', { blocking: impact.blocking })
             : text('detail.retire.impactClear', { retained: impact.retained }))}
       </StatusText>
-      <FormInput
-        autoComplete="off"
-        id="retire-market-code"
-        label={text('detail.retire.typeCode', { code: market.marketCode })}
-        name="confirmMarketCode"
-        onChange={(event) => setTyped(event.target.value)}
-        value={typed}
-        {...(showIssues && !confirmed ? { validateStatus: 'error' as const } : {})}
-      />
-      <ReasonField
-        id="retire-market-reason"
-        label={text('detail.retire.reason')}
-        onChange={setReason}
-        showIssue={showIssues}
-        value={reason}
-      />
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={retireForm}
+        // The confirmation message names the code to type.
+        translateMessage={(message) => text(message, { code: market.marketCode })}
+      >
+        <retireForm.confirmMarketCode
+          autoComplete="off"
+          id="retire-market-code"
+          label={text('detail.retire.typeCode', { code: market.marketCode })}
+          name="confirmMarketCode"
+        />
+        <retireForm.reason
+          id="retire-market-reason"
+          label={text('detail.retire.reason')}
+          maxLength={500}
+          name="reason"
+        />
+        <FormRootError form={retireForm} />
+      </FormRoot>
     </DialogFrame>
   );
 };

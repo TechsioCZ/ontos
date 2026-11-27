@@ -1,6 +1,6 @@
 import { optionalField } from '../../../../../shared/domain/common.ts';
-import { Effect, Option } from 'effect';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Effect, Option, Schema } from 'effect';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Zásoby (S05): item list with stock level badges + item detail panel with ledger, plan, batches and serials.
 import {
   DetailList,
@@ -16,23 +16,32 @@ import {
   useDraftSave,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import {
+  BareTextField,
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SwitchField,
+  TemplateChoiceField,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
 import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
 import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
@@ -69,6 +78,20 @@ const warehouseLabelKey = 'fields.warehouse';
 const supplierLabelKey = 'fields.supplier';
 
 const ALL = '__all__';
+
+/** The filters over the stock list; they act as they change, so Enter sends nothing. */
+const stockFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('alertsOnly', Schema.Boolean)
+    .addField('search', Schema.String)
+    .addField('warehouse', Schema.String),
+  {
+    fields: { alertsOnly: SwitchField, search: BareTextField, warehouse: TemplateChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noStockFilters = { alertsOnly: false, search: '', warehouse: ALL };
 
 /** Inline link-styled button: an unstyled kit Button at the surrounding text size. */
 export const TextLink = ({ children, onClick }: { readonly children: ReactNode; readonly onClick: () => void }) => (
@@ -196,9 +219,10 @@ export const StockTab = ({ onOpen, state }: StockTabProps) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const lookup = lookupOf(state);
-  const [search, setSearch] = useState('');
-  const [warehouse, setWarehouse] = useState(ALL);
-  const [alertsOnly, setAlertsOnly] = useState(false);
+  const { alertsOnly, search, warehouse } = Option.getOrElse(
+    useAtomValue(stockFilterForm.values),
+    () => noStockFilters,
+  );
   const today = todayIso();
   const plans = state.items.map((item) => materialPlanOf(state, item, today));
   const query = foldSearchText(search.trim());
@@ -248,35 +272,29 @@ export const StockTab = ({ onOpen, state }: StockTabProps) => {
   ];
   return (
     <div className="flex flex-col gap-200">
-      <div className="flex flex-wrap items-end gap-200">
+      <FormRoot
+        className="flex flex-wrap items-end gap-200"
+        defaultValues={noStockFilters}
+        form={stockFilterForm}
+        translateMessage={(message) => t(message)}
+      >
         <div className="w-full max-w-xs">
-          <Input
-            aria-label={k('filters.search')}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={k('filters.search')}
-            size="sm"
-            value={search}
-          />
+          <stockFilterForm.search aria-label={k('filters.search')} placeholder={k('filters.search')} size="sm" />
         </div>
         <div className="w-full max-w-xs">
-          <Select
+          <stockFilterForm.warehouse
             items={[
-              { displayValue: k('filters.allWarehouses'), label: k('filters.allWarehouses'), value: ALL },
-              ...state.warehouses.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id })),
+              { label: k('filters.allWarehouses'), value: ALL },
+              ...state.warehouses.map((entry) => ({ label: entry.name, value: entry.id })),
             ]}
             label={k(warehouseLabelKey)}
             labelProps={{ className: 'sr-only' }}
-            name="warehouse-filter"
-            onValueChange={({ value }) => setWarehouse(value[0] ?? ALL)}
             placeholder={k('placeholders.warehouse')}
             size="sm"
-            value={[warehouse]}
           />
         </div>
-        <Switch checked={alertsOnly} onCheckedChange={setAlertsOnly}>
-          {k('filters.alertsOnly')}
-        </Switch>
-      </div>
+        <stockFilterForm.alertsOnly>{k('filters.alertsOnly')}</stockFilterForm.alertsOnly>
+      </FormRoot>
       <StockLookupContext value={lookup}>
         <DataTable
           columns={columns}
@@ -418,16 +436,35 @@ export const MovementTable = ({
   );
 };
 
-/** The edit form's fields as typed. */
-interface ItemEditDraft {
-  readonly leadTimeDays: string;
-  readonly maximum: string;
-  readonly minimum: string;
-  readonly name: string;
-  readonly note: string;
-  readonly price: string;
-  readonly supplierId: string;
-}
+/**
+ * The edit of one stock item, as typed; no supplier is `""`. Uložit sends it through the draft save, so the form only
+ * holds the values and Enter sends nothing. One item panel is open at a time, so one form serves every item.
+ */
+const itemEditForm = FormReact.make(
+  FormBuilder.empty
+    .addField('leadTimeDays', Schema.String)
+    .addField('maximum', Schema.String)
+    .addField('minimum', Schema.String)
+    .addField('name', Schema.String)
+    .addField('note', Schema.String)
+    .addField('price', Schema.String)
+    .addField('supplierId', Schema.String),
+  {
+    fields: {
+      leadTimeDays: TextField,
+      maximum: TextField,
+      minimum: TextField,
+      name: TextField,
+      note: TextField,
+      price: TextField,
+      supplierId: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type ItemEditDraft = typeof itemEditForm.schema.Encoded;
 
 const itemEditDraftOf = (item: StockItem): ItemEditDraft => ({
   leadTimeDays: String(item.leadTimeDays),
@@ -436,7 +473,7 @@ const itemEditDraftOf = (item: StockItem): ItemEditDraft => ({
   name: item.name,
   note: item.note ?? '',
   price: item.lastPriceMinor === undefined ? '' : String(item.lastPriceMinor / 100),
-  supplierId: item.supplierId ?? 'none',
+  supplierId: item.supplierId ?? '',
 });
 
 const itemEditFields = ['leadTimeDays', 'maximum', 'minimum', 'name', 'note', 'price', 'supplierId'] as const;
@@ -493,8 +530,9 @@ const ItemEditForm = ({
 }) => {
   const k = usePurchasingT();
   const { language, t } = useModernI18n();
-  const [values, setValues] = useState<ItemEditDraft>(() => itemEditDraftOf(item));
-  const set = (name: keyof ItemEditDraft, next: string) => setValues((current) => ({ ...current, [name]: next }));
+  const shown = useFormValues(itemEditForm, itemEditDraftOf(item));
+  const { values } = shown;
+  const setValues = useAtomSet(itemEditForm.setValues);
   const toast = useToast();
   // Why the last save failed, in the agenda's words; the save bar shows it while the save is failed.
   const [error, setError] = useState<string | null>(null);
@@ -547,16 +585,6 @@ const ItemEditForm = ({
     setValues(current);
   };
   const problem = record.status === 'invalid' ? itemEditProblem(values) : undefined;
-  const input = (name: keyof ItemEditDraft, label: string, numeric = false) => (
-    <FormInput
-      id={`item-edit-${name}`}
-      inputMode={numeric ? 'numeric' : undefined}
-      label={label}
-      maxLength={200}
-      onChange={(event) => set(name, event.target.value)}
-      value={values[name]}
-    />
-  );
   return (
     <SectionCard title={k('items.editTitle')}>
       {problem !== undefined && (
@@ -564,23 +592,43 @@ const ItemEditForm = ({
           {problem === 'required' ? t('facility-operations.common.required') : k('items.maxBelowMin')}
         </StatusText>
       )}
-      {input('name', k('fields.name'))}
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
-        {input('minimum', k('fields.minimum'), true)}
-        {input('maximum', k('fields.maximum'), true)}
-        {input('leadTimeDays', k('fields.leadTimeDays'), true)}
-      </div>
-      {input('price', k('fields.lastPriceCzk'), true)}
-      <Select
-        items={state.suppliers.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id }))}
-        label={k(supplierLabelKey)}
-        name="item-edit-supplier"
-        onValueChange={({ value }) => set('supplierId', value[0] ?? 'none')}
-        placeholder={k('placeholders.supplier')}
-        size="md"
-        value={values.supplierId === 'none' ? [] : [values.supplierId]}
-      />
-      {input('note', t('facility-operations.common.note'))}
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={itemEditDraftOf(item)}
+        form={itemEditForm}
+        key={item.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <itemEditForm.name id="item-edit-name" label={k('fields.name')} maxLength={200} />
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
+          <itemEditForm.minimum
+            id="item-edit-minimum"
+            inputMode="numeric"
+            label={k('fields.minimum')}
+            maxLength={200}
+          />
+          <itemEditForm.maximum
+            id="item-edit-maximum"
+            inputMode="numeric"
+            label={k('fields.maximum')}
+            maxLength={200}
+          />
+          <itemEditForm.leadTimeDays
+            id="item-edit-leadTimeDays"
+            inputMode="numeric"
+            label={k('fields.leadTimeDays')}
+            maxLength={200}
+          />
+        </div>
+        <itemEditForm.price id="item-edit-price" inputMode="numeric" label={k('fields.lastPriceCzk')} maxLength={200} />
+        <itemEditForm.supplierId
+          items={state.suppliers.map((entry) => ({ label: entry.name, value: entry.id }))}
+          label={k(supplierLabelKey)}
+          placeholder={k('placeholders.supplier')}
+        />
+        <itemEditForm.note id="item-edit-note" label={t('facility-operations.common.note')} maxLength={200} />
+      </FormRoot>
       <div className="flex flex-wrap items-center justify-end gap-100">
         <Button appearance="outline" onClick={() => guard.request(onDone)} severity="secondary" size="sm">
           {t('facility-operations.common.cancel')}

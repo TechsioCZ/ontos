@@ -1,16 +1,16 @@
-// Small form building blocks for the assets page (ui-kit FormInput / Select / FormTextarea / FormCheckbox).
+// Building blocks of the assets forms: the panel form around a form's bindings, its layout and its error line.
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
+import { requiredLabelFor } from '@app/admin-ui';
+import { FormRoot } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { InFooter } from '../../../../ui/footer-slot.tsx';
 import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
 
 export interface Option {
@@ -18,80 +18,17 @@ export interface Option {
   readonly value: string;
 }
 
-export const TextField = (props: {
-  readonly helpText?: string;
-  readonly id: string;
-  readonly inputMode?: 'decimal' | 'numeric' | 'text';
-  readonly invalid?: boolean;
-  readonly label: string;
-  readonly maxLength?: number;
-  readonly onChange: (value: string) => void;
-  readonly placeholder?: string;
-  readonly required?: boolean;
-  readonly type?: 'text' | 'date';
-  readonly value: string;
-}) => (
-  <FormInput
-    autoComplete="off"
-    id={props.id}
-    inputMode={props.inputMode}
-    label={props.label}
-    maxLength={props.maxLength ?? 200}
-    name={props.id}
-    onChange={(event) => props.onChange(event.target.value)}
-    required={props.required === true}
-    type={props.type ?? 'text'}
-    value={props.value}
-    {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
-    {...(props.helpText === undefined ? {} : { helpText: props.helpText })}
-    {...(props.invalid === true ? { validateStatus: 'error' as const } : {})}
-  />
-);
+/** What every assets text input had: no autofill, and at most 200 characters unless it says otherwise. */
+export const textInput = { autoComplete: 'off', maxLength: 200 } as const;
 
-export const AreaField = (props: {
-  readonly helpText?: string;
-  readonly id: string;
-  readonly label: string;
-  readonly onChange: (value: string) => void;
-  readonly required?: boolean;
-  readonly value: string;
-}) => (
-  <FormTextarea
-    id={props.id}
-    label={props.label}
-    maxLength={2000}
-    name={props.id}
-    onChange={(event) => props.onChange(event.target.value)}
-    required={props.required === true}
-    rows={3}
-    value={props.value}
-    {...(props.helpText === undefined ? {} : { helpText: props.helpText })}
-  />
-);
+/** What every assets text area had: at most 2000 characters on three rows. */
+export const textArea = { maxLength: 2000, rows: 3 } as const;
 
-export const SelectField = (props: {
-  readonly label: string;
-  readonly name: string;
-  readonly onChange: (value: string) => void;
-  readonly options: readonly Option[];
-  readonly value: string;
-}) => (
-  <Select
-    items={props.options.map((option) => ({ displayValue: option.label, label: option.label, value: option.value }))}
-    label={props.label}
-    name={props.name}
-    onValueChange={({ value }) => props.onChange(value[0] ?? '')}
-    size="md"
-    value={props.value === '' ? [] : [props.value]}
-  />
-);
-
-export const CheckField = (props: {
-  readonly checked: boolean;
-  readonly id: string;
-  readonly label: string;
-  readonly onChange: (value: boolean) => void;
-}) => <FormCheckbox checked={props.checked} id={props.id} label={props.label} onCheckedChange={props.onChange} />;
+/** A required field: marked, with the page language's hidden text. */
+export const useRequired = () => {
+  const { language } = useModernI18n();
+  return { required: true, requiredLabel: requiredLabelFor(language) } as const;
+};
 
 export const FormGrid = ({ children }: { readonly children: ReactNode }) => (
   <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">{children}</div>
@@ -103,11 +40,6 @@ export const ErrorLine = ({ message }: { readonly message: string | undefined })
       {message}
     </StatusText>
   );
-
-/** The body of a form without a save of its own (the card edit, whose save bar the panel renders). */
-export const PanelFields = ({ children }: { readonly children: ReactNode }) => (
-  <div className="flex flex-col gap-200 py-200">{children}</div>
-);
 
 /** How the panel around a form runs the command the form built, and what follows a confirmed save. */
 export interface AssetSubmit {
@@ -122,30 +54,36 @@ export interface PanelFormEdit {
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 }
 
+/** The form of one assets panel: `FormRoot`'s form, whose values are what it opens with and what it holds. */
+type PanelFormForm<V> = Parameters<typeof FormRoot<V>>[0]['form'] & Parameters<typeof useFormValues<V>>[0];
+
 /**
- * The body of one assets form. Typing changes only the form's draft (`value`); the shared Uložit, rendered last in
- * the panel footer, builds the command (`command`, which says itself what is missing) and sends it once. Leaving
- * with typed input asks first; Enter never submits.
+ * The body of one assets form. Typing changes only the form's values; the shared Uložit, rendered last in the panel
+ * footer, builds the command from them (`command`, which says itself what is missing) and sends it once. Leaving with
+ * typed input asks first; Enter never submits.
  */
 export const PanelForm = <V,>(props: {
-  readonly children: ReactNode;
-  readonly command: () => OpsCommand | undefined;
+  readonly children: ReactNode | ((values: V) => ReactNode);
+  readonly command: (values: V) => OpsCommand | undefined;
   readonly edit?: PanelFormEdit | undefined;
   /** The form's own message for an incomplete draft. */
   readonly error: string | undefined;
+  readonly form: PanelFormForm<V>;
   readonly onSubmit: AssetSubmit;
+  /** The values the form opens with. */
+  readonly opened: V;
   /** The values the form opens with can be sent at once (a prefilled follow-up or archive reason). */
   readonly savableAtOnce?: boolean | undefined;
-  readonly value: V;
 }) => {
   const { t } = useModernI18n();
   const [failure, setFailure] = useState<string | undefined>();
+  const { ready, values } = useFormValues(props.form, props.opened);
   const run = props.edit?.run ?? props.onSubmit.run;
   const form = useFormSave({
     savableAtOnce: props.savableAtOnce,
-    submit: () => {
+    submit: (value) => {
       setFailure(undefined);
-      const command = props.command();
+      const command = props.command(value);
       if (command === undefined) {
         return Effect.succeed<FormSubmitResult>('failed');
       }
@@ -160,15 +98,21 @@ export const PanelForm = <V,>(props: {
         ),
       );
     },
-    value: props.value,
+    value: values,
   });
   return (
-    <div className="flex flex-col gap-200 py-200">
-      {props.children}
+    <FormRoot
+      className="flex flex-col gap-200 py-200"
+      defaultValues={props.opened}
+      form={props.form}
+      translateMessage={(message) => t(message)}
+    >
+      {ready}
+      {Predicate.isFunction(props.children) ? props.children(values) : props.children}
       <InFooter>
         <FormSaveFooter error={failure ?? props.error} form={form} onReloadLatest={props.edit?.onReloadLatest} />
       </InFooter>
-    </div>
+    </FormRoot>
   );
 };
 

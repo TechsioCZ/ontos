@@ -5,11 +5,11 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { DetailList, formatDateTime, formatMoney, SectionCard, StatusBadge, surfaceTileClassName } from '@app/admin-ui';
-import { DateTime, Effect } from 'effect';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { orderCurrency } from '../../../../../shared/domain/merchandise-model.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
@@ -157,25 +157,37 @@ const OrderHistory = ({
   );
 };
 
-/** Demo-only soft removal, with an explicit reason and separate destructive confirmation. */
-const DemoOrderCleanup = ({
-  onRemoved,
-  order,
-  revision,
-}: {
+/** The reason of a demo order's removal. The dialog's button sends it; the form itself is never submitted. */
+const cleanupReasonForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+interface DemoOrderCleanupProps {
   readonly onRemoved: () => void;
   readonly order: Order;
   readonly revision: number;
+}
+
+/** The removal question: its reason comes from `cleanupReasonForm`, which it renders inside. */
+const DemoOrderCleanupDialog = ({
+  demo,
+  onRemoved,
+  open,
+  order,
+  revision,
+  setOpen,
+}: DemoOrderCleanupProps & {
+  readonly demo: boolean;
+  readonly open: boolean;
+  readonly setOpen: (open: boolean) => void;
 }) => {
   const { t } = useModernI18n();
-  const [open, setOpen] = useState(false);
-  // Same split as the server: DEMO wording only for a DEMO order from the e-shop.
-  const demo = order.demo === true && isStorefrontOrder(order);
-  const [reason, setReason] = useState(() =>
-    demo
-      ? t('merchandise.pages.orders.detail.cleanup.reasonDefault')
-      : t('merchandise.pages.orders.detail.cleanup.cancelled.reasonDefault'),
-  );
+  const reason = Option.match(useAtomValue(cleanupReasonForm.values), {
+    onNone: () => '',
+    onSome: (values) => values.reason,
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Effect.Error<ReturnType<typeof removeDemoOrder>> | null>(null);
   const remove = () => {
@@ -201,6 +213,63 @@ const DemoOrderCleanup = ({
     );
   };
   return (
+    <Dialog
+      actions={
+        <div className="grid w-full gap-2">
+          <Button appearance="outline" disabled={busy} onClick={() => setOpen(false)} severity="secondary" size="sm">
+            {t('merchandise.pages.orders.detail.cleanup.keep')}
+          </Button>
+          <Button
+            disabled={reason.trim().length < 5}
+            isLoading={busy}
+            loadingText={t('merchandise.pages.orders.detail.cleanup.busy')}
+            onClick={remove}
+            severity="danger"
+            size="sm"
+          >
+            {demo
+              ? t('merchandise.pages.orders.detail.cleanup.confirm')
+              : t('merchandise.pages.orders.detail.cleanup.cancelled.confirm')}
+          </Button>
+        </div>
+      }
+      closeLabel={t('merchandise.pages.orders.detail.close')}
+      customTrigger
+      description={
+        demo
+          ? t('merchandise.pages.orders.detail.cleanup.description')
+          : t('merchandise.pages.orders.detail.cleanup.cancelled.description')
+      }
+      onOpenChange={({ open: next }) => {
+        if (!busy) {
+          setOpen(next);
+        }
+      }}
+      open={open}
+      title={
+        demo
+          ? t('merchandise.pages.orders.detail.cleanup.title', { number: order.number })
+          : t('merchandise.pages.orders.detail.cleanup.cancelled.title', { number: order.number })
+      }
+    >
+      <cleanupReasonForm.reason
+        id="demo-cleanup-reason"
+        label={t('merchandise.ui.removalReason')}
+        maxLength={500}
+        name="reason"
+      />
+      {error && <StatusText status="error">{t('merchandise.pages.orders.detail.cleanup.failed')}</StatusText>}
+    </Dialog>
+  );
+};
+
+/** Demo-only soft removal, with an explicit reason and separate destructive confirmation. */
+const DemoOrderCleanup = (props: DemoOrderCleanupProps) => {
+  const { t } = useModernI18n();
+  const [open, setOpen] = useState(false);
+  // Same split as the server: DEMO wording only for a DEMO order from the e-shop.
+  const demo = props.order.demo === true && isStorefrontOrder(props.order);
+  return (
     <>
       <div>
         <Button appearance="outline" onClick={() => setOpen(true)} severity="danger" size="sm">
@@ -209,55 +278,19 @@ const DemoOrderCleanup = ({
             : t('merchandise.pages.orders.detail.cleanup.cancelled.open')}
         </Button>
       </div>
-      <Dialog
-        actions={
-          <div className="grid w-full gap-2">
-            <Button appearance="outline" disabled={busy} onClick={() => setOpen(false)} severity="secondary" size="sm">
-              {t('merchandise.pages.orders.detail.cleanup.keep')}
-            </Button>
-            <Button
-              disabled={reason.trim().length < 5}
-              isLoading={busy}
-              loadingText={t('merchandise.pages.orders.detail.cleanup.busy')}
-              onClick={remove}
-              severity="danger"
-              size="sm"
-            >
-              {demo
-                ? t('merchandise.pages.orders.detail.cleanup.confirm')
-                : t('merchandise.pages.orders.detail.cleanup.cancelled.confirm')}
-            </Button>
-          </div>
-        }
-        closeLabel={t('merchandise.pages.orders.detail.close')}
-        customTrigger
-        description={
-          demo
-            ? t('merchandise.pages.orders.detail.cleanup.description')
-            : t('merchandise.pages.orders.detail.cleanup.cancelled.description')
-        }
-        onOpenChange={({ open: next }) => {
-          if (!busy) {
-            setOpen(next);
-          }
+      {/* The question renders in a portal; the form's own box takes no room in the detail. */}
+      <FormRoot
+        className="contents"
+        defaultValues={{
+          reason: demo
+            ? t('merchandise.pages.orders.detail.cleanup.reasonDefault')
+            : t('merchandise.pages.orders.detail.cleanup.cancelled.reasonDefault'),
         }}
-        open={open}
-        title={
-          demo
-            ? t('merchandise.pages.orders.detail.cleanup.title', { number: order.number })
-            : t('merchandise.pages.orders.detail.cleanup.cancelled.title', { number: order.number })
-        }
+        form={cleanupReasonForm}
+        translateMessage={t}
       >
-        <FormInput
-          id="demo-cleanup-reason"
-          label={t('merchandise.ui.removalReason')}
-          maxLength={500}
-          name="reason"
-          onChange={(event) => setReason(event.target.value)}
-          value={reason}
-        />
-        {error && <StatusText status="error">{t('merchandise.pages.orders.detail.cleanup.failed')}</StatusText>}
-      </Dialog>
+        <DemoOrderCleanupDialog {...props} demo={demo} open={open} setOpen={setOpen} />
+      </FormRoot>
     </>
   );
 };

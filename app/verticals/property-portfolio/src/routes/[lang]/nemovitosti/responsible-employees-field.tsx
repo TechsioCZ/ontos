@@ -1,7 +1,6 @@
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { Combobox } from '@app/admin-ui/form-controls';
 
-import type { ResponsibleSelection } from './use-property-editor.ts';
+import type { RecordForm, ResponsibleSelection } from './use-property-editor.ts';
 
 const fieldId = 'property-responsible-employees';
 
@@ -12,6 +11,8 @@ export interface ResponsibleEmployeesCopy {
   readonly loading: string;
   readonly placeholder: string;
   readonly required: string;
+  /** Read after the label of the required field. */
+  readonly requiredLabel: string;
   readonly retry: string;
   /** Shown instead of an employee the current user cannot see; never the employee's identifier. */
   readonly unavailable: string;
@@ -22,9 +23,10 @@ export interface ResponsibleEmployeesFieldProps {
   readonly disabled: boolean;
   /** Why the employee register could not be read; empty while it can. */
   readonly error: string;
+  /** The building or unit form whose `responsibleEmployeeIds` field holds the choice. */
+  readonly form: RecordForm;
   readonly invalid: boolean;
   readonly loading: boolean;
-  readonly onChange: (value: string | string[]) => void;
   readonly onRetry: () => void;
   readonly selection: ResponsibleSelection;
 }
@@ -37,9 +39,9 @@ export const ResponsibleEmployeesField = ({
   copy,
   disabled,
   error,
+  form,
   invalid,
   loading,
-  onChange,
   onRetry,
   selection,
 }: ResponsibleEmployeesFieldProps) => {
@@ -49,7 +51,7 @@ export const ResponsibleEmployeesField = ({
       : [{ key: 'legacy', label: selection.legacyName }];
   return (
     <div className="grid gap-100">
-      <Combobox
+      <form.responsibleEmployeeIds
         allowCustomValue={false}
         closeOnSelect={false}
         disabled={disabled}
@@ -59,18 +61,16 @@ export const ResponsibleEmployeesField = ({
         label={copy.label}
         loading={loading}
         loadingMessage={copy.loading}
-        multiple
         name="responsibleEmployeeIds"
         noResultsMessage={copy.empty}
-        onChange={onChange}
         onRetry={onRetry}
         openOnClick
         placeholder={copy.placeholder}
         required
+        requiredLabel={copy.requiredLabel}
         retryLabel={copy.retry}
         selectionBehavior="clear"
-        value={selection.selected.map((choice) => choice.id)}
-        {...(invalid ? { helpText: copy.required, validateStatus: 'error' as const } : {})}
+        {...(invalid ? { helpText: copy.required, invalid: true } : {})}
       />
       {shown.length > 0 && (
         <ul aria-labelledby={`${fieldId}-label`} className="flex flex-wrap gap-50">

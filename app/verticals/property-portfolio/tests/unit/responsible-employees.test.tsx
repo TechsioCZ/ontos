@@ -1,15 +1,19 @@
+// @rstest-environment happy-dom
+import { FormRoot } from '@app/core-runtime/ui/form';
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { createElement } from 'react';
+import { act } from 'react';
 import type { ComponentProps } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { createRoot } from 'react-dom/client';
 
 import { PropertyCommandSchema } from '../../shared/actions/apply-command.ts';
 import { RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { ResponsibleEmployeesField } from '../../src/routes/[lang]/nemovitosti/responsible-employees-field.tsx';
 import {
   editCommandOf,
+  editRecordForm,
+  emptyRecordValues,
   propertyDraftErrors,
   propertyDraftOf,
   responsibleSelection,
@@ -88,6 +92,7 @@ const copy = {
   loading: 'Načítání zaměstnanců…',
   placeholder: 'Vyberte zaměstnance',
   required: 'Vyberte alespoň jednoho zaměstnance.',
+  requiredLabel: '(povinné)',
   retry: 'Načíst zaměstnance znovu',
   unavailable: 'Nedostupný zaměstnanec',
 };
@@ -96,27 +101,45 @@ const unreadableRegister = Option.getOrUndefined(Option.none<readonly never[]>()
 const rejectRenderInteraction = () => {
   expect.unreachable('Rendering the field must not change the selection.');
 };
-const render = (selection: ComponentProps<typeof ResponsibleEmployeesField>['selection']) =>
-  renderToStaticMarkup(
-    createElement(ResponsibleEmployeesField, {
-      copy,
-      disabled: false,
-      error: '',
-      invalid: false,
-      loading: false,
-      onChange: rejectRenderInteraction,
-      onRetry: rejectRenderInteraction,
-      selection,
-    }),
-  );
-const visibleText = (markup: string) => markup.replaceAll(/<[^>]*>/gu, ' ');
+/** What the field shows in an edit form that holds the selection's chosen employees. */
+const render = (selection: ComponentProps<typeof ResponsibleEmployeesField>['selection']) => {
+  const container = document.createElement('div');
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => {
+    root.render(
+      <FormRoot
+        defaultValues={{ ...emptyRecordValues, responsibleEmployeeIds: selection.selected.map((choice) => choice.id) }}
+        form={editRecordForm}
+        translateMessage={(message) => message}
+      >
+        <ResponsibleEmployeesField
+          copy={copy}
+          disabled={false}
+          error=""
+          form={editRecordForm}
+          invalid={false}
+          loading={false}
+          onRetry={rejectRenderInteraction}
+          selection={selection}
+        />
+      </FormRoot>,
+    );
+  });
+  const shown = {
+    chosen: container.querySelector('ul[aria-labelledby="property-responsible-employees-label"]')?.textContent ?? '',
+    visible: container.textContent,
+  };
+  act(() => {
+    root.unmount();
+  });
+  container.remove();
+  return shown;
+};
+type Shown = ReturnType<typeof render>;
+const visibleText = (shown: Shown) => shown.visible;
 /** The chosen employees listed under the field: the closed listbox options do not count as shown. */
-const chosenText = (markup: string) =>
-  visibleText(
-    /<ul aria-labelledby="property-responsible-employees-label"[^>]*>(?<list>.*?)<\/ul>/u.exec(markup)?.groups?.[
-      'list'
-    ] ?? '',
-  );
+const chosenText = (shown: Shown) => shown.chosen;
 
 it.effect('shows the stored responsible employee of a building in its editor', () =>
   Effect.gen(function* storedEmployeeShown() {

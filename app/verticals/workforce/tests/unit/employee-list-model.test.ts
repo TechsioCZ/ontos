@@ -1,12 +1,14 @@
-import { DateTime, Predicate, Schema, Struct } from 'effect';
+import { DateTime, Predicate, Result, Schema, SchemaIssue, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { EmployeeIdSchema } from '../../shared/resources/employee.ts';
 import { EmployeePhoneInputSchema } from '../../shared/apis/records.ts';
 import type { Employee } from '../../shared/apis/records.ts';
 import {
+  DepartmentTextSchema,
+  EmailTextSchema,
+  FullNameTextSchema,
   createCommand,
   draftFromEmployee,
-  errorFieldKey,
   filterEmployees,
   noFilters,
   sameDraft,
@@ -40,11 +42,20 @@ it('finds a name or e-mail whether or not the query has diacritics', () => {
   expect(names('   ')).toEqual(['Jana Nováková', 'Tomáš Černý']);
 });
 
+const formatIssue = SchemaIssue.makeFormatterStandardSchemaV1();
+const messageOf = (schema: typeof FullNameTextSchema, value: string) =>
+  Result.match(Schema.decodeUnknownResult(schema)(value), {
+    onFailure: (error) => formatIssue(error.issue).issues[0]?.message,
+    onSuccess: () => null,
+  });
+const errors = 'workforce.pages.employees.errors';
+
 it('gives a name over the stored limit its own message key', () => {
-  const draft = draftFromEmployee(jana);
-  expect(errorFieldKey({ ...draft, fullName: 'Jan '.repeat(60) }, 'fullName')).toBe('fullNameTooLong');
-  expect(errorFieldKey({ ...draft, fullName: '' }, 'fullName')).toBe('fullName');
-  expect(errorFieldKey({ ...draft, fullName: 'Jana Nováková' }, 'email')).toBe('email');
+  expect(messageOf(FullNameTextSchema, 'Jan '.repeat(60))).toBe(`${errors}.fullNameTooLong`);
+  expect(messageOf(FullNameTextSchema, ' ')).toBe(`${errors}.fullName`);
+  expect(messageOf(FullNameTextSchema, 'Jana Nováková')).toBeNull();
+  expect(messageOf(EmailTextSchema, 'jana@')).toBe(`${errors}.email`);
+  expect(messageOf(DepartmentTextSchema, '  ')).toBe(`${errors}.department`);
 });
 
 it('recognises an unchanged draft so saving it closes the panel instead of writing', () => {

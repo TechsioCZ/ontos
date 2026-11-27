@@ -11,18 +11,19 @@ import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { executeRecords as executeEmployeeRecords } from '@app/workforce/clients/records';
 import type { AiBatch, AiChange, AiLogEntry } from '@app/shared-contracts/ai-approvals';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Atom } from 'effect/reactivity';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { applyPipelineCommand } from '../prilezitosti/pipeline-api.ts';
 import { salesPipelineAiCommandSchemas } from '../../../../../shared/actions/apply-command.ts';
 import { usePipelineReferences } from '../prilezitosti/pipeline-references.ts';
@@ -197,6 +198,18 @@ const sendCommand = (module: ModuleKey, command: AiCommand, revision: number): E
         : sendOrderReview(parsed).pipe(Effect.mapError(refusal)),
     ),
   );
+
+/**
+ * The decision note of one batch; every batch card has its own. The batch's buttons send it, so the form itself is
+ * never submitted.
+ */
+const decisionNoteFormOf = Atom.family((_groupKey: string) =>
+  FormReact.make(FormBuilder.empty.addField('note', Schema.String), {
+    fields: { note: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  }),
+);
 
 /** Principal id -> employee name, so decisions show who approved them (people only; agents have their label). */
 const usePrincipalNames = () => {
@@ -416,7 +429,9 @@ const RunCard = ({
   readonly valueLabel: (field: string, value: string | undefined) => string | undefined;
 }) => {
   const { t } = useModernI18n();
-  const [note, setNote] = useState('');
+  const noteForm = decisionNoteFormOf(group.key);
+  // The note outlives its input: once the batch is decided, "Vrátit vše" still sends it.
+  const note = Option.match(useAtomValue(noteForm.values), { onNone: () => '', onSome: (values) => values.note });
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = group.parts.flatMap((part) =>
     part.changes.flatMap((change) => (change.status === 'pending' ? [{ change, module: part.module }] : [])),
@@ -488,13 +503,18 @@ const RunCard = ({
         )}
         {decidable.length > 0 && (
           <>
-            <FormInput
-              id={`note-${group.key}`}
-              label={t('sales-pipeline.aiReview.decisionNote')}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder={t('sales-pipeline.aiReview.decisionNotePlaceholder')}
-              value={note}
-            />
+            <FormRoot
+              className="contents"
+              defaultValues={{ note }}
+              form={noteForm}
+              translateMessage={(message) => t(message, { defaultValue: message })}
+            >
+              <noteForm.note
+                id={`note-${group.key}`}
+                label={t('sales-pipeline.aiReview.decisionNote')}
+                placeholder={t('sales-pipeline.aiReview.decisionNotePlaceholder')}
+              />
+            </FormRoot>
             <div className="flex flex-wrap items-center gap-2">
               <Button disabled={busy} onClick={() => decideMany(decidable, 'approve')} size="sm">
                 Schválit dávku ({decidable.length})

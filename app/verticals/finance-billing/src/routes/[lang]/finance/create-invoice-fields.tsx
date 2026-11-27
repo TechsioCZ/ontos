@@ -1,9 +1,14 @@
 // The issue date picker and the totals summary of the create invoice form.
-import { DetailList, datePickerSegmentsClassName, datePickerTranslations, formatMoney } from '@app/admin-ui';
+import {
+  DetailList,
+  datePickerSegmentsClassName,
+  datePickerTranslations,
+  formatMoney,
+  requiredLabelFor,
+} from '@app/admin-ui';
 import { CalendarDate as IntlCalendarDate } from '@internationalized/date';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { DatePicker } from '@app/admin-ui/form-controls';
 import { isPlausibleIssueDate } from '../../../../shared/domain/invoice-draft.ts';
 import type { draftTotals } from '../../../../shared/domain/invoice-draft.ts';
 import type { InvoiceDocumentKind } from '../../../../shared/apis/records.ts';
@@ -39,47 +44,37 @@ export const issueDateProblem = (issueDate: string, submitted: boolean): 'missin
 /** A sum past the money range shows a dash and an error instead of 0 Kč. */
 const optionalMoney = (minor: number | undefined) => (minor === undefined ? '—' : formatMoney(minor));
 
-interface IssueDateFieldProps {
+/**
+ * The props of a required Czech date picker bound to a date field (an issue date, a valid-from date) and its inline
+ * error. The wrapper id lets a failed submit focus it. The field holds ISO `YYYY-MM-DD`, or '' while the date is
+ * incomplete.
+ */
+export const useIssueDateProps = ({
+  error,
+  id = ISSUE_DATE_FIELD_ID,
+  label,
+}: {
   readonly error: string | undefined;
+  readonly id?: string;
   readonly label: string;
-  /** ISO `YYYY-MM-DD`, or '' while the date is incomplete. */
-  readonly onChange: (isoDate: string) => void;
-  readonly value: string;
-}
-
-/** Czech date picker for the issue date, plus its inline error. The wrapper id lets a failed submit focus it. */
-export const IssueDateField = ({ error, label, onChange, value }: IssueDateFieldProps) => (
-  <div className="flex flex-col gap-50" id={ISSUE_DATE_FIELD_ID}>
-    <DatePicker.Root
-      invalid={error !== undefined}
-      locale="cs-CZ"
-      name="issueDate"
-      onValueChange={(details) => onChange(details.value === null ? '' : details.valueAsString)}
-      required
-      size="md"
-      translations={datePickerTranslations}
-      value={toIssueCalendarDate(value)}
-    >
-      <DatePicker.Label>{label}</DatePicker.Label>
-      <DatePicker.Control>
-        <DatePicker.Segments className={datePickerSegmentsClassName} />
-        <DatePicker.IndicatorGroup>
-          <DatePicker.Trigger />
-        </DatePicker.IndicatorGroup>
-      </DatePicker.Control>
-      <DatePicker.Positioner>
-        <DatePicker.Content className="z-(--z-popup) bg-(--color-popup-bg)">
-          <DatePicker.Calendar />
-        </DatePicker.Content>
-      </DatePicker.Positioner>
-    </DatePicker.Root>
-    {error !== undefined && (
-      <StatusText showIcon size="sm" status="error">
-        {error}
-      </StatusText>
-    )}
-  </div>
-);
+}) => {
+  const { language } = useModernI18n();
+  const props = {
+    className: 'flex flex-col gap-50',
+    contentClassName: 'z-(--z-popup) bg-(--color-popup-bg)',
+    id,
+    label,
+    locale: 'cs-CZ',
+    name: 'issueDate',
+    required: true,
+    requiredLabel: requiredLabelFor(language),
+    segmentsClassName: datePickerSegmentsClassName,
+    size: 'md',
+    toDateValue: toIssueCalendarDate,
+    translations: datePickerTranslations,
+  } as const;
+  return error === undefined ? props : { ...props, error };
+};
 
 interface DraftTotalsSummaryProps {
   /** Undefined when the sum passes the money range. */

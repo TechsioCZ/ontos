@@ -1,5 +1,6 @@
 import { Clock, DateTime, Effect, Match, Option, Predicate, Schema } from 'effect';
 
+import { retiredByLineage } from '../catalog/release-ordering.ts';
 import type { AssignmentIncarnationId, CapabilityKey, PrincipalId, RoleId } from '../ids.ts';
 import type {
   AccessScope,
@@ -342,8 +343,13 @@ export const planDelegatedAssignment = Effect.fn('accessLifecycle.planDelegatedA
     }
     // The assignment grants the whole revision, so every cell of it has to be inside the envelope.
     const catalogByKey = new Map(catalog.map((entry) => [entry.key, entry] as const));
+    // A capability the release retired along declared lineage is inert in the revision, so it bounds nothing.
+    const retired = retiredByLineage(catalog);
     for (const cell of roleRevision.cells) {
       const entry = catalogByKey.get(cell.capabilityKey);
+      if (entry === undefined && retired.has(cell.capabilityKey)) {
+        continue;
+      }
       if (entry === undefined) {
         return yield* lifecycleRefusal(
           'delegation_unknown_capability',

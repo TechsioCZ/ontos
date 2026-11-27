@@ -1,12 +1,11 @@
 // Per-variant storefront details: parameters (Akros filters), image (any photo of the product's photo library, picked
 // by its thumbnail, or a new upload), labels, unit, order minimum and package, quantity tiers, description, weight and
-// the struck-through price. Edits the variant draft of the Varianty tab in place.
+// the struck-through price. Its inputs are the fields of the variant's row in the Varianty tab's form.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FileUpload } from '@techsio/ui-kit/molecules/file-upload';
 import { surfaceTileClassName } from '@app/admin-ui';
-import { FormInput, FormTextarea, Switch } from '@app/admin-ui/form-controls';
 import { Option } from 'effect';
 import type { ReactNode } from 'react';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
@@ -23,54 +22,31 @@ import {
   variantTiersShown,
 } from './product-sales-terms-draft.ts';
 import type { TierDraft } from './product-sales-terms-draft.ts';
+import { variantsFields } from './product-variants-form.ts';
+import type {
+  VariantDetailDraft,
+  VariantParameterDraft,
+  VariantParameters,
+  VariantTiers,
+} from './product-variants-form.ts';
 
-export interface VariantParameterDraft {
-  readonly key: number;
-  readonly label: string;
-  readonly unit: string;
-  readonly value: string;
-}
-
-export interface VariantFlagsDraft {
-  readonly isAction: boolean;
-  readonly isNew: boolean;
-  readonly isRecommended: boolean;
-  readonly isSale: boolean;
-}
-
-/** The detail fields of one variant draft, as typed. Empty text means "not set". */
-export interface VariantDetailDraft {
-  readonly description: string;
-  readonly flags: VariantFlagsDraft;
-  readonly imageSrc: string;
-  readonly minimumQuantityText: string;
-  readonly originalPriceText: string;
-  readonly packageQuantityText: string;
-  readonly parameters: readonly VariantParameterDraft[];
-  readonly sourceUnit: string;
-  readonly tiers: readonly TierDraft[];
-  readonly tiersEdited: boolean;
-  /** The minimum `tiers` were written for: the rows follow a minimum changed since ({@link variantTiersShown}). */
-  readonly tiersMinimumText: string;
-  readonly unit: string;
-  readonly weightGramsText: string;
-}
-
-const flagLabels = [
-  ['isAction', 'Akce'],
-  ['isNew', 'Novinka'],
-  ['isRecommended', 'Doporučujeme'],
-  ['isSale', 'Výprodej'],
+const flagFields = [
+  ['isAction', 'Akce', variantsFields.rows.isAction],
+  ['isNew', 'Novinka', variantsFields.rows.isNew],
+  ['isRecommended', 'Doporučujeme', variantsFields.rows.isRecommended],
+  ['isSale', 'Výprodej', variantsFields.rows.isSale],
 ] as const;
 
 export interface VariantDetailEditorProps {
   readonly disabled: boolean;
+  /** The variant's draft as its row in the form has it. */
   readonly draft: VariantDetailDraft;
   readonly idPrefix: string;
   /** The product's photos (image refs): the gallery first, then the photo library the server keeps. */
   readonly images: readonly string[];
   /** The product's main photo, the first gallery image: the only one marked "Hlavní"; none with an empty gallery. */
   readonly mainImage: string | undefined;
+  /** The parts of the draft no input types: the picked image, added or removed parameters and tier rows. */
   readonly onChange: (next: Partial<VariantDetailDraft>) => void;
   readonly productId: ProductId;
   readonly vatRate: number | undefined;
@@ -227,7 +203,93 @@ export const VariantDetailsToggle = ({
   </Button>
 );
 
-export const VariantDetailEditor = ({
+type ParameterText = Exclude<keyof VariantParameterDraft, 'key'>;
+
+/** The input of one text of one parameter: it reads and writes that parameter of the row's parameters. */
+const parameterPart = (key: number, text: ParameterText) => ({
+  read: (parameters: VariantParameters) => parameters.find((parameter) => parameter.key === key)?.[text] ?? '',
+  write: (parameters: VariantParameters, typed: string): VariantParameters =>
+    parameters.map((parameter) => (parameter.key === key ? { ...parameter, [text]: typed } : parameter)),
+});
+
+const ParameterRows = ({
+  disabled,
+  draft,
+  idPrefix,
+  onChange,
+}: Pick<VariantDetailEditorProps, 'disabled' | 'draft' | 'idPrefix' | 'onChange'>) => {
+  let nextParameterKey = 0;
+  for (const parameter of draft.parameters) {
+    nextParameterKey = Math.max(nextParameterKey, parameter.key + 1);
+  }
+  return (
+    <div className="flex flex-col gap-100">
+      <h3 className="font-semibold text-sm">Parametry varianty (filtry v e-shopu)</h3>
+      {draft.parameters.map((parameter, index) => (
+        <div
+          className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)_auto]"
+          key={parameter.key}
+        >
+          <variantsFields.rows.parameters
+            disabled={disabled}
+            id={`${idPrefix}-param-label-${parameter.key}`}
+            label="Název parametru"
+            name={`${idPrefix}-param-label-${parameter.key}`}
+            size="sm"
+            {...parameterPart(parameter.key, 'label')}
+          />
+          <variantsFields.rows.parameters
+            disabled={disabled}
+            id={`${idPrefix}-param-value-${parameter.key}`}
+            label="Hodnota"
+            name={`${idPrefix}-param-value-${parameter.key}`}
+            size="sm"
+            {...parameterPart(parameter.key, 'value')}
+          />
+          <variantsFields.rows.parameters
+            disabled={disabled}
+            id={`${idPrefix}-param-unit-${parameter.key}`}
+            label="Jednotka"
+            name={`${idPrefix}-param-unit-${parameter.key}`}
+            size="sm"
+            {...parameterPart(parameter.key, 'unit')}
+          />
+          {disabled ? null : (
+            <Button
+              appearance="ghost"
+              aria-label={`Odebrat parametr ${index + 1}`}
+              icon="icon-[mdi--delete-outline]"
+              onClick={() => onChange({ parameters: draft.parameters.filter((entry) => entry.key !== parameter.key) })}
+              severity="secondary"
+              size="sm"
+              type="button"
+            />
+          )}
+        </div>
+      ))}
+      {disabled ? null : (
+        <div>
+          <Button
+            appearance="outline"
+            icon="icon-[mdi--plus]"
+            onClick={() =>
+              onChange({
+                parameters: [...draft.parameters, { key: nextParameterKey, label: '', unit: '', value: '' }],
+              })
+            }
+            severity="secondary"
+            size="sm"
+            type="button"
+          >
+            Přidat parametr
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const VariantImagePicker = ({
   disabled,
   draft,
   idPrefix,
@@ -235,236 +297,170 @@ export const VariantDetailEditor = ({
   mainImage,
   onChange,
   productId,
-  vatRate,
-}: VariantDetailEditorProps) => {
+}: Omit<VariantDetailEditorProps, 'vatRate'>) => {
   const imageChoices = draft.imageSrc !== '' && !images.includes(draft.imageSrc) ? [...images, draft.imageSrc] : images;
-  const patchParameter = (key: number, next: Partial<VariantParameterDraft>) =>
-    onChange({
-      parameters: draft.parameters.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)),
-    });
-  let nextParameterKey = 0;
-  for (const parameter of draft.parameters) {
-    nextParameterKey = Math.max(nextParameterKey, parameter.key + 1);
-  }
+  return (
+    <div className="flex flex-col gap-100 sm:col-span-2">
+      <h3 className="font-semibold text-sm" id={`${idPrefix}-image-label`}>
+        Obrázek varianty
+      </h3>
+      <ul
+        aria-labelledby={`${idPrefix}-image-label`}
+        className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-100"
+      >
+        <ImageChoice
+          caption="Bez obrázku"
+          disabled={disabled}
+          onPick={() => onChange({ imageSrc: '' })}
+          selected={draft.imageSrc === ''}
+        >
+          <span aria-hidden className="token-icon-image-unavailable size-300 text-fg-secondary" />
+        </ImageChoice>
+        {imageChoices.map((image) => (
+          <VariantImageTile
+            disabled={disabled}
+            image={image}
+            key={image}
+            main={image === mainImage}
+            onPick={() => onChange({ imageSrc: image })}
+            productId={productId}
+            selected={image === draft.imageSrc}
+          />
+        ))}
+      </ul>
+      {disabled ? null : (
+        <VariantPhotoUploadButton
+          name={`${idPrefix}-image-upload`}
+          onStored={(image) => onChange({ imageSrc: image })}
+          productId={productId}
+        />
+      )}
+    </div>
+  );
+};
+
+const VariantTierRows = ({
+  disabled,
+  draft,
+  idPrefix,
+  onChange,
+  vatRate,
+}: Pick<VariantDetailEditorProps, 'disabled' | 'draft' | 'idPrefix' | 'onChange' | 'vatRate'>) => {
   const minimum = parseQuantityText(draft.minimumQuantityText);
   const tiers = variantTiersShown(draft);
   const tiersNote = tiersAtMinimumNote(draft.tiers, tiers, variantMinimumOf(draft.minimumQuantityText));
+  const shownOf = (value: VariantTiers) =>
+    variantTiersShown({
+      minimumQuantityText: draft.minimumQuantityText,
+      tiers: value.rows,
+      tiersMinimumText: value.minimumText,
+    });
+  // Typed rows are saved as typed, written for the minimum typed now (the one they were written for while it is invalid).
+  const writtenFor = (current: string) =>
+    variantMinimumOf(draft.minimumQuantityText) === null ? current : draft.minimumQuantityText;
+  const edit = (value: VariantTiers, next: readonly TierDraft[]): VariantTiers => ({
+    edited: true,
+    minimumText: writtenFor(value.minimumText),
+    rows: next,
+  });
+  return (
+    <div className="flex flex-col gap-100">
+      <h3 className="font-semibold text-sm">Množstevní ceny varianty</h3>
+      <PriceTierRows
+        disabled={disabled}
+        edit={edit}
+        field={variantsFields.rows.tiers}
+        idPrefix={idPrefix}
+        minimum={minimum ?? 1}
+        onChange={(next) =>
+          onChange({ tiers: next, tiersEdited: true, tiersMinimumText: writtenFor(draft.tiersMinimumText) })
+        }
+        shownOf={shownOf}
+        tiers={tiers}
+        vatRate={vatRate}
+      />
+      {tiersNote === null ? null : <p className="text-fg-secondary text-xs">{tiersNote}</p>}
+      {draft.tiers.length > 0 && nextTierKey(draft.tiers) > 0 && !draft.tiersEdited && tiers === draft.tiers ? (
+        <p className="text-fg-secondary text-xs">Při změně ceny varianty se množstevní ceny přepočítají.</p>
+      ) : null}
+    </div>
+  );
+};
+
+/** The detail editor of one variant; it renders inside the `Item` of the variant's row in the tab's form. */
+export const VariantDetailEditor = (props: VariantDetailEditorProps) => {
+  const { disabled, idPrefix } = props;
   return (
     <div className="flex flex-col gap-200 p-200">
-      <div className="flex flex-col gap-100">
-        <h3 className="font-semibold text-sm">Parametry varianty (filtry v e-shopu)</h3>
-        {draft.parameters.map((parameter, index) => (
-          <div
-            className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,2fr)_minmax(0,2fr)_minmax(0,1fr)_auto]"
-            key={parameter.key}
-          >
-            <FormInput
-              disabled={disabled}
-              id={`${idPrefix}-param-label-${parameter.key}`}
-              label="Název parametru"
-              name={`${idPrefix}-param-label-${parameter.key}`}
-              onChange={(event) => patchParameter(parameter.key, { label: event.target.value })}
-              size="sm"
-              value={parameter.label}
-            />
-            <FormInput
-              disabled={disabled}
-              id={`${idPrefix}-param-value-${parameter.key}`}
-              label="Hodnota"
-              name={`${idPrefix}-param-value-${parameter.key}`}
-              onChange={(event) => patchParameter(parameter.key, { value: event.target.value })}
-              size="sm"
-              value={parameter.value}
-            />
-            <FormInput
-              disabled={disabled}
-              id={`${idPrefix}-param-unit-${parameter.key}`}
-              label="Jednotka"
-              name={`${idPrefix}-param-unit-${parameter.key}`}
-              onChange={(event) => patchParameter(parameter.key, { unit: event.target.value })}
-              size="sm"
-              value={parameter.unit}
-            />
-            {disabled ? null : (
-              <Button
-                appearance="ghost"
-                aria-label={`Odebrat parametr ${index + 1}`}
-                icon="icon-[mdi--delete-outline]"
-                onClick={() =>
-                  onChange({ parameters: draft.parameters.filter((entry) => entry.key !== parameter.key) })
-                }
-                severity="secondary"
-                size="sm"
-                type="button"
-              />
-            )}
-          </div>
-        ))}
-        {disabled ? null : (
-          <div>
-            <Button
-              appearance="outline"
-              icon="icon-[mdi--plus]"
-              onClick={() =>
-                onChange({
-                  parameters: [...draft.parameters, { key: nextParameterKey, label: '', unit: '', value: '' }],
-                })
-              }
-              severity="secondary"
-              size="sm"
-              type="button"
-            >
-              Přidat parametr
-            </Button>
-          </div>
-        )}
-      </div>
+      <ParameterRows {...props} />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <div className="flex flex-col gap-100 sm:col-span-2">
-          <h3 className="font-semibold text-sm" id={`${idPrefix}-image-label`}>
-            Obrázek varianty
-          </h3>
-          <ul
-            aria-labelledby={`${idPrefix}-image-label`}
-            className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-100"
-          >
-            <ImageChoice
-              caption="Bez obrázku"
-              disabled={disabled}
-              onPick={() => onChange({ imageSrc: '' })}
-              selected={draft.imageSrc === ''}
-            >
-              <span aria-hidden className="token-icon-image-unavailable size-300 text-fg-secondary" />
-            </ImageChoice>
-            {imageChoices.map((image) => (
-              <VariantImageTile
-                disabled={disabled}
-                image={image}
-                key={image}
-                main={image === mainImage}
-                onPick={() => onChange({ imageSrc: image })}
-                productId={productId}
-                selected={image === draft.imageSrc}
-              />
-            ))}
-          </ul>
-          {disabled ? null : (
-            <VariantPhotoUploadButton
-              name={`${idPrefix}-image-upload`}
-              onStored={(image) => onChange({ imageSrc: image })}
-              productId={productId}
-            />
-          )}
-        </div>
+        <VariantImagePicker {...props} />
         <div className="flex flex-wrap items-end gap-200">
-          {flagLabels.map(([flag, label]) => (
-            <Switch
-              checked={draft.flags[flag]}
-              disabled={disabled}
-              key={flag}
-              name={`${idPrefix}-${flag}`}
-              onCheckedChange={(checked: boolean) => onChange({ flags: { ...draft.flags, [flag]: checked } })}
-            >
+          {flagFields.map(([flag, label, FlagField]) => (
+            <FlagField disabled={disabled} key={flag} name={`${idPrefix}-${flag}`}>
               {label}
-            </Switch>
+            </FlagField>
           ))}
         </div>
-        <FormInput
+        <variantsFields.rows.minimumQuantityText
           disabled={disabled}
           helpText="Zároveň násobek, po kterém se varianta objednává. Prázdné = 1."
           id={`${idPrefix}-minimum`}
           inputMode="decimal"
           label="Minimální odběr"
           name={`${idPrefix}-minimum`}
-          onChange={(event) => onChange({ minimumQuantityText: event.target.value })}
           size="sm"
-          value={draft.minimumQuantityText}
         />
-        <FormInput
+        <variantsFields.rows.packageQuantityText
           disabled={disabled}
           id={`${idPrefix}-package`}
           inputMode="decimal"
           label="Počet v balení"
           name={`${idPrefix}-package`}
-          onChange={(event) => onChange({ packageQuantityText: event.target.value })}
           size="sm"
-          value={draft.packageQuantityText}
         />
-        <FormInput
+        <variantsFields.rows.unit
           disabled={disabled}
           id={`${idPrefix}-unit`}
           label="Jednotka"
           name={`${idPrefix}-unit`}
-          onChange={(event) => onChange({ unit: event.target.value })}
           size="sm"
-          value={draft.unit}
         />
-        <FormInput
+        <variantsFields.rows.sourceUnit
           disabled={disabled}
           helpText="Jednotka zobrazená v e-shopu, má přednost před jednotkou."
           id={`${idPrefix}-source-unit`}
           label="Jednotka v e-shopu"
           name={`${idPrefix}-source-unit`}
-          onChange={(event) => onChange({ sourceUnit: event.target.value })}
           size="sm"
-          value={draft.sourceUnit}
         />
-        <FormInput
+        <variantsFields.rows.weightGramsText
           disabled={disabled}
           helpText="0 nebo prázdné = neuvádět."
           id={`${idPrefix}-weight`}
           inputMode="numeric"
           label="Hmotnost (g)"
           name={`${idPrefix}-weight`}
-          onChange={(event) => onChange({ weightGramsText: event.target.value })}
           size="sm"
-          value={draft.weightGramsText}
         />
-        <FormInput
+        <variantsFields.rows.originalPriceText
           disabled={disabled}
           helpText="Prázdné = žádná."
           id={`${idPrefix}-original-price`}
           inputMode="decimal"
           label="Původní cena s DPH (přeškrtnutá, Kč)"
           name={`${idPrefix}-original-price`}
-          onChange={(event) => onChange({ originalPriceText: event.target.value })}
           size="sm"
-          value={draft.originalPriceText}
         />
       </div>
-      <FormTextarea
+      <variantsFields.rows.description
         disabled={disabled}
         id={`${idPrefix}-description`}
         label="Popis varianty"
         maxLength={2000}
         name={`${idPrefix}-description`}
-        onChange={(event) => onChange({ description: event.target.value })}
-        value={draft.description}
       />
-      <div className="flex flex-col gap-100">
-        <h3 className="font-semibold text-sm">Množstevní ceny varianty</h3>
-        <PriceTierRows
-          disabled={disabled}
-          idPrefix={idPrefix}
-          minimum={minimum ?? 1}
-          onChange={(next) =>
-            onChange({
-              tiers: next,
-              tiersEdited: true,
-              tiersMinimumText:
-                variantMinimumOf(draft.minimumQuantityText) === null
-                  ? draft.tiersMinimumText
-                  : draft.minimumQuantityText,
-            })
-          }
-          tiers={tiers}
-          vatRate={vatRate}
-        />
-        {tiersNote === null ? null : <p className="text-fg-secondary text-xs">{tiersNote}</p>}
-        {draft.tiers.length > 0 && nextTierKey(draft.tiers) > 0 && !draft.tiersEdited && tiers === draft.tiers ? (
-          <p className="text-fg-secondary text-xs">Při změně ceny varianty se množstevní ceny přepočítají.</p>
-        ) : null}
-      </div>
+      <VariantTierRows {...props} />
     </div>
   );
 };

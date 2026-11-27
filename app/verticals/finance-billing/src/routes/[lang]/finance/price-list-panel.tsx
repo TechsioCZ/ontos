@@ -1,7 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
-import { DateTime, Effect, Option } from 'effect';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import {
   SaveBar,
   SectionCard,
@@ -20,7 +20,15 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@app/admin-ui/form-controls';
+import {
+  FlaggedTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { useEffect, useRef, useState } from 'react';
 import type { PriceListItem } from '../../../../shared/apis/records.ts';
@@ -30,6 +38,7 @@ import { invoiceLineKey, isPendingApproval, outcomeNotice, withOccurrenceKeys } 
 import type { FinanceCommandDraft, FinanceNotice, FinanceViewModel } from './finance-ui.tsx';
 import type { CommandOutcome } from './use-finance-records.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
+import { useFormDraft } from './finance-form-draft.tsx';
 import {
   emptyItem,
   financeSaveOutcome,
@@ -42,79 +51,136 @@ import {
 import type { ItemDraft } from './price-list-draft.ts';
 import { choicesOf, useVatChoices } from './use-vat-choices.ts';
 import type { VatChoicesState } from './use-vat-choices.ts';
-import { VatChoiceSelect, VatLabel } from './vat-choice-select.tsx';
+import { LineVatChoiceSchema, VatChoiceField, VatLabel } from './vat-choice-select.tsx';
 
 /** The company's VAT today: a price-list item stores the classification, its rate as Tax publishes it today. */
 const useTodayVatChoices = (vm: FinanceViewModel): VatChoicesState =>
   useVatChoices(vm.scope, vm.referenceDate === '' ? DateTime.formatIsoDateUtc(DateTime.nowUnsafe()) : vm.referenceDate);
 
-/** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
-const invalidField = (invalid: boolean, message: string) =>
-  invalid ? { helpText: message, validateStatus: 'error' as const } : {};
+/** One price list item as typed; the dialog's save bar sends it, so the form only holds it. */
+const makeItemForm = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('code', Schema.String)
+      .addField('name', Schema.String)
+      .addField('price', Schema.String)
+      .addField('unit', Schema.String)
+      .addField('vat', LineVatChoiceSchema),
+    {
+      fields: {
+        code: TextField,
+        name: FlaggedTextField,
+        price: FlaggedTextField,
+        unit: TextField,
+        vat: VatChoiceField,
+      },
+      onSubmit: () => Effect.void,
+      runtime: financeBrowserAtomRuntime,
+    },
+  );
 
-/** The fields of one price list item, shared by the create dialog and the autosaving edit dialog. */
+/**
+ * The edit and the create dialog each have their own form, so a draft typed in one never shows in the other. One
+ * dialog of each kind is open at a time: the panel opens a single edited item and a single new item.
+ */
+const itemEditForm = makeItemForm();
+const itemCreateForm = makeItemForm();
+type ItemForm = typeof itemEditForm;
+
+/** The fields of one price list item, shared by the create dialog and the edit dialog: the form's bound fields. */
 const PriceItemFields = ({
   draft,
-  onChange,
+  fields,
   showErrors,
   vat,
 }: {
   readonly draft: ItemDraft;
-  readonly onChange: (patch: Partial<ItemDraft>) => void;
+  readonly fields: ItemForm;
   readonly showErrors: boolean;
   readonly vat: VatChoicesState;
 }) => {
   const { t } = useModernI18n();
   const problems = itemProblems(draft);
+  const nameInvalid = showErrors && problems.name;
+  const priceInvalid = showErrors && problems.price;
   return (
     <>
-      <FormInput
+      <fields.name
+        helpText={nameInvalid ? t('finance-billing.financeUi.priceList.nameRequired') : undefined}
         id="price-name"
+        invalid={nameInvalid}
         label={t('finance-billing.financeUi.priceList.serviceName')}
-        onChange={(event) => onChange({ name: event.target.value })}
         placeholder={t('finance-billing.financeUi.priceList.serviceExample')}
         size="sm"
-        value={draft.name}
-        {...invalidField(showErrors && problems.name, t('finance-billing.financeUi.priceList.nameRequired'))}
       />
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-        <FormInput
-          id="price-code"
-          label={t('finance-billing.financeUi.priceList.code')}
-          onChange={(event) => onChange({ code: event.target.value })}
-          size="sm"
-          value={draft.code}
-        />
-        <FormInput
+        <fields.code id="price-code" label={t('finance-billing.financeUi.priceList.code')} size="sm" />
+        <fields.unit
           id="price-unit"
           label={t('finance-billing.financeUi.priceList.unit')}
-          onChange={(event) => onChange({ unit: event.target.value })}
           placeholder={t('finance-billing.financeUi.priceList.unitExamples')}
           size="sm"
-          value={draft.unit}
         />
       </div>
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-        <FormInput
+        <fields.price
+          helpText={priceInvalid ? t('finance-billing.financeUi.priceList.priceRequired') : undefined}
           id="price-amount"
           inputMode="decimal"
+          invalid={priceInvalid}
           label={t('finance-billing.financeUi.priceList.netPrice')}
-          onChange={(event) => onChange({ price: event.target.value })}
           size="sm"
-          value={draft.price}
-          {...invalidField(showErrors && problems.price, t('finance-billing.financeUi.priceList.priceRequired'))}
         />
-        <VatChoiceSelect
-          choice={draft.vat}
+        <fields.vat
           direction="OUTGOING"
           invalid={showErrors && lineVatOf(draft.vat, choicesOf(vat)) === undefined}
           name="price-vat"
-          onChange={(next) => onChange({ vat: next })}
           vat={vat}
         />
       </div>
     </>
   );
+};
+
+/** Exactly the same input in every field; the draft's own equality ignores surrounding spaces. */
+const sameTyped = (left: ItemDraft, right: ItemDraft) =>
+  left.code === right.code &&
+  left.name === right.name &&
+  left.price === right.price &&
+  left.unit === right.unit &&
+  sameItemDraft(left, right);
+
+/**
+ * Keeps the edit form's values and the record draft the same: typing goes into the draft, and a draft the record
+ * replaced (Zahodit změny, Načíst aktuální verzi, a newer server version) goes back into the form.
+ */
+const DraftValues = ({
+  draft,
+  onTyped,
+}: {
+  readonly draft: ItemDraft;
+  readonly onTyped: (value: ItemDraft) => void;
+}) => {
+  const setValues = useAtomSet(itemEditForm.setValues);
+  const shown = useRef(draft);
+  useAtomSubscribe(
+    itemEditForm.values,
+    (values) => {
+      if (Option.isSome(values) && !sameTyped(values.value, shown.current)) {
+        shown.current = values.value;
+        onTyped(values.value);
+      }
+    },
+    // Immediate: a subscription that does not read the value first never hears a change of a value not read yet.
+    { immediate: true },
+  );
+  useEffect(() => {
+    if (!sameTyped(draft, shown.current)) {
+      shown.current = draft;
+      setValues(draft);
+    }
+  }, [draft, setValues]);
+  return null;
 };
 
 /**
@@ -178,10 +244,10 @@ const PriceItemEditDialog = ({
   const close = () => {
     guard.request(onClose);
   };
-  const handleChange = (patch: Partial<ItemDraft>) => record.setDraft((current) => ({ ...current, ...patch }));
   const labels = saveLabelsFor(language);
   const handleReloadLatest = record.reloadLatest;
   const handleSave = record.save;
+  const handleTyped = record.setDraft;
   return (
     <>
       <Dialog
@@ -206,14 +272,20 @@ const PriceItemEditDialog = ({
         size="md"
         title={t('finance-billing.financeUi.priceList.editTitle')}
       >
-        <div className="flex flex-col gap-150">
+        <FormRoot
+          className="flex flex-col gap-150"
+          defaultValues={record.draft}
+          form={itemEditForm}
+          translateMessage={t}
+        >
+          <DraftValues draft={record.draft} onTyped={handleTyped} />
           {error !== undefined && (
             <StatusText showIcon size="sm" status={error.status}>
               {error.text}
             </StatusText>
           )}
-          <PriceItemFields draft={record.draft} onChange={handleChange} showErrors vat={vat} />
-        </div>
+          <PriceItemFields draft={record.draft} fields={itemEditForm} showErrors vat={vat} />
+        </FormRoot>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -234,7 +306,7 @@ const PriceItemCreateDialog = ({
   readonly vm: FinanceViewModel;
 }) => {
   const { language, t } = useModernI18n();
-  const [draft, setDraft] = useState<ItemDraft>(initial);
+  const { draft, ready, reset } = useFormDraft(itemCreateForm, initial);
   const [error, setError] = useState<FinanceNotice>();
   const vat = useTodayVatChoices(vm);
   const choices = choicesOf(vat);
@@ -257,7 +329,7 @@ const PriceItemCreateDialog = ({
     value: draft,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => setDraft(initial) });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => reset(initial) });
   const labels = saveLabelsFor(language);
   const close = () => {
     guard.request(onClose);
@@ -271,12 +343,7 @@ const PriceItemCreateDialog = ({
             <Button appearance="outline" onClick={close} severity="secondary">
               {t('finance-billing.financeUi.priceList.cancel')}
             </Button>
-            <SaveBar
-              labels={labels}
-              onReloadLatest={() => setDraft(initial)}
-              onSave={handleSave}
-              status={record.status}
-            />
+            <SaveBar labels={labels} onReloadLatest={() => reset(initial)} onSave={handleSave} status={record.status} />
           </>
         }
         closeLabel={dialogCloseLabel}
@@ -292,7 +359,8 @@ const PriceItemCreateDialog = ({
         size="md"
         title={t('finance-billing.financeUi.priceList.addTitle')}
       >
-        <div className="flex flex-col gap-150">
+        <FormRoot className="flex flex-col gap-150" defaultValues={initial} form={itemCreateForm} translateMessage={t}>
+          {ready}
           {error !== undefined && (
             <StatusText showIcon size="sm" status={error.status}>
               {error.text}
@@ -300,11 +368,11 @@ const PriceItemCreateDialog = ({
           )}
           <PriceItemFields
             draft={draft}
-            onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+            fields={itemCreateForm}
             showErrors={record.status === 'invalid' || error?.status === 'error'}
             vat={vat}
           />
-        </div>
+        </FormRoot>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

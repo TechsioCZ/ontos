@@ -5,7 +5,17 @@
 // administrator confirms them, asks the Shell to make them through Core's
 // `core.identity.change-system-workload-enrollment` and `core.identity.register-integration-workloads`, then repeats
 // the change once.
-import { FormInput } from '@app/admin-ui/form-controls';
+import { requiredLabelFor } from '@app/admin-ui';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  FormScope,
+  TextField,
+  makeMemberCheckboxField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import type {
   ConnectorPartnerComponentProps,
   ConnectorPartnerCoreWriteOutcome,
@@ -14,18 +24,20 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { Effect, Random, Schema } from 'effect';
+import { Effect, Option, Random, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 
-import { ManageSymmyRoutesPayloadSchema } from '../../shared/actions/manage-symmy-routes.ts';
-import type { ManageSymmyRoutesPayload } from '../../shared/actions/manage-symmy-routes.ts';
+import {
+  ManageSymmyRoutesPayloadSchema,
+  SymmyManagedRouteKeySchema,
+} from '../../shared/actions/manage-symmy-routes.ts';
+import type { ManageSymmyRoutesPayload, SymmyManagedRouteKey } from '../../shared/actions/manage-symmy-routes.ts';
 import { ManageSymmyRoutesActionIneligibleProblemSchema } from '../../shared/apis/manage-symmy-routes-action.ts';
 import { SymmyCompanyRoutesForbiddenProblemSchema } from '../../shared/apis/symmy-company-routes.ts';
 import type { SymmyCompanyRoutesResponse } from '../../shared/apis/symmy-company-routes.ts';
 import { executeManageSymmyRoutes } from '../api/manage-symmy-routes-action-client.ts';
 import { executeSymmyCompanyRoutes } from '../api/symmy-company-routes-client.ts';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import {
   SYMMY_DEFAULT_RETENTION_DAYS,
   SYMMY_INITIAL_ROUTE_CHOICE,
@@ -163,6 +175,40 @@ const confirmedRunFailureState = (failure: ConfirmedRunProblem): ChangeState => 
   const refusals = isIneligible(failure.problem) ? (failure.problem.refusals ?? []) : [];
   return { done: failure.done, failed: failure.failed, kind: 'confirmedRunFailed', refusals };
 };
+
+const RouteKeyCheckboxField = makeMemberCheckboxField((routeKey: SymmyManagedRouteKey) => routeKey);
+
+/**
+ * What the administrator enters to enable routes: the partner's source identity, the retention of the write routes
+ * and the route families to enable. "Povolit" builds the route changes from it and decodes them into the Action
+ * payload; the form itself never submits.
+ */
+const routeSetupForm = FormReact.make(
+  FormBuilder.empty
+    .addField('issuerId', Schema.String)
+    .addField('retentionDays', Schema.String)
+    .addField('routeKeys', Schema.Array(SymmyManagedRouteKeySchema))
+    .addField('sourceNamespace', Schema.String),
+  {
+    fields: {
+      issuerId: TextField,
+      retentionDays: TextField,
+      routeKeys: RouteKeyCheckboxField,
+      sourceNamespace: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type RouteSetup = typeof routeSetupForm.schema.Encoded;
+
+const initialSetup: RouteSetup = {
+  issuerId: '',
+  retentionDays: String(SYMMY_DEFAULT_RETENTION_DAYS),
+  routeKeys: SYMMY_INITIAL_ROUTE_CHOICE,
+  sourceNamespace: '',
+};
+const routeKeysField = routeSetupForm.getFieldAtoms(routeSetupForm.fields.routeKeys);
 
 const PrerequisiteItem = ({ prerequisite }: { readonly prerequisite: SymmyPrerequisite }) => {
   const { t } = useModernI18n();
@@ -303,18 +349,14 @@ const ConfirmedRunFailure = ({
 };
 
 /** Symmy's routes of this integration in the selected company, and the form that enables more of them. */
-export const SymmyRoutesPanel = ({
-  integrationPrincipalId: principalId,
-  writeCore,
-}: ConnectorPartnerComponentProps) => {
-  const { t } = useModernI18n();
+const SymmyRoutes = ({ integrationPrincipalId: principalId, writeCore }: ConnectorPartnerComponentProps) => {
+  const { language, t } = useModernI18n();
+  const requiredLabel = requiredLabelFor(language);
   const [routes, setRoutes] = useState<readonly CompanyRoute[] | null>(null);
   const [readFailure, setReadFailure] = useState<'readFailed' | 'readForbidden' | null>(null);
   const [change, setChange] = useState<ChangeState>({ kind: 'idle' });
-  const [issuerId, setIssuerId] = useState('');
-  const [sourceNamespace, setSourceNamespace] = useState('');
-  const [retentionDays, setRetentionDays] = useState(String(SYMMY_DEFAULT_RETENTION_DAYS));
-  const [chosen, setChosen] = useState<ReadonlySet<string>>(new Set(SYMMY_INITIAL_ROUTE_CHOICE));
+  const setup = Option.getOrElse(useAtomValue(routeSetupForm.values), () => initialSetup);
+  const setRouteKeys = useAtomSet(routeKeysField.setValue);
   const load = () => {
     browserRuntime.runFork(
       readRoutes(principalId).pipe(
@@ -333,7 +375,7 @@ export const SymmyRoutesPanel = ({
   useEffect(() => loadOnMount(), []);
   const settled = () => {
     setChange({ kind: 'idle' });
-    setChosen(new Set(SYMMY_INITIAL_ROUTE_CHOICE));
+    setRouteKeys(SYMMY_INITIAL_ROUTE_CHOICE);
     load();
   };
   const run = (changes: readonly SymmyRouteChangeInput[], reason: string) => {
@@ -366,13 +408,12 @@ export const SymmyRoutesPanel = ({
     );
   };
   const enable = () => {
-    const days = Math.trunc(Number(retentionDays));
     const changes = symmyEnableChanges(
       {
-        issuerId,
-        retentionDays: days,
-        routeKeys: SYMMY_PANEL_ROUTES.filter((routeKey) => chosen.has(routeKey)),
-        sourceNamespace,
+        issuerId: setup.issuerId,
+        retentionDays: Math.trunc(Number(setup.retentionDays)),
+        routeKeys: SYMMY_PANEL_ROUTES.filter((routeKey) => setup.routeKeys.includes(routeKey)),
+        sourceNamespace: setup.sourceNamespace,
       },
       routes ?? [],
     );
@@ -382,23 +423,12 @@ export const SymmyRoutesPanel = ({
     const base = { expectedChangeToken: route.changeToken, kind: 'disable' as const, routeKey: route.routeKey };
     run([route.routeCode === undefined ? base : { ...base, routeCode: route.routeCode }], disableReason);
   };
-  const toggle = (routeKey: string, checked: boolean) => {
-    const next = new Set(chosen);
-    if (checked) {
-      next.add(routeKey);
-    } else {
-      next.delete(routeKey);
-    }
-    setChosen(next);
-  };
   const saving = change.kind === 'saving';
   const busy = saving || change.kind === 'confirm';
   const pending = routes === null ? [] : symmyPendingRoutes(routes);
-  const nothingChosen = !pending.some((routeKey) => chosen.has(routeKey));
+  const nothingChosen = !pending.some((routeKey) => setup.routeKeys.includes(routeKey));
   return (
-    <section className="flex min-w-0 flex-col gap-100 border-border-primary/60 border-t pt-150">
-      <h3 className="font-medium text-sm">{t(`${copyKey}.title`)}</h3>
-      <p className="text-fg-secondary text-xs">{t(`${copyKey}.description`)}</p>
+    <>
       {readFailure !== null && (
         <StatusText showIcon status={readFailure === 'readForbidden' ? 'warning' : 'error'}>
           {t(`${copyKey}.${readFailure}`)}
@@ -413,51 +443,47 @@ export const SymmyRoutesPanel = ({
       {routes !== null && pending.length > 0 && (
         <div className="flex min-w-0 flex-col gap-100">
           <div className="flex min-w-0 flex-wrap gap-100">
-            <FormInput
+            <routeSetupForm.issuerId
               autoComplete="off"
               label={t(`${copyKey}.issuerId`)}
               maxLength={300}
               name="symmyIssuerId"
-              onChange={(event) => setIssuerId(event.target.value)}
               placeholder={t(`${copyKey}.issuerIdPlaceholder`)}
               required
-              value={issuerId}
+              requiredLabel={requiredLabel}
             />
-            <FormInput
+            <routeSetupForm.sourceNamespace
               autoComplete="off"
               label={t(`${copyKey}.sourceNamespace`)}
               maxLength={300}
               name="symmySourceNamespace"
-              onChange={(event) => setSourceNamespace(event.target.value)}
               placeholder={t(`${copyKey}.sourceNamespacePlaceholder`)}
               required
-              value={sourceNamespace}
+              requiredLabel={requiredLabel}
             />
-            <FormInput
+            <routeSetupForm.retentionDays
               label={t(`${copyKey}.retentionDays`)}
               max={3650}
               min={1}
               name="symmyRetentionDays"
-              onChange={(event) => setRetentionDays(event.target.value)}
               type="number"
-              value={retentionDays}
             />
           </div>
           <div className="flex min-w-0 flex-wrap gap-150">
             {pending.map((routeKey) => (
-              <FormCheckbox
-                checked={chosen.has(routeKey)}
+              <routeSetupForm.routeKeys
                 id={`symmy-route-${principalId}-${routeKey}`}
                 key={routeKey}
                 label={t(`${copyKey}.route.${routeKey}`)}
-                onCheckedChange={(checked) => toggle(routeKey, checked)}
-                size="sm"
+                member={routeKey}
               />
             ))}
           </div>
           <div>
             <Button
-              disabled={busy || nothingChosen || issuerId.trim().length === 0 || sourceNamespace.trim().length === 0}
+              disabled={
+                busy || nothingChosen || setup.issuerId.trim().length === 0 || setup.sourceNamespace.trim().length === 0
+              }
               onClick={enable}
               severity="primary"
               size="sm"
@@ -487,6 +513,30 @@ export const SymmyRoutesPanel = ({
           {t(`${copyKey}.${change.kind}`)}
         </StatusText>
       )}
+    </>
+  );
+};
+
+/**
+ * The panel of one integration. The Shell shows one per Symmy integration, so each keeps its route setup in its own
+ * form scope.
+ */
+export const SymmyRoutesPanel = (props: ConnectorPartnerComponentProps) => {
+  const { t } = useModernI18n();
+  return (
+    <section className="flex min-w-0 flex-col gap-100 border-border-primary/60 border-t pt-150">
+      <h3 className="font-medium text-sm">{t(`${copyKey}.title`)}</h3>
+      <p className="text-fg-secondary text-xs">{t(`${copyKey}.description`)}</p>
+      <FormScope>
+        <FormRoot
+          className="flex min-w-0 flex-col gap-100"
+          defaultValues={initialSetup}
+          form={routeSetupForm}
+          translateMessage={t}
+        >
+          <SymmyRoutes {...props} />
+        </FormRoot>
+      </FormScope>
     </section>
   );
 };

@@ -1,20 +1,21 @@
 // Market definition and price-list forms of the staff screens (DESIGN 4): what the person types, its validation, and
 // the Action/command inputs it becomes. Pure; the dialogs decode the result with the owners' schemas before sending.
 import { DateTime, Option, Schema } from 'effect';
+import { MarketCurrencySchema, MarketOfferModeSchema } from '@app/merchandise/domain/market-offers';
 import type { MarketCurrency, MarketOfferMode, MarketSettings } from '@app/merchandise/domain/market-offers';
 import type { CurrentMarket, MarketChannel } from './eshops-model.ts';
 
 export const marketChannels: readonly MarketChannel[] = ['B2C', 'B2B'];
 export const jurisdictionKinds = ['COUNTRY', 'REGION', 'JURISDICTION'] as const;
-export type JurisdictionKind = (typeof jurisdictionKinds)[number];
 export const marketCurrencies: readonly MarketCurrency[] = ['CZK', 'EUR', 'PLN'];
 export const offerModes: readonly MarketOfferMode[] = ['WHOLE_CATALOGUE', 'SELECTED_PRODUCTS'];
 
+/** The definition as the form holds it: the channels and the jurisdiction kind are the offered choices. */
 export interface MarketDefinitionForm {
-  readonly channels: readonly MarketChannel[];
+  readonly channels: readonly string[];
   readonly code: string;
   readonly jurisdictionCodes: string;
-  readonly jurisdictionKind: JurisdictionKind;
+  readonly jurisdictionKind: string;
   readonly locales: string;
   readonly purpose: string;
   /** `YYYY-MM-DD`; empty or not later than today means "from now". */
@@ -103,7 +104,9 @@ export const definitionIssues = (form: MarketDefinitionForm): readonly Definitio
   return issues;
 };
 
-export const pricingIssues = (form: MarketPricingForm): readonly PricingField[] => {
+export const pricingIssues = (
+  form: Pick<MarketPricingForm, 'exchangeRate' | 'roundingMinor'>,
+): readonly PricingField[] => {
   const issues: PricingField[] = [];
   const rate = normalizeRate(form.exchangeRate);
   if (!RATE_PATTERN.test(rate) || !/[1-9]/u.test(rate)) {
@@ -115,6 +118,67 @@ export const pricingIssues = (form: MarketPricingForm): readonly PricingField[] 
   }
   return issues;
 };
+
+/** Where the form shows each definition issue; a missing channel is the form's own error, under the channel choices. */
+const definitionIssuePath = {
+  code: ['code'],
+  jurisdictions: ['jurisdictionCodes'],
+  locales: ['locales'],
+  purpose: ['purpose'],
+  validFrom: ['validFrom'],
+  validTo: ['validTo'],
+} as const satisfies Record<Exclude<DefinitionField, 'channels'>, readonly [keyof MarketDefinitionForm]>;
+
+/**
+ * The definition form as effect-form checks it: `definitionIssues` names every invalid field at once, each with the
+ * message key the field shows.
+ */
+export const MarketDefinitionInputSchema = Schema.Struct({
+  channels: Schema.Array(Schema.String),
+  code: Schema.String,
+  jurisdictionCodes: Schema.String,
+  jurisdictionKind: Schema.String,
+  locales: Schema.String,
+  purpose: Schema.String,
+  validFrom: Schema.String,
+  validTo: Schema.String,
+}).check(
+  Schema.makeFilter((form: MarketDefinitionForm) => {
+    const issues = definitionIssues(form);
+    return (
+      issues.length === 0 ||
+      issues.map((field) =>
+        field === 'channels' ? 'form.channelsError' : { issue: `form.${field}Error`, path: definitionIssuePath[field] },
+      )
+    );
+  }),
+);
+
+const pricingIssueMessage = {
+  exchangeRate: 'form.exchangeRateError',
+  roundingMinor: 'form.roundingError',
+} as const satisfies Record<PricingField, string>;
+
+/** The price list as the form holds it: the currency and the offer mode are the offered choices. */
+export const MarketPricingInputSchema = Schema.Struct({
+  currency: Schema.String,
+  exchangeRate: Schema.String,
+  offerMode: Schema.String,
+  roundingMinor: Schema.String,
+}).check(
+  Schema.makeFilter((form: Pick<MarketPricingForm, 'exchangeRate' | 'roundingMinor'>) => {
+    const issues = pricingIssues(form);
+    return issues.length === 0 || issues.map((field) => ({ issue: pricingIssueMessage[field], path: [field] }));
+  }),
+);
+
+/** The price list the form holds, as the merchandise command takes it. */
+export const MarketPricingFormSchema = Schema.Struct({
+  currency: MarketCurrencySchema,
+  exchangeRate: Schema.String,
+  offerMode: MarketOfferModeSchema,
+  roundingMinor: Schema.String,
+});
 
 /** The UTC calendar day of an instant, as the date inputs show it. */
 export const dateOf = (instant: DateTime.Utc): string => DateTime.formatIso(instant).slice(0, 10);
@@ -240,3 +304,6 @@ export const configureMarketCommand = (input: {
 });
 /** The mandatory reason of a recorded change. */
 export const reasonValid = (value: string): boolean => value.trim() !== '' && value.trim().length <= 500;
+
+/** The reason field: required, at most 500 characters. */
+export const ReasonInputSchema = Schema.String.check(Schema.makeFilter(reasonValid, { message: 'form.reasonError' }));

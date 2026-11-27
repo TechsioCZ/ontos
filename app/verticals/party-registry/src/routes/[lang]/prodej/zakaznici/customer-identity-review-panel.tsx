@@ -1,15 +1,45 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { DetailList, SidePanel } from '@app/admin-ui';
+import { DetailList, SidePanel, requiredLabelFor } from '@app/admin-ui';
+import { FormReact, FormRoot, TextField, fromPayload, useAtomSet } from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { Option } from 'effect';
+import { Effect, Option, Struct } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { derivePartyDisplayName } from '../../../../../shared/domain/identity-contracts.ts';
+import { DuplicateCaseResolutionPayloadSchema } from '../../../../../shared/domain/matching-contracts.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { useCustomerIdentityReview } from './customers-data.ts';
 
 type ReviewModel = ReturnType<typeof useCustomerIdentityReview>;
 type ReviewDetail = Extract<ReviewModel['detail'], { readonly status: 'ready' }>['value'];
 const reviewKey = 'party-registry.pages.customers.identityReview';
+
+/**
+ * The reviewer's reason for resolving a duplicate case, as the resolution Actions take it. Each resolution button
+ * sends it, so the form itself is never submitted.
+ */
+const reviewReasonForm = FormReact.make(
+  fromPayload(DuplicateCaseResolutionPayloadSchema.mapFields(Struct.pick(['reason']))),
+  {
+    fields: { reason: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** A case opens with no reason. */
+const emptyReviewReason = { reason: '' };
+
+/** The reason typed for the open case; none while no case is open. */
+export const reviewReason: Atom.Atom<string> = reviewReasonForm.values.pipe(
+  Atom.map(Option.match({ onNone: () => emptyReviewReason.reason, onSome: (values) => values.reason })),
+);
+
+/** Clears the reason typed for the open case, for the next case. */
+export const useClearReviewReason = (): (() => void) => {
+  const setValues = useAtomSet(reviewReasonForm.setValues);
+  return () => setValues(emptyReviewReason);
+};
 
 const ReviewParty = ({
   party,
@@ -77,7 +107,7 @@ const ReviewCaseDetail = ({
   readonly duplicate: ReviewDetail;
   readonly review: ReviewModel;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   return (
     <>
       <DetailList
@@ -134,15 +164,22 @@ const ReviewCaseDetail = ({
       {duplicate.parties.map((party) => (
         <ReviewParty key={party.partyRef.resourceId} party={party} review={review} />
       ))}
-      <FormInput
-        disabled={!review.canResolve}
-        id="customer-duplicate-reason"
-        label={t(`${reviewKey}.reason`)}
-        maxLength={1000}
-        onChange={(event) => review.setReason(event.target.value)}
-        required
-        value={review.reason}
-      />
+      {/* Each case starts with its own reason; a re-read of the same case keeps the one typed. */}
+      <FormRoot
+        defaultValues={emptyReviewReason}
+        form={reviewReasonForm}
+        key={duplicate.candidateCase.caseRef.resourceId}
+        translateMessage={(message) => t(message, { defaultValue: t(`${reviewKey}.validation`) })}
+      >
+        <reviewReasonForm.reason
+          disabled={!review.canResolve}
+          id="customer-duplicate-reason"
+          label={t(`${reviewKey}.reason`)}
+          maxLength={1000}
+          required
+          requiredLabel={requiredLabelFor(language)}
+        />
+      </FormRoot>
       <p className="text-fg-secondary text-sm">{t(`${reviewKey}.createWarning`)}</p>
       <div className="flex flex-wrap gap-150">
         <Button

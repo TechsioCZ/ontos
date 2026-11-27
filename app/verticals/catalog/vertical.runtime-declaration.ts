@@ -712,6 +712,10 @@ export const catalogRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
           accessDeclaration: {
             key: 'commerce.catalog.products.view',
             kind: 'read',
+            // "Produkty z ERP" lost its own navigation entry (fdd3141406): the page view now carries the access the
+            // navigation read gave, so the release that drops commerce.catalog.navigation-products.read is a governed
+            // successor (docs/architecture/AUTHORIZATION.md, "Release activation"). splitFrom carries no Role cell.
+            lineage: { splitFrom: 'commerce.catalog.navigation-products.read' },
             modes: ['run'],
             placement: { group: 'product', level: 'basic' },
             risk: 'routine',

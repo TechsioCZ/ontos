@@ -36,6 +36,7 @@ import {
   useUnsavedChangesGuard,
   whenBrowserIdle,
 } from '@app/admin-ui';
+import { useAtomValue } from '@app/core-runtime/ui/form';
 import type { BlockedNavigation, DraftSaveResult, RowIntentProps, SavableDraft, SaveState } from '@app/admin-ui';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
@@ -89,6 +90,8 @@ import {
   withWritten,
 } from './customer-detail-draft.ts';
 import type { CustomerDraft, CustomerDraftChange, CustomerDraftSource } from './customer-detail-draft.ts';
+import { customerDetailBasis } from './customer-detail-content.tsx';
+import { reviewReason, useClearReviewReason } from './customer-identity-review-panel.tsx';
 import {
   customerContactEditable,
   customerContactRows,
@@ -677,8 +680,8 @@ export const useCustomerDetail = (
     localSnapshot !== undefined && localSnapshot.source === initialSnapshot ? localSnapshot.value : initialSnapshot;
   const setSnapshot = (value: CustomerDetailSnapshot | undefined) =>
     setLocalSnapshot({ source: initialSnapshot, value });
-  const [reason, setReason] = useState('');
-  const [evidence, setEvidence] = useState('');
+  // The change basis is the detail's form, typed beside the facts.
+  const { evidence, reason } = useAtomValue(customerDetailBasis);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -837,7 +840,6 @@ export const useCustomerDetail = (
   const { confirmed } = record;
   const draft = changedCustomerFields(record.draft, confirmed);
   const { dirty } = record;
-  const value = (key: string, original = '') => record.draft.fields[key] ?? original;
   const changeDraft = (key: string, next: string) =>
     record.setDraft((current) => ({ ...current, fields: { ...current.fields, [key]: next } }));
 
@@ -934,12 +936,9 @@ export const useCustomerDetail = (
     runCommand,
     save,
     saveError,
-    setEvidence,
-    setReason,
     snapshot,
     stale,
     status,
-    value,
   };
 };
 
@@ -1168,7 +1167,9 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
   const [queue, setQueue] = useState<DuplicateRead<DuplicateCandidateListResponse>>({ status: 'idle' });
   const [detail, setDetail] = useState<DuplicateRead<CustomerDuplicateDetail>>({ status: 'idle' });
   const [selectedPartyId, setSelectedPartyId] = useState('');
-  const [reason, setReason] = useState('');
+  // The reason is the review panel's form; a case opens with none.
+  const reason = useAtomValue(reviewReason);
+  const clearReason = useClearReviewReason();
   const [notice, setNotice] = useState<{ readonly key: string; readonly success: boolean }>();
   const [busy, setBusy] = useState(false);
   const [stale, setStale] = useState(false);
@@ -1288,7 +1289,7 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
     caseSelection.current = caseRef;
     setDetail({ status: 'loading' });
     setSelectedPartyId('');
-    setReason('');
+    clearReason();
     setNotice(undefined);
     setStale(false);
     setCommitted(false);
@@ -1499,7 +1500,6 @@ export const useCustomerIdentityReview = (onResolved: () => void) => {
     reason,
     resolve,
     selectedPartyId,
-    setReason,
     setSelectedPartyId,
     stale,
     uncertain,

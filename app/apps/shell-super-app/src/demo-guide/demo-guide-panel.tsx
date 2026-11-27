@@ -1,14 +1,22 @@
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  MemberCheckboxField,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { Effect } from 'effect';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { Effect, Equal, Option, Schema } from 'effect';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 
 import {
@@ -18,21 +26,34 @@ import {
   setDemoGuideProgress,
   setDemoGuideWidth,
   summarizeGuideProgress,
-  toggleStep,
   useDemoGuideProgress,
   useDemoGuideWidth,
 } from './demo-guide-store.ts';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime } from '../runtime/browser-effect-runtime.ts';
+import { DemoGuideIdSchema } from './demo-guide-types.ts';
 
 import type { DemoGuide, DemoGuideBoundaries, DemoGuidePersona, DemoGuideStep } from './demo-guide-types.ts';
 
-const toggleGuideStep = (guideId: DemoGuide['id'], doneIds: readonly string[], stepId: string): void => {
-  browserRuntime.runFork(
-    Effect.fromResult(setDemoGuideProgress(guideId, toggleStep(doneIds, stepId))).pipe(
-      Effect.tapError(Effect.logError.bind(undefined, 'Demo progress could not be encoded')),
-    ),
-  );
-};
+const saveProgress = Effect.fn('DemoGuidePanel.saveProgress')(
+  function* saveProgress(input: { readonly doneIds: readonly string[]; readonly guideId: string }) {
+    const guideId = yield* Schema.decodeUnknownEffect(DemoGuideIdSchema)(input.guideId);
+    yield* Effect.fromResult(setDemoGuideProgress(guideId, input.doneIds));
+  },
+  Effect.tapError(Effect.logError.bind(undefined, 'Demo progress could not be encoded')),
+);
+
+/** The done steps of one guide; every tick is saved at once in this browser. */
+const progressForm = FormReact.make(
+  FormBuilder.empty.addField('doneIds', Schema.Array(Schema.String)).addField('guideId', Schema.String),
+  {
+    fields: { doneIds: MemberCheckboxField, guideId: TextField },
+    mode: { autoSubmit: true, validation: 'onChange' },
+    onSubmit: (_submit, { decoded }) => saveProgress(decoded),
+    runtime: browserAtomRuntime,
+  },
+);
+
+const shownProgress = progressForm.getFieldAtoms(progressForm.fields.doneIds).value;
 
 export const demoGuidePanelId = 'demo-guide-panel';
 const guideIcon = 'icon-[mdi--presentation-play]';
@@ -249,49 +270,57 @@ const StepCard = ({
   done,
   identityEmail,
   isNext,
-  onToggle,
   step,
 }: {
   readonly done: boolean;
   readonly identityEmail: string | undefined;
   readonly isNext: boolean;
-  readonly onToggle: () => void;
   readonly step: DemoGuideStep;
-}) => {
-  const checkboxId = `demo-guide-check-${step.id}`;
-  return (
-    <li
-      className={`grid gap-150 rounded-lg p-200 ${isNext ? 'bg-primary-light' : 'bg-surface'}`}
-      id={`demo-guide-step-${step.id}`}
-    >
-      <div className="flex items-start gap-150">
-        <Checkbox checked={done} className="mt-50 shrink-0" id={checkboxId} onChange={onToggle} />
-        <label
-          className={`min-w-0 flex-1 font-semibold text-sm ${done ? 'text-fg-secondary line-through' : 'text-fg-primary'}`}
-          htmlFor={checkboxId}
-        >
-          {step.title}
-        </label>
-        {isNext ? (
-          <Badge severity="info" size="sm">
-            Další krok
-          </Badge>
-        ) : null}
+}) => (
+  <li
+    className={`grid gap-150 rounded-lg p-200 ${isNext ? 'bg-primary-light' : 'bg-surface'}`}
+    id={`demo-guide-step-${step.id}`}
+  >
+    <div className="flex items-start gap-150">
+      <div className="min-w-0 flex-1">
+        <progressForm.doneIds
+          id={`demo-guide-check-${step.id}`}
+          label={
+            <span className={`font-semibold text-sm ${done ? 'text-fg-secondary line-through' : 'text-fg-primary'}`}>
+              {step.title}
+            </span>
+          }
+          member={step.id}
+        />
       </div>
-      <p className="rounded-md bg-surface p-150 text-fg-primary text-sm">{`„${step.say}“`}</p>
-      <PersonaLine persona={step.persona} signedIn={step.persona !== null && identityEmail === step.persona.email} />
-      {step.click === undefined ? null : (
-        <p className="flex items-start gap-100 text-fg-secondary text-xs">
-          <Icon className="shrink-0" icon="icon-[mdi--cursor-default-click-outline]" size="sm" />
-          <span>
-            <span className="font-medium text-fg-primary">Co kliknout: </span>
-            {step.click}
-          </span>
-        </p>
-      )}
-      <StepLink step={step} />
-    </li>
-  );
+      {isNext ? (
+        <Badge severity="info" size="sm">
+          Další krok
+        </Badge>
+      ) : null}
+    </div>
+    <p className="rounded-md bg-surface p-150 text-fg-primary text-sm">{`„${step.say}“`}</p>
+    <PersonaLine persona={step.persona} signedIn={step.persona !== null && identityEmail === step.persona.email} />
+    {step.click === undefined ? null : (
+      <p className="flex items-start gap-100 text-fg-secondary text-xs">
+        <Icon className="shrink-0" icon="icon-[mdi--cursor-default-click-outline]" size="sm" />
+        <span>
+          <span className="font-medium text-fg-primary">Co kliknout: </span>
+          {step.click}
+        </span>
+      </p>
+    )}
+    <StepLink step={step} />
+  </li>
+);
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier mount left, so the values are read only after `onReady`.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
 };
 
 export interface DemoGuidePanelProps {
@@ -358,12 +387,23 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   const doneIds = useDemoGuideProgress(guide.id);
   const summary = summarizeGuideProgress(guide, doneIds);
   const done = new Set(doneIds);
+  const [ready, setReady] = useState(false);
+  const shown = Option.filter(useAtomValue(shownProgress), () => ready);
+  const showProgress = useAtomSet(progressForm.setValues);
+  const saving = useAtomValue(progressForm.submit).waiting;
+  // Progress also changes outside the ticks (Začít znovu, another tab); once no tick is being saved, the form shows it.
+  useEffect(() => {
+    if (!saving && Option.isSome(shown) && !Equal.equals(shown.value, doneIds)) {
+      showProgress({ doneIds, guideId: guide.id });
+    }
+  }, [doneIds, guide.id, saving, showProgress, shown]);
+  // The steps render once the form is initialized; only then is the list as long as the offset needs.
   const listRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (listRef.current !== null) {
+    if (ready && listRef.current !== null) {
       listRef.current.scrollTop = readScroll(guide.id);
     }
-  }, [guide.id]);
+  }, [guide.id, ready]);
 
   return (
     <aside
@@ -448,37 +488,45 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
             </p>
           ) : null}
         </section>
-        {guide.chapters.map((chapter, chapterIndex) => {
-          const chapterDone = chapter.steps.filter((step) => done.has(step.id)).length;
-          const headingId = `demo-guide-chapter-${chapter.id}`;
-          return (
-            <section aria-labelledby={headingId} className="grid gap-150" key={chapter.id}>
-              <header className="grid gap-50">
-                <div className="flex items-center justify-between gap-150">
-                  <h3 className="font-semibold text-fg-primary text-sm" id={headingId}>
-                    {`${chapterIndex + 1}. ${chapter.title}`}
-                  </h3>
-                  <Badge severity={chapterDone === chapter.steps.length ? 'success' : 'neutral'} size="sm">
-                    {`${chapterDone}/${chapter.steps.length}`}
-                  </Badge>
-                </div>
-                <p className="text-fg-secondary text-xs">{chapter.summary}</p>
-              </header>
-              <ol className="grid gap-150">
-                {chapter.steps.map((step) => (
-                  <StepCard
-                    done={done.has(step.id)}
-                    identityEmail={identityEmail}
-                    isNext={step.id === summary.nextStepId}
-                    key={step.id}
-                    onToggle={toggleGuideStep.bind(undefined, guide.id, doneIds, step.id)}
-                    step={step}
-                  />
-                ))}
-              </ol>
-            </section>
-          );
-        })}
+        <FormRoot
+          className="flex flex-col gap-300"
+          defaultValues={{ doneIds, guideId: guide.id }}
+          form={progressForm}
+          key={guide.id}
+          translateMessage={(message) => t(message)}
+        >
+          <FormReady onReady={setReady} />
+          {guide.chapters.map((chapter, chapterIndex) => {
+            const chapterDone = chapter.steps.filter((step) => done.has(step.id)).length;
+            const headingId = `demo-guide-chapter-${chapter.id}`;
+            return (
+              <section aria-labelledby={headingId} className="grid gap-150" key={chapter.id}>
+                <header className="grid gap-50">
+                  <div className="flex items-center justify-between gap-150">
+                    <h3 className="font-semibold text-fg-primary text-sm" id={headingId}>
+                      {`${chapterIndex + 1}. ${chapter.title}`}
+                    </h3>
+                    <Badge severity={chapterDone === chapter.steps.length ? 'success' : 'neutral'} size="sm">
+                      {`${chapterDone}/${chapter.steps.length}`}
+                    </Badge>
+                  </div>
+                  <p className="text-fg-secondary text-xs">{chapter.summary}</p>
+                </header>
+                <ol className="grid gap-150">
+                  {chapter.steps.map((step) => (
+                    <StepCard
+                      done={done.has(step.id)}
+                      identityEmail={identityEmail}
+                      isNext={step.id === summary.nextStepId}
+                      key={step.id}
+                      step={step}
+                    />
+                  ))}
+                </ol>
+              </section>
+            );
+          })}
+        </FormRoot>
         {guide.boundaries === undefined ? null : <BoundariesSection boundaries={guide.boundaries} />}
       </div>
     </aside>

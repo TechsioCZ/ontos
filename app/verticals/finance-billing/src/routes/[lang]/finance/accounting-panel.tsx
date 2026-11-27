@@ -1,18 +1,26 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import { EmptyState, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
+import {
+  CheckboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RowCheckboxField,
+  SelectTemplateField,
+  useAtomSet,
+} from '@app/core-runtime/ui/form';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
+import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
+import { useFormDraft } from './finance-form-draft.tsx';
 import type { AccountingExport, AccountingExportFormat, Invoice } from '../../../../shared/apis/records.ts';
 import { downloadText, outcomeNotice } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
@@ -24,6 +32,44 @@ import { ExportConfirmationForm, ExportFailureForm } from './accounting-decision
 import type { SetupKey } from './accounting-setup-form.tsx';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
+
+/**
+ * What the next package takes: the file format, whether only invoices not yet handed over are listed, and the selected
+ * rows. A command, not a form: "Vytvořit balíček" builds the package from these; no record is edited.
+ */
+const exportSelectionForm = FormReact.make(
+  FormBuilder.empty
+    .addField('format', Schema.String)
+    .addField('onlyNew', Schema.Boolean)
+    .addField('selected', Schema.Array(Schema.String)),
+  {
+    fields: {
+      format: SelectTemplateField,
+      onlyNew: CheckboxField,
+      selected: RowCheckboxField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+const openedSelection = {
+  format: 'CSV',
+  onlyNew: true,
+  selected: [],
+} as const satisfies typeof exportSelectionForm.schema.Encoded;
+const selectedRows = exportSelectionForm.getFieldAtoms(exportSelectionForm.fields.selected);
+
+/** The selection's form around the package section; `ready` marks that this mount initialized it. */
+const SelectionForm = ({ children, ready }: { readonly children: ReactNode; readonly ready: ReactNode }) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot defaultValues={openedSelection} form={exportSelectionForm} translateMessage={t}>
+      {ready}
+      {children}
+    </FormRoot>
+  );
+};
 
 const FORMATS: readonly { readonly label: string; readonly value: AccountingExportFormat }[] = [
   { label: 'CSV (středník, UTF-8)', value: 'CSV' },
@@ -156,9 +202,13 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     (state?.accountingExports ?? []).flatMap((entry) => (entry.status === 'FAILED' ? [] : entry.invoiceResourceIds)),
   );
   const [failTarget, setFailTarget] = useState<AccountingExport>();
-  const [onlyNew, setOnlyNew] = useState(true);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [format, setFormat] = useState<AccountingExportFormat>('CSV');
+  const selection = useFormDraft(exportSelectionForm, openedSelection);
+  const { onlyNew } = selection.draft;
+  const selected: ReadonlySet<string> = new Set(selection.draft.selected);
+  const format: AccountingExportFormat =
+    FORMATS.find((entry) => entry.value === selection.draft.format)?.value ?? 'CSV';
+  const setSelectedRows = useAtomSet(selectedRows.setValue);
+  const setSelected = (next: ReadonlySet<string>) => setSelectedRows([...next]);
   const [editing, setEditing] = useState(false);
   const issuerName = useInvoiceIssuer();
   const [message, setMessage] = useState<PanelMessage>();
@@ -172,17 +222,6 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
   ).length;
   const nameOf = (invoice: Invoice) =>
     customerOf(vm.references.customerById, invoice)?.displayName ?? invoice.counterpartyName ?? '—';
-
-  const toggle = (id: string) =>
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
 
   const createExport = (): void => {
     void financeBrowserRuntime.runPromise(
@@ -210,18 +249,15 @@ const useAccountingPanel = (vm: FinanceViewModel) => {
     message,
     missing,
     nameOf,
-    onlyNew,
     selected,
+    selectionReady: selection.ready,
     setConfirmTarget,
     setEditing,
     setFailTarget,
-    setFormat,
     setMessage,
-    setOnlyNew,
     setSelected,
     setup,
     state,
-    toggle,
     vm,
     withoutVatBreakdown,
   };
@@ -307,160 +343,133 @@ const AccountingSelection = (model: ReturnType<typeof useAccountingPanel>) => {
     handedOver,
     message,
     nameOf,
-    onlyNew,
     selected,
-    setFormat,
-    setOnlyNew,
-    setSelected,
+    selectionReady,
     setup,
-    toggle,
     vm,
     withoutVatBreakdown,
   } = model;
   return (
-    <SectionCard
-      actions={
-        vm.canWrite ? (
-          <>
-            <div className="w-64">
-              <SelectTemplate
-                aria-label={t('finance-billing.financeUi.accounting.format')}
-                items={FORMATS.map((entry) => ({
-                  displayValue: entry.label,
-                  label: entry.label,
-                  value: entry.value,
-                }))}
-                onValueChange={({ value }) => {
-                  const next = FORMATS.find((entry) => entry.value === value[0]);
-                  if (next !== undefined) {
-                    setFormat(next.value);
-                  }
+    <SelectionForm ready={selectionReady}>
+      <SectionCard
+        actions={
+          vm.canWrite ? (
+            <>
+              <div className="w-64">
+                <exportSelectionForm.format
+                  aria-label={t('finance-billing.financeUi.accounting.format')}
+                  items={FORMATS.map((entry) => ({ label: entry.label, value: entry.value }))}
+                  size="sm"
+                />
+              </div>
+              {/* A command, not a form: the export builds a package from the selected rows; no record is edited. */}
+              <Button
+                disabled={selected.size === 0 || vm.busy}
+                icon="icon-[mdi--package-variant-closed]"
+                onClick={() => {
+                  createExport();
                 }}
+                severity="primary"
                 size="sm"
-                value={[format]}
-              />
-            </div>
-            {/* A command, not a form: the export builds a package from the selected rows; no record is edited. */}
-            <Button
-              disabled={selected.size === 0 || vm.busy}
-              icon="icon-[mdi--package-variant-closed]"
-              onClick={() => {
-                createExport();
-              }}
-              severity="primary"
-              size="sm"
-            >
-              Vytvořit balíček ({selected.size})
-            </Button>
-          </>
-        ) : undefined
-      }
-      title={t('finance-billing.financeUi.accounting.newPackage')}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-150">
-        <p className="text-fg-secondary text-sm">
-          Vyberte potvrzené doklady. Balíček nese verzi schématu, identifikátory, protistranu, data, měnu, částky,
-          objekt a odkaz na doklad.
-        </p>
-        <FormCheckbox
-          checked={onlyNew}
-          id="export-only-new"
-          label={t('finance-billing.financeUi.accounting.onlyNew')}
-          onCheckedChange={setOnlyNew}
-          size="sm"
-        />
-      </div>
-      {format === 'POHODA_XML' && (
-        <div className="flex flex-col gap-100">
-          <StatusText showIcon size="sm" status="default">
-            Soubor odpovídá oficiálnímu schématu STORMWARE POHODA XML (dataPack 2.0, vydané i přijaté faktury). Import
-            do POHODA a zaúčtování provádí účetní.
-          </StatusText>
-          <StatusText showIcon size="sm" status="default">
-            DUZP se vyplní datem vystavení a forma úhrady „příkazem“ – OntOS je u dokladu samostatně neeviduje.
-          </StatusText>
-          {setup.issuerIco === undefined && (
-            <StatusText showIcon size="sm" status="warning">
-              IČO účetní jednotky není vyplněné – soubor ho neponese a POHODA ho naimportuje do právě otevřené účetní
-              jednotky. Doplňte IČO v sekci Účetní jednotka výše.
-            </StatusText>
-          )}
-          {withoutVatBreakdown > 0 && (
-            <StatusText showIcon size="sm" status="warning">
-              Vybrané doklady bez rozpisu DPH: {withoutVatBreakdown}. V POHODA budou označené „Nezahrnovat do DPH“ s
-              poznámkou, aby účetní doplnila členění podle originálu dokladu.
-            </StatusText>
-          )}
+              >
+                Vytvořit balíček ({selected.size})
+              </Button>
+            </>
+          ) : undefined
+        }
+        title={t('finance-billing.financeUi.accounting.newPackage')}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-150">
+          <p className="text-fg-secondary text-sm">
+            Vyberte potvrzené doklady. Balíček nese verzi schématu, identifikátory, protistranu, data, měnu, částky,
+            objekt a odkaz na doklad.
+          </p>
+          <exportSelectionForm.onlyNew id="export-only-new" label={t('finance-billing.financeUi.accounting.onlyNew')} />
         </div>
-      )}
-      {message !== undefined && (
-        <StatusText showIcon size="sm" status={message.kind}>
-          {message.text}
-        </StatusText>
-      )}
-      {candidates.length === 0 ? (
-        <p className="text-fg-secondary text-sm">Žádné potvrzené doklady k předání.</p>
-      ) : (
-        <div className="max-h-[22rem] overflow-auto">
-          <Table appearance="line" size="sm">
-            <Table.Header>
-              <Table.Row>
-                <Table.ColumnHeader>
-                  <Checkbox
-                    aria-label={t('finance-billing.financeUi.common.selectAll')}
-                    checked={
-                      candidates.length > 0 && candidates.every((invoice) => selected.has(invoice.ref.resourceId))
-                    }
-                    onChange={(event) =>
-                      setSelected(
-                        event.target.checked ? new Set(candidates.map((invoice) => invoice.ref.resourceId)) : new Set(),
-                      )
-                    }
-                  />
-                </Table.ColumnHeader>
-                <Table.ColumnHeader>Doklad</Table.ColumnHeader>
-                <Table.ColumnHeader>Typ</Table.ColumnHeader>
-                <Table.ColumnHeader>Protistrana</Table.ColumnHeader>
-                <Table.ColumnHeader>Vystaveno</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Celkem</Table.ColumnHeader>
-                <Table.ColumnHeader>Předání</Table.ColumnHeader>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {candidates.map((invoice) => (
-                <Table.Row key={invoice.ref.resourceId}>
-                  <Table.Cell>
-                    <Checkbox
-                      aria-label={`Vybrat ${invoice.number ?? invoice.documentNumber}`}
-                      checked={selected.has(invoice.ref.resourceId)}
-                      onChange={() => toggle(invoice.ref.resourceId)}
+        {format === 'POHODA_XML' && (
+          <div className="flex flex-col gap-100">
+            <StatusText showIcon size="sm" status="default">
+              Soubor odpovídá oficiálnímu schématu STORMWARE POHODA XML (dataPack 2.0, vydané i přijaté faktury). Import
+              do POHODA a zaúčtování provádí účetní.
+            </StatusText>
+            <StatusText showIcon size="sm" status="default">
+              DUZP se vyplní datem vystavení a forma úhrady „příkazem“ – OntOS je u dokladu samostatně neeviduje.
+            </StatusText>
+            {setup.issuerIco === undefined && (
+              <StatusText showIcon size="sm" status="warning">
+                IČO účetní jednotky není vyplněné – soubor ho neponese a POHODA ho naimportuje do právě otevřené účetní
+                jednotky. Doplňte IČO v sekci Účetní jednotka výše.
+              </StatusText>
+            )}
+            {withoutVatBreakdown > 0 && (
+              <StatusText showIcon size="sm" status="warning">
+                Vybrané doklady bez rozpisu DPH: {withoutVatBreakdown}. V POHODA budou označené „Nezahrnovat do DPH“ s
+                poznámkou, aby účetní doplnila členění podle originálu dokladu.
+              </StatusText>
+            )}
+          </div>
+        )}
+        {message !== undefined && (
+          <StatusText showIcon size="sm" status={message.kind}>
+            {message.text}
+          </StatusText>
+        )}
+        {candidates.length === 0 ? (
+          <p className="text-fg-secondary text-sm">Žádné potvrzené doklady k předání.</p>
+        ) : (
+          <div className="max-h-[22rem] overflow-auto">
+            <Table appearance="line" size="sm">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>
+                    <exportSelectionForm.selected
+                      aria-label={t('finance-billing.financeUi.common.selectAll')}
+                      members={candidates.map((invoice) => invoice.ref.resourceId)}
                     />
-                  </Table.Cell>
-                  <Table.Cell className="whitespace-nowrap font-medium">
-                    {invoice.number ?? invoice.documentNumber}
-                  </Table.Cell>
-                  <Table.Cell>{invoice.direction === 'OUTGOING' ? 'Vydaná' : 'Přijatá'}</Table.Cell>
-                  <Table.Cell>{nameOf(invoice)}</Table.Cell>
-                  <Table.Cell>{formatDate(invoice.issueDate)}</Table.Cell>
-                  <Table.Cell align="end" className="tabular-nums">
-                    {formatMoney(invoice.totalMinor)}
-                  </Table.Cell>
-                  <Table.Cell>
-                    {handedOver.has(invoice.ref.resourceId) ? (
-                      <Badge severity="info" size="sm">
-                        Už předáno
-                      </Badge>
-                    ) : (
-                      <span className="text-fg-secondary text-xs">Nepředáno</span>
-                    )}
-                  </Table.Cell>
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader>Doklad</Table.ColumnHeader>
+                  <Table.ColumnHeader>Typ</Table.ColumnHeader>
+                  <Table.ColumnHeader>Protistrana</Table.ColumnHeader>
+                  <Table.ColumnHeader>Vystaveno</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Celkem</Table.ColumnHeader>
+                  <Table.ColumnHeader>Předání</Table.ColumnHeader>
                 </Table.Row>
-              ))}
-            </Table.Body>
-          </Table>
-        </div>
-      )}
-    </SectionCard>
+              </Table.Header>
+              <Table.Body>
+                {candidates.map((invoice) => (
+                  <Table.Row key={invoice.ref.resourceId}>
+                    <Table.Cell>
+                      <exportSelectionForm.selected
+                        aria-label={`Vybrat ${invoice.number ?? invoice.documentNumber}`}
+                        member={invoice.ref.resourceId}
+                      />
+                    </Table.Cell>
+                    <Table.Cell className="whitespace-nowrap font-medium">
+                      {invoice.number ?? invoice.documentNumber}
+                    </Table.Cell>
+                    <Table.Cell>{invoice.direction === 'OUTGOING' ? 'Vydaná' : 'Přijatá'}</Table.Cell>
+                    <Table.Cell>{nameOf(invoice)}</Table.Cell>
+                    <Table.Cell>{formatDate(invoice.issueDate)}</Table.Cell>
+                    <Table.Cell align="end" className="tabular-nums">
+                      {formatMoney(invoice.totalMinor)}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {handedOver.has(invoice.ref.resourceId) ? (
+                        <Badge severity="info" size="sm">
+                          Už předáno
+                        </Badge>
+                      ) : (
+                        <span className="text-fg-secondary text-xs">Nepředáno</span>
+                      )}
+                    </Table.Cell>
+                  </Table.Row>
+                ))}
+              </Table.Body>
+            </Table>
+          </div>
+        )}
+      </SectionCard>
+    </SelectionForm>
   );
 };
 

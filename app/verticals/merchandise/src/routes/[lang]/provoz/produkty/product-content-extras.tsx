@@ -1,8 +1,7 @@
 // Sections of the "Obsah e-shopu" tab for additional categories, homepage order, brand, SEO, documents and related
-// products. They edit the tab's draft; its one Uložit sends them with the rest of the content.
+// products. They edit the tab's form; its one Uložit sends them with the rest of the content.
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
 import { SectionCard } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
@@ -10,19 +9,25 @@ import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/re
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
+import {
+  contentFields,
+  useUpdateAdditionalCategories,
+  useUpdateContentDocuments,
+  useSetRelatedProducts,
+} from './product-catalog-content-form.ts';
 import { documentUrlInvalid, featuredInvalid } from './product-content-extras-draft.ts';
 import type { ContentExtras } from './product-content-extras-draft.ts';
-import { fieldError } from './product-form-validation.ts';
+import { fieldVerdict } from './product-form-validation.ts';
 import { readProductLabels } from './product-reads.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
 
 export interface ContentExtrasSectionsProps {
   readonly canWrite: boolean;
+  /** The extra content as the tab's form has it. */
   readonly extras: ContentExtras;
   readonly hasCategoryTree: boolean;
   /** The primary category the draft has; additional ones need it. */
   readonly hasPrimaryCategory: boolean;
-  readonly onChange: (update: (current: ContentExtras) => ContentExtras) => void;
   readonly product: ProductRecord;
 }
 
@@ -39,17 +44,14 @@ const moved = <T,>(items: readonly T[], index: number, offset: number): readonly
   return next;
 };
 
-const AdditionalCategories = ({ canWrite, extras, hasPrimaryCategory, onChange }: ContentExtrasSectionsProps) => {
+const AdditionalCategories = ({ canWrite, extras, hasPrimaryCategory }: ContentExtrasSectionsProps) => {
+  const setCategories = useUpdateAdditionalCategories();
   const add = (category: CategoryTrail | null) => {
     if (category !== null && !extras.additionalCategories.some((entry) => entry.id === category.id)) {
-      onChange((current) => ({ ...current, additionalCategories: [...current.additionalCategories, category] }));
+      setCategories((current) => [...current, category]);
     }
   };
-  const remove = (id: string) =>
-    onChange((current) => ({
-      ...current,
-      additionalCategories: current.additionalCategories.filter((entry) => entry.id !== id),
-    }));
+  const remove = (id: string) => setCategories((current) => current.filter((entry) => entry.id !== id));
   return (
     <SectionCard title={`Další kategorie (${extras.additionalCategories.length})`}>
       {hasPrimaryCategory ? null : (
@@ -105,7 +107,7 @@ const relatedLabelOf = (labels: readonly RelatedLabel[], id: string) => {
   return label === undefined ? id : `${label.name} (${label.sku})`;
 };
 
-const RelatedProducts = ({ canWrite, extras, onChange, product }: ContentExtrasSectionsProps) => {
+const RelatedProducts = ({ canWrite, extras, product }: ContentExtrasSectionsProps) => {
   const [answer, setAnswer] = useState<LabelsAnswer | null>(null);
   const stored = answer?.status === 'ready' ? answer.rows : NO_LABELS;
   const [picked, setPicked] = useState<readonly RelatedLabel[]>(NO_LABELS);
@@ -129,7 +131,7 @@ const RelatedProducts = ({ canWrite, extras, onChange, product }: ContentExtrasS
       fiber?.interruptUnsafe();
     };
   }, [storedKey]);
-  const update = (related: readonly string[]) => onChange((current) => ({ ...current, related }));
+  const update = useSetRelatedProducts();
   return (
     <SectionCard title={`Související produkty (${extras.related.length} / 12)`}>
       <ul className="flex flex-col gap-50 text-sm">
@@ -194,57 +196,47 @@ const RelatedProducts = ({ canWrite, extras, onChange, product }: ContentExtrasS
   );
 };
 
-const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) => {
+const Documents = ({ canWrite, extras }: ContentExtrasSectionsProps) => {
+  const setDocuments = useUpdateContentDocuments();
   let nextKey = 0;
   for (const document of extras.documents) {
     nextKey = Math.max(nextKey, document.key + 1);
   }
-  const patch = (key: number, next: { readonly label?: string; readonly url?: string }) =>
-    onChange((current) => ({
-      ...current,
-      documents: current.documents.map((document) => (document.key === key ? { ...document, ...next } : document)),
-    }));
-  const remove = (key: number) =>
-    onChange((current) => ({ ...current, documents: current.documents.filter((entry) => entry.key !== key) }));
+  const remove = (key: number) => setDocuments((current) => current.filter((entry) => entry.key !== key));
   return (
     <SectionCard title={`Dokumenty (${extras.documents.length})`}>
       <div className="flex flex-col gap-100">
         {extras.documents.map((document, index) => (
-          <div
-            className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
-            key={document.key}
-          >
-            <FormInput
-              disabled={!canWrite}
-              id={`content-document-label-${document.key}`}
-              label="Název dokumentu"
-              name={`content-document-label-${document.key}`}
-              onChange={(event) => patch(document.key, { label: event.target.value })}
-              size="sm"
-              value={document.label}
-            />
-            <FormInput
-              disabled={!canWrite}
-              id={`content-document-url-${document.key}`}
-              label="Adresa (https:// nebo /…)"
-              name={`content-document-url-${document.key}`}
-              onChange={(event) => patch(document.key, { url: event.target.value })}
-              size="sm"
-              value={document.url}
-              {...fieldError(documentUrlInvalid(document.url), 'Adresa musí začínat https:// nebo /')}
-            />
-            {canWrite ? (
-              <Button
-                appearance="ghost"
-                aria-label={`Odebrat dokument ${index + 1}`}
-                icon="icon-[mdi--delete-outline]"
-                onClick={() => remove(document.key)}
-                severity="secondary"
+          <contentFields.documents.Item index={index} key={document.key}>
+            <div className="grid grid-cols-1 items-end gap-100 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+              <contentFields.documents.label
+                disabled={!canWrite}
+                id={`content-document-label-${document.key}`}
+                label="Název dokumentu"
+                name={`content-document-label-${document.key}`}
                 size="sm"
-                type="button"
               />
-            ) : null}
-          </div>
+              <contentFields.documents.url
+                disabled={!canWrite}
+                id={`content-document-url-${document.key}`}
+                label="Adresa (https:// nebo /…)"
+                name={`content-document-url-${document.key}`}
+                size="sm"
+                {...fieldVerdict(documentUrlInvalid(document.url), 'Adresa musí začínat https:// nebo /')}
+              />
+              {canWrite ? (
+                <Button
+                  appearance="ghost"
+                  aria-label={`Odebrat dokument ${index + 1}`}
+                  icon="icon-[mdi--delete-outline]"
+                  onClick={() => remove(document.key)}
+                  severity="secondary"
+                  size="sm"
+                  type="button"
+                />
+              ) : null}
+            </div>
+          </contentFields.documents.Item>
         ))}
       </div>
       {canWrite && extras.documents.length < 20 ? (
@@ -252,12 +244,7 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
           <Button
             appearance="outline"
             icon="icon-[mdi--plus]"
-            onClick={() =>
-              onChange((current) => ({
-                ...current,
-                documents: [...current.documents, { key: nextKey, label: '', url: '' }],
-              }))
-            }
+            onClick={() => setDocuments((current) => [...current, { key: nextKey, label: '', url: '' }])}
             severity="secondary"
             size="sm"
             type="button"
@@ -272,58 +259,49 @@ const Documents = ({ canWrite, extras, onChange }: ContentExtrasSectionsProps) =
 
 /** Additional categories, homepage order, brand, SEO, documents and related products. */
 export const ContentExtrasSections = (props: ContentExtrasSectionsProps) => {
-  const { canWrite, extras, hasCategoryTree, onChange, product } = props;
-  const set = (next: Partial<ContentExtras>) => onChange((current) => ({ ...current, ...next }));
+  const { canWrite, extras, hasCategoryTree, product } = props;
   return (
     <>
       {hasCategoryTree ? <AdditionalCategories {...props} /> : null}
       <SectionCard title="Úvodní stránka a značka">
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-          <FormInput
+          <contentFields.featuredText
             disabled={!canWrite}
             helpText="Prázdné = produkt není na úvodní stránce. Menší číslo je dřív."
             id="content-featured-position"
             inputMode="decimal"
             label="Pořadí na úvodní stránce"
             name="featuredPosition"
-            onChange={(event) => set({ featuredText: event.target.value })}
-            value={extras.featuredText}
-            {...fieldError(featuredInvalid(extras.featuredText), 'Zadejte číslo')}
+            {...fieldVerdict(featuredInvalid(extras.featuredText), 'Zadejte číslo')}
           />
-          <FormInput
+          <contentFields.brand
             disabled={!canWrite}
             id="content-brand"
             label="Značka (výrobce)"
             maxLength={120}
             name="brand"
-            onChange={(event) => set({ brand: event.target.value })}
-            value={extras.brand}
           />
         </div>
       </SectionCard>
       <SectionCard title="SEO">
         <div className="flex flex-col gap-200">
-          <FormInput
+          <contentFields.seoTitle
             disabled={!canWrite}
             helpText={`${extras.seoTitle.trim().length} / 200 znaků. Prázdné = název produktu.`}
             id="content-seo-title"
             label="SEO titulek"
             maxLength={200}
             name="seoTitle"
-            onChange={(event) => set({ seoTitle: event.target.value })}
             placeholder={product.name}
-            value={extras.seoTitle}
           />
-          <FormTextarea
+          <contentFields.seoDescription
             disabled={!canWrite}
             helpText={`${extras.seoDescription.trim().length} / 500 znaků. Prázdné = krátký popis.`}
             id="content-seo-description"
             label="SEO popis"
             maxLength={500}
             name="seoDescription"
-            onChange={(event) => set({ seoDescription: event.target.value })}
             placeholder={product.shortDescription ?? ''}
-            value={extras.seoDescription}
           />
         </div>
       </SectionCard>

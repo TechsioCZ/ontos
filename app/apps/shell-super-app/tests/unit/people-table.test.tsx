@@ -6,7 +6,6 @@ import userEvent from '@testing-library/user-event';
 import { Effect, Schema } from 'effect';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, rstest } from 'effect-rstest';
 import type { PropsWithChildren, ReactElement } from 'react';
-import { useState } from 'react';
 
 import csResource from '../../locales/cs/shell.json';
 import enResource from '../../locales/en/shell.json';
@@ -162,32 +161,25 @@ const names = (filters: Partial<PeopleFilters>) =>
     ({ displayName }) => displayName,
   );
 
-const Harness = () => {
-  const [filters, setFilters] = useState(defaultPeopleFilters);
-  return (
-    <>
-      <PeopleToolbar
-        access={accessViewFor(people)}
-        actions={null}
-        companyAvailable
-        filters={filters}
-        onFiltersChange={setFilters}
-        onScopeChange={() => {}}
-        scope="company"
-      />
-      <PeopleTable
-        access={accessViewFor(people)}
-        filters={filters}
-        loading={false}
-        onEdit={() => {}}
-        onFiltersChange={setFilters}
-        onOpen={() => {}}
-        people={people}
-        scope="company"
-      />
-    </>
-  );
-};
+const Harness = () => (
+  <>
+    <PeopleToolbar
+      access={accessViewFor(people)}
+      actions={null}
+      companyAvailable
+      onScopeChange={() => {}}
+      scope="company"
+    />
+    <PeopleTable
+      access={accessViewFor(people)}
+      loading={false}
+      onEdit={() => {}}
+      onOpen={() => {}}
+      people={people}
+      scope="company"
+    />
+  </>
+);
 
 afterEach(() => {
   cleanup();
@@ -278,10 +270,8 @@ describe('translations', () => {
       const table = render(
         <PeopleTable
           access={accessViewFor(people)}
-          filters={defaultPeopleFilters}
           loading
           onEdit={() => {}}
-          onFiltersChange={() => {}}
           onOpen={() => {}}
           people={[]}
           scope="company"
@@ -291,10 +281,8 @@ describe('translations', () => {
       table.rerender(
         <PeopleTable
           access={accessViewFor(people)}
-          filters={defaultPeopleFilters}
           loading={false}
           onEdit={() => {}}
-          onFiltersChange={() => {}}
           onOpen={() => {}}
           people={[]}
           scope="company"
@@ -304,10 +292,8 @@ describe('translations', () => {
       table.rerender(
         <PeopleTable
           access={accessViewFor(people)}
-          filters={defaultPeopleFilters}
           loading={false}
           onEdit={() => {}}
-          onFiltersChange={() => {}}
           onOpen={() => {}}
           people={[jana]}
           scope="company"
@@ -330,12 +316,10 @@ describe('translations', () => {
           <RoleChips names={['Obchodník', 'Správce firmy', 'Účetní', 'Vedení']} />
           <PeopleTable
             access={accessViewFor(people)}
-            filters={defaultPeopleFilters}
             loading={false}
             onEdit={(kind, edited) => {
               onEdit(kind, edited);
             }}
-            onFiltersChange={() => {}}
             onOpen={() => {}}
             people={[invited]}
             scope="company"
@@ -361,12 +345,10 @@ describe('row action menu', () => {
       render(
         <PeopleTable
           access={accessViewFor(people)}
-          filters={defaultPeopleFilters}
           loading={false}
           onEdit={(kind, edited) => {
             onEdit(kind, edited);
           }}
-          onFiltersChange={() => {}}
           onOpen={(opened) => {
             onOpen(opened);
           }}

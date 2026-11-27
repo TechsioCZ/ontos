@@ -6,12 +6,14 @@ import { crownsInput } from './lease-story.tsx';
 
 type OccupancyWire = Schema.Codec.Encoded<typeof OccupancySchema>;
 
-interface EditorInputs {
+/**
+ * What the Save button of the lease or stay form sends from: every typed field of the form. The form holds it; the
+ * page only says what it opens with. The guest search box is not part of it; it only looks parties up.
+ */
+export interface OccupancyDraft {
   readonly customerId: string;
-  readonly editingId: string;
   readonly endDate: NonNullable<OccupancyWire['endDate']>;
   readonly guestId: string;
-  readonly guestQuery: string;
   readonly peopleCount: string;
   readonly rentMonthly: string;
   readonly rentPaymentDay: string;
@@ -20,89 +22,76 @@ interface EditorInputs {
   readonly stayNote: string;
   readonly unitId: string;
 }
-/**
- * What the Save button of the lease or stay form sends from: every typed field of the form. The guest search box is
- * not part of it; it only looks parties up.
- */
-export type OccupancyDraft = Omit<EditorInputs, 'editingId' | 'guestQuery'>;
-
-/** The draft of an editor state. */
-export const occupancyDraftOf = (state: EditorInputs): OccupancyDraft => ({
-  customerId: state.customerId,
-  endDate: state.endDate,
-  guestId: state.guestId,
-  peopleCount: state.peopleCount,
-  rentMonthly: state.rentMonthly,
-  rentPaymentDay: state.rentPaymentDay,
-  rentService: state.rentService,
-  startDate: state.startDate,
-  stayNote: state.stayNote,
-  unitId: state.unitId,
-});
 
 type Guest = Effect.Success<ReturnType<typeof findCustomers>>[number];
 
-export interface OccupancyEditorState extends EditorInputs {
+export interface OccupancyEditorState {
   readonly customerOpen: boolean;
   readonly customers: Effect.Success<ReturnType<typeof listCustomers>>;
   readonly customersLoading: boolean;
+  /** The lease draft the form edits; empty for a new lease or stay. */
+  readonly editingId: string;
   readonly editor: Option.Option<'lease' | 'stay'>;
   /**
-   * The guest the person chose. The form owns it: a later guest search only offers others, so the guest stays chosen
-   * until the person picks another one or clears it, or a refused read clears the whole form.
+   * The guest the person chose. The page keeps who it is: a later guest search only offers others, so the guest stays
+   * chosen until the person picks another one or clears it, or a refused read clears the whole form.
    */
   readonly guest: Option.Option<Guest>;
   /** What the latest guest search found. */
   readonly guests: readonly Guest[];
   /** The latest guest search failed for now; the stay form says so next to the guest picker. */
   readonly guestSearchFailed: boolean;
+  /** The values the lease or stay form opens with. */
+  readonly opened: OccupancyDraft;
   readonly rentEditorOpen: boolean;
 }
 export type OccupancyEditorMode = Option.Option.Value<OccupancyEditorState['editor']>;
 export type OccupancyEditorAction = Data.TaggedEnum<{
-  CLEAR: { readonly startDate: EditorInputs['startDate'] };
+  CLEAR: { readonly startDate: OccupancyDraft['startDate'] };
   CUSTOMERS_LOADED: { readonly customers: OccupancyEditorState['customers'] };
   CUSTOMERS_LOADING: { readonly loading: boolean };
   EDIT_DRAFT: { readonly record: Occupancy };
+  /** The person chose the guest `guestId` in the stay form, or cleared the choice (`""`). */
+  GUEST_CHOSEN: { readonly guestId: string };
   /** The guest search failed for now: no earlier hit stays on offer, the chosen guest stays. */
   GUEST_SEARCH_FAILED: Readonly<Record<never, never>>;
   GUESTS_LOADED: { readonly guests: OccupancyEditorState['guests'] };
   OPEN_DRAFT: {
     readonly initialUnitId: string;
     readonly mode: OccupancyEditorMode;
-    readonly startDate: EditorInputs['startDate'];
+    readonly startDate: OccupancyDraft['startDate'];
   };
-  OPEN_RENT: { readonly terms: Option.Option<RentTerms> };
-  /** "Zahodit změny" or "Načíst aktuální verzi": the form shows `draft` again. */
-  RESTORE_DRAFT: { readonly draft: OccupancyDraft };
   SET_CUSTOMER_OPEN: { readonly open: boolean };
   SET_EDITOR: { readonly mode: OccupancyEditorState['editor'] };
-  SET_INPUT: { readonly field: keyof EditorInputs; readonly value: string };
   SET_RENT_EDITOR_OPEN: { readonly open: boolean };
 }>;
 export const occupancyEditorActions = Data.taggedEnum<OccupancyEditorAction>();
 
-export const initialEditorState = (startDate: EditorInputs['startDate']): OccupancyEditorState => ({
+/** The values a new lease or stay opens with. */
+const newDraft = (startDate: OccupancyDraft['startDate'], unitId: string): OccupancyDraft => ({
   customerId: '',
-  customerOpen: false,
-  customers: [],
-  customersLoading: false,
-  editingId: '',
-  editor: Option.none(),
   endDate: '',
-  guest: Option.none(),
   guestId: '',
-  guestQuery: '',
-  guests: [],
-  guestSearchFailed: false,
   peopleCount: '2',
-  rentEditorOpen: false,
   rentMonthly: '',
   rentPaymentDay: '15',
   rentService: '',
   startDate,
   stayNote: '',
-  unitId: '',
+  unitId,
+});
+
+export const initialEditorState = (startDate: OccupancyDraft['startDate']): OccupancyEditorState => ({
+  customerOpen: false,
+  customers: [],
+  customersLoading: false,
+  editingId: '',
+  editor: Option.none(),
+  guest: Option.none(),
+  guests: [],
+  guestSearchFailed: false,
+  opened: newDraft(startDate, ''),
+  rentEditorOpen: false,
 });
 const rentInputs = (terms: Option.Option<RentTerms>) =>
   Option.match(terms, {
@@ -128,11 +117,7 @@ export const withRecordInputs = (draft: OccupancyDraft, record: Occupancy): Occu
  */
 export const guestChoicesOf = (state: OccupancyEditorState): readonly Guest[] =>
   state.guest.pipe(
-    Option.filter(
-      (chosen) =>
-        chosen.partyRef.resourceId === state.guestId &&
-        !state.guests.some((item) => item.partyRef.resourceId === chosen.partyRef.resourceId),
-    ),
+    Option.filter((chosen) => !state.guests.some((item) => item.partyRef.resourceId === chosen.partyRef.resourceId)),
     Option.match({ onNone: () => state.guests, onSome: (chosen) => [chosen, ...state.guests] }),
   );
 
@@ -145,32 +130,33 @@ export const occupancyEditorReducer = (
     Match.tagsExhaustive({
       CLEAR: ({ startDate }) => ({
         ...state,
-        customerId: '',
         customerOpen: false,
         customers: [],
         customersLoading: false,
         editingId: '',
         editor: Option.none(),
-        endDate: '',
         guest: Option.none(),
-        guestId: '',
-        guestQuery: '',
         guests: [],
         guestSearchFailed: false,
+        opened: { ...state.opened, customerId: '', endDate: '', guestId: '', startDate, unitId: '' },
         rentEditorOpen: false,
-        startDate,
-        unitId: '',
       }),
       CUSTOMERS_LOADED: ({ customers }) => ({ ...state, customers }),
       CUSTOMERS_LOADING: ({ loading }) => ({ ...state, customersLoading: loading }),
       EDIT_DRAFT: ({ record }) => ({
         ...state,
-        ...rentInputs(Option.fromUndefinedOr(record.rentTerms)),
         editingId: record.occupancyRef.resourceId,
         editor: Option.some<OccupancyEditorMode>('lease'),
-        endDate: record.endDate ?? '',
-        startDate: record.startDate,
+        opened: withRecordInputs(state.opened, record),
       }),
+      // Choosing a guest keeps who it is, so a later search that omits the guest does not lose the choice.
+      GUEST_CHOSEN: ({ guestId }) => {
+        const guest = Option.fromUndefinedOr(
+          guestChoicesOf(state).find((item) => item.partyRef.resourceId === guestId),
+        );
+        const same = Option.getOrUndefined(guest) === Option.getOrUndefined(state.guest);
+        return same ? state : { ...state, guest };
+      },
       GUEST_SEARCH_FAILED: () => ({ ...state, guests: [], guestSearchFailed: true }),
       // A newer answer about the chosen guest replaces the kept one, so a later search that omits the guest still
       // shows the current name.
@@ -186,38 +172,17 @@ export const occupancyEditorReducer = (
       }),
       OPEN_DRAFT: ({ initialUnitId, mode, startDate }) => ({
         ...state,
-        customerId: '',
         customers: [],
         customersLoading: mode === 'lease' || state.customersLoading,
         editingId: '',
         editor: Option.some(mode),
-        endDate: '',
         guest: Option.none(),
-        guestId: '',
-        guestQuery: '',
         guests: [],
         guestSearchFailed: false,
-        peopleCount: '2',
-        rentMonthly: '',
-        rentPaymentDay: '15',
-        rentService: '',
-        startDate,
-        stayNote: '',
-        unitId: initialUnitId,
+        opened: newDraft(startDate, initialUnitId),
       }),
-      OPEN_RENT: ({ terms }) => ({ ...state, ...rentInputs(terms), rentEditorOpen: true }),
-      RESTORE_DRAFT: ({ draft }) => ({ ...state, ...draft }),
       SET_CUSTOMER_OPEN: ({ open }) => ({ ...state, customerOpen: open }),
       SET_EDITOR: ({ mode }) => ({ ...state, editor: mode }),
-      // Choosing a guest keeps who it is, so a later search that omits the guest does not lose the choice.
-      SET_INPUT: ({ field, value }) =>
-        field === 'guestId'
-          ? {
-              ...state,
-              guest: Option.fromUndefinedOr(guestChoicesOf(state).find((item) => item.partyRef.resourceId === value)),
-              guestId: value,
-            }
-          : { ...state, [field]: value },
       SET_RENT_EDITOR_OPEN: ({ open }) => ({ ...state, rentEditorOpen: open }),
     }),
   );

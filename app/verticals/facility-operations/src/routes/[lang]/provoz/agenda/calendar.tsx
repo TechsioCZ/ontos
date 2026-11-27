@@ -1,17 +1,18 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // S13 shared calendar: month / week / list over deadlines READ from their sources. Owned by the ops-agenda lane.
 import { EmptyState, foldSearchText } from '@app/admin-ui';
+import { BareTextField, FormBuilder, FormReact, FormRoot } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { useState, useSyncExternalStore } from 'react';
-import { DateTime, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import type { Tone } from '../../../../ui/ops-agenda/model.ts';
 import { addDays, daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline, SourceId } from '../../../../../shared/domain/ops-overview.ts';
 import { sourceKeys } from '../../../../ui/ops-agenda/sources.ts';
 import type { RentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import {
   Dot,
   Icon,
@@ -28,6 +29,14 @@ const k = 'facility-operations.agenda';
 
 export const CalendarModeSchema = Schema.Literals(['mesic', 'tyden', 'seznam']);
 export type CalendarMode = typeof CalendarModeSchema.Type;
+
+/** The text filter over the calendar's entries: it narrows what the calendar shows and is never submitted. */
+const calendarSearchForm = FormReact.make(FormBuilder.empty.addField('query', Schema.String), {
+  fields: { query: BareTextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noSearch = { query: '' };
 
 const calendarSources: readonly SourceId[] = ['agreements', 'occupancy', 'work', 'finance', 'property', 'ops'];
 
@@ -422,7 +431,8 @@ export const CalendarView = ({
   const [mineOnly, setMineOnly] = useState(false);
   const [overdueOnly, setOverdueOnly] = useState(initialOverdue);
   const [showDone, setShowDone] = useState(false);
-  const [query, setQuery] = useState('');
+  const search = useFormValues(calendarSearchForm, noSearch);
+  const { query } = search.values;
 
   const range = calendarRange(mode, cursor);
 
@@ -610,15 +620,21 @@ export const CalendarView = ({
           onToggle={() => setOverdueOnly((value) => !value)}
         />
         <Toggle active={showDone} label={t(`${k}.calendar.showDone`)} onToggle={() => setShowDone((value) => !value)} />
-        <Input
-          aria-label={t(`${k}.calendar.filter`)}
-          className="ml-auto h-auto w-auto min-w-[200px] rounded-lg px-3 py-1.5 text-sm"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t(`${k}.calendar.filter`)}
-          size="sm"
-          type="search"
-          value={query}
-        />
+        <FormRoot
+          className="ml-auto"
+          defaultValues={noSearch}
+          form={calendarSearchForm}
+          translateMessage={(message) => t(message)}
+        >
+          {search.ready}
+          <calendarSearchForm.query
+            aria-label={t(`${k}.calendar.filter`)}
+            className="h-auto w-auto min-w-[200px] rounded-lg px-3 py-1.5 text-sm"
+            placeholder={t(`${k}.calendar.filter`)}
+            size="sm"
+            type="search"
+          />
+        </FormRoot>
       </div>
 
       {missing.length > 0 && (

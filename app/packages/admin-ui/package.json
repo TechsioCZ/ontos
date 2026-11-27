@@ -18,6 +18,7 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/core-runtime": "catalog:",
     "effect": "4.0.7"
   },
   "peerDependencies": {

@@ -6,14 +6,14 @@ import { Data, Effect, Schema } from 'effect';
 import { UnsavedChangesDialog, dialogCloseLabel, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { FlaggedTextAreaField, FormBuilder, FormReact, FormRoot, TextField } from '@app/core-runtime/ui/form';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useState } from 'react';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import { reminderText } from '../../../../shared/domain/finance-planning.ts';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceSaveActions, useFinanceFormSave } from './finance-form-save.tsx';
+import { useFormDraft } from './finance-form-draft.tsx';
 import type { FinanceFormSave } from './finance-form-save.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import type { EmailProviderState } from './reminder-email-receipts.tsx';
@@ -25,10 +25,17 @@ class FinanceClipboardError extends Data.TaggedError('FinanceClipboardError')<{
   readonly cause: Schema.Defect['Type'];
 }> {}
 
-interface ReminderDraft {
-  readonly recipient: string;
-  readonly text: string;
-}
+/** The recipient and the text as typed. Uložit opens the review, so the form only holds them. */
+const reminderForm = FormReact.make(
+  FormBuilder.empty.addField('recipient', Schema.String).addField('text', Schema.String),
+  {
+    fields: { recipient: TextField, text: FlaggedTextAreaField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+type ReminderDraft = typeof reminderForm.schema.Encoded;
 
 /** Why the reminder cannot be saved yet, or undefined when it can. */
 const reminderProblem = (draft: ReminderDraft, canSendEmail: boolean): string | undefined => {
@@ -210,13 +217,13 @@ export const InvoiceReminderForm = ({
       senderName: vm.actorLabel ?? 'Finanční oddělení',
     }),
   };
-  const [draft, setDraft] = useState(initial);
+  const { draft, ready, reset } = useFormDraft(reminderForm, initial);
   const [notice, setNotice] = useState<string>();
   const form = useFinanceFormSave({
     initial,
     isValid: (value) => reminderProblem(value, canSendEmail) === undefined,
     onClose,
-    reset: setDraft,
+    reset,
     send: (value) => {
       const command: FinanceCommandDraft<'RecordReminder'> = {
         _tag: 'RecordReminder',
@@ -260,7 +267,13 @@ export const InvoiceReminderForm = ({
     setNotice('Návrh upomínky stažen jako textový soubor. Upomínka se jako odeslaná nezaznamenala.');
   };
   return (
-    <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
+    <FormRoot
+      className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}
+      defaultValues={initial}
+      form={reminderForm}
+      translateMessage={t}
+    >
+      {ready}
       <ReminderReview
         invoice={invoice}
         issuerName={issuerName}
@@ -281,33 +294,23 @@ export const InvoiceReminderForm = ({
           {problem}
         </StatusText>
       )}
-      <FormInput
+      <reminderForm.recipient
         id="reminder-recipient"
         label={t('finance-billing.financeUi.reminders.recipient')}
-        onChange={(event) => {
-          const { value } = event.target;
-          setDraft((current) => ({ ...current, recipient: value }));
-        }}
         placeholder={t('finance-billing.financeUi.reminders.emailExample')}
         size="sm"
         type="email"
-        value={draft.recipient}
       />
-      <FormTextarea
+      <reminderForm.text
         helpText={
           textTooLong
             ? `${textLength} / ${REMINDER_TEXT_MAX} znaků – text je příliš dlouhý, zkraťte ho o ${textLength - REMINDER_TEXT_MAX}.`
             : `${textLength} / ${REMINDER_TEXT_MAX} znaků`
         }
         id="reminder-text"
+        invalid={textTooLong}
         label={t('finance-billing.financeUi.reminders.message')}
-        onChange={(event) => {
-          const { value } = event.target;
-          setDraft((current) => ({ ...current, text: value }));
-        }}
         rows={9}
-        validateStatus={textTooLong ? 'error' : 'default'}
-        value={draft.text}
       />
       <div className="flex flex-wrap items-center gap-100">
         <Button appearance="outline" icon="icon-[mdi--content-copy]" onClick={copy} severity="secondary" size="sm">
@@ -321,6 +324,6 @@ export const InvoiceReminderForm = ({
         </div>
       </div>
       <UnsavedChangesDialog labels={form.labels} prompt={review.reviewed.guard.prompt} />
-    </div>
+    </FormRoot>
   );
 };

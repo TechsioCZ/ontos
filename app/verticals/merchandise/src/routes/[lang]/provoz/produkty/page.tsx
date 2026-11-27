@@ -4,18 +4,27 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { useRouterState, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import type { RegisteredRouter } from '@tanstack/react-router';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter, useTagCatalog } from '@app/tagging/components/tag-controls';
-import { Effect, Schema } from 'effect';
+import {
+  BareTextField,
+  CheckboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
 import { useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
@@ -124,10 +133,50 @@ const bulkFailureKey = (reason: FailureReason): string => {
   return reason === 'rejected' ? 'messages.rejected' : 'messages.failed';
 };
 
+/**
+ * The list's search text and its switches. A change filters the list at once; the form itself is never
+ * submitted.
+ */
+const productFiltersForm = FormReact.make(
+  FormBuilder.empty
+    .addField('archived', Schema.Boolean)
+    .addField('lowStockOnly', Schema.Boolean)
+    .addField('search', Schema.String)
+    .addField('symmyOnly', Schema.Boolean),
+  {
+    fields: {
+      archived: CheckboxField,
+      lowStockOnly: CheckboxField,
+      search: BareTextField,
+      symmyOnly: CheckboxField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noFilters = { archived: false, lowStockOnly: false, search: '', symmyOnly: false };
+const filters = productFiltersForm.values.pipe(Atom.map(Option.getOrElse(() => noFilters)));
+/** One filter as a plain value, which changes only when that filter does. */
+const filterOf = <K extends keyof typeof noFilters>(name: K) =>
+  filters.pipe(Atom.map((values): (typeof noFilters)[K] => values[name]));
+const searchFilter = filterOf('search');
+const lowStockFilter = filterOf('lowStockOnly');
+const archivedFilter = filterOf('archived');
+const symmyFilter = filterOf('symmyOnly');
+
 interface RecordsPageContentProps {
   readonly context?: ModulePageContext | undefined;
   readonly legalEntityId: string;
 }
+
+/** True from the first render `answered` holds on, so what it shows never disappears again. */
+const useShownOnceAnswered = (answered: boolean) => {
+  const [shown, setShown] = useState(false);
+  if (answered && !shown) {
+    setShown(true);
+  }
+  return shown || answered;
+};
 
 const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps) => {
   const { language, t } = useModernI18n();
@@ -135,13 +184,11 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const toaster = useToast();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
 
-  const [search, setSearch] = useState('');
+  const { archived, lowStockOnly, search, symmyOnly } = useAtomValue(filters);
+  const setFilters = useAtomSet(productFiltersForm.setValues);
   /** A storefront tree category, or a product category label when the company has no tree. */
   const [treeCategory, setTreeCategory] = useState<CategoryTrail | null>(null);
   const [labelCategory, setLabelCategory] = useState<string | null>(null);
-  const [lowStockOnly, setLowStockOnly] = useState(false);
-  const [symmyOnly, setSymmyOnly] = useState(false);
-  const [archived, setArchived] = useState(false);
   const [sort, setSort] = useState<ProductSort | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
   const [table, setTable] = useState<TanstackTable<ProductRecord>>();
@@ -176,6 +223,18 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   /** A filter change starts again at the first page. */
   const firstPage = () =>
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  useAtomSubscribe(searchFilter, firstPage, { immediate: false });
+  useAtomSubscribe(lowStockFilter, firstPage, { immediate: false });
+  useAtomSubscribe(symmyFilter, firstPage, { immediate: false });
+  /** The archived list is a list of its own: the selection and the page start again. */
+  useAtomSubscribe(
+    archivedFilter,
+    () => {
+      setSelection({});
+      firstPage();
+    },
+    { immediate: false },
+  );
 
   const ready = state.status === 'ready' ? state.response : undefined;
   const products = ready?.products ?? [];
@@ -187,12 +246,9 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   // The filters beside the search depend on the category choices (tree or labels), the first page (write rights,
   // Symmy products) and the tag catalogue (the tag filter). They appear together once all answered, so none of them
   // shifts another one later, and once shown they stay.
-  const [filtersShown, setFiltersShown] = useState(false);
-  const filtersAnswered = choicesSettled && state.status !== 'loading' && productTagCatalog.status !== 'loading';
-  if (filtersAnswered && !filtersShown) {
-    setFiltersShown(true);
-  }
-  const filtersSettled = filtersShown || filtersAnswered;
+  const filtersSettled = useShownOnceAnswered(
+    choicesSettled && state.status !== 'loading' && productTagCatalog.status !== 'loading',
+  );
 
   const selectedIds = Object.keys(selection).filter(isProductId);
   const filtersActive = [
@@ -222,19 +278,10 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     reloadCategories();
   };
   const clearFilters = () => {
-    setSearch('');
+    setFilters(noFilters);
     setTreeCategory(null);
     setLabelCategory(null);
-    setLowStockOnly(false);
-    setSymmyOnly(false);
-    setArchived(false);
     tagFilter.setTagId(null);
-    firstPage();
-  };
-  /** The archived list is a list of its own: the selection and the page start again. */
-  const toggleArchived = (checked: boolean) => {
-    setArchived(checked);
-    setSelection({});
     firstPage();
   };
 
@@ -315,7 +362,6 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     k,
     labelCategory,
     labelItems,
-    lowStockOnly,
     onCategoriesCommitted,
     onCommitted,
     openDetail,
@@ -329,13 +375,10 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     revision,
     rowIntent,
     runBulk,
-    search,
     selectedIds,
     selection,
     setLabelCategory,
-    setLowStockOnly,
     setPagination,
-    setSearch,
     setSelection,
     setSort,
     setSymmyOnly,
@@ -347,12 +390,128 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     t,
     tableStatus,
     tagFilter,
-    toggleArchived,
     treeCategory,
   };
 };
 
+type ProductListPage = ReturnType<typeof useProductListPage>;
+
+/** The search and the filters beside it; the switches live in the filters form, the pickers in the page's state. */
+const ProductFilters = ({ page }: { readonly page: ProductListPage }) => {
+  const {
+    byTree,
+    canWrite,
+    filtersSettled,
+    firstPage,
+    k,
+    labelCategory,
+    labelItems,
+    productTagCatalog,
+    ready,
+    setLabelCategory,
+    setSort,
+    setTreeCategory,
+    sort,
+    t,
+    tagFilter,
+    treeCategory,
+  } = page;
+  return (
+    <FormRoot
+      className="flex flex-wrap items-start gap-150"
+      defaultValues={noFilters}
+      form={productFiltersForm}
+      translateMessage={t}
+    >
+      <productFiltersForm.search
+        aria-label={k('filters.search')}
+        className="w-64"
+        placeholder={k('filters.search')}
+        size="sm"
+        type="search"
+      />
+      {filtersSettled && (
+        <>
+          {byTree && (
+            <div className="w-64">
+              <CategorySearchCombobox
+                allLabel={k('filters.allCategories')}
+                errorMessage={k('filters.categoryError')}
+                hiddenLabel
+                id="products-category-filter"
+                label={k('filters.category')}
+                loadingMessage={t('merchandise.loading')}
+                moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
+                noResultsMessage={k('filters.categoryNoResults')}
+                onSelect={(next) => {
+                  setTreeCategory(next);
+                  firstPage();
+                }}
+                placeholder={k('filters.categorySearch')}
+                retryLabel={k('filters.categoryRetry')}
+                selected={treeCategory}
+                size="sm"
+              />
+            </div>
+          )}
+          {!byTree && labelItems.length > 0 && (
+            <div className="w-64">
+              <SelectTemplate
+                items={[selectItem(ALL_CATEGORIES, k('filters.allCategories')), ...labelItems]}
+                label={k('filters.category')}
+                labelProps={srOnlyLabelProps}
+                name="category"
+                onValueChange={(details) => {
+                  const [next] = details.value;
+                  setLabelCategory(next === undefined || next === ALL_CATEGORIES ? null : next);
+                  firstPage();
+                }}
+                placeholder={t('merchandise.selectPlaceholder')}
+                size="sm"
+                value={[labelCategory ?? ALL_CATEGORIES]}
+              />
+            </div>
+          )}
+          <div className="w-48">
+            <SelectTemplate
+              items={sortSelectItems(k)}
+              label={k('sort.label')}
+              labelProps={srOnlyLabelProps}
+              name="sort"
+              onValueChange={(details) => {
+                const [next] = details.value;
+                setSort(SORTS.find((candidate) => candidate === next) ?? null);
+                firstPage();
+              }}
+              placeholder={t('merchandise.selectPlaceholder')}
+              size="sm"
+              value={[sort ?? DEFAULT_SORT]}
+            />
+          </div>
+          {canWrite && (
+            <TagFilter
+              catalog={productTagCatalog}
+              kind="product"
+              onChange={(tagId) => {
+                tagFilter.setTagId(tagId);
+                firstPage();
+              }}
+              value={tagFilter.tagId}
+            />
+          )}
+          <productFiltersForm.lowStockOnly className="self-center" label={k('filters.lowStockOnly')} size="sm" />
+          {(ready?.symmyProductCount ?? 0) > 0 && (
+            <productFiltersForm.symmyOnly className="self-center" label={k('filters.symmyOnly')} size="sm" />
+          )}
+          {canWrite && <productFiltersForm.archived className="self-center" label={k('filters.archived')} size="sm" />}
+        </>
+      )}
+    </FormRoot>
+  );
+};
+
 const RecordsPageContent = (props: RecordsPageContentProps) => {
+  const page = useProductListPage(props);
   const {
     archived,
     bulkBusy,
@@ -363,46 +522,28 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     closeDialog,
     dialog,
     filtersActive,
-    filtersSettled,
-    firstPage,
     k,
-    labelCategory,
-    labelItems,
-    lowStockOnly,
     onCategoriesCommitted,
     onCommitted,
     openDetail,
     openDialog,
     pagination,
     products,
-    productTagCatalog,
     productTags,
     ready,
     reload,
     revision,
     rowIntent,
     runBulk,
-    search,
     selectedIds,
     selection,
-    setLabelCategory,
-    setLowStockOnly,
     setPagination,
-    setSearch,
     setSelection,
-    setSort,
-    setSymmyOnly,
     setTable,
-    setTreeCategory,
-    sort,
     state,
-    symmyOnly,
-    t,
     tableStatus,
     tagFilter,
-    toggleArchived,
-    treeCategory,
-  } = useProductListPage(props);
+  } = page;
 
   return (
     <>
@@ -434,127 +575,7 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
 
         <ProductStats indicators={ready?.indicators} label={k} />
 
-        <div className="flex flex-wrap items-start gap-150">
-          <Input
-            aria-label={k('filters.search')}
-            className="w-64"
-            onChange={(event) => {
-              setSearch(event.target.value);
-              firstPage();
-            }}
-            placeholder={k('filters.search')}
-            size="sm"
-            type="search"
-            value={search}
-          />
-          {filtersSettled && (
-            <>
-              {byTree && (
-                <div className="w-64">
-                  <CategorySearchCombobox
-                    allLabel={k('filters.allCategories')}
-                    errorMessage={k('filters.categoryError')}
-                    hiddenLabel
-                    id="products-category-filter"
-                    label={k('filters.category')}
-                    loadingMessage={t('merchandise.loading')}
-                    moreMessage={(shown, total) =>
-                      t('merchandise.pages.products.filters.categoryMore', { shown, total })
-                    }
-                    noResultsMessage={k('filters.categoryNoResults')}
-                    onSelect={(next) => {
-                      setTreeCategory(next);
-                      firstPage();
-                    }}
-                    placeholder={k('filters.categorySearch')}
-                    retryLabel={k('filters.categoryRetry')}
-                    selected={treeCategory}
-                    size="sm"
-                  />
-                </div>
-              )}
-              {!byTree && labelItems.length > 0 && (
-                <div className="w-64">
-                  <SelectTemplate
-                    items={[selectItem(ALL_CATEGORIES, k('filters.allCategories')), ...labelItems]}
-                    label={k('filters.category')}
-                    labelProps={srOnlyLabelProps}
-                    name="category"
-                    onValueChange={(details) => {
-                      const [next] = details.value;
-                      setLabelCategory(next === undefined || next === ALL_CATEGORIES ? null : next);
-                      firstPage();
-                    }}
-                    placeholder={t('merchandise.selectPlaceholder')}
-                    size="sm"
-                    value={[labelCategory ?? ALL_CATEGORIES]}
-                  />
-                </div>
-              )}
-              <div className="w-48">
-                <SelectTemplate
-                  items={sortSelectItems(k)}
-                  label={k('sort.label')}
-                  labelProps={srOnlyLabelProps}
-                  name="sort"
-                  onValueChange={(details) => {
-                    const [next] = details.value;
-                    setSort(SORTS.find((candidate) => candidate === next) ?? null);
-                    firstPage();
-                  }}
-                  placeholder={t('merchandise.selectPlaceholder')}
-                  size="sm"
-                  value={[sort ?? DEFAULT_SORT]}
-                />
-              </div>
-              {canWrite && (
-                <TagFilter
-                  catalog={productTagCatalog}
-                  kind="product"
-                  onChange={(tagId) => {
-                    tagFilter.setTagId(tagId);
-                    firstPage();
-                  }}
-                  value={tagFilter.tagId}
-                />
-              )}
-              <FormCheckbox
-                checked={lowStockOnly}
-                className="self-center"
-                label={k('filters.lowStockOnly')}
-                name="lowStockOnly"
-                onCheckedChange={(checked) => {
-                  setLowStockOnly(checked);
-                  firstPage();
-                }}
-                size="sm"
-              />
-              {(ready?.symmyProductCount ?? 0) > 0 && (
-                <FormCheckbox
-                  checked={symmyOnly}
-                  className="self-center"
-                  label={k('filters.symmyOnly')}
-                  name="symmyOnly"
-                  onCheckedChange={(checked) => {
-                    setSymmyOnly(checked);
-                    firstPage();
-                  }}
-                  size="sm"
-                />
-              )}
-              {canWrite && (
-                <FormCheckbox
-                  checked={archived}
-                  className="self-center"
-                  label={k('filters.archived')}
-                  name="archived"
-                  onCheckedChange={toggleArchived}
-                  size="sm"
-                />
-              )}
-            </>
-          )}
-        </div>
+        <ProductFilters page={page} />
         {tagFilter.status === 'error' && (
           <StatusText showIcon status="error">
             {k('states.tagFilterFailed')}

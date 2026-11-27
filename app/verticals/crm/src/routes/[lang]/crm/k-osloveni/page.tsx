@@ -16,9 +16,10 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { salespersonOptions } from '../../../../crm/option-labels.ts';
-import { Schema } from 'effect';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, useAtomSubscribe } from '@app/core-runtime/ui/form';
+import { Effect, Schema } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
@@ -45,6 +46,7 @@ import {
   writableClients,
 } from '../navstevy/visits-model.ts';
 import { CompletePlanPanel, PlanContactPanel } from './plan-panels.tsx';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const dangerTextClass = 'text-danger';
 
@@ -352,6 +354,50 @@ const planSelection = ({
   return { activeTab, canWrite, completing, done, lead, mine, open, own, plan, rescheduling, scope, teamItems, today };
 };
 
+/** The team's salesperson filter: picking a salesperson narrows the lists at once. */
+const salespersonFilterForm = FormReact.make(FormBuilder.empty.addField('salesperson', Schema.String), {
+  fields: { salesperson: SelectTemplateField },
+  mode: { autoSubmit: true, validation: 'onChange' },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.salesperson === '' ? ALL : decoded.salesperson),
+  runtime: browserAtomRuntime,
+});
+
+const SalespersonFilter = ({
+  onChange,
+  records,
+  value,
+}: {
+  readonly onChange: (salesperson: string) => void;
+  readonly records: RecordsResponse;
+  readonly value: string;
+}) => {
+  const { t } = useModernI18n();
+  useAtomSubscribe(
+    salespersonFilterForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== value) {
+        onChange(result.value);
+      }
+    },
+    { immediate: false },
+  );
+  return (
+    <FormRoot
+      className="w-52"
+      defaultValues={{ salesperson: value }}
+      form={salespersonFilterForm}
+      translateMessage={(message) => t(message, { defaultValue: message })}
+    >
+      <salespersonFilterForm.salesperson
+        items={[{ label: 'Všichni obchodníci', value: ALL }, ...salespersonOptions(records.state.salespeople)]}
+        label={t('crm.ciWorkflow.salesperson')}
+        name="salespersonFilter"
+        size="sm"
+      />
+    </FormRoot>
+  );
+};
+
 const PlanContent = () => {
   const { t } = useModernI18n();
   const { load, state, submit } = useCrmRecords();
@@ -443,19 +489,7 @@ const PlanContent = () => {
                 </Tabs.List>
               </Tabs>
               {lead && activeTab !== 'mine' && (
-                <div className="w-52">
-                  <SelectTemplate
-                    items={[
-                      { label: 'Všichni obchodníci', value: ALL },
-                      ...salespersonOptions(records.state.salespeople),
-                    ]}
-                    label={t('crm.ciWorkflow.salesperson')}
-                    name="salespersonFilter"
-                    onValueChange={(details) => setSalespersonFilter(details.value[0] ?? ALL)}
-                    size="sm"
-                    value={[salespersonFilter]}
-                  />
-                </div>
+                <SalespersonFilter onChange={setSalespersonFilter} records={records} value={salespersonFilter} />
               )}
             </div>
 

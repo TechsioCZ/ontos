@@ -18,7 +18,6 @@ import {
   isStale,
   moduleChoices,
   policyChoices,
-  setModuleChoice,
 } from '../../../../src/routes/[lang]/profile/connected-apps-model.ts';
 import type { EditDraft } from '../../../../src/routes/[lang]/profile/connected-apps-model.ts';
 
@@ -120,18 +119,18 @@ test('draftFromConnection and draftToRequest round trip the grant', () => {
     writePolicy: 'approval',
   });
   expect(draftToRequest('g-1', { ...draft, allModules: true }).modules).toEqual([]);
-  expect(draftToRequest('g-1', setModuleChoice(draft, 'fin', 'write')).modules.map((grant) => grant.moduleId)).toEqual([
-    'crm',
-    'fin',
-    'sklad',
-  ]);
+  expect(
+    draftToRequest('g-1', { ...draft, modules: { ...draft.modules, fin: 'write' } }).modules.map(
+      (grant) => grant.moduleId,
+    ),
+  ).toEqual(['crm', 'fin', 'sklad']);
 });
 
 test('draftProblem asks for at least one module unless everything is allowed', () => {
   const empty: EditDraft = { allModules: false, modules: { crm: 'none', sklad: 'none' }, writePolicy: 'approval' };
   expect(draftProblem(empty)).toBe('Vyberte alespoň jeden modul.');
   expect(draftProblem({ ...empty, allModules: true })).toBeUndefined();
-  expect(draftProblem(setModuleChoice(empty, 'crm', 'read'))).toBeUndefined();
+  expect(draftProblem({ ...empty, modules: { ...empty.modules, crm: 'read' } })).toBeUndefined();
 });
 
 test('failureText prefers the server detail', () => {
