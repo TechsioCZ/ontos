@@ -4,18 +4,27 @@ import type { SaveOutcome } from '@app/admin-ui';
 import type { StorefrontApplicationSummary } from '@app/storefront-registry/api/storefront-applications';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { DateTime, Effect, Schema } from 'effect';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useState } from 'react';
+import { MarketChannelSchema } from '../../shared/market-contracts.ts';
 import { AssociateStorefrontPayloadSchema } from '../../shared/actions/associate-storefront.ts';
 import { RemoveStorefrontAssociationPayloadSchema } from '../../shared/actions/remove-storefront-association.ts';
 import { ReviseStorefrontAssociationPayloadSchema } from '../../shared/actions/revise-storefront-association.ts';
 import { executeAssociateStorefront } from '../api/associate-storefront-action-client.ts';
 import { executeRemoveStorefrontAssociation } from '../api/remove-storefront-association-action-client.ts';
 import { executeReviseStorefrontAssociation } from '../api/revise-storefront-association-action-client.ts';
-import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { newUuid } from './browser-crypto.ts';
 import type { CurrentAssociation, CurrentMarket, MarketChannel } from './eshops-model.ts';
 import { storefrontName } from './eshops-model.ts';
@@ -23,6 +32,7 @@ import { storefrontChoices } from './market-detail-model.ts';
 import type { StorefrontChoice } from './market-detail-model.ts';
 import { dateOf, effectivePeriodOf } from './market-form.ts';
 import { DialogFrame, FormDialogFrame } from './dialog-frame.tsx';
+import { useOpenedValues } from './market-fields.tsx';
 import { formatDay } from './definition-text.ts';
 import { failureText, useMarketText } from './market-ui.tsx';
 import { marketActionEffect, runMarketAction } from './page-data.ts';
@@ -30,7 +40,43 @@ import type { WriteFailure, WriteOutcome } from './page-data.ts';
 
 const isProposal = Schema.is(ActionProposalAcceptedSchema);
 
-const item = (value: string, label: string) => ({ displayValue: label, label, value });
+const isChannel = Schema.is(MarketChannelSchema);
+
+/**
+ * The associate / revise form: the e-shop, its channel (`""` while the e-shop offers none) and the validity dates.
+ * Picking changes only the form; the dialog's Uložit sends it through the save bar, so the form is never submitted.
+ */
+const associationForm = FormReact.make(
+  FormBuilder.empty
+    .addField('appId', Schema.String)
+    .addField('channel', Schema.String)
+    .addField('validFrom', Schema.String)
+    .addField('validTo', Schema.String),
+  {
+    fields: { appId: ChoiceField, channel: ChoiceField, validFrom: TextField, validTo: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type AssociationDraft = typeof associationForm.schema.Encoded;
+
+const appIdField = associationForm.getFieldAtoms(associationForm.fields.appId);
+const pickedAppId = appIdField.value.pipe(Atom.map(Option.getOrElse(() => '')));
+const channelField = associationForm.getFieldAtoms(associationForm.fields.channel);
+
+/** Another e-shop is sold to on its first channel; rendered inside the form, after it started. */
+const FirstChannelOfPicked = ({ choices }: { readonly choices: readonly StorefrontChoice[] }) => {
+  const setChannel = useAtomSet(channelField.setValue);
+  useAtomSubscribe(
+    pickedAppId,
+    (appId) => {
+      setChannel(choices.find((candidate) => candidate.appId === appId)?.channels[0] ?? '');
+    },
+    { immediate: false },
+  );
+  return null;
+};
 
 interface AssociationDialogProps {
   /** Present when an existing association is revised. */
@@ -44,14 +90,6 @@ interface AssociationDialogProps {
   readonly onDone: (message: string) => void;
 }
 
-/** The draft of the associate / revise dialog: the e-shop, its channel and the validity dates. */
-interface AssociationDraft {
-  readonly appId: string;
-  readonly channel: MarketChannel | undefined;
-  readonly validFrom: string;
-  readonly validTo: string;
-}
-
 /** What the dialog opens with: the stored association, or the first e-shop and channel for a new one. */
 const associationDraftOf = (
   association: CurrentAssociation | undefined,
@@ -60,7 +98,7 @@ const associationDraftOf = (
   const appId = association?.storefrontRef.appId ?? choices[0]?.appId ?? '';
   return {
     appId,
-    channel: association?.channel ?? choices.find((candidate) => candidate.appId === appId)?.channels[0],
+    channel: association?.channel ?? choices.find((candidate) => candidate.appId === appId)?.channels[0] ?? '',
     validFrom: association === undefined ? '' : dateOf(association.effectivePeriod.startsAt),
     validTo: association?.effectivePeriod.endsAt === undefined ? '' : dateOf(association.effectivePeriod.endsAt),
   };
@@ -76,8 +114,9 @@ const AssociationDialog = ({
   onDone,
 }: AssociationDialogProps) => {
   const { text } = useMarketText();
-  const [draft, setDraft] = useState<AssociationDraft>(() => associationDraftOf(association, choices));
   const opened = associationDraftOf(association, choices);
+  const { ready, values: draft } = useOpenedValues(associationForm.values, opened);
+  const setValues = useAtomSet(associationForm.setValues);
   const [failure, setFailure] = useState<WriteFailure | null>(null);
   const choice = choices.find((candidate) => candidate.appId === draft.appId);
   const channelsOf = (selected: StorefrontChoice | undefined): readonly MarketChannel[] =>
@@ -136,12 +175,12 @@ const AssociationDialog = ({
     // A new association exists nowhere yet: its confirmed version has no e-shop, so the pre-selected one is already
     // something Uložit can send.
     initial: association === undefined ? { ...opened, appId: '' } : undefined,
-    isValid: (value) => value.appId !== '' && value.channel !== undefined,
+    isValid: (value) => value.appId !== '' && isChannel(value.channel),
     // Leaving asks only about what the user changed, not about the pre-selected defaults.
     opened,
     runtime: browserRuntime,
     save: (value) => {
-      if (value.channel === undefined) {
+      if (!isChannel(value.channel)) {
         return Effect.succeed<SaveOutcome>('failed');
       }
       return send(value, value.channel).pipe(
@@ -166,7 +205,7 @@ const AssociationDialog = ({
     value: draft,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => setDraft(opened) });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => setValues(opened) });
   const handleSave = record.save;
   return (
     <FormDialogFrame
@@ -181,51 +220,40 @@ const AssociationDialog = ({
           : text('detail.storefronts.reviseTitle', { name })
       }
     >
-      <SelectTemplate
-        disabled={association !== undefined}
-        items={choices.map((candidate) => item(candidate.appId, nameOf(candidate.appId)))}
-        label={text('detail.storefronts.storefront')}
-        name="storefront"
-        onValueChange={(details: { readonly value: readonly string[] }) => {
-          const next = choices.find((candidate) => candidate.appId === details.value[0]);
-          if (next !== undefined) {
-            setDraft((current) => ({ ...current, appId: next.appId, channel: next.channels[0] }));
-          }
-        }}
-        value={draft.appId === '' ? [] : [draft.appId]}
-      />
-      <SelectTemplate
-        items={channelsOf(choice).map((value) => item(value, text(`form.channel${value}`)))}
-        label={text('detail.storefronts.channel')}
-        name="channel"
-        onValueChange={(details: { readonly value: readonly string[] }) =>
-          setDraft((current) => ({
-            ...current,
-            channel: channelsOf(choice).find((candidate) => candidate === details.value[0]),
-          }))
-        }
-        value={draft.channel === undefined ? [] : [draft.channel]}
-      />
-      <div className="grid grid-cols-2 gap-200">
-        <FormInput
-          helpText={text('form.validFromHelp')}
-          id="association-valid-from"
-          label={text('form.validFrom')}
-          name="validFrom"
-          onChange={(event) => setDraft((current) => ({ ...current, validFrom: event.target.value }))}
-          type="date"
-          value={draft.validFrom}
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={associationForm}
+        translateMessage={(message) => text(message)}
+      >
+        {ready}
+        <FirstChannelOfPicked choices={choices} />
+        <associationForm.appId
+          disabled={association !== undefined}
+          items={choices.map((candidate) => ({ label: nameOf(candidate.appId), value: candidate.appId }))}
+          label={text('detail.storefronts.storefront')}
         />
-        <FormInput
-          helpText={text('form.validToHelp')}
-          id="association-valid-to"
-          label={text('form.validTo')}
-          name="validTo"
-          onChange={(event) => setDraft((current) => ({ ...current, validTo: event.target.value }))}
-          type="date"
-          value={draft.validTo}
+        <associationForm.channel
+          items={channelsOf(choice).map((value) => ({ label: text(`form.channel${value}`), value }))}
+          label={text('detail.storefronts.channel')}
         />
-      </div>
+        <div className="grid grid-cols-2 gap-200">
+          <associationForm.validFrom
+            helpText={text('form.validFromHelp')}
+            id="association-valid-from"
+            label={text('form.validFrom')}
+            name="validFrom"
+            type="date"
+          />
+          <associationForm.validTo
+            helpText={text('form.validToHelp')}
+            id="association-valid-to"
+            label={text('form.validTo')}
+            name="validTo"
+            type="date"
+          />
+        </div>
+      </FormRoot>
     </FormDialogFrame>
   );
 };

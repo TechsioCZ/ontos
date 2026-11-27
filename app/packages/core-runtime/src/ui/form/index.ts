@@ -12,6 +12,7 @@ export { makeActionAttempt } from './action-attempt.ts';
 export { fromPayload } from './payload-form.ts';
 export type { PayloadFormFields } from './payload-form.ts';
 export { FormRoot, FormRootError, SubmitButton, useFormPending } from './form-root.ts';
+export { FormScope } from './form-scope.ts';
 export {
   CheckboxField,
   ChoiceField,
@@ -24,3 +25,7 @@ export {
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
+export { type FieldNotice, NoticedTextField } from './noticed-text-field.ts';
+export { CheckboxSettingField } from './checkbox-setting-field.ts';
+export { EntrySwitchField } from './entry-switch-field.ts';
+export { UpperCaseTextField } from './upper-case-text-field.ts';
