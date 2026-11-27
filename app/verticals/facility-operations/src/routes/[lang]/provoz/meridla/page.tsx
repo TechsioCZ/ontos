@@ -1,5 +1,5 @@
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Facility operations — Měřidla a energie (S04). OWNED BY THE `meters` LANE (ops-meters).
 // List of meters with last reading, truthful consumption and anomaly highlight → detail side panel with history and
 // chart → record reading / edit meter; consumption and costs per property/unit below the list.
@@ -13,6 +13,7 @@ import {
   formatMoney,
   matchesSearch,
 } from '@app/admin-ui';
+import { BareTextField, FormBuilder, FormReact, FormRoot, useAtomValue } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
@@ -22,7 +23,8 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { DateTime, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import {
   daysBetween,
   latestRow,
@@ -32,7 +34,6 @@ import {
 } from '../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
-import { ListSearch, useListSearch } from '../../../../ui/search-form.tsx';
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { ConsumptionByPlace } from './consumption-by-place.tsx';
@@ -72,6 +73,18 @@ const useInitialSelection = () =>
   });
 
 const k = 'facility-operations.meters';
+
+/** The search box over the meters list: a one-field form the list filters by, so Enter sends nothing. */
+const metersSearchForm = FormReact.make(FormBuilder.empty.addField('search', Schema.String), {
+  fields: { search: BareTextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noSearch = { search: '' };
+/** The typed text, `""` before the box is on screen. */
+const metersSearchText = metersSearchForm
+  .getFieldAtoms(metersSearchForm.fields.search)
+  .value.pipe(Atom.map(Option.getOrElse(() => '')));
 
 const pragueDate = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
@@ -280,7 +293,7 @@ const useMetersView = () => {
   const fileAccess = ops.data?.access.find((entry) => entry.agenda === 'documents');
 
   const [medium, setMedium] = useState<MeterMedium | 'ALL'>('ALL');
-  const search = useListSearch('meters');
+  const search = useAtomValue(metersSearchText);
   const [anomaliesOnly, setAnomaliesOnly] = useState(false);
   const initialSelection = useInitialSelection();
   const [detailId, setDetailId] = useState<string | undefined>(initialSelection);
@@ -633,13 +646,14 @@ const MetersView = () => {
             {anomalies.length > 0 ? ` (${anomalies.length})` : ''}
           </Button>
           <div className="min-w-[16rem] flex-1">
-            <ListSearch
-              label={t(`${k}.filters.search`)}
-              list="meters"
-              placeholder={t(`${k}.filters.search`)}
-              size="sm"
-              type="search"
-            />
+            <FormRoot defaultValues={noSearch} form={metersSearchForm} translateMessage={(message) => t(message)}>
+              <metersSearchForm.search
+                aria-label={t(`${k}.filters.search`)}
+                placeholder={t(`${k}.filters.search`)}
+                size="sm"
+                type="search"
+              />
+            </FormRoot>
           </div>
         </div>
 

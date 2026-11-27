@@ -23,11 +23,10 @@ const switchFormOf = (initial: boolean) => {
 const switchForms = {
   incidentsOpenOnly: switchFormOf(true),
   ordersOpenOnly: switchFormOf(false),
-  stockAlertsOnly: switchFormOf(false),
 };
 
 /** The switches over lists. */
-export const ListSwitchNameSchema = Schema.Literals(['incidentsOpenOnly', 'ordersOpenOnly', 'stockAlertsOnly']);
+export const ListSwitchNameSchema = Schema.Literals(['incidentsOpenOnly', 'ordersOpenOnly']);
 export type ListSwitchName = typeof ListSwitchNameSchema.Type;
 
 /** Whether a list's switch is on; the value its list starts from before the switch is on screen. */
