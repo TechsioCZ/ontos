@@ -17,7 +17,7 @@ import {
 import type { SourceAdmissionCounterparty } from './source-counterparty-admission.service.ts';
 import {
   currentSourcePersonAdmission,
-  loadAuthorizedSourceCorrelatedParty,
+  loadAuthorizedSourceCorrelatedParties,
   sourcePersonNotAdmissible,
 } from './source-person-admission.service.ts';
 import type { SourceCorrelatedParty } from './source-person-admission.service.ts';
@@ -64,31 +64,52 @@ export const readSourceAdmissionSet = Effect.fn('SourceAdmissionSet.read')(funct
   if (legalEntityId !== undefined && input.items.some((item) => item.kind === 'COUNTERPARTY' && admissible(item))) {
     yield* lockTenantIdentityReads(transaction, scope.tenantId);
   }
-  const loaded = yield* Effect.forEach(
+  // The exact Counterparty of each admissible company item, then every correlation of the page in one batch.
+  const counterparties = yield* Effect.forEach(
     input.items,
-    Effect.fnUntraced(function* load(item): Effect.fn.Return<Loaded, PartyPersistenceUnavailableError> {
-      if (!admissible(item)) {
-        return undefined;
-      }
-      if (item.kind === 'PERSON') {
-        const correlated = yield* loadAuthorizedSourceCorrelatedParty(transaction, scope, item);
-        return correlated === undefined ? undefined : { correlated, kind: 'PERSON' };
-      }
-      if (legalEntityId === undefined) {
-        return undefined;
-      }
-      const counterparty = yield* loadSourceAdmissionCounterparty(transaction, scope, legalEntityId, item);
-      if (counterparty === undefined) {
-        return undefined;
-      }
-      const correlated = yield* loadAuthorizedSourceCorrelatedParty(transaction, scope, {
-        partyRef: makePartyRef(scope.tenantId, counterparty.partyId),
-        sourceReference: item.sourceReference,
-      });
-      return correlated === undefined ? undefined : { correlated, counterparty, kind: 'COUNTERPARTY' };
-    }),
+    (item) =>
+      item.kind === 'COUNTERPARTY' && admissible(item) && legalEntityId !== undefined
+        ? loadSourceAdmissionCounterparty(transaction, scope, legalEntityId, item)
+        : Effect.succeed(undefined),
     { concurrency: 1 },
   );
+  const correlationInputs = input.items.flatMap((item, index) => {
+    if (!admissible(item)) {
+      return [];
+    }
+    if (item.kind === 'PERSON') {
+      return [{ index, request: item }];
+    }
+    const counterparty = counterparties[index];
+    return counterparty === undefined
+      ? []
+      : [
+          {
+            index,
+            request: {
+              partyRef: makePartyRef(scope.tenantId, counterparty.partyId),
+              sourceReference: item.sourceReference,
+            },
+          },
+        ];
+  });
+  const correlations = yield* loadAuthorizedSourceCorrelatedParties(
+    transaction,
+    scope,
+    correlationInputs.map(({ request }) => request),
+  );
+  const correlatedByIndex = new Map(correlationInputs.map(({ index }, position) => [index, correlations[position]]));
+  const loaded: Loaded[] = input.items.map((item, index) => {
+    const correlated = correlatedByIndex.get(index);
+    if (correlated === undefined) {
+      return undefined;
+    }
+    if (item.kind === 'PERSON') {
+      return { correlated, kind: 'PERSON' };
+    }
+    const counterparty = counterparties[index];
+    return counterparty === undefined ? undefined : { correlated, counterparty, kind: 'COUNTERPARTY' };
+  });
   yield* authorizePartyClientSourceReferences(
     input.items.flatMap((item, index) => {
       const current = loaded[index];
