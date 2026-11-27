@@ -337,18 +337,20 @@ const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) 
   return null;
 };
 
-const kindChoices = kinds.map((kind) => ({
-  label: (
-    <>
-      <span
-        aria-hidden
-        className={`${kind === 'organization' ? 'icon-[mdi--office-building-outline]' : 'icon-[mdi--account-outline]'} me-50 inline-block size-200 align-middle`}
-      />
-      {kind === 'organization' ? 'Firma' : 'Fyzická osoba'}
-    </>
-  ),
-  value: kind,
-}));
+/** Built when rendered, not at module load: the module contract generator imports this module without a JSX runtime. */
+const kindChoices = () =>
+  kinds.map((kind) => ({
+    label: (
+      <>
+        <span
+          aria-hidden
+          className={`${kind === 'organization' ? 'icon-[mdi--office-building-outline]' : 'icon-[mdi--account-outline]'} me-50 inline-block size-200 align-middle`}
+        />
+        {kind === 'organization' ? 'Firma' : 'Fyzická osoba'}
+      </>
+    ),
+    value: kind,
+  }));
 
 interface ClientFormDialogProps {
   readonly busy: boolean;
@@ -595,7 +597,7 @@ export const ClientFormDialog = (props: ClientFormDialogProps) => {
         <FormReady onReady={setReady} />
         <form.kind
           itemGroupClassName="inline-flex w-fit gap-150 rounded-lg border border-border-primary p-100"
-          items={kindChoices}
+          items={kindChoices()}
           label="Typ klienta"
           size="sm"
         />

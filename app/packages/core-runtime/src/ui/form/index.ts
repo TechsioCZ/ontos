@@ -8,6 +8,8 @@
  */
 export { useAtomSet, useAtomSubscribe, useAtomValue } from '@effect/atom-react';
 export { Field, FormBuilder, FormReact } from '@lucas-barake/effect-form-react';
+// The form state atoms themselves, for helpers that drive a form outside React (admin-ui's explicit-save drafts).
+export { FormAtoms } from '@lucas-barake/effect-form';
 export { makeActionAttempt } from './action-attempt.ts';
 export { fromPayload } from './payload-form.ts';
 export type { PayloadFormFields } from './payload-form.ts';

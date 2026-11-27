@@ -301,13 +301,14 @@ const allowedCoreExternalSpecifiers = new Set([
   // The CoreSDK UI surface: the one form model and the React it renders with. The kit's own modules
   // are admitted by `kitSubpath` below.
   '@effect/atom-react',
+  '@lucas-barake/effect-form',
   '@lucas-barake/effect-form-react',
   'react',
   'react/jsx-runtime',
 ]);
 
 /** The design system's atoms and molecules, which the CoreSDK UI surface binds to the form model. */
-const kitSubpath = /^@techsio\/ui-kit\/(?:atoms|molecules)\/[a-z-]+$/u;
+const kitSubpath = /^@techsio\/ui-kit\/(?:atoms|molecules|templates)\/[a-z-]+$/u;
 
 // Effect 4 platform modules (formerly `effect/unstable/*`) are published as top-level subpaths.
 const effectPlatformSubpath =
@@ -587,6 +588,7 @@ const allowedCorePackageDependencies = new Set([
   '@effect/atom-react',
   '@effect/platform-node',
   '@effect/sql-pg',
+  '@lucas-barake/effect-form',
   '@lucas-barake/effect-form-react',
   '@noble/hashes',
   '@techsio/ui-kit',

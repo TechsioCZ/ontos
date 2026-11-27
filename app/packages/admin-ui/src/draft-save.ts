@@ -1,5 +1,5 @@
 // Explicit save for edit forms: the draft is effect-form state, Uložit is the form's submit and nothing is sent before it.
-import { FormAtoms, FormBuilder } from '@lucas-barake/effect-form';
+import { FormAtoms, FormBuilder } from '@app/core-runtime/ui/form';
 import { Effect, Equal, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
 import { identity } from 'effect/Function';
 import type { ManagedRuntime } from 'effect';
