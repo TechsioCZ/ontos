@@ -7,16 +7,26 @@ import { accessScopes } from '../../db/schema.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { LegalEntityScope } from '../../operations/legal-entity-scope.ts';
 
-const fenceUnavailable = (cause?: unknown) => {
-  const failure = new ActionPermissionCheckError({
-    code: 'action_permission_check_failed',
-    reason: 'The access authority of this Action could not be pinned to its transaction',
-  });
+const FENCE_UNAVAILABLE_REASON = 'The access authority of this Action could not be pinned to its transaction';
+
+/**
+ * The reason a Changing fence gives its 503: an access writer holds the fence for the few seconds a reconcile takes,
+ * so the authority is being rewritten, not missing or broken. Only a preparation outside any transaction may wait for
+ * Ready on it (`AccessGate.prepare`); a fence held to commit still refuses at once.
+ */
+const FENCE_CHANGING_REASON = 'An access writer is changing the access authority of this Action';
+
+const fenceUnavailable = (cause?: unknown, reason = FENCE_UNAVAILABLE_REASON) => {
+  const failure = new ActionPermissionCheckError({ code: 'action_permission_check_failed', reason });
   if (cause !== undefined) {
     Object.defineProperty(failure, 'cause', { value: cause });
   }
   return failure;
 };
+
+/** Whether this refusal is a writer holding the fence, not a missing, unavailable or unreadable one. */
+export const isAccessFenceChanging = (failure: ActionPermissionCheckError): boolean =>
+  failure.reason === FENCE_CHANGING_REASON;
 
 /** The one access scope of a tenant context (no company) or of one company; anything else is the typed 503. */
 const scopeFenceOf = Effect.fn('ActionMandateDispatch.scopeFenceOf')(function* scopeFenceOfEffect(
@@ -52,7 +62,11 @@ const lockScopeFence = Effect.fn('ActionMandateDispatch.lockScopeFence')(functio
       'objects',
     )
     .pipe(Effect.mapError((cause) => fenceUnavailable(cause)));
-  return fences.length === 1 && fences[0]?.state === 'Ready' ? yield* Effect.void : yield* fenceUnavailable();
+  const state = fences.length === 1 ? fences[0]?.state : undefined;
+  if (state === 'Ready') {
+    return yield* Effect.void;
+  }
+  return yield* state === 'Changing' ? fenceUnavailable(undefined, FENCE_CHANGING_REASON) : fenceUnavailable();
 });
 
 /**

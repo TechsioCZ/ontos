@@ -1,5 +1,5 @@
 import { and, eq, isNull, or } from 'drizzle-orm';
-import { Effect, Option } from 'effect';
+import { Data, Duration, Effect, Option, Predicate } from 'effect';
 
 import { CoreDatabase } from '../../db/client.ts';
 import { installOperationalScope } from '../../db/scoped-transaction.ts';
@@ -10,12 +10,30 @@ import { accessScopeFences, accessScopes } from '../../db/schema.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 import type { LegalEntityScope } from '../../operations/legal-entity-scope.ts';
 import { accessDecisionUnavailable } from '../decision/errors.ts';
-import { lockActionAccessFence } from '../approvals/action-access-fence.ts';
+import type { AccessDecisionUnavailable } from '../decision/errors.ts';
+import { isAccessFenceChanging, lockActionAccessFence } from '../approvals/action-access-fence.ts';
 
 export interface AccessAuthorityRevision {
   readonly revision: number;
   readonly scopeId: string;
 }
+
+/**
+ * An access writer holds the persisted authority (its fence is Changing) or moved its revision while a preparation read
+ * it. The authority is being rewritten, not missing: the writer gives the fence back within seconds.
+ */
+export class AccessAuthorityChanging extends Data.TaggedError('AccessAuthorityChanging')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}
+
+/**
+ * How long a protected Action's preparation waits for a writer to give the fence back before it answers the 503. Every
+ * reconcile closes the tenant's fence, an unchanged one too, and a deploy's activation and grant steps run them while
+ * the previous host still serves: Akros reconciles take 3.5–6 s on stage and the longest tenant 17 s. The wait stays
+ * under the 30 s an owner response may take.
+ */
+export const ACTION_AUTHORITY_READY_WAIT = Duration.seconds(20);
 
 export interface AccessAuthorityCurrentness {
   readonly read: (
@@ -23,7 +41,9 @@ export interface AccessAuthorityCurrentness {
     legalEntityScope: LegalEntityScope,
     administrative: boolean,
     transaction?: CoreTransaction,
-  ) => Effect.Effect<readonly AccessAuthorityRevision[], ReturnType<typeof accessDecisionUnavailable>>;
+  ) => Effect.Effect<readonly AccessAuthorityRevision[], AccessDecisionUnavailable | AccessAuthorityChanging>;
+  /** How long a preparation outside any transaction waits for a Changing authority; absent, it does not wait. */
+  readonly readyWait?: Duration.Duration;
 }
 
 /**
@@ -43,7 +63,11 @@ const readRevisionInTransaction = Effect.fn('AccessAuthority.readRevisionInTrans
       return yield* accessDecisionUnavailable('Authority preparation requires the trusted company');
     }
     yield* lockActionAccessFence(current, scope, legalEntityScope, administrative).pipe(
-      Effect.mapError((cause) => accessDecisionUnavailable('The prepared authority fence could not be locked', cause)),
+      Effect.mapError((cause) =>
+        isAccessFenceChanging(cause)
+          ? new AccessAuthorityChanging({ cause, reason: 'An access writer holds the prepared authority fence' })
+          : accessDecisionUnavailable('The prepared authority fence could not be locked', cause),
+      ),
     );
     const rows = yield* current
       .select({
@@ -77,10 +101,13 @@ const readRevisionInTransaction = Effect.fn('AccessAuthority.readRevisionInTrans
   },
 );
 
-export const makeAccessAuthorityCurrentness = (database: {
-  readonly enrollment: DatabaseIdentityEnrollment;
-  readonly executor: CoreDatabaseExecutor;
-}): AccessAuthorityCurrentness => {
+export const makeAccessAuthorityCurrentness = (
+  database: {
+    readonly enrollment: DatabaseIdentityEnrollment;
+    readonly executor: CoreDatabaseExecutor;
+  },
+  readyWait?: Duration.Duration,
+): AccessAuthorityCurrentness => {
   const read: AccessAuthorityCurrentness['read'] = Effect.fn('AccessAuthority.readCurrentness')(
     function* readCurrentness(scope, legalEntityScope, administrative, transaction) {
       const effect =
@@ -92,19 +119,26 @@ export const makeAccessAuthorityCurrentness = (database: {
             )
           : readRevisionInTransaction(transaction, scope, legalEntityScope, administrative);
       return yield* effect.pipe(
-        Effect.mapError((cause) => accessDecisionUnavailable('Authority currentness could not be read', cause)),
+        Effect.mapError((cause) =>
+          Predicate.isTagged(cause, 'AccessAuthorityChanging')
+            ? cause
+            : accessDecisionUnavailable('Authority currentness could not be read', cause),
+        ),
       );
     },
   );
-  return Object.freeze({ read });
+  return Object.freeze(readyWait === undefined ? { read } : { read, readyWait });
 };
 
-/** The runtime's persisted currentness: the enrolled Core database the surrounding layers provide. */
+/**
+ * The runtime's persisted currentness: the enrolled Core database the surrounding layers provide. Its Actions wait for a
+ * Changing authority (`ACTION_AUTHORITY_READY_WAIT`).
+ */
 export const AccessAuthorityCurrentnessLive = Effect.gen(function* accessAuthorityCurrentnessFromLayers() {
   const [database, enrollment] = yield* Effect.all([CoreDatabase, DatabaseIdentityEnrollmentContext], {
     concurrency: 2,
   });
-  return makeAccessAuthorityCurrentness({ enrollment, executor: database.executor });
+  return makeAccessAuthorityCurrentness({ enrollment, executor: database.executor }, ACTION_AUTHORITY_READY_WAIT);
 });
 
 export const sameAuthorityRevision = (

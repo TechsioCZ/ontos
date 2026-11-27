@@ -1,5 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
-import { Cause, Context, Crypto, Effect, Exit, Layer, Option, Schema } from 'effect';
+import { Cause, Context, Crypto, Effect, Exit, Fiber, Layer, Option, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import type { AccessDecisionLogEntry } from '../../src/access/enforcement/decision-log.ts';
@@ -122,8 +123,10 @@ const scripted =
 const opensOwnTransaction = (statement: string): boolean =>
   /(?:^|\s)(?:begin|savepoint|set transaction)(?:\s|$)/iu.test(statement);
 
-const nativeActionBinding = () =>
+/** `writerLocks`: how many fence locks an access writer answers Changing before it gives the fence back. */
+const nativeActionBinding = (writerLocks = 0) =>
   Effect.gen(function* nativeActionBindingFixture() {
+    let changingLocks = writerLocks;
     const grant = cell({ capability: CAPABILITY, deadline: at('2026-11-03T13:00:00Z') });
     const request = makeAuthority({ cells: [grant] });
     let joined = makeAuthority({ cells: [grant] });
@@ -138,6 +141,10 @@ const nativeActionBinding = () =>
         ]);
       }
       if (statement.includes('lock_access_scope_fence')) {
+        if (changingLocks > 0) {
+          changingLocks -= 1;
+          return Effect.succeed([{ state: 'Changing' }]);
+        }
         return Effect.succeed([{ state: 'Ready' }]);
       }
       if (statement.includes('"access_scope_fences"')) {
@@ -232,6 +239,42 @@ it.effect('the live Action binding re-plans under the SQL fence without remote I
     );
     expect(fixture.remoteCalls()).toBe(calls);
     expect(fixture.request.calls.readCells).toBe(requestReads);
+    return yield* Effect.void;
+  }),
+);
+
+it.effect('a protected Action waits for an access writer to give the fence back instead of answering 503', () =>
+  Effect.gen(function* preparedActionWaitsForWriter() {
+    const fixture = yield* nativeActionBinding(3);
+    const { prepare } = fixture.actionGate;
+    if (prepare === undefined) {
+      return yield* Effect.die('The production Action binding must prepare persisted authority');
+    }
+    const waiting = yield* prepare(gateInput).pipe(Effect.forkChild);
+    yield* TestClock.adjust('1 second');
+    const prepared = yield* Fiber.join(waiting);
+    expect(prepared.decision.outcome).toBe('ALLOWED');
+    // The engine is asked once, from the Ready authority; the Changing rounds never reached it.
+    expect(fixture.remoteCalls()).toBe(1);
+    const decision = yield* fixture.executor.transaction((transaction) =>
+      prepared.recheck(now, transaction).pipe(insideDatabaseTransaction(CAPABILITY)),
+    );
+    expect(decision.outcome).toBe('ALLOWED');
+    return yield* Effect.void;
+  }),
+);
+
+it.effect('a writer that keeps the fence past the wait still answers the retryable 503', () =>
+  Effect.gen(function* preparedActionGivesUp() {
+    const fixture = yield* nativeActionBinding(Infinity);
+    const { prepare } = fixture.actionGate;
+    if (prepare === undefined) {
+      return yield* Effect.die('The production Action binding must prepare persisted authority');
+    }
+    const waiting = yield* prepare(gateInput).pipe(Effect.result, Effect.forkChild);
+    yield* TestClock.adjust('21 seconds');
+    expect(yield* Fiber.join(waiting)).toMatchObject({ failure: { _tag: 'AccessDecisionUnavailable' } });
+    expect(fixture.remoteCalls()).toBe(0);
     return yield* Effect.void;
   }),
 );

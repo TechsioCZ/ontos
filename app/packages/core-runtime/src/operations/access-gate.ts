@@ -1,6 +1,6 @@
 import { PrivacyDispatchLivenessSource } from '../access/enforcement/privacy-dispatch-liveness.ts';
 import type { PrivacyDispatchLiveness } from '../access/enforcement/privacy-dispatch-liveness.ts';
-import { Context, Effect, Option } from 'effect';
+import { Context, Effect, Option, Predicate, Schedule } from 'effect';
 
 import { AccessPrincipalKindSource } from '../access/enforcement/actor.ts';
 import type { AccessPrincipalKinds, PrincipalKindQuery } from '../access/enforcement/actor.ts';
@@ -27,8 +27,12 @@ import type { AccessDecisionUnavailable } from '../access/decision/errors.ts';
 import type { LegalEntityId } from '../access/ids.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from './context.ts';
-import { AccessAuthorityCurrentnessLive, sameAuthorityRevision } from '../access/enforcement/currentness.ts';
-import type { AccessAuthorityCurrentness } from '../access/enforcement/currentness.ts';
+import {
+  AccessAuthorityChanging,
+  AccessAuthorityCurrentnessLive,
+  sameAuthorityRevision,
+} from '../access/enforcement/currentness.ts';
+import type { AccessAuthorityCurrentness, AccessAuthorityRevision } from '../access/enforcement/currentness.ts';
 import { prepareEngineEvidence } from '../access/enforcement/prepared-check.ts';
 import { accessDecisionUnavailable } from '../access/decision/errors.ts';
 
@@ -237,6 +241,14 @@ const decisionPortsOf = (ports: AccessEnforcementPorts): AccessDecisionPorts =>
     ports.workloadBindings,
   );
 
+/** A writer revision that passed while the engine answered: the preparation starts over once the writer is done. */
+const requireUnchangedAuthority =
+  (before: readonly AccessAuthorityRevision[]) =>
+  (after: readonly AccessAuthorityRevision[]): Effect.Effect<void, AccessAuthorityChanging> =>
+    sameAuthorityRevision(before, after)
+      ? Effect.void
+      : Effect.fail(new AccessAuthorityChanging({ reason: 'Persisted authority changed while the engine answered' }));
+
 /**
  * The gate bound to these ports. The gate itself is the seam's own service (`AccessDecisionLive` in
  * a deployment, a scripted double in a suite); the ports are what this composition provides.
@@ -256,30 +268,54 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
   };
   const prepare = Effect.fn('AccessGate.prepare')(function* prepareAccessDecision(input: GateInput) {
     const { currentness } = ports;
-    if (currentness === undefined || gate.rebind === undefined || ports.intent.joined === undefined) {
+    const { rebind } = gate;
+    if (currentness === undefined || rebind === undefined || ports.intent.joined === undefined) {
       return yield* accessDecisionUnavailable('The gate cannot prepare and join current persisted authority');
     }
     const administrative = input.carrier.accessDeclaration?.kind === 'admin';
-    const before = yield* currentness.read(input.scope, input.legalEntityScope, administrative);
-    const evidence = prepareEngineEvidence(ports.check);
-    const capturePorts = { ...ports, check: evidence.capture };
-    const capturing = gate.rebind(decisionPortsOf(capturePorts));
-    const decision = yield* capturing.decide(input).pipe(
-      Effect.provideContext(contextOf(capturePorts)),
-      // This second revision read MUST follow the remote answer. Parallelizing it would allow
-      // a complete writer revision to pass between the read and the engine response.
-      Effect.tap(() =>
-        currentness
-          .read(input.scope, input.legalEntityScope, administrative)
-          .pipe(
-            Effect.flatMap((after) =>
-              sameAuthorityRevision(before, after)
-                ? Effect.void
-                : Effect.fail(accessDecisionUnavailable('Persisted authority changed while the engine answered')),
-            ),
-          ),
+    const readCurrent = () => currentness.read(input.scope, input.legalEntityScope, administrative);
+    const prepareOnce = Effect.gen(function* prepareAgainstReadyAuthority() {
+      const before = yield* readCurrent();
+      const evidence = prepareEngineEvidence(ports.check);
+      const capturePorts = { ...ports, check: evidence.capture };
+      const capturing = rebind(decisionPortsOf(capturePorts));
+      const decision = yield* capturing.decide(input).pipe(
+        Effect.provideContext(contextOf(capturePorts)),
+        // This second revision read MUST follow the remote answer. Parallelizing it would allow
+        // a complete writer revision to pass between the read and the engine response.
+        Effect.tap(() => readCurrent().pipe(Effect.flatMap(requireUnchangedAuthority(before)))),
+      );
+      return { before, decision, evidence };
+    });
+    const { readyWait } = currentness;
+    // A writer holds the fence only while it reconciles, so the preparation waits for Ready instead of answering the
+    // 503 at once. Every attempt reads in its own short transaction: nothing is locked while it waits, so the writer
+    // can give the fence back. A Ready authority takes the single pass it always took.
+    const capability = input.carrier.accessDeclaration?.key ?? 'an undeclared Action';
+    let writerRefusals = 0;
+    const waitingForWriter = prepareOnce.pipe(
+      Effect.tapErrorTag('AccessAuthorityChanging', () =>
+        Effect.sync(() => {
+          writerRefusals += 1;
+        }),
+      ),
+      Effect.retry({
+        schedule: Schedule.spaced('250 millis').pipe(Schedule.upTo({ duration: readyWait })),
+        while: (failure) => Predicate.isTagged(failure, 'AccessAuthorityChanging'),
+      }),
+    );
+    const { before, decision, evidence } = yield* (readyWait === undefined ? prepareOnce : waitingForWriter).pipe(
+      Effect.catchTag('AccessAuthorityChanging', (failure) =>
+        Effect.logWarning(
+          `The authority of ${capability} stayed with an access writer through ${writerRefusals} refusals; answering 503`,
+        ).pipe(Effect.andThen(Effect.fail(accessDecisionUnavailable(failure.reason, failure)))),
       ),
     );
+    if (writerRefusals > 0) {
+      yield* Effect.logInfo(
+        `The authority of ${capability} waited for an access writer through ${writerRefusals} refusals`,
+      );
+    }
     evidence.seal();
     return Object.freeze({
       decision,
@@ -287,7 +323,13 @@ export const bindAccessGate = (gate: UnboundAccessGate, ports: AccessEnforcement
         now: Date,
         transaction: CoreTransaction,
       ) {
-        const current = yield* currentness.read(input.scope, input.legalEntityScope, administrative, transaction);
+        const current = yield* currentness
+          .read(input.scope, input.legalEntityScope, administrative, transaction)
+          .pipe(
+            Effect.catchTag('AccessAuthorityChanging', (failure) =>
+              Effect.fail(accessDecisionUnavailable(failure.reason, failure)),
+            ),
+          );
         if (!sameAuthorityRevision(before, current)) {
           return yield* accessDecisionUnavailable('The prepared authority revision is no longer current');
         }
