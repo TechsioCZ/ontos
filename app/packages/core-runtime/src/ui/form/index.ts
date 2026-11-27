@@ -25,3 +25,14 @@ export {
 export type { FieldChoice } from './kit-fields.ts';
 export { ComboboxField } from './kit-fields-combobox.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
+export { NumericField, makeItemNumericField } from './kit-fields-numeric.ts';
+export type { ItemNumber } from './kit-fields-numeric.ts';
+export { SwitchField } from './kit-fields-switch.ts';
+export { EntryTextAreaField } from './kit-fields-entry-textarea.ts';
+export { FilePickerField } from './kit-fields-file.ts';
+export { DateRangeField } from './kit-fields-date.ts';
+export type { DayRangeValue } from './kit-fields-date.ts';
+export { ClearableChoiceField } from './kit-fields-select.ts';
+export { SelectTemplateField } from './kit-fields-select-template.ts';
+export { RichRadioField } from './kit-fields-rich-radio.ts';
+export type { RichChoice } from './kit-fields-rich-radio.ts';
