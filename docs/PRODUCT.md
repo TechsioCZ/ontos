@@ -14,6 +14,8 @@ cohesive capabilities that can evolve without weakening shared runtime guarantee
   behavior into Core.
 - Business Modules own complete business capabilities and data lifecycles behind independently
   deployable MicroVertical seams.
+- Tenant Modules, a direction for what follows V0, let one Tenant add a business capability OntOS
+  does not provide. They carry their own identity and never change a module OntOS ships.
 - Application Compositions assemble compatible modules for a coherent purpose. Customer
   Configuration selects permitted options and policies without creating hidden forks.
 
@@ -29,10 +31,11 @@ separate product or silently redefine shared architecture.
 - Cross-module references preserve ownership instead of creating shared tables or private imports.
 - Authentication, authorization, and business policy remain separate decisions.
 - Historical data, audit, and evidence remain recoverable when a module is inactive or replaced.
-- Customer-specific behavior is declarative or an explicitly catalogued implementation, never an
-  invisible fork under an existing identity.
-- Architecture exists to deliver understandable business outcomes, not to create a generic plugin,
-  workflow, ontology, or control-plane platform.
+- Customer-specific behavior is declarative, a Tenant Module under its own identity, or an explicitly
+  catalogued implementation, never an invisible fork under an existing identity.
+- Architecture exists to deliver understandable business outcomes, not to create a generic workflow,
+  ontology, or control-plane platform. OntOS is extended through Modules, not through a separate
+  plugin mechanism.
 
 ## Boundaries
 
@@ -40,9 +43,14 @@ OntOS does not commit to an exhaustive generic ERP module catalog. Unvalidated m
 are discovery input, not scope. Statutory accounting stays in specialist accounting systems;
 OntOS may own operational evidence, billing facts, approvals, and explicit integration handoffs.
 
-User-facing autonomous agents, generalized low-code generation, a generic workflow engine, and
+User-facing autonomous agents, a low-code interpreter, a generic workflow engine, and
 machine-prediction technology are not product foundations. They may integrate through public
 Actions, resources, evidence, and external contracts when a validated use case requires them.
+
+Tenant-authored modules are a target foundation for what follows V0, proposed in
+[ADR-0032](adr/0032-one-coresdk-for-platform-and-tenant-modules.md). A Tenant Module is ordinary
+module code, not a configuration run by an interpreter. AI-assisted authoring through the Vibe
+Module stays outside V0 ([ADR-0007](adr/0007-no-product-ai-in-v0.md)).
 
 ## Product grounding
 

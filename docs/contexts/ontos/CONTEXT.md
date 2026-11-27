@@ -104,10 +104,13 @@ that Tenant. It is an ordinary Module: it owns its Resources, Actions, and event
 identity and reaches other Modules only through their public contracts.
 _Avoid_: customer module, plugin, extension, vibe module.
 
-**Vibe Module** — The Platform Module through which a Tenant's authorized people create, change,
-version, revert, and delete that Tenant's Tenant Modules with AI assistance. It is the authoring
-tool, not the modules it produces.
+**Vibe Module** — The Platform Module through which a Tenant's authorized people, with AI
+assistance, create and change that Tenant's Tenant Modules and modify its Channel Applications. It
+is the authoring tool, not what it produces.
 _Avoid_: calling a Tenant Module a vibe module.
+
+**Module Runtime** — The execution environment in which a Module's server behavior runs.
+_Avoid_: worker, Worker Runtime.
 
 **Module Replacement** — Use, for one Tenant, of a different Module Implementation Identity for the
 same Module Contract Identity. A substitute that cannot honour the complete contract is a different
@@ -170,9 +173,9 @@ and tests. The exact current and target fields are owned by app-local manifest g
 from outside itself. Every other description of that Module follows from it.
 _Avoid_: a second, separately maintained description of the same Module.
 
-**Module Blueprint** — A named, repeatable pattern from which an ordinary Module, or part of one, is
-produced from explicit inputs. A blueprint has no meaning once the Module exists: the result is a
-Module like any other, and equal inputs give an equal result.
+**Module Blueprint** — A named, repeatable pattern from which the business structure of an ordinary
+Module, or part of one, is produced once from explicit inputs. The result belongs to its author and
+is a Module like any other; equal inputs give an equal result.
 _Avoid_: low-code interpreter, template runtime, treating a blueprint as a module kind.
 
 **Vertical Runtime Registration** — Owner-local private binding from a module's public contract to
@@ -205,6 +208,18 @@ handler remains private.
 
 **Outbox Worker** — Module-owned asynchronous consumer of committed facts. It is governed as an
 entrypoint of the consuming module and never extends the producing Action's transaction.
+
+**Published Event** — A committed fact that a Module declares as part of its public contract so that
+other Modules and systems outside OntOS may react to it. A fact a Module records only for its own
+use is not a Published Event.
+
+**Inbound Endpoint** — A Module Entrypoint through which a system outside OntOS delivers a request
+to the Module that declares it, such as a payment provider's notification or a partner's call.
+_Avoid_: webhook, which does not say which side sends.
+
+**Outbound Webhook** — A Tenant's configured delivery of one Published Event to a system outside
+OntOS. It is configuration over a Module's public contract, not Module behavior.
+_Avoid_: webhook for an Inbound Endpoint.
 
 ## Identity and shared business reality
 
