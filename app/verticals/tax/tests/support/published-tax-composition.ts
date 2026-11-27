@@ -12,6 +12,7 @@ import { Hex } from 'effect/encoding';
 
 import { ultramodernDeliveryUnit } from '../../shared/ultramodern-build.ts';
 import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
+import { sharedPackagesOf } from '@app/core-runtime/modules/shared-packages';
 
 class TaxProductionRuntimeFixtureUnavailable extends Schema.TaggedError<TaxProductionRuntimeFixtureUnavailable>()(
   'TaxProductionRuntimeFixtureUnavailable',
@@ -65,7 +66,7 @@ export const publishedTaxComposition = Effect.gen(function* publishedTaxComposit
     ),
   )(new TextDecoder().decode(shellFederationBytes));
   const singletons = yield* Effect.forEach(
-    federation.shared.filter((entry) => entry.singleton === true),
+    sharedPackagesOf(federation.shared).filter((entry) => entry.singleton === true),
     (entry) =>
       Schema.decodeUnknownEffect(ApplicationCompositionSingletonSchema)({
         packageName: entry.name,
