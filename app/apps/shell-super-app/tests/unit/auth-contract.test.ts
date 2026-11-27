@@ -227,6 +227,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     listAccessApprovals: '/shell/access/approvals/list',
     listAccessAssignments: '/shell/access/people/assignments',
     listAccessChanges: '/shell/access/changes/list',
+    listAccessPages: '/shell/access/pages',
     listAccessPeople: '/shell/access/people/list',
     listAccessPeopleOptions: '/shell/access/people/options',
     listAccessRoles: '/shell/access/roles/list',

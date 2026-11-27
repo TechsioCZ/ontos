@@ -33,6 +33,7 @@ import type {
   ListAccessAssignmentsResponse,
   ListAccessChangesPayload,
   ListAccessChangesResponse,
+  ListAccessPagesResponse,
   ListAccessPeoplePayload,
   ListAccessPeopleOptionsResponse,
   ListAccessPeopleResponse,
@@ -826,5 +827,11 @@ export const explainAccess = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ExplainAccessResponse, AccessAdministrationClientError> =>
   invokeAccessAdministrationClient(options, (client) => client.accessAdminExplain.explainAccess({ payload }));
+
+/** Navigation only: the access administration pages the person may open. Every page still authorizes itself. */
+export const listAccessAdministrationPages = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ListAccessPagesResponse, AccessAdministrationClientError> =>
+  invokeAccessAdministrationClient(options, (client) => client.accessAdminNavigation.listAccessPages({ payload: {} }));
 
 export { Effect } from '@modern-js/bff-effect/effect-client';

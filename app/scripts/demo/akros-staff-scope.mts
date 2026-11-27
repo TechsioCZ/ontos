@@ -385,13 +385,25 @@ interface AccountPlan {
  * non-run, narrowed and limited cells, and the plan refuses ownership, administration and time-limited grants.
  */
 export const REVIEWED_ROLE_CONTENTS = {
-  /** expedice@akros.demo: the order desk — the order page, its records and media, and the order status change. */
+  /**
+   * expedice@akros.demo: the order desk and stock — the order and product pages with their navigation, search,
+   * records and media, the order status change and the stock movement. Never a catalogue, price, market or image
+   * change: the product fields stay read-only.
+   */
   fulfilment: {
     capabilities: [
+      'demo.merchandise.page-merchandise-home.read',
+      'demo.merchandise.navigation-orders.read',
       'demo.merchandise.page-orders.read',
+      'demo.merchandise.search-orders.read',
+      'demo.merchandise.navigation-records.read',
+      'demo.merchandise.page-products.read',
+      'demo.merchandise.page-product-detail.read',
+      'demo.merchandise.search-products.read',
       'demo.merchandise.api-records.read',
       'demo.merchandise.api-media.read',
       'demo.merchandise.order-status.change',
+      'demo.merchandise.stock-movement.record',
     ],
   },
   /**

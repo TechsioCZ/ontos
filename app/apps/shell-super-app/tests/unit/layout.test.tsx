@@ -1,3 +1,7 @@
+import { settle, waitUntil } from '@app/admin-ui/testing/module-ui';
+import { browserNetwork, networkIdle, serveApi } from '@app/shared-contracts/testing/http-double';
+import { HttpApi } from '@modern-js/bff-effect/effect-client';
+import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { RouterContextProvider } from '@modern-js/plugin-tanstack/runtime';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -5,7 +9,10 @@ import { Effect } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest, test } from 'effect-rstest';
 import type { ComponentProps, ReactNode } from 'react';
 
-import { AppIdSchema } from '../../shared/browser-api.ts';
+import { accessAdminNavigationGroup } from '../../shared/access-admin-api.ts';
+import type { AccessAdministrationPage } from '../../shared/access-admin-api.ts';
+import { AppIdSchema, shellAuthenticationApiContract } from '../../shared/browser-api.ts';
+import { resetSessionScope } from '../../src/routes/session-scope.ts';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout, buildShellNavigation, shellSearchScopeKey } from '../../src/routes/shell-frame';
@@ -315,7 +322,26 @@ test('supports module pages with their own heading and preserves their content',
   expect(screen.getByText('Module content')).toBeTruthy();
 });
 
-test('offers access administration in its own landmark and marks the current page', () => {
+const accessPagesApi = HttpApi.make('accessPagesDouble')
+  .add(accessAdminNavigationGroup)
+  .prefix(shellAuthenticationApiContract.apiPrefix);
+let accessPagesAsked = 0;
+/** The Shell answering which access administration pages the signed-in person may open. */
+const accessPagesNetwork = (pages: readonly AccessAdministrationPage[]) =>
+  browserNetwork(
+    serveApi(
+      accessPagesApi,
+      HttpApiBuilder.group(accessPagesApi, 'accessAdminNavigation', (group) =>
+        group.handle('listAccessPages', () =>
+          Effect.sync(() => {
+            accessPagesAsked += 1;
+            return { pages };
+          }),
+        ),
+      ),
+    ),
+  );
+const renderAccessPage = () => {
   visit('/en/access/approvals');
   renderCopy(
     <AuthenticatedDashboardLayout
@@ -330,19 +356,50 @@ test('offers access administration in its own landmark and marks the current pag
       <section>Page-specific content</section>
     </AuthenticatedDashboardLayout>,
   );
-
-  expect(screen.getByRole('region', { name: 'Access administration' })).toBeTruthy();
-  const links = [...screen.getByRole('navigation', { name: 'Access administration' }).querySelectorAll('a')];
-  expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-    ['Roles', '/en/access/roles'],
-    ['People', '/en/access/people'],
-    ['Permission changes', '/en/access/changes'],
-    ['Approvals', '/en/access/approvals'],
-    ['Why?', '/en/access/why'],
+};
+const accessLinks = () =>
+  [...screen.getByRole('navigation', { name: 'Access administration' }).querySelectorAll('a')].map((link) => [
+    link.textContent,
+    link.getAttribute('href'),
+    link.getAttribute('aria-current'),
   ]);
-  expect(links.map((link) => link.getAttribute('aria-current'))).toEqual([null, null, null, 'page', null]);
-  expect(screen.getAllByRole('heading', { name: approvalsTitle })).toHaveLength(1);
-});
+
+it.effect('offers access administration in its own landmark and marks the current page', () =>
+  Effect.gen(function* allAccessPages() {
+    yield* resetSessionScope;
+    renderAccessPage();
+    yield* Effect.promise(() => screen.findByRole('region', { name: 'Access administration' }));
+    expect(accessLinks()).toEqual([
+      ['Roles', '/en/access/roles', null],
+      ['People', '/en/access/people', null],
+      ['Permission changes', '/en/access/changes', null],
+      ['Approvals', '/en/access/approvals', 'page'],
+      ['Why?', '/en/access/why', null],
+    ]);
+    expect(screen.getAllByRole('heading', { name: approvalsTitle })).toHaveLength(1);
+  }).pipe(Effect.provide(accessPagesNetwork(['roles', 'people', 'changes', 'approvals', 'why']))),
+);
+
+it.effect('offers only the access administration pages the person may open', () =>
+  Effect.gen(function* someAccessPages() {
+    yield* resetSessionScope;
+    renderAccessPage();
+    yield* Effect.promise(() => screen.findByRole('region', { name: 'Access administration' }));
+    expect(accessLinks()).toEqual([['Why?', '/en/access/why', null]]);
+  }).pipe(Effect.provide(accessPagesNetwork(['why']))),
+);
+
+it.live('shows no access administration to a person who may open none of its pages', () =>
+  Effect.gen(function* noAccessPages() {
+    yield* resetSessionScope;
+    renderAccessPage();
+    yield* waitUntil(() => accessPagesAsked > 0);
+    yield* networkIdle;
+    yield* settle;
+    expect(screen.queryByRole('region', { name: 'Access administration' })).toBeNull();
+    expect(screen.getByText('Page-specific content')).toBeTruthy();
+  }).pipe(Effect.provide(accessPagesNetwork([]))),
+);
 
 test('keeps Home as the only navigation link when no active modules are supplied', () => {
   renderCopy(

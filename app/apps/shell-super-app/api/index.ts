@@ -234,6 +234,7 @@ import {
   accessAdminExplainGroupLive,
   accessExplainDeclarations,
 } from './access-admin/explain.ts';
+import { AccessPagesBffLive, accessAdminNavigationGroupLive } from './access-admin/pages.ts';
 import { AccessPeopleBffLive, accessAdminPeopleGroupLive, accessPeopleDeclarations } from './access-admin/people.ts';
 import { AccessAdminRolesBffLive, accessAdminRolesGroupLive, accessRolesDeclarations } from './access-admin/roles.ts';
 import {
@@ -5193,6 +5194,7 @@ export const makeShellAuthenticationApiRuntime = (
     AccessApprovalsBffLive,
     AccessChangesBffLive,
     AccessExplainBffWithMembershipsLive,
+    AccessPagesBffLive,
     AccessPeopleBffLive,
   ).pipe(
     Layer.provide(
@@ -5216,6 +5218,7 @@ export const makeShellAuthenticationApiRuntime = (
     accessAdminChangesGroupLive,
     accessAdminApprovalsGroupLive,
     accessAdminExplainGroupLive,
+    accessAdminNavigationGroupLive,
   );
   const delegationLedgerLayer = GatewayDelegationExchangeLedgerLive.pipe(Layer.provide(runtimeAuthPersistenceLive));
   const originatorEvidenceLayer = GatewayOriginatorEvidenceLive.pipe(

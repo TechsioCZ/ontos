@@ -22,6 +22,7 @@ import {
   accessAdminApprovalsGroup,
   accessAdminChangesGroup,
   accessAdminExplainGroup,
+  accessAdminNavigationGroup,
   accessAdminPeopleGroup,
   accessAdminRolesGroup,
 } from './access-admin-api.ts';
@@ -1860,7 +1861,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(accessAdminPeopleGroup)
   .add(accessAdminChangesGroup)
   .add(accessAdminApprovalsGroup)
-  .add(accessAdminExplainGroup);
+  .add(accessAdminExplainGroup)
+  .add(accessAdminNavigationGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;

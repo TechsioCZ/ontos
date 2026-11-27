@@ -269,6 +269,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(ShellBrowserApi.groups.accessAdminChanges)
   .add(ShellBrowserApi.groups.accessAdminApprovals)
   .add(ShellBrowserApi.groups.accessAdminExplain)
+  .add(ShellBrowserApi.groups.accessAdminNavigation)
   .add(SymmyIngressGroup)
   // Payment gateway relay (#1157): typed PSP notification and reconciliation driver ingress.
   .add(PaymentNotificationsGroup.middleware(PaymentNotificationBoundary))

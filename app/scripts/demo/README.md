@@ -373,6 +373,26 @@ accounts (`management@najempark.demo`, `operations@najempark.demo`, `finance@naj
 `external@najempark.demo`, `provoz@najempark.demo`) also get their roles in the
 Nájempark company 0021 (`siamparkRentalPersonas`).
 
+### AKROS staff on stage
+
+The AKROS tenant (`bceaa540…`, company AKROS `c0c78a3e…`) has its own logins. They and their passwords come from the
+operator stage accounts file (ADR-0028), never from this repository; the playground logins are named in
+`akros-playground-copy.mts` (`akrosPlaygroundAccounts`). `akros-staff-scope.mts` keeps the roles of the two
+`*.demo` staff logins to the reviewed lists in `REVIEWED_ROLE_CONTENTS`; the owner edits the roles in Správa
+oprávnění › Role.
+
+| Login                       | Role                                                             | Can do                                                                                                     |
+| --------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `admin@akros.playground`    | Tenant owner (Plný přístup)                                      | everything, including roles and people                                                                     |
+| `eshop@akros.playground`    | Správce e-shopu AKROS: AKROS access administrator, Plný přístup  | the whole catalogue (Nový produkt, product edits, Kategorie e-shopu, Příjem zboží), orders, e-shops, roles |
+| `eshop@akros.demo`          | Správce e-shopu, Směrování modulů, AKROS E-shopy registry reader | customers, orders, products and their edits, ERP products, e-shops, tasks, employees, tags, contacts       |
+| `expedice@akros.demo`       | Expedice, Směrování modulů                                       | orders and their status, products and stock read only, stock movements (Příjem, Výdej, Korekce)            |
+| `expedice@akros.playground` | Expedice                                                         | same as `expedice@akros.demo`                                                                              |
+
+Two people can work on the catalogue at once: `eshop@akros.demo` and `eshop@akros.playground` both edit products.
+Expedice never edits a product, price, image or market. Správa oprávnění shows only the pages the gate lets a person
+open, so the two staff logins without access administration do not see it.
+
 ### Nájempark CRM: entrusted contacts (S00)
 
 `node --env-file=.env scripts/demo/seed-siampark-crm.mts` writes the Nájempark (0021) CRM state once (`--reset`

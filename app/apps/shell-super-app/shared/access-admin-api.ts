@@ -869,13 +869,27 @@ export const accessAdminExplainGroup = HttpApiGroup.make('accessAdminExplain').a
   }),
 );
 
+/** The access administration pages, in navigation order. */
+export const AccessAdministrationPageSchema = Schema.Literals(['roles', 'people', 'changes', 'approvals', 'why']);
+export type AccessAdministrationPage = typeof AccessAdministrationPageSchema.Type;
+/** The access administration pages the person may open, as the gate decides each page's own declaration. */
+export const ListAccessPagesResponseSchema = Schema.Struct({ pages: Schema.Array(AccessAdministrationPageSchema) });
+export const accessAdminNavigationGroup = HttpApiGroup.make('accessAdminNavigation').add(
+  HttpApiEndpoint.post('listAccessPages', '/shell/access/pages', {
+    error: accessAdminErrors,
+    payload: Schema.Struct({}),
+    success: ListAccessPagesResponseSchema,
+  }),
+);
+
 /** Native client contract; Shell composes backed groups into shared/api.ts as handlers arrive. */
 export const AccessAdministrationApi = HttpApi.make('accessAdministrationApi')
   .add(accessAdminRolesGroup)
   .add(accessAdminPeopleGroup)
   .add(accessAdminChangesGroup)
   .add(accessAdminApprovalsGroup)
-  .add(accessAdminExplainGroup);
+  .add(accessAdminExplainGroup)
+  .add(accessAdminNavigationGroup);
 
 // Core exposes precise ./access/decision/{contract,explain} and
 // ./access/changes/{commands,role-revision} subpaths, not area barrels.
@@ -918,3 +932,4 @@ export type ExecuteAccessApprovalPayload = typeof ExecuteAccessApprovalPayloadSc
 export type AccessApproval = typeof AccessApprovalSchema.Type;
 export type ExplainAccessPayload = typeof ExplainAccessPayloadSchema.Type;
 export type ExplainAccessResponse = typeof ExplainAccessResponseSchema.Type;
+export type ListAccessPagesResponse = typeof ListAccessPagesResponseSchema.Type;

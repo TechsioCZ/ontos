@@ -19,7 +19,7 @@ import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
 import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
-import { Effect, Schema } from 'effect';
+import { Effect } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
@@ -27,7 +27,10 @@ import { staffRoutePreloads } from './route-preload-scheduler.ts';
 import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
+import { AccessAdministrationPageSchema } from '../../shared/access-admin-api.ts';
+import type { AccessAdministrationPage } from '../../shared/access-admin-api.ts';
 import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/browser-api.ts';
+import { useAccessAdministrationPages } from './access-administration-pages.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
@@ -70,10 +73,6 @@ interface DashboardLegalEntityItem {
   readonly legalEntityId: string;
   readonly legalName: string;
 }
-
-/** The access administration pages in navigation order. */
-const AccessAdministrationPageSchema = Schema.Literals(['roles', 'people', 'changes', 'approvals', 'why']);
-export type AccessAdministrationPage = typeof AccessAdministrationPageSchema.Type;
 
 /** The icon each access administration page carries in the navigation, beside the module destinations. */
 const accessAdministrationIcons = {
@@ -875,15 +874,23 @@ const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch, scopeKey
 
 /**
  * Access administration is tenant work, so it is offered whether or not a company is selected. It is
- * a Shell-owned destination group beside the module navigation, not a module contribution.
+ * a Shell-owned destination group beside the module navigation, not a module contribution. It lists only the
+ * pages the gate lets the person open, and is not shown at all to a person who may open none.
  */
 const AccessAdministrationNavigation = ({
   currentPage,
+  pages,
 }: {
   readonly currentPage: AccessAdministrationPage | undefined;
+  readonly pages: readonly AccessAdministrationPage[];
 }) => {
   const { t } = useModernI18n();
   const label = t('shell.accessAdmin.accessible.navigation');
+  const allowed = new Set(pages);
+  const offered = AccessAdministrationPageSchema.literals.filter((page) => allowed.has(page));
+  if (offered.length === 0) {
+    return null;
+  }
 
   return (
     <section aria-label={label} className="flex flex-col gap-150">
@@ -892,7 +899,7 @@ const AccessAdministrationNavigation = ({
       </Sidebar.Expanded>
       <nav aria-label={label}>
         <Sidebar.Menu>
-          {AccessAdministrationPageSchema.literals.map((page) => (
+          {offered.map((page) => (
             <Sidebar.Item key={page}>
               <DashboardNavigationLink
                 collapsedSide
@@ -1067,6 +1074,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
       navigationHrefFromPath((resolvedLocation ?? location).pathname, pageLanguage),
   });
   const model = buildShellNavigation({ ...props, currentHref, language: pageLanguage, pendingHref }, t);
+  const accessPages = useAccessAdministrationPages(props.identity.principalId, props.currentTenantId);
   // A record's page names the tab after the record; other pages after their destination.
   const recordTitle = useDocumentTitle();
   const preload = useDashboardRoutePreload(props);
@@ -1184,7 +1192,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         </Header>
         <div className={props.logoutPending ? 'hidden' : 'flex min-h-0 flex-1'}>
           <GroupedSidebarPanel
-            accessNavigation={<AccessAdministrationNavigation currentPage={props.currentAccessPage} />}
+            accessNavigation={
+              <AccessAdministrationNavigation currentPage={props.currentAccessPage} pages={accessPages} />
+            }
             model={model}
             selectors={
               <DashboardContextSelectors
