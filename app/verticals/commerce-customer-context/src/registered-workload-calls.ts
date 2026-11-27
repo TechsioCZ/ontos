@@ -22,6 +22,10 @@ const privacyCoreOrganizationProfileIcoApplicabilityRead = 'privacy.core.organiz
 const privacyCoreOrganizationProfileIcoCheck = 'privacy.core.organization-profile-ico-check';
 const privacyCoreSourceProcessingCheck = 'privacy.core.source-processing-check';
 const privacyCoreSourceProcessingEligibilityRead = 'privacy.core.source-processing-eligibility.read';
+const partyRegistryApiSourceAdmissionSet = 'party.registry.api.source-admission-set';
+const partyRegistrySourceAdmissionSetRead = 'party.registry.source-admission-set.read';
+const privacyCoreApiSourceProcessingEligibilitySet = 'privacy.core.api.source-processing-eligibility-set';
+const privacyCoreSourceProcessingEligibilitySetRead = 'privacy.core.source-processing-eligibility-set.read';
 
 /**
  * The registered-workload calls this module's credential makes; its manifest declares them. Each entry is verbatim
@@ -257,5 +261,27 @@ export const commerceCustomerContextRegisteredWorkloadCalls = [
     schemaVersion: '1',
     sourceWorkloadKey: commerceCustomerContextSourceRead,
     workloadKey: partyRegistrySourceRead,
+  },
+  // symmy-customers-under-3s: a source-sync customer page proves every customer at once, through
+  // commerce.customer-context.requirement.customer-profile-source-page-admissions and -page-privacy-set
+  {
+    audience: partyRegistry,
+    declarationKey: partyRegistrySourceAdmissionSetRead,
+    entrypointKey: partyRegistryApiSourceAdmissionSet,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: commerceCustomerContextSourceRead,
+    workloadKey: partyRegistrySourceRead,
+  },
+  {
+    audience: 'privacy',
+    declarationKey: privacyCoreSourceProcessingEligibilitySetRead,
+    entrypointKey: privacyCoreApiSourceProcessingEligibilitySet,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'required',
+    schemaVersion: '1',
+    sourceWorkloadKey: commerceCustomerContextSourceRead,
+    workloadKey: privacyCoreSourceProcessingCheck,
   },
 ] as const satisfies readonly OntosRegisteredWorkloadCallInput[];

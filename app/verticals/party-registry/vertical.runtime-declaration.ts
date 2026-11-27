@@ -16,6 +16,7 @@ import { partyRegistryCommandsApi } from './shared/command-api.ts';
 import {
   partyOrganizationPrivacyRequirementKey,
   partySourcePrivacyRequirementKey,
+  partySourcePrivacySetRequirementKey,
 } from './src/services/party-client-source-privacy.service.ts';
 import { duplicateCandidateDetailRead } from './src/api/duplicate-candidate-detail.read.ts';
 import { partyCommandResultRead } from './src/api/party-command-result.read.ts';
@@ -100,6 +101,7 @@ import { retailCustomerProfileRead } from './src/api/retail-customer-profile.rea
 import { SearchLabelsApi } from './shared/apis/search-labels.ts';
 import { SourceCounterpartyAdmissionApi } from './shared/apis/source-counterparty-admission.ts';
 import { sourceCounterpartyAdmissionRead } from './src/api/source-counterparty-admission.read.ts';
+import { sourceAdmissionSetRead } from './src/api/source-admission-set.read.ts';
 import { SourcePartySearchApi } from './shared/apis/source-party-search.ts';
 import { sourcePartySearchRead } from './src/api/source-party-search.read.ts';
 import { SourcePersonAdmissionApi } from './shared/apis/source-person-admission.ts';
@@ -375,6 +377,11 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         apiKey: 'source-counterparty-admission',
         operationKey: 'sourceCounterpartyAdmission.execute',
         registration: sourceCounterpartyAdmissionRead,
+      },
+      {
+        apiKey: 'source-counterparty-admission',
+        operationKey: 'sourceCounterpartyAdmission.executeSet',
+        registration: sourceAdmissionSetRead,
       },
       { apiKey: 'source-party-search', operationKey: 'sourcePartySearch.execute', registration: sourcePartySearchRead },
       {
@@ -722,6 +729,7 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         organizationBusinessNameExportRead,
         sourcePartySearchRead,
         sourceCounterpartyAdmissionRead,
+        sourceAdmissionSetRead,
         duplicateCandidateDetailRead,
         partyMatchDecisionRead,
         // Create recovery returns a source-created result only through its exact receipt and current Privacy.
@@ -739,6 +747,22 @@ export const partyRegistryRuntimeManifest: VerticalRuntimeRegistrationInput['man
         key: partySourcePrivacyRequirementKey(descriptor.entrypoint.entrypointKey),
         provider: {
           entrypointKey: 'privacy.core.api.source-processing-eligibility',
+          moduleId: 'privacy.core',
+          schemaVersion: '1',
+        },
+      })),
+      // A whole source page asks Privacy once per phase: one set decision for all of its source references.
+      ...[sourceAdmissionSetRead, sourceProfileExportRead].map(({ descriptor }) => ({
+        condition: 'party.registry.condition.client-source-processing',
+        entrypointKey: descriptor.entrypoint.entrypointKey,
+        evidence: [
+          'party.registry.evidence.current-qualified-source',
+          'party.registry.evidence.current-processing-eligibility',
+          'party.registry.evidence.current-anti-resurrection',
+        ],
+        key: partySourcePrivacySetRequirementKey(descriptor.entrypoint.entrypointKey),
+        provider: {
+          entrypointKey: 'privacy.core.api.source-processing-eligibility-set',
           moduleId: 'privacy.core',
           schemaVersion: '1',
         },
@@ -863,6 +887,7 @@ export const partyRegistryRuntimeDeclaration: VerticalRuntimeRegistrationInput =
     partySourceEffectReceiptRead,
     retailCustomerProfileRead,
     sourceCounterpartyAdmissionRead,
+    sourceAdmissionSetRead,
     sourcePartySearchRead,
     sourcePersonAdmissionRead,
     sourceProfileExportRead,

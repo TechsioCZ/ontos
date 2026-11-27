@@ -214,6 +214,15 @@ export function ProductGrid({
                   priceLabel
                 )}
               </ProductCard.Price>
+              {product.customerPrice && !priceUnavailable && (
+                <p
+                  className="m-0 text-center text-xs leading-[1.4] text-(--color-fg-secondary)"
+                  data-sf-your-price=""
+                >
+                  {cs.product.yourPrice} {formatPrice(product.customerPrice.netMinor, money)}{" "}
+                  {cs.product.excludingVat}
+                </p>
+              )}
 
               <ProductCard.Actions className="mt-auto block [&>*]:w-full" data-sf-product-actions>
                 {canAddToCart && product.stock.kind === "quantity" ? (
@@ -232,6 +241,7 @@ export function ProductGrid({
                       stockCount: product.stock.stockCount,
                       priceMinor: product.priceMinor,
                       priceExcludingVatMinor: product.priceExcludingVatMinor,
+                      ...(product.customerPrice ? { yourPrice: true as const } : {}),
                       ...(product.variantLabel ? { variantLabel: product.variantLabel } : {}),
                     }}
                     quantity={product.stock.minimumQuantity}

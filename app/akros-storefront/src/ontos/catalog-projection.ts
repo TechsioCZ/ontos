@@ -65,6 +65,7 @@ export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProdu
   belowPackage: product.belowPackage,
   priceUnavailableReason: product.priceUnavailableReason,
   netWeight: product.netWeight,
+  ...(product.customerPrice ? { customerPrice: product.customerPrice } : {}),
   detail: { priceTiers: product.detail.priceTiers },
 });
 
@@ -404,8 +405,10 @@ export function projectProducts(body: Raw): ProductPage {
           : sourceUnitWeightKg(text(v.sku), unit);
       const variantOriginal = number(v.originalPriceMinor);
       const variantDescription = text(v.description).trim() || undefined;
+      const catalogVariantId = filled(v.catalogVariantId);
       return {
         id: text(v.id),
+        ...(catalogVariantId === undefined ? {} : { catalogVariantId }),
         sourceId: text(v.sourceId, text(v.id)),
         sku: text(v.sku),
         label: text(v.name, text(v.label, text(v.sku))),
@@ -527,8 +530,12 @@ export function projectProducts(body: Raw): ProductPage {
     const seoTitle = filled(p.seoTitle);
     const seoDescription = filled(p.seoDescription);
     const detail = p.detail && typeof p.detail === "object" ? (p.detail as Raw) : {};
+    const catalogProductId = filled(p.catalogProductId);
+    const catalogVariantId = filled(p.catalogVariantId);
     products.push({
       id: text(p.id),
+      ...(catalogProductId === undefined ? {} : { catalogProductId }),
+      ...(catalogVariantId === undefined ? {} : { catalogVariantId }),
       slug: text(p.slug),
       sku: text(p.sku),
       name: text(p.name),

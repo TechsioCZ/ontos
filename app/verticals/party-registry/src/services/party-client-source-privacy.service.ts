@@ -16,7 +16,10 @@ import { executeOrganizationBusinessApplicabilityWithAuthorization } from '@app/
 import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readScopedCurrentActionInvocation, requireModuleOperation } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor, ScopedCurrentActionInvocationFact } from '@app/core-runtime';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
+import {
+  executeSourceProcessingEligibilitySetWithAuthorization,
+  executeSourceProcessingEligibilityWithAuthorization,
+} from '@app/privacy-contracts/source-processing-eligibility/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import {
@@ -80,6 +83,9 @@ export const withPartyClientSourceRequest =
 
 export const partySourcePrivacyRequirementKey = (entrypointKey: string) =>
   `party.registry.requirement.${entrypointKey.slice('party.registry.'.length)}-source-privacy`;
+/** The requirement of the one Privacy set decision an entrypoint asks for a whole source page. */
+export const partySourcePrivacySetRequirementKey = (entrypointKey: string) =>
+  `${partySourcePrivacyRequirementKey(entrypointKey)}-set`;
 export const partyOrganizationPrivacyRequirementKey = (entrypointKey: string) =>
   `party.registry.requirement.${entrypointKey.slice('party.registry.'.length)}-organization-business-privacy`;
 
@@ -743,15 +749,11 @@ const sourceSyncOrganizationWitnessMatches = Effect.fn('PartyClientSourcePrivacy
   },
 );
 
-const readPartySourceProcessing = Effect.fn('PartyClientSourcePrivacy.readSourceProcessing')(function* read(
+/** The exact Privacy request of one source reference and intent. */
+const sourceProcessingPayload = Effect.fn('PartyClientSourcePrivacy.sourceProcessingPayload')(function* payloadOf(
   input: PartySourcePrivacyInput,
-  crypto: Crypto.Crypto,
-  operationRequirementKey: string,
 ) {
-  const { scope, assertion, intent } = input;
-  yield* requireModuleOperation(operationRequirementKey).pipe(
-    Effect.catch((error) => failUnavailable('delegation', error)),
-  );
+  const { assertion, intent } = input;
   let target: { readonly kind: 'PARTY' | 'DUPLICATE_CANDIDATE'; readonly resourceId: string } | null = null;
   if ('partyId' in intent) {
     target = { kind: 'PARTY', resourceId: intent.partyId };
@@ -760,7 +762,7 @@ const readPartySourceProcessing = Effect.fn('PartyClientSourcePrivacy.readSource
   } else if (intent.target?.kind === 'DUPLICATE_CANDIDATE') {
     target = { kind: 'DUPLICATE_CANDIDATE', resourceId: intent.target.caseId };
   }
-  const payload = yield* Schema.decodeUnknownEffect(SourceProcessingEligibilityRequestSchema, {
+  return yield* Schema.decodeUnknownEffect(SourceProcessingEligibilityRequestSchema, {
     onExcessProperty: 'error',
   })({
     consumerModuleId: 'party.registry',
@@ -768,24 +770,49 @@ const readPartySourceProcessing = Effect.fn('PartyClientSourcePrivacy.readSource
     source: { ...assertion.source, recordId: assertion.recordId, occurrenceId: assertion.occurrenceId },
     target,
   }).pipe(Effect.catch((error) => failUnavailable('privacy-read', error)));
-  const requestHash = computeCanonicalValueHash(payload);
+});
+
+/** The carrier of one Privacy call: the route's native read, the registered workload, or the caller's assertion. */
+const partyPrivacySubject = (
+  scope: PartyClientSourceScope,
+  declarationKey: string,
+  operationRequirementKey: string,
+  requestHash: string,
+): GatewayDelegationSubject => {
   const registeredSubject = {
     _tag: 'RegisteredAssertion' as const,
     scope,
-    declarationKey: 'privacy.core.source-processing-eligibility.read',
+    declarationKey,
     operationRequirementKey,
   };
-  let subject: GatewayDelegationSubject;
   if (readVerifiedGatewayRouteScope(scope)?.nativeReadReceiver !== undefined) {
-    subject = { _tag: 'NativeRouteRead', scope, operationRequirementKey, requestHash };
-  } else if (usesRegisteredPartyPrivacyCarrier(scope)) {
-    subject = registeredSubject;
-    if (readVerifiedGatewayRecovery(scope) !== undefined) {
-      subject = { ...registeredSubject, recoveryRequestHash: requestHash };
-    }
-  } else {
-    subject = { _tag: 'Assertion', scope };
+    return { _tag: 'NativeRouteRead', scope, operationRequirementKey, requestHash };
   }
+  if (usesRegisteredPartyPrivacyCarrier(scope)) {
+    return readVerifiedGatewayRecovery(scope) === undefined
+      ? registeredSubject
+      : { ...registeredSubject, recoveryRequestHash: requestHash };
+  }
+  return { _tag: 'Assertion', scope };
+};
+
+const readPartySourceProcessing = Effect.fn('PartyClientSourcePrivacy.readSourceProcessing')(function* read(
+  input: PartySourcePrivacyInput,
+  crypto: Crypto.Crypto,
+  operationRequirementKey: string,
+) {
+  const { scope } = input;
+  yield* requireModuleOperation(operationRequirementKey).pipe(
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
+  const payload = yield* sourceProcessingPayload(input);
+  const requestHash = computeCanonicalValueHash(payload);
+  const subject = partyPrivacySubject(
+    scope,
+    'privacy.core.source-processing-eligibility.read',
+    operationRequirementKey,
+    requestHash,
+  );
   const requestCorrelation = yield* crypto
     .randomUUIDv4()
     .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
@@ -920,4 +947,118 @@ export const checkPartyClientSourcePrivacy = Effect.fn('PartyClientSourcePrivacy
     return organization;
   }
   return (yield* readPartySourceProcessing(input, crypto.value, operationRequirementKey)).result.outcome;
+});
+
+/** One Privacy set call for the exact requests of several source references, answered in their order. */
+const readPartySourceProcessingSet = Effect.fn('PartyClientSourcePrivacy.readSourceProcessingSet')(function* readSet(
+  inputs: readonly PartySourcePrivacyInput[],
+  scope: PartyClientSourceScope,
+  crypto: Crypto.Crypto,
+  operationRequirementKey: string,
+) {
+  yield* requireModuleOperation(operationRequirementKey).pipe(
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
+  const requests = yield* Effect.forEach(inputs, sourceProcessingPayload, { concurrency: 1 });
+  const payload = { requests };
+  const subject = partyPrivacySubject(
+    scope,
+    'privacy.core.source-processing-eligibility-set.read',
+    operationRequirementKey,
+    computeCanonicalValueHash(payload),
+  );
+  const requestCorrelation = yield* crypto
+    .randomUUIDv4()
+    .pipe(Effect.catch((error) => failUnavailable('crypto', error)));
+  yield* tracePartyPrivacyCarrier(scope, subject, operationRequirementKey);
+  const credential = yield* acquireDelegatedGatewayContext(
+    {
+      audience: 'privacy',
+      callingAppId: 'party-registry',
+      legalEntityScope: 'subject',
+      requestCorrelation,
+      subject,
+    },
+    crypto,
+  ).pipe(
+    partyRegistryEvidenceCall.clientSourcePrivacy,
+    Effect.catch((error) => failUnavailable('delegation', error)),
+  );
+  const result = yield* executeSourceProcessingEligibilitySetWithAuthorization(
+    payload,
+    credential.authorization,
+    requestCorrelation,
+    {
+      baseUrl: credential.apiBaseUrl,
+      compositionRevision: credential.compositionRevision,
+    },
+  ).pipe(
+    partyRegistryEvidenceCall.clientSourcePrivacy,
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
+  if (result.decisions.length !== requests.length) {
+    return yield* failUnavailable('privacy-read');
+  }
+  return requests.flatMap((request, index) => {
+    const decision = result.decisions[index];
+    return decision === undefined ? [] : [{ request, result: decision }];
+  });
+});
+
+/**
+ * The current Privacy decisions of several source references of one scope, in their order. In source-sync mode they
+ * are asked in one set call and each is judged exactly as checkPartyClientSourcePrivacy judges it; every other mode
+ * asks each one through checkPartyClientSourcePrivacy itself.
+ */
+export const checkPartyClientSourcePrivacySet = Effect.fn('PartyClientSourcePrivacy.checkSet')(function* checkSet(
+  scope: PartyClientSourceScope,
+  inputs: readonly Omit<PartySourcePrivacyInput, 'scope'>[],
+) {
+  if (inputs.length === 0) {
+    return [];
+  }
+  if (!isVerifiedGatewayPrincipalContext(scope)) {
+    return yield* failUnavailable('scope');
+  }
+  const crypto = yield* Effect.serviceOption(Crypto.Crypto);
+  if (Option.isNone(crypto)) {
+    return yield* failUnavailable('crypto');
+  }
+  const operationRequirementKey = yield* PartyPrivacyRequirement;
+  if (operationRequirementKey === null) {
+    return yield* failUnavailable('delegation');
+  }
+  const scoped = inputs.map((input) => ({ ...input, scope }));
+  const sourceSyncMode = yield* Config.Boolean('ONTOS_PRIVACY_SOURCE_SYNC_PROCESSING_ENABLED').pipe(
+    Config.withDefault(false),
+    Effect.catch((error) => failUnavailable('privacy-read', error)),
+  );
+  if (!sourceSyncMode) {
+    return yield* Effect.forEach(scoped, (input) => checkPartyClientSourcePrivacy(input), { concurrency: 1 });
+  }
+  const witnessed = yield* Effect.forEach(
+    scoped,
+    (input) => sourceSyncOrganizationWitnessMatches(input).pipe(Effect.mapError(unavailable)),
+    { concurrency: 1 },
+  );
+  const asked = scoped.filter((_, index) => witnessed[index] === true);
+  const answered =
+    asked.length === 0
+      ? []
+      : yield* readPartySourceProcessingSet(asked, scope, crypto.value, `${operationRequirementKey}-set`);
+  if (answered.length !== asked.length) {
+    return yield* failUnavailable('privacy-read');
+  }
+  const now = yield* DateTime.now;
+  let next = 0;
+  return witnessed.map((admitted): PartyClientSourcePrivacyDecision => {
+    if (!admitted) {
+      return 'DENIED';
+    }
+    const decision = answered[next];
+    next += 1;
+    return decision === undefined
+      ? 'DENIED'
+      : sourceSyncPartyProcessingAuthority({ scope, request: decision.request, result: decision.result, now });
+  });
 });

@@ -15,9 +15,26 @@ export interface CatalogCategory {
   imageAlt?: string;
 }
 
+/**
+ * The signed-in customer's own Price Group price of a unit imported or linked through Symmy, read from Pricing for this
+ * request (`customer-prices.ts`). The unit's `priceMinor` and `priceTiers` already are this price; the base is the
+ * price every other shopper sees.
+ */
+export interface CatalogCustomerPrice {
+  catalogVariantId: string;
+  priceGroupId: string;
+  /** The group price without VAT (PRE_TAX, as Pricing stores it). */
+  netMinor: number;
+  basePriceMinor: number;
+  basePriceExcludingVatMinor?: number;
+}
+
 export interface CatalogProductVariant {
   vatRate?: number;
   id: string;
+  /** The main Catalog variant this variant is linked to through Symmy (its prices come from Pricing). */
+  catalogVariantId?: string;
+  customerPrice?: CatalogCustomerPrice;
   sourceId: string;
   sku: string;
   label: string;
@@ -112,6 +129,10 @@ export interface CatalogVariantSummary {
 export interface CatalogProduct {
   vatRate?: number;
   id: string;
+  /** The main Catalog product and (for a product without variants) variant of a product imported or linked through Symmy. */
+  catalogProductId?: string;
+  catalogVariantId?: string;
+  customerPrice?: CatalogCustomerPrice;
   slug: string;
   categoryId: string;
   name: string;
@@ -182,6 +203,7 @@ export type CatalogPurchaseProduct = Pick<
   | "belowPackage"
   | "priceUnavailableReason"
   | "netWeight"
+  | "customerPrice"
 > & { detail: Pick<CatalogProductDetail, "priceTiers"> };
 export type CatalogPurchaseVariant = Omit<
   CatalogProductVariant,

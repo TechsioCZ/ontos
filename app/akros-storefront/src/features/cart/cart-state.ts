@@ -18,6 +18,8 @@ export interface CartItemSnapshot {
   stockCount: number;
   priceMinor: number;
   priceExcludingVatMinor?: number;
+  /** The price is the signed-in customer's own Price Group price („Vaše cena“), as the server quote set it. */
+  yourPrice?: true;
   variantLabel?: string;
 }
 

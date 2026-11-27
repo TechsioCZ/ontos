@@ -23,6 +23,7 @@ import {
   CatalogCategoryIdSchema,
   ClientRequestIdSchema,
   CustomerAccountIdSchema,
+  CustomerGroupPriceSchema,
   ProductIdReferenceSchema,
   VariantIdReferenceSchema,
   OrderIdReferenceSchema,
@@ -127,6 +128,11 @@ const QuantitySchema = Schema.Finite.check(
 
 /** One storefront cart line: the gross unit price the customer saw is re-validated on the server. */
 export const StorefrontOrderLineRequestSchema = Schema.Struct({
+  /**
+   * Storefront server only: the signed-in customer's Price Group price of the unit, read by the storefront from
+   * Pricing through Commerce's portal (never a browser value). Used only when it names the unit's own Catalog variant.
+   */
+  customerGroupPrice: Schema.optionalKey(CustomerGroupPriceSchema),
   expectedUnitPriceMinor: MinorAmountSchema,
   productId: ProductIdSchema,
   quantity: QuantitySchema,

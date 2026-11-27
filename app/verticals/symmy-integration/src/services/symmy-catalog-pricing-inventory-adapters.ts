@@ -945,6 +945,34 @@ const readinessNameText = Effect.fn('SymmyOwnerAdapters.readinessNameText')(func
   return item.localized;
 });
 
+/** The qualified source create intent of the Product this job creates, as Catalog recorded it for that source. */
+const parentSourceProduct = Effect.fn('SymmyOwnerAdapters.parentSourceProduct')(function* parentSource(
+  input: SymmyEffectAdapterInput,
+  intent: ProductDependentIntent,
+) {
+  const parent = input.dependencies.find(
+    (dependency) =>
+      dependency.itemKey === intent.parent.itemKey && dependency.effect.effectKey === intent.parent.effectKey,
+  );
+  if (parent === undefined || intent.variantParent !== undefined) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  const parentIntent = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema)(
+    parent.effect.intent,
+  ).pipe(Effect.mapError(symmyJobWorkerInvalid));
+  const sourceIntent = materializeSymmyCatalogPricingInventorySourceOccurrence(
+    parentIntent,
+    parent.effect.ref.occurrence.occurrenceId,
+  );
+  if (
+    !Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[0])(sourceIntent) ||
+    !qualifiedSource({ ...input, effect: parent.effect }, sourceIntent.payload.sourceCorrelation)
+  ) {
+    return yield* symmyJobWorkerInvalid();
+  }
+  return sourceIntent.payload;
+});
+
 /**
  * The plain intent a command on the Product of this job becomes once the receipts of its create effects exist.
  * The Product update takes the Product as its owner target, a text of the Product takes the Product, a text of a
@@ -970,13 +998,37 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
           })
         : Effect.fail(symmyJobWorkerInvalid()),
     ),
-    Match.tag('UpdateProduct', ({ payload }) =>
-      target === undefined
-        ? Effect.succeed({
-            intent: { _tag: 'CatalogUpdateProduct', payload: { ...payload, productRef } },
-            target: productRef,
-          })
-        : Effect.fail(symmyJobWorkerInvalid()),
+    Match.tag(
+      'UpdateProduct',
+      Effect.fn('SymmyOwnerAdapters.lifecycleIntent')(function* lifecycle({
+        payload,
+      }: Extract<ProductDependentIntent['request'], { readonly _tag: 'UpdateProduct' }>) {
+        if (target !== undefined) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        // The lifecycle applies to the Product as Catalog holds it now, which a re-import does not know in advance.
+        const sourceProduct = yield* parentSourceProduct(input, intent);
+        if (sourceProduct.sourceCorrelation === undefined) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        const current = yield* readCatalogSourceProduct(input, sourceProduct.sourceCorrelation, contract, crypto);
+        if (!sameRef(current.product.productRef, productRef)) {
+          return yield* symmyJobWorkerInvalid();
+        }
+        return {
+          intent: {
+            _tag: 'CatalogUpdateProduct',
+            payload: {
+              ...payload,
+              expectedRevision: current.product.revision,
+              productRef,
+              // Catalog lets only the source that imported a Product retire it by an update.
+              ...(payload.targetLifecycle === 'RETIRED' ? { sourceProduct } : {}),
+            },
+          },
+          target: productRef,
+        };
+      }),
     ),
     Match.tag('SetVariantLocalizedFacts', ({ payload }) =>
       target === undefined
@@ -1041,27 +1093,7 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
           return yield* symmyJobWorkerInvalid();
         }
         const variantRef = yield* requireCreatedVariant(input, intent, product);
-        const parent = input.dependencies.find(
-          (dependency) =>
-            dependency.itemKey === intent.parent.itemKey && dependency.effect.effectKey === intent.parent.effectKey,
-        );
-        if (parent === undefined || intent.variantParent !== undefined) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        const parentIntent = yield* Schema.decodeUnknownEffect(SymmyCatalogPricingInventoryIntentSchema)(
-          parent.effect.intent,
-        ).pipe(Effect.mapError(symmyJobWorkerInvalid));
-        const sourceIntent = materializeSymmyCatalogPricingInventorySourceOccurrence(
-          parentIntent,
-          parent.effect.ref.occurrence.occurrenceId,
-        );
-        if (
-          !Schema.is(SymmyCatalogPricingInventoryIntentSchema.members[0])(sourceIntent) ||
-          !qualifiedSource({ ...input, effect: parent.effect }, sourceIntent.payload.sourceCorrelation)
-        ) {
-          return yield* symmyJobWorkerInvalid();
-        }
-        const sourceProduct = sourceIntent.payload;
+        const sourceProduct = yield* parentSourceProduct(input, intent);
         const reason = 'Symmy product import';
         const { evidenceRefs } = request;
         if (request.step === 'AXES') {
@@ -1342,12 +1374,19 @@ const createdSourceOutcome = (
         status: 'duplicate',
       };
 
+/**
+ * Records the receipt of a settled Product create. A create this invocation committed answers the new draft. A replay
+ * answers the original creation result, so when the job plans readiness Catalog's current Product decides it: a draft
+ * needs the original revisions (a create stored before readiness existed has none, and stays unresolved), while a
+ * Product already ACTIVE or RETIRED records that lifecycle and its readiness has nothing to prepare.
+ */
 const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduct')(function* captureProduct(
   input: SymmyEffectAdapterInput,
   result: typeof CreateProductRecoveryResponseSchema.Type,
   contract: AdapterContract,
   crypto: Crypto.Crypto,
-  expectedInvocationId?: string,
+  currentInvocationId: string,
+  recovering = false,
 ) {
   const intent = yield* checkedIntent(input);
   return yield* Match.value(intent).pipe(
@@ -1366,19 +1405,22 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
           return yield* symmyJobWorkerUnavailable();
         }
         const needsReadiness = readinessEffectInPlan(input);
-        if (needsReadiness && result.initialVariantRevision === undefined) {
-          return Option.none<string>();
-        }
         let actionInvocationId = result.businessOriginalCreateInvocationId;
-        if (actionInvocationId === undefined) {
-          if (expectedInvocationId !== undefined) {
-            return yield* symmyJobWorkerUnavailable();
-          }
+        let { lifecycle } = result.product;
+        if (actionInvocationId === undefined && recovering) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        if (actionInvocationId === undefined || (needsReadiness && actionInvocationId !== currentInvocationId)) {
           const bound = yield* readCatalogSourceProduct(input, source, contract, crypto);
           if (!sameRef(bound.product.productRef, result.product.productRef) || bound.variantId !== result.variantId) {
             return yield* symmyJobWorkerUnavailable();
           }
-          actionInvocationId = bound.originalActionInvocationId;
+          actionInvocationId ??= bound.originalActionInvocationId;
+          ({ lifecycle } = bound.product);
+        }
+        const drafting = needsReadiness && lifecycle === 'DRAFT';
+        if (drafting && result.initialVariantRevision === undefined) {
+          return Option.none<string>();
         }
         const receipt: SymmyCatalogPricingInventoryReceipt = {
           _tag: 'ProductCreated',
@@ -1386,11 +1428,13 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
           initialVariantRef: initialVariant.variantRef,
           productRef: result.product.productRef,
         };
-        if (needsReadiness) {
+        if (drafting) {
           Object.assign(receipt, {
             productRevision: result.product.revision,
             variantRevision: result.initialVariantRevision,
           });
+        } else if (needsReadiness) {
+          Object.assign(receipt, { lifecycle });
         }
         yield* input.recordOwnerReceipt(receipt);
         return Option.some(actionInvocationId);
@@ -1599,7 +1643,14 @@ const recoveryOutcome = Effect.fn('SymmyOwnerAdapters.recoveryOutcome')(function
           requestCorrelation,
           options,
         ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-        const businessOriginalCreateId = yield* captureCreatedProduct(input, result, contract, crypto, invocationId);
+        const businessOriginalCreateId = yield* captureCreatedProduct(
+          input,
+          result,
+          contract,
+          crypto,
+          invocationId,
+          true,
+        );
         if (Option.isNone(businessOriginalCreateId)) {
           return safeOutcome(input, 'unresolved');
         }
@@ -2037,7 +2088,13 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
             return safeOutcome(input, 'unresolved');
           }
           const currentInvocationId = yield* recordCurrentNativeInvocation(input, contract);
-          const businessOriginalCreateId = yield* captureCreatedProduct(input, result, contract, crypto);
+          const businessOriginalCreateId = yield* captureCreatedProduct(
+            input,
+            result,
+            contract,
+            crypto,
+            currentInvocationId,
+          );
           if (Option.isNone(businessOriginalCreateId)) {
             return safeOutcome(input, 'unresolved');
           }
@@ -2995,6 +3052,40 @@ const acceptsResolvedIntent = (contract: AdapterContract, intent: SymmyCatalogPr
   (contract.tag === 'CatalogSetProductLocalizedFacts' &&
     Schema.is(Schema.TaggedStruct('CatalogReadinessName', {}))(intent));
 
+/**
+ * Readiness turns the draft a job creates into an active Product. When the job's create settled on a Product Catalog
+ * already holds ACTIVE (a re-import), every step is already satisfied and settles unchanged without an owner call, so
+ * the price, texts and stock of the Product run as without readiness. A RETIRED Product is not reactivated by an
+ * update: its activation is a conflict (staff restore a retired Product in the admin) and the steps before it have
+ * nothing to do. A step an earlier attempt already sent keeps its owner path.
+ */
+const readinessOfSettledProduct = Effect.fn('SymmyOwnerAdapters.readinessOfSettledProduct')(function* settled(
+  input: SymmyEffectAdapterInput,
+) {
+  const intent = Schema.decodeUnknownOption(SymmyCatalogPricingInventoryIntentSchema, { onExcessProperty: 'error' })(
+    input.effect.intent,
+  ).pipe(Option.getOrUndefined);
+  if (
+    intent?._tag !== 'CatalogProductDependentEffect' ||
+    intent.request._tag !== 'CatalogReadiness' ||
+    !input.canExecuteNewEffects ||
+    input.effect.ref.originalTarget !== undefined ||
+    input.originalExecutorPrincipalId !== undefined ||
+    input.originalInvocationId !== undefined ||
+    input.originalRequestHash !== undefined ||
+    input.originalAuthContextRef !== undefined ||
+    input.originalOwnerReceipt !== undefined
+  ) {
+    return Option.none<SymmyExecutionOutcome>();
+  }
+  const { lifecycle } = yield* requireCreatedProductParent(input, intent.parent);
+  if (lifecycle === undefined) {
+    return Option.none<SymmyExecutionOutcome>();
+  }
+  const activatingRetired = lifecycle === 'RETIRED' && intent.request.step === 'ACTIVATE';
+  return Option.some(safeOutcome(input, activatingRetired ? 'conflict' : 'accepted_no_change'));
+});
+
 const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEffectAdapter => ({
   execute: Effect.fn('SymmyOwnerAdapters.execute')(function* execute(originalInput) {
     const observe = <A, E, R>(stage: typeof preDispatchStage.Type, effect: Effect.Effect<A, E, R>) =>
@@ -3008,6 +3099,10 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
           }).pipe(Effect.ignoreCause),
         ),
       );
+    const settledReadiness = yield* observe('product-dependency', readinessOfSettledProduct(originalInput));
+    if (Option.isSome(settledReadiness)) {
+      return settledReadiness.value;
+    }
     const productInput = yield* observe(
       'product-dependency',
       resolveProductDependency(originalInput, contract, crypto),

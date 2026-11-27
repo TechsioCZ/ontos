@@ -1,5 +1,6 @@
 import {
   acquireSourceSyncProcessingPermit,
+  requireSourceSyncProcessingPermit,
   sourceSyncProcessingSelected,
 } from '../integrations/source-sync-processing.ts';
 import { CommerceOrganizationBusinessEligibility } from '../integrations/organization-business-eligibility.ts';
@@ -24,7 +25,7 @@ import type { ReadServiceFactory } from '@app/core-runtime';
 import { readScopedAdmittedWorkload } from '@app/core-runtime/access/enforcement';
 import { computeCanonicalValueHash } from '@app/core-runtime/actions/canonical-value-hash';
 import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { Array as Arr, Effect, Match, Option, Schema } from 'effect';
+import { Array as Arr, DateTime, Effect, Match, Option, Schema } from 'effect';
 import {
   CustomerProfileSourceResponseSchema,
   CustomerProfileSourceReceiptSchema,
@@ -50,6 +51,7 @@ import { CommerceSourceProcessingEligibility } from '../integrations/source-proc
 import type { CommerceSourceProcessingRequest } from '../integrations/source-processing-eligibility.ts';
 import { CommerceSourceProcessingRejected } from '../integrations/source-processing-rejected.ts';
 import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
+import type { SourceProfileAdmission, SourceProfileAdmissionItem } from '../integrations/source-profile-owner-proof.ts';
 import { readSourceProfileAddresses } from './source-profile-addresses.ts';
 
 const storedSourceResponseSchema = Schema.Union([
@@ -89,6 +91,11 @@ const sourcePageReadRequirements: SourceReadRequirements = {
   party: 'commerce.customer-context.requirement.customer-profile-source-page-party',
   privacy: 'commerce.customer-context.requirement.customer-profile-source-page-privacy',
 };
+/** The two owner calls a source-sync page makes for all of its customers at once. */
+const sourcePageSetRequirements = {
+  admissions: 'commerce.customer-context.requirement.customer-profile-source-page-admissions',
+  privacy: 'commerce.customer-context.requirement.customer-profile-source-page-privacy-set',
+} as const;
 
 const sourceReadRoutine = defineScopedRoutine({
   name: 'read_customer_profile_source',
@@ -191,6 +198,41 @@ export interface CustomerProfileSourcePartiesReadServices {
   ) => Effect.Effect<CustomerProfileSourcePartiesResponse, ReadHandlerUnavailable | ReadPermissionDenied>;
 }
 
+/** The exact Privacy request of one source Profile use. */
+const sourceProfilePrivacyRequest = (
+  source: CustomerProfileSourceAssertion,
+  item: CustomerProfileSourceItem,
+  operation: string,
+): CommerceSourceProcessingRequest => ({
+  operation,
+  partySourceReference: item.partySourceReference,
+  source: {
+    issuer: source.issuer,
+    namespace: source.namespace,
+    occurrenceId: source.occurrenceId,
+    recordId: source.recordId,
+    recordType: source.recordType,
+    routeRef: source.route.id,
+  },
+  target: {
+    kind:
+      item.profile.profileRef.kind === 'RETAIL'
+        ? ('RETAIL_CUSTOMER_PROFILE' as const)
+        : ('COUNTERPARTY_PURCHASING_PROFILE' as const),
+    resourceId: item.profile.profileRef.resourceId,
+  },
+});
+
+/** The Party owner admission an item's customer kind asks for, with the exact source reference of its Party. */
+const sourceProfileAdmissionItem = (item: CustomerProfileSourceItem): SourceProfileAdmissionItem =>
+  item.profile.subject.kind === 'RETAIL'
+    ? { kind: 'RETAIL', partyRef: item.partyRef, partySourceReference: item.partySourceReference }
+    : {
+        counterpartyResourceId: item.profile.subject.counterpartyRef.resourceId,
+        kind: 'COUNTERPARTY',
+        partySourceReference: item.partySourceReference,
+      };
+
 const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(function* sourceProfileReadServices(
   requirements: SourceReadRequirements,
   transaction: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[0],
@@ -210,25 +252,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     item: CustomerProfileSourceItem,
     operation: string,
   ) {
-    const request = {
-      operation,
-      partySourceReference: item.partySourceReference,
-      source: {
-        issuer: source.issuer,
-        namespace: source.namespace,
-        occurrenceId: source.occurrenceId,
-        recordId: source.recordId,
-        recordType: source.recordType,
-        routeRef: source.route.id,
-      },
-      target: {
-        kind:
-          item.profile.profileRef.kind === 'RETAIL'
-            ? ('RETAIL_CUSTOMER_PROFILE' as const)
-            : ('COUNTERPARTY_PURCHASING_PROFILE' as const),
-        resourceId: item.profile.profileRef.resourceId,
-      },
-    };
+    const request = sourceProfilePrivacyRequest(source, item, operation);
     if (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure))) {
       return yield* acquireSourceSyncProcessingPermit(
         scope,
@@ -479,6 +503,119 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       .pipe(Effect.mapError(unavailable));
     return counterparty.outcome === 'ELIGIBLE';
   });
+  /**
+   * The checks of checkItem and partyStillCurrent on an admission the Party owner already answered: a customer whose
+   * Party or Counterparty is no longer current is left out (none), a current one that fails any check fails the page.
+   */
+  const currentSourceSyncItem = Effect.fn('CustomerProfileSourceRead.currentSourceSyncItem')(function* currentItem(
+    item: CustomerProfileSourceItem,
+    admission: SourceProfileAdmission | undefined,
+  ) {
+    if (admission === undefined) {
+      return yield* unavailable();
+    }
+    const stillCurrent =
+      admission.kind === 'RETAIL'
+        ? admission.proof.outcome === 'CURRENT_PARTY_RESOLVED'
+        : admission.proof.outcome === 'ELIGIBLE';
+    if (!stillCurrent) {
+      return Option.none<CustomerProfileSourceItem>();
+    }
+    if (
+      item.profile.profileRef.tenantId !== scope.tenantId ||
+      item.partyRef.tenantId !== scope.tenantId ||
+      item.profile.subject.kind !== item.profile.profileRef.kind
+    ) {
+      return yield* unavailable();
+    }
+    const { subject } = item.profile;
+    const retail = admission.kind === 'RETAIL' ? admission.proof : undefined;
+    const counterparty = admission.kind === 'COUNTERPARTY' ? admission.proof : undefined;
+    const retailAdmission =
+      subject.kind === 'RETAIL' &&
+      subject.partyRef.resourceId === item.partyRef.resourceId &&
+      subject.sellingLegalEntityRef.resourceId === scope.legalEntityId &&
+      retail?.outcome === 'CURRENT_PARTY_RESOLVED' &&
+      retail.partyResourceId === item.partyRef.resourceId
+        ? retail.currentAdmission
+        : undefined;
+    const counterpartyAdmission =
+      subject.kind === 'COUNTERPARTY' &&
+      counterparty?.outcome === 'ELIGIBLE' &&
+      counterparty.partyResourceId === item.partyRef.resourceId
+        ? counterparty.currentAdmission
+        : undefined;
+    const currentAdmission = retailAdmission ?? counterpartyAdmission;
+    if (
+      currentAdmission === undefined ||
+      currentAdmission.partyRef.resourceId !== item.partyRef.resourceId ||
+      currentAdmission.partyRef.tenantId !== scope.tenantId ||
+      computeCanonicalValueHash(currentAdmission.sourceReference) !==
+        computeCanonicalValueHash(item.partySourceReference)
+    ) {
+      return yield* unavailable();
+    }
+    return Option.some(item);
+  });
+  /**
+   * A source-sync page proves all of its customers in a constant number of owner calls: one Party owner admission set
+   * for every customer, then one Privacy decision set for the customers that are still current. Each customer is
+   * judged exactly as projectCurrentItem and partyStillCurrent judge it one at a time, in the page order.
+   */
+  const projectSourceSyncPage = Effect.fn('CustomerProfileSourceRead.sourceSyncPage')(function* sourceSyncPage(
+    items: readonly CustomerProfileSourceItem[],
+    includeSourceAddresses: boolean,
+  ) {
+    yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
+    yield* requireModuleOperation(sourcePageSetRequirements.admissions).pipe(Effect.mapError(unavailable));
+    const admissions = yield* proof
+      .admissionSet(scope, items.map(sourceProfileAdmissionItem), sourcePageSetRequirements.admissions)
+      .pipe(Effect.mapError(unavailable));
+    if (admissions.length !== items.length) {
+      return yield* unavailable();
+    }
+    const current = Arr.getSomes(
+      yield* Effect.forEach(items, (item, index) => currentSourceSyncItem(item, admissions[index]), {
+        concurrency: 1,
+      }),
+    );
+    if (current.length > 0) {
+      yield* requireModuleOperation(sourcePageSetRequirements.privacy).pipe(Effect.mapError(unavailable));
+      const requests = current.map((item) =>
+        sourceProfilePrivacyRequest(item.source, item, 'customer-profile-source.read'),
+      );
+      const decisions = yield* privacy
+        .checkSet(scope, requests, sourcePageSetRequirements.privacy)
+        .pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
+      const now = DateTime.formatIso(yield* DateTime.now);
+      yield* Effect.forEach(
+        requests,
+        (request, index) => {
+          const decision = decisions[index];
+          return decision === undefined
+            ? Effect.fail(unavailable())
+            : requireSourceSyncProcessingPermit(scope, request, decision, now).pipe(
+                Effect.mapError(customerProfileSourcePrivacyFailure),
+              );
+        },
+        { concurrency: 1, discard: true },
+      );
+    }
+    return yield* Effect.forEach(
+      current,
+      Effect.fnUntraced(function* project(item) {
+        const { icoAuthority: _classification, ...sourceSyncItem } = item;
+        const selected = { ...sourceSyncItem, sourceProcessingMode: 'SOURCE_SYNC' as const };
+        return includeSourceAddresses
+          ? {
+              ...selected,
+              sourceAddresses: yield* readSourceProfileAddresses(transaction, scope, selected, requirements.privacy),
+            }
+          : selected;
+      }),
+      { concurrency: 1 },
+    );
+  });
   const projectCurrentItem = Effect.fn('CustomerProfileSourceRead.projectCurrent')(function* projectCurrent(
     item: CustomerProfileSourceItem,
     includeSourceAddresses: boolean,
@@ -662,6 +799,12 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       const page = yield* Schema.decodeUnknownEffect(CustomerProfileSourcePageResponseSchema, {
         onExcessProperty: 'error',
       })(row.result).pipe(Effect.mapError(unavailable));
+      const sourceSync =
+        page.items.length > 0 &&
+        (yield* sourceSyncProcessingSelected.pipe(Effect.mapError(customerProfileSourcePrivacyFailure)));
+      if (sourceSync) {
+        return { ...page, items: yield* projectSourceSyncPage(page.items, includeSourceAddresses === true) };
+      }
       const items =
         page.items.length === 0
           ? yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable), Effect.as([]))

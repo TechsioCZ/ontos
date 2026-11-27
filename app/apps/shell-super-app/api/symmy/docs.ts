@@ -483,6 +483,26 @@ After the job completes, read the list's \`priceGroupRef\` from \`GET /price-lis
 **To change** texts, the item number or the price, send the product again with the same identifiers and a new
 \`idempotency-key\`.
 
+**\`lifecycle\`** (optional) says whether the product is sold. You may send it on every sync: a value the product
+already has changes nothing.
+
+- Left out, or \`DRAFT\`: a new product is created as a hidden draft. It is not listed or sold in the shops. An
+  existing product keeps its current state: \`DRAFT\` never turns an active product back into a draft and never takes
+  it off sale. Use \`RETIRED\` for that.
+- \`ACTIVE\`: a new product is prepared for sale and activated, and the shops sell it once it has a price. The job shows
+  the preparation as the \`readiness-*\` parts. For a product that is already active nothing changes: those parts read
+  \`accepted_no_change\`, and the price, texts and stock are written as usual.
+- \`RETIRED\`: the product is retired. A shop product OntOS created from your import is archived and leaves the
+  shops. A shop product that only shares the item number (SKU) with it stays on sale but no longer follows your price
+  and stock. Sending \`RETIRED\` again changes nothing (\`accepted_no_change\`).
+- \`ACTIVE\` does not bring back a retired product. Its \`readiness-activate\` part reads \`conflict\`, and the parts
+  that wait for it, the price among them, read \`unsupported\` (\`missing_context\`). Staff restore a retired product
+  in OntOS. After that, send it again.
+
+A variant's \`lifecycle\`: leave it out or send \`WORK_IN_PROGRESS\`. A product's single variant is activated and
+retired together with the product. \`ACTIVE\` or \`RETIRED\` on a variant is not written: the item reports it as an
+unsupported part and ends \`partial\`.
+
 **Limit:** 16 items per request. A product counts as one, its variant as one more when it carries texts or an item
 number, and each price as one more. Five products with texts and a price fit in one request.
 
