@@ -19,10 +19,10 @@ export interface SaveLabels {
   readonly proposed: string;
   /** Reload-required only: the button that reloads the page and puts the unsaved drafts back. */
   readonly reloadKeepingDrafts: string;
-  /** Status of a draft a deploy left behind: the new release refuses this tab until the page reloads. */
-  readonly reloadRequired: string;
   /** Conflict only: the action that loads the version someone else saved. */
   readonly reloadLatest: string;
+  /** Status of a draft a deploy left behind: the new release refuses this tab until the page reloads. */
+  readonly reloadRequired: string;
   /** The Save button, here and in the confirmation. */
   readonly save: string;
   readonly saved: string;
@@ -80,7 +80,8 @@ const en: SaveLabels = {
   proposed: 'Sent for approval – the change has not been applied yet',
   reloadKeepingDrafts: 'Load the new version and restore changes',
   reloadLatest: 'Load the latest version',
-  reloadRequired: 'A new version of the app was deployed in the meantime. Reload the page; your changes will be restored.',
+  reloadRequired:
+    'A new version of the app was deployed in the meantime. Reload the page; your changes will be restored.',
   save: 'Save',
   saved: 'Saved',
   saving: 'Saving…',

@@ -445,7 +445,8 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                             <p className="sf-product-detail__price-row" data-sf-your-price="">
                               <span>{cs.product.yourPrice}</span>
                               <strong>
-                                {formatPrice(customerPrice.netMinor, money)} {cs.product.excludingVat}
+                                {formatPrice(customerPrice.netMinor, money)}{" "}
+                                {cs.product.excludingVat}
                               </strong>
                             </p>
                             {customerPrice.basePriceExcludingVatMinor !== undefined && (

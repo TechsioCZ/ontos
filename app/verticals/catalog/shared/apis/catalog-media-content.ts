@@ -3,11 +3,12 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { MediaRenditionSchema } from '@app/core-runtime/media/image-contract';
+import { MediaAssetRefSchema } from '@app/core-runtime/resources/media-asset';
 import { ProductRefSchema } from '@app/catalog-selection-contracts/resources/product';
 
 export const CatalogMediaContentRequestSchema = Schema.Struct({
   /** The Core Media Asset id of an ACTIVE MEDIA assignment of the Product. */
-  assetId: Schema.String.check(Schema.isUUID()),
+  assetId: MediaAssetRefSchema.fields.resourceId,
   productRef: ProductRefSchema,
   rendition: MediaRenditionSchema,
 });

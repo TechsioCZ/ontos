@@ -108,7 +108,7 @@ const collectOrganizationChange = Effect.fn('OrganizationMembershipEvents.collec
       tenantId,
     },
     services: { admitSnapshot: unused, apply: () => Effect.succeed({ replayed, result }), recover: unused },
-  }).pipe(Effect.provideService(CommerceSourceProcessingEligibility, { check: unused }));
+  }).pipe(Effect.provideService(CommerceSourceProcessingEligibility, { check: unused, checkSet: unused }));
   expect(returned).toEqual(result);
   return collector.snapshot();
 });

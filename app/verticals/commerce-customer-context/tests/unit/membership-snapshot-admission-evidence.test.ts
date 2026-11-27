@@ -80,7 +80,7 @@ const collectAdmissionEvidence = Effect.fn('MembershipSnapshotEvidence.collect')
       tenantId,
     },
     services: { admitSnapshot: () => Effect.succeed({ replayed, result }), apply: unused, recover: unused },
-  }).pipe(Effect.provideService(CommerceSourceProcessingEligibility, { check: unused }));
+  }).pipe(Effect.provideService(CommerceSourceProcessingEligibility, { check: unused, checkSet: unused }));
   expect(returned).toEqual(result);
   return collector.snapshot();
 });

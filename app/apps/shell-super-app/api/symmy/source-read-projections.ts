@@ -198,12 +198,17 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
       id: qualifySymmyReadId(scope, 'PRODUCT', item.source.recordId),
       product: item.product,
       source_record_id: item.source.recordId,
-      variantSources: item.variantSources.map((variant) => ({
-        id: qualifySymmyReadId(scope, 'VARIANT', variant.source.recordId),
-        source_record_id: variant.source.recordId,
-        variantId: variant.variantId,
-        ...(variant.localizedNames === undefined ? {} : { localizedNames: variant.localizedNames }),
-      })),
+      variantSources: item.variantSources.map((variant) => {
+        const projected: SymmyInternalProductsProjection['products'][number]['variantSources'][number] = {
+          id: qualifySymmyReadId(scope, 'VARIANT', variant.source.recordId),
+          source_record_id: variant.source.recordId,
+          variantId: variant.variantId,
+        };
+        if (variant.localizedNames !== undefined) {
+          Object.assign(projected, { localizedNames: variant.localizedNames });
+        }
+        return projected;
+      }),
     })),
     projection: 'products',
     unsupported_fields: ['tax', 'assortment', 'prices', 'stock'],

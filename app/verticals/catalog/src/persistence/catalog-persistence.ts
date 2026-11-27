@@ -1,6 +1,6 @@
 import type { ActionRuntime, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { findPostgresFailure } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
+import { Crypto, DateTime, Effect, Match, Option, Schema } from 'effect';
 import { and, asc, eq } from 'drizzle-orm';
 
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread, effect-native/no-sequential-independent-yields, eslint/no-negated-condition, eslint/prefer-destructuring, perfectionist/sort-object-types, perfectionist/sort-objects, typescript/consistent-type-specifier-style -- Drizzle rows and optional SQL columns are decoded at this tenant-scoped persistence boundary; generated insert key order and transactional read ordering are intentional. expires: 2027-03-31. */
@@ -625,6 +625,74 @@ export const catalogPersistenceForScope = (
     return { _tag: 'created' as const, product: product.value, variantId };
   });
 
+  const retire: CatalogPersistence['retire'] = Effect.fn('CatalogPersistence.retire')(function* retire(input) {
+    const current = yield* loadProduct(transaction, tenantId, input.productId, selectionEvidence);
+    if (Option.isNone(current)) {
+      return { _tag: 'not_found' as const };
+    }
+    const existing = current.value;
+    if (existing.revision !== input.expectedRevision) {
+      return { _tag: 'revision_conflict' as const, actualRevision: existing.revision };
+    }
+    if (existing.lifecycle === 'RETIRED') {
+      return { _tag: 'already_retired' as const, product: existing };
+    }
+    const revision = existing.revision + 1;
+    const effectiveAt = input.effectiveAt;
+    const now = DateTime.toDateUtc(yield* DateTime.now);
+    const [updated] = yield* transaction
+      .update(products)
+      .set({
+        currentRevision: revision,
+        lifecycleState: 'RETIRED',
+        retiredEffectiveAt: effectiveAt,
+        retiredReason: input.reason,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(products.productId, input.productId),
+          eq(products.tenantId, tenantId),
+          eq(products.currentRevision, input.expectedRevision),
+        ),
+      )
+      .returning()
+      .pipe(Effect.mapError(unavailable));
+    if (updated === undefined) {
+      const [latest] = yield* getProductRow(transaction, tenantId, input.productId);
+      return {
+        _tag: 'revision_conflict' as const,
+        actualRevision: latest?.currentRevision ?? input.expectedRevision,
+      };
+    }
+    yield* insertRevision(transaction, {
+      actionInvocationId: input.actionInvocationId,
+      actingPrincipalId: input.principalId,
+      changeKind: 'LIFECYCLE',
+      description: existing.description,
+      evidenceRefs: [],
+      lifecycle: 'RETIRED',
+      name: existing.name,
+      productId: input.productId,
+      reason: input.reason,
+      revision,
+      tenantId,
+    });
+    yield* insertLifecycleEvent(transaction, {
+      actionInvocationId: input.actionInvocationId,
+      actingPrincipalId: input.principalId,
+      effectiveAt,
+      event: 'RETIRED',
+      productId: input.productId,
+      reason: input.reason,
+      tenantId,
+    });
+    const resulting = yield* loadProduct(transaction, tenantId, input.productId, selectionEvidence);
+    return Option.isSome(resulting)
+      ? { _tag: 'retired' as const, product: resulting.value }
+      : { _tag: 'not_found' as const };
+  });
+
   // oxlint-disable-next-line complexity -- Lifecycle and optimistic-concurrency branches are the complete Product update state machine. expires: 2027-03-31.
   const update: CatalogPersistence['update'] = Effect.fn('CatalogPersistence.update')(function* update(input) {
     if (input.sourceProduct !== undefined) {
@@ -693,10 +761,11 @@ export const catalogPersistenceForScope = (
         reason: input.reason,
         tenantId,
       });
-      if (retired._tag === 'retired' || retired._tag === 'already_retired') {
-        return { _tag: 'updated' as const, changed: retired._tag === 'retired', product: retired.product };
-      }
-      return retired;
+      return Match.value(retired).pipe(
+        Match.tag('retired', ({ product }) => ({ _tag: 'updated' as const, changed: true, product })),
+        Match.tag('already_retired', ({ product }) => ({ _tag: 'updated' as const, changed: false, product })),
+        Match.orElse((result) => result),
+      );
     }
     const activatingVariant =
       input.activateVariantId === undefined
@@ -784,74 +853,6 @@ export const catalogPersistenceForScope = (
     const resulting = yield* loadProduct(transaction, tenantId, input.productId, selectionEvidence);
     return Option.isSome(resulting)
       ? { _tag: 'updated' as const, changed: true, product: resulting.value }
-      : { _tag: 'not_found' as const };
-  });
-
-  const retire: CatalogPersistence['retire'] = Effect.fn('CatalogPersistence.retire')(function* retire(input) {
-    const current = yield* loadProduct(transaction, tenantId, input.productId, selectionEvidence);
-    if (Option.isNone(current)) {
-      return { _tag: 'not_found' as const };
-    }
-    const existing = current.value;
-    if (existing.revision !== input.expectedRevision) {
-      return { _tag: 'revision_conflict' as const, actualRevision: existing.revision };
-    }
-    if (existing.lifecycle === 'RETIRED') {
-      return { _tag: 'already_retired' as const, product: existing };
-    }
-    const revision = existing.revision + 1;
-    const effectiveAt = input.effectiveAt;
-    const now = DateTime.toDateUtc(yield* DateTime.now);
-    const [updated] = yield* transaction
-      .update(products)
-      .set({
-        currentRevision: revision,
-        lifecycleState: 'RETIRED',
-        retiredEffectiveAt: effectiveAt,
-        retiredReason: input.reason,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(products.productId, input.productId),
-          eq(products.tenantId, tenantId),
-          eq(products.currentRevision, input.expectedRevision),
-        ),
-      )
-      .returning()
-      .pipe(Effect.mapError(unavailable));
-    if (updated === undefined) {
-      const [latest] = yield* getProductRow(transaction, tenantId, input.productId);
-      return {
-        _tag: 'revision_conflict' as const,
-        actualRevision: latest?.currentRevision ?? input.expectedRevision,
-      };
-    }
-    yield* insertRevision(transaction, {
-      actionInvocationId: input.actionInvocationId,
-      actingPrincipalId: input.principalId,
-      changeKind: 'LIFECYCLE',
-      description: existing.description,
-      evidenceRefs: [],
-      lifecycle: 'RETIRED',
-      name: existing.name,
-      productId: input.productId,
-      reason: input.reason,
-      revision,
-      tenantId,
-    });
-    yield* insertLifecycleEvent(transaction, {
-      actionInvocationId: input.actionInvocationId,
-      actingPrincipalId: input.principalId,
-      effectiveAt,
-      event: 'RETIRED',
-      productId: input.productId,
-      reason: input.reason,
-      tenantId,
-    });
-    const resulting = yield* loadProduct(transaction, tenantId, input.productId, selectionEvidence);
-    return Option.isSome(resulting)
-      ? { _tag: 'retired' as const, product: resulting.value }
       : { _tag: 'not_found' as const };
   });
 

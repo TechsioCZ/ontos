@@ -137,17 +137,17 @@ const readPageItem = Effect.fn('ProductPageRead.item')(function* readPageItem(
     }),
     { concurrency: 1 },
   );
-  return {
+  const page: Omit<ProductPageItem, 'productRef' | 'revision' | 'variants'> = {
     categories,
     lifecycle,
     localized: localizedOf(text, input.locale),
     localizedRevision: text.revision,
     media: media.ordered,
-    ...(name === undefined ? {} : { name }),
-    productRef,
-    revision,
-    variants: pageVariants,
   };
+  if (name !== undefined) {
+    Object.assign(page, { name });
+  }
+  return { ...page, productRef, revision, variants: pageVariants };
 });
 
 export const readProductPage = Effect.fn('ProductPageRead.read')(function* readProductPage(

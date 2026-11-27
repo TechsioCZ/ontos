@@ -50,6 +50,7 @@ const COMMITTED_DRAINING = 'COMMITTED draining';
 const DURABLE_COMPLETE = 'DURABLE COMPLETE';
 const DURABLE_BLOCKED = 'DURABLE BLOCKED';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
+const COMMITTED_ADMISSION_CLOSED = 'COMMITTED admission closed';
 const LEGACY_TRANSACTION_CHECK = 'LEGACY TRANSACTION CHECK';
 const OWNER_RELEASE = 'OWNER RELEASE';
 const OWNER_ACQUIRE = 'OWNER ACQUIRE';
@@ -336,14 +337,16 @@ it.effect('fences concurrent public writers before acquiring owner leases for bo
       // transactions first, after the drain.
       const before = fixture.events.slice(0, acquisition);
       const observation =
-        position === 0 ? before.lastIndexOf('COMMITTED admission closed') : before.lastIndexOf(LEGACY_TRANSACTION_CHECK);
+        position === 0 ? before.lastIndexOf(COMMITTED_ADMISSION_CLOSED) : before.lastIndexOf(LEGACY_TRANSACTION_CHECK);
       expect(observation).toBeGreaterThanOrEqual(position === 0 ? 0 : (acquisitions[0] ?? 0));
       if (position === 0) {
         expect(before).not.toContain(LEGACY_TRANSACTION_CHECK);
       }
-      expect(fixture.authorityLockPositions.some((position) => position > observation && position <= acquisition)).toBe(
-        true,
-      );
+      expect(
+        fixture.authorityLockPositions.some(
+          (lockPosition) => lockPosition > observation && lockPosition <= acquisition,
+        ),
+      ).toBe(true);
       const release = fixture.events.indexOf(OWNER_RELEASE, acquisition);
       expect(release).toBeGreaterThan(acquisition);
       expect(fixture.events.slice(acquisition, release).some((event) => event.startsWith('COMMITTED '))).toBe(true);
@@ -372,7 +375,7 @@ it.effect('commits draining and sealing before migration, then records completio
 
     expect(fixture.events).toEqual([
       'SESSION LOCK',
-      'COMMITTED admission closed',
+      COMMITTED_ADMISSION_CLOSED,
       DURABLE_COMPLETE,
       // No database-wide legacy transaction check before entering draining (4fce160ce6): the authority lock fences.
       ...ownerObservationEvents,
@@ -524,7 +527,7 @@ const REOPENED = 'Durable admission was reopened and the authority stays active.
 const expectAdmissionReopenedByThisRun = (fixture: ReturnType<typeof migrationFixture>) => {
   expect(fixture.phase()).toBe('active');
   expect(fixture.admission()).toBe('open');
-  const closedAt = fixture.events.indexOf('COMMITTED admission closed');
+  const closedAt = fixture.events.indexOf(COMMITTED_ADMISSION_CLOSED);
   expect(closedAt).toBeGreaterThanOrEqual(0);
   expect(fixture.events.indexOf('COMMITTED admission open', closedAt)).toBeGreaterThan(closedAt);
   expect(fixture.events).not.toContain(COMMITTED_DRAINING);

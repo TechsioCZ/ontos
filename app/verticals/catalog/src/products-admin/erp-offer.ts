@@ -53,6 +53,12 @@ const OfferJsonSchema = Schema.fromJsonString(ErpOfferSchema);
 export const encodeErpOffer = (offer: ErpOffer): string =>
   Option.getOrElse(Schema.encodeOption(OfferJsonSchema)(offer), () => '');
 
+// The upstream reads expose opaque scope text; the offer decoder below owns its stricter domain checks.
+const PricingChannelIdSchema = Schema.String.pipe(Schema.brand('ErpPricingChannelId'));
+const PricingMarketIdSchema = Schema.String.pipe(Schema.brand('ErpPricingMarketId'));
+const PricingUnitIdSchema = Schema.String.pipe(Schema.brand('ErpPricingUnitId'));
+const StockCustomerConfigurationIdSchema = Schema.String.pipe(Schema.brand('ErpStockCustomerConfigurationId'));
+
 const EmptyPayloadSchema = Schema.Struct({});
 
 /** Pricing's standing price source scopes of the selected company (`commerce.pricing.api.external-price-source-scopes`). */
@@ -63,10 +69,10 @@ const PricingScopesApi = HttpApi.make('ErpOfferPricingApi').add(
       success: Schema.Struct({
         scopes: Schema.Array(
           Schema.Struct({
-            channelId: Schema.String,
+            channelId: Schema.toEncoded(PricingChannelIdSchema),
             currencyCode: Schema.String,
-            marketId: Schema.String,
-            unitId: Schema.String,
+            marketId: Schema.toEncoded(PricingMarketIdSchema),
+            unitId: Schema.toEncoded(PricingUnitIdSchema),
             unitQuantity: Schema.String,
           }),
         ),
@@ -80,7 +86,9 @@ const SymmyStockSourceApi = HttpApi.make('ErpOfferSymmyApi').add(
   HttpApiGroup.make('stock').add(
     HttpApiEndpoint.post('read', '/reads/symmy-company-stock-source', {
       payload: EmptyPayloadSchema,
-      success: Schema.Struct({ customerConfigurationIds: Schema.Array(Schema.String) }),
+      success: Schema.Struct({
+        customerConfigurationIds: Schema.Array(Schema.toEncoded(StockCustomerConfigurationIdSchema)),
+      }),
     }),
   ),
 );

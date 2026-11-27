@@ -64,7 +64,9 @@ const priceScope = (): PriceScope | undefined => {
       typeof unitQuantity !== "string" ||
       !/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(unitQuantity)
     )
-      throw new Error(`${VARIABLE} of this company needs channelId, marketId, currencyCode, unitId and unitQuantity`);
+      throw new Error(
+        `${VARIABLE} of this company needs channelId, marketId, currencyCode, unitId and unitQuantity`,
+      );
     scope = { channelId, marketId, currencyCode, unitId, unitQuantity };
   }
   scopes.set(raw, scope);
@@ -198,7 +200,9 @@ const readGroupPrices = async (
       // The portal no longer admits the session: the visitor is a guest.
       if (response.status === 401 || response.status === 403) return new Map();
       if (!response.ok) {
-        fail(`HTTP ${response.status} ${/"code":"([\w.-]+)"/u.exec(await response.text())?.[1] ?? ""}`);
+        fail(
+          `HTTP ${response.status} ${/"code":"([\w.-]+)"/u.exec(await response.text())?.[1] ?? ""}`,
+        );
         return found;
       }
       const body = (await response.json()) as { _tag?: unknown; prices?: unknown };
@@ -208,10 +212,13 @@ const readGroupPrices = async (
       }
       for (const price of body.prices as (PagePrice | null)[]) {
         if (price?._tag === "PRICING_INDETERMINATE") {
-          fail(`${String(price.reason)} for ${String(price.catalogSelection?.variantRef?.resourceId)}`);
+          fail(
+            `${String(price.reason)} for ${String(price.catalogSelection?.variantRef?.resourceId)}`,
+          );
           continue;
         }
-        if (price?._tag !== "PRICE_FOUND" || price.priceGroupSelector?.kind !== "PRICE_GROUP") continue;
+        if (price?._tag !== "PRICE_FOUND" || price.priceGroupSelector?.kind !== "PRICE_GROUP")
+          continue;
         const catalogVariantId = price.catalogSelection?.variantRef?.resourceId;
         const priceGroupId = price.priceGroupSelector.priceGroupRef?.resourceId;
         const netMinor = minorOf(price.priceRevision?.monetaryAmount?.amount);
@@ -229,7 +236,9 @@ const readGroupPrices = async (
   } catch (error) {
     operation.check();
     if (isOperationError(error) || charged) throw error;
-    console.error(`[ontos] customer group prices failed (${String(error)}); shown at the shared price`);
+    console.error(
+      `[ontos] customer group prices failed (${String(error)}); shown at the shared price`,
+    );
     return new Map();
   }
 };
@@ -239,7 +248,9 @@ const customerPriceOf = (
   basePriceMinor: number,
   baseTiers: readonly { priceMinor: number; priceExcludingVatMinor: number }[],
 ): CatalogCustomerPrice => {
-  const baseNet = baseTiers.find((tier) => tier.priceMinor === basePriceMinor)?.priceExcludingVatMinor;
+  const baseNet = baseTiers.find(
+    (tier) => tier.priceMinor === basePriceMinor,
+  )?.priceExcludingVatMinor;
   return {
     ...claim,
     basePriceMinor,
@@ -317,7 +328,8 @@ const personalized = (
   const cheapest = variants
     .filter((variant) => !variant.priceUnavailableReason && variant.priceMinor > 0)
     .reduce<CatalogProductVariant | undefined>(
-      (best, variant) => (best === undefined || variant.priceMinor < best.priceMinor ? variant : best),
+      (best, variant) =>
+        best === undefined || variant.priceMinor < best.priceMinor ? variant : best,
       undefined,
     );
   const repriced = (offer: CatalogSearchVariantOffer): CatalogSearchVariantOffer => {
@@ -325,7 +337,11 @@ const personalized = (
     if (variant?.customerPrice === undefined) return offer;
     const { originalPriceMinor: _original, ...rest } = offer;
     void _original;
-    return { ...rest, priceMinor: variant.priceMinor, priceExcludingVatMinor: variant.customerPrice.netMinor };
+    return {
+      ...rest,
+      priceMinor: variant.priceMinor,
+      priceExcludingVatMinor: variant.customerPrice.netMinor,
+    };
   };
   const match = product.searchMatch;
   const searchMatch =
@@ -341,7 +357,12 @@ const personalized = (
       : variants.length === 1
         ? variants[0]
         : undefined;
-  const { originalPriceMinor: _original, customerPrice: _customer, searchMatch: _match, ...rest } = product;
+  const {
+    originalPriceMinor: _original,
+    customerPrice: _customer,
+    searchMatch: _match,
+    ...rest
+  } = product;
   void _original;
   void _customer;
   void _match;
@@ -394,12 +415,17 @@ const withVariantRecords = async (
       const detail = groups.includes(product) ? details.get(product.id) : undefined;
       return detail === undefined
         ? product
-        : { ...product, detail: { ...product.detail, variants: detail.variants, priceTiers: detail.priceTiers } };
+        : {
+            ...product,
+            detail: { ...product.detail, variants: detail.variants, priceTiers: detail.priceTiers },
+          };
     });
   } catch (error) {
     operation.check();
     if (isOperationError(error)) throw error;
-    console.error(`[ontos] customer group prices: variants unread (${String(error)}); shown at the shared price`);
+    console.error(
+      `[ontos] customer group prices: variants unread (${String(error)}); shown at the shared price`,
+    );
     return products;
   }
 };

@@ -38,6 +38,8 @@ export interface CommerceSourceProcessingEligibilityService {
   ) => Effect.Effect<readonly CommerceSourceProcessingAuthority[], CommerceSourceProcessingRejected>;
 }
 
+const INVALID_SOURCE_PROCESSING_EVIDENCE = 'Privacy returned invalid source processing evidence';
+
 const rejected = (code: 'DENIED' | 'UNAVAILABLE', reason: string) => (cause?: unknown) =>
   Object.defineProperty(new CommerceSourceProcessingRejected({ code, reason }), 'cause', {
     configurable: true,
@@ -113,7 +115,7 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
               Object.defineProperty(
                 new CommerceSourceProcessingRejected({
                   code: 'UNAVAILABLE',
-                  reason: 'Privacy returned invalid source processing evidence',
+                  reason: INVALID_SOURCE_PROCESSING_EVIDENCE,
                 }),
                 'cause',
                 { configurable: true, value: cause },
@@ -164,19 +166,24 @@ export const commerceSourceProcessingEligibilityLive = Layer.effect(
             crypto,
           ).pipe(
             Effect.flatMap((issued) =>
-              executeSourceProcessingEligibilitySetWithAuthorization(payload, issued.authorization, scope.correlationId, {
-                baseUrl: new URL(issued.apiBaseUrl),
-                compositionRevision: issued.compositionRevision,
-              }),
+              executeSourceProcessingEligibilitySetWithAuthorization(
+                payload,
+                issued.authorization,
+                scope.correlationId,
+                {
+                  baseUrl: new URL(issued.apiBaseUrl),
+                  compositionRevision: issued.compositionRevision,
+                },
+              ),
             ),
             commerceCustomerContextEvidenceCall.sourceProcessingEligibility,
             Effect.mapError(rejected('UNAVAILABLE', 'Current source Privacy authority is unavailable')),
           );
           const { decisions } = yield* Schema.decodeUnknownEffect(SourceProcessingEligibilitySetResponseSchema)(
             response,
-          ).pipe(Effect.mapError(rejected('UNAVAILABLE', 'Privacy returned invalid source processing evidence')));
+          ).pipe(Effect.mapError(rejected('UNAVAILABLE', INVALID_SOURCE_PROCESSING_EVIDENCE)));
           if (decisions.length !== inputs.length) {
-            return yield* rejected('UNAVAILABLE', 'Privacy returned invalid source processing evidence')();
+            return yield* rejected('UNAVAILABLE', INVALID_SOURCE_PROCESSING_EVIDENCE)();
           }
           const sourceSync = yield* sourceSyncProcessingSelected;
           const now = DateTime.formatIso(yield* DateTime.now);

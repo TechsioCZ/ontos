@@ -19,6 +19,8 @@ import type { prepareInternalSyncAuthority } from './symmy-c14-sync-authority.mt
 import { internalSyncSource } from './symmy-c14-sync-plans.mts';
 
 type Authority = Effect.Success<ReturnType<typeof prepareInternalSyncAuthority>>;
+const CATALOG_MODULE_KEY = 'commerce.catalog';
+
 const uuid = Schema.String.check(Schema.isUUID());
 const digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const nameEffectKey = 'readiness-name';
@@ -292,12 +294,12 @@ const adoptedCatalogEvidence = Effect.fn('InternalC14Sync.adoptedCatalogEvidence
         expect(row.product_result).toEqual(original);
         expect(row.outcome).toMatchObject({
           effectId: row.ref.effectId,
-          owner: 'commerce.catalog',
+          owner: CATALOG_MODULE_KEY,
           status: 'accepted_no_change',
         });
         expect(row.ref.operation).toEqual({
           entrypointKey: `commerce.catalog.${readinessActions[row.effect_key]}`,
-          moduleId: 'commerce.catalog',
+          moduleId: CATALOG_MODULE_KEY,
           schemaVersion: '1',
         });
         expect(row.ref.originalTarget).toBeUndefined();
@@ -380,14 +382,14 @@ export const assertInternalSyncCatalog = Effect.fn('InternalC14Sync.catalogReadi
           expect(row.committed_reply.encoded).toEqual(row.result);
           expect(row.ref.operation).toEqual({
             entrypointKey: actionKey,
-            moduleId: 'commerce.catalog',
+            moduleId: CATALOG_MODULE_KEY,
             schemaVersion: '1',
           });
           expect(row.ref.originalTarget).toEqual(productRef);
           expect(row.product_receipt).toEqual(receipt);
           expect(row.product_result).toEqual(original);
           expect(row.outcome.effectId).toBe(row.ref.effectId);
-          expect(row.outcome.owner).toBe('commerce.catalog');
+          expect(row.outcome.owner).toBe(CATALOG_MODULE_KEY);
           expect(row.outcome.status).toBe('accepted_change');
           expect(row.ref.occurrence.record).toEqual({
             entityKind: 'PRODUCT',

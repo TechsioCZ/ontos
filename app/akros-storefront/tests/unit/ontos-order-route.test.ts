@@ -217,8 +217,12 @@ describe("real order boundary", () => {
       const merchandise = reads.filter(({ audience }) => audience === "merchandise");
       // Selected offer, shipping methods and fresh aggregate revision are distinct owner queries. The offer is shared
       // with the directory, so the next submit reads only the shipping methods and a fresh revision.
-      const checkoutReads = merchandise.filter(({ query }) => query.view.storefrontCheckout === true);
-      const revisionReads = merchandise.filter(({ query }) => query.view.storefrontCatalog?.pageSize === 1);
+      const checkoutReads = merchandise.filter(
+        ({ query }) => query.view.storefrontCheckout === true,
+      );
+      const revisionReads = merchandise.filter(
+        ({ query }) => query.view.storefrontCatalog?.pageSize === 1,
+      );
       expect(checkoutReads).toHaveLength(1);
       expect(revisionReads).toHaveLength(1);
       expect(merchandise).toHaveLength(attempt === 0 ? 3 : 2);

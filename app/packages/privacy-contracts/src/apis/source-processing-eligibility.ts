@@ -205,35 +205,37 @@ export const SourceProcessingEligibilityInternalProblemSchema = makeProblemDetai
 );
 
 export const SourceProcessingEligibilityApi = HttpApi.make('SourceProcessingEligibilityApi').add(
-  HttpApiGroup.make('sourceProcessingEligibility').add(
-    HttpApiEndpoint.post('execute', '/reads/source-processing-eligibility', {
-      error: [
-        SourceProcessingEligibilityInvalidProblemSchema,
-        SourceProcessingEligibilityAuthenticationProblemSchema,
-        SourceProcessingEligibilityForbiddenProblemSchema,
-        SourceProcessingEligibilityNotFoundProblemSchema,
-        SourceProcessingEligibilityPolicyConflictProblemSchema,
-        SourceProcessingEligibilityPolicyProblemSchema,
-        SourceProcessingEligibilityUnavailableProblemSchema,
-        SourceProcessingEligibilityInternalProblemSchema,
-      ],
-      payload: SourceProcessingEligibilityRequestSchema,
-      success: SourceProcessingEligibilityResponseSchema,
-    }),
-  ).add(
-    HttpApiEndpoint.post('executeSet', '/reads/source-processing-eligibility-set', {
-      error: [
-        SourceProcessingEligibilityInvalidProblemSchema,
-        SourceProcessingEligibilityAuthenticationProblemSchema,
-        SourceProcessingEligibilityForbiddenProblemSchema,
-        SourceProcessingEligibilityNotFoundProblemSchema,
-        SourceProcessingEligibilityPolicyConflictProblemSchema,
-        SourceProcessingEligibilityPolicyProblemSchema,
-        SourceProcessingEligibilityUnavailableProblemSchema,
-        SourceProcessingEligibilityInternalProblemSchema,
-      ],
-      payload: SourceProcessingEligibilitySetRequestSchema,
-      success: SourceProcessingEligibilitySetResponseSchema,
-    }),
-  ),
+  HttpApiGroup.make('sourceProcessingEligibility')
+    .add(
+      HttpApiEndpoint.post('execute', '/reads/source-processing-eligibility', {
+        error: [
+          SourceProcessingEligibilityInvalidProblemSchema,
+          SourceProcessingEligibilityAuthenticationProblemSchema,
+          SourceProcessingEligibilityForbiddenProblemSchema,
+          SourceProcessingEligibilityNotFoundProblemSchema,
+          SourceProcessingEligibilityPolicyConflictProblemSchema,
+          SourceProcessingEligibilityPolicyProblemSchema,
+          SourceProcessingEligibilityUnavailableProblemSchema,
+          SourceProcessingEligibilityInternalProblemSchema,
+        ],
+        payload: SourceProcessingEligibilityRequestSchema,
+        success: SourceProcessingEligibilityResponseSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('executeSet', '/reads/source-processing-eligibility-set', {
+        error: [
+          SourceProcessingEligibilityInvalidProblemSchema,
+          SourceProcessingEligibilityAuthenticationProblemSchema,
+          SourceProcessingEligibilityForbiddenProblemSchema,
+          SourceProcessingEligibilityNotFoundProblemSchema,
+          SourceProcessingEligibilityPolicyConflictProblemSchema,
+          SourceProcessingEligibilityPolicyProblemSchema,
+          SourceProcessingEligibilityUnavailableProblemSchema,
+          SourceProcessingEligibilityInternalProblemSchema,
+        ],
+        payload: SourceProcessingEligibilitySetRequestSchema,
+        success: SourceProcessingEligibilitySetResponseSchema,
+      }),
+    ),
 );

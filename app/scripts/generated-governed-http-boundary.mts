@@ -1991,6 +1991,14 @@ const governedRuntimeConstruction = {
   },
 };
 
+const isOwnerRuntimeRegistration = (
+  registration: ReturnType<typeof namedSourceImport>,
+  ownerRegistration: string,
+  backendRegistration: string,
+): boolean =>
+  (registration?.modulePath === '../vertical.registration.ts' && registration.imported === ownerRegistration) ||
+  (registration?.modulePath === '../vertical.runtime-declaration.ts' && registration.imported === backendRegistration);
+
 /** Scaffolds may preserve adapted roots only when both construction and owner provenance are proven. */
 export const hasOwnerBoundGovernedRuntime = (
   source: string,
@@ -2016,13 +2024,7 @@ export const hasOwnerBoundGovernedRuntime = (
     return false;
   }
   const registration = namedSourceImport(source, args[1] ?? '');
-  if (
-    !(
-      (registration?.modulePath === '../vertical.registration.ts' && registration.imported === ownerRegistration) ||
-      (registration?.modulePath === '../vertical.runtime-declaration.ts' &&
-        registration.imported === backendRegistration)
-    )
-  ) {
+  if (!isOwnerRuntimeRegistration(registration, ownerRegistration, backendRegistration)) {
     return false;
   }
   if (kind === 'read') {

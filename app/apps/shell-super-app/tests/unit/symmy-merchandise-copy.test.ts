@@ -12,7 +12,10 @@ import {
   scheduleSymmyMerchandiseCopy,
   symmyUpsertSourceProductCommand,
 } from '../../api/symmy/merchandise-copy.ts';
-import { SymmyInternalProductsProjectionSchema } from '../../api/symmy/read-projection-contracts.ts';
+import {
+  SymmyInternalProductsProjectionSchema,
+  SymmyQualifiedReadIdSchema,
+} from '../../api/symmy/read-projection-contracts.ts';
 import type { SymmyIngressAdmission } from '../../api/symmy/transport.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -111,18 +114,19 @@ it('omits unknown price and stock rather than inventing zeroes', () => {
   expect(command?.variants[0]).toEqual({ catalogVariantId: variantId, sku: 'ERP-V1' });
 });
 
+const named = (id: string, code: string, name: string) => ({
+  id: SymmyQualifiedReadIdSchema.make(`~c14r1.${'c'.repeat(43)}`),
+  localizedNames: [
+    { locale: 'en', name: 'ignored' },
+    { locale: 'cs', name },
+  ],
+  source_record_id: `variant:variantId:${code}`,
+  variantId: id,
+});
+
 it('names each of several variants by its Czech source name without the product name, and a single variant not at all', () => {
   const item = sourceItem();
   const secondId = '55555555-5555-4555-8555-555555555555';
-  const named = (id: string, code: string, name: string) => ({
-    id: `~c14r1.${'c'.repeat(43)}`,
-    localizedNames: [
-      { locale: 'en', name: 'ignored' },
-      { locale: 'cs', name },
-    ],
-    source_record_id: `variant:variantId:${code}`,
-    variantId: id,
-  });
   const several = symmyUpsertSourceProductCommand({
     ...item,
     variantSources: [named(variantId, 'ERP-V1', 'Source title 4 x 40'), named(secondId, 'ERP-V2', '5 x 50')],

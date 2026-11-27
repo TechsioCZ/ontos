@@ -246,6 +246,10 @@ export default defineConfig({
     'tools/oxlint/effect-native/tests/fixtures/**',
     // Written against the trunk a deploy replaces: the VAT deploy rehearsal runs it in a checkout of that trunk.
     'scripts/integration/tests/*.old-release.mts',
+    // Hand-run stable sales operator tool, written in the 2026-11-27 demo hotfix without hooks. Runs in no gate
+    // or stage delivery. Do not run or rewrite it blind while stable is postponed. When stable resumes, rewrite
+    // it like scripts/demo/akros-playground-copy.mts or delete it.
+    'scripts/demo/copy-stage-catalog-to-stable.mts',
   ],
   jsPlugins: [
     ...jsPlugins.jsPlugins,

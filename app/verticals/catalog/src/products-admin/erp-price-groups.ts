@@ -8,11 +8,15 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import type { ErpOffer } from './erp-offer.ts';
 
+const PriceGroupResourceIdSchema = Schema.String.pipe(Schema.brand('ErpPriceGroupId'));
+const PriceGroupTenantIdSchema = Schema.String.pipe(Schema.brand('ErpPriceGroupTenantId'));
+const PriceGroupRouteIdSchema = Schema.String.pipe(Schema.brand('ErpPriceGroupRouteId'));
+
 const PriceGroupRefSchema = Schema.Struct({
   moduleId: Schema.Literal('pricing.price-group-catalog'),
-  resourceId: Schema.String,
+  resourceId: Schema.toEncoded(PriceGroupResourceIdSchema),
   resourceType: Schema.Literal('pricing.price-group-catalog.price-group'),
-  tenantId: Schema.String,
+  tenantId: Schema.toEncoded(PriceGroupTenantIdSchema),
 });
 
 /** The most associations one page answers (the read's own limit). */
@@ -27,7 +31,7 @@ const PriceGroupCatalogApi = HttpApi.make('ErpPriceGroupCatalogApi').add(
           limit: Schema.Number,
           namespace: Schema.String,
           offset: Schema.Number,
-          routeId: Schema.String,
+          routeId: Schema.toEncoded(PriceGroupRouteIdSchema),
         }),
         success: Schema.Struct({
           associations: Schema.Array(Schema.Struct({ priceGroupRef: PriceGroupRefSchema })),
@@ -37,7 +41,10 @@ const PriceGroupCatalogApi = HttpApi.make('ErpPriceGroupCatalogApi').add(
     )
     .add(
       HttpApiEndpoint.post('definition', '/reads/price-group-definition', {
-        payload: Schema.Struct({ priceGroupRef: PriceGroupRefSchema, trustedOperationAt: Schema.String }),
+        payload: Schema.Struct({
+          priceGroupRef: PriceGroupRefSchema,
+          trustedOperationAt: Schema.DateTimeUtcFromString,
+        }),
         success: Schema.Struct({
           definition: Schema.Struct({ displayName: Schema.String }),
           identity: Schema.Struct({ lifecycle: Schema.Struct({ state: Schema.String }) }),
@@ -47,7 +54,13 @@ const PriceGroupCatalogApi = HttpApi.make('ErpPriceGroupCatalogApi').add(
 );
 
 /** The Symmy price-list route each company's ERP price groups were imported through (AKROS only today). */
-const priceGroupSources: Readonly<Record<string, { issuer: string; namespace: string; routeId: string }>> = {
+const PriceGroupSourceSchema = Schema.Struct({
+  issuer: Schema.String,
+  namespace: Schema.String,
+  routeId: Schema.toEncoded(PriceGroupRouteIdSchema),
+});
+const PriceGroupSourcesSchema = Schema.Record(Schema.String, PriceGroupSourceSchema);
+const priceGroupSources: typeof PriceGroupSourcesSchema.Type = {
   akros: { issuer: 'symmy-akros', namespace: 'akros-erp', routeId: '9e355544-4242-4704-a9d3-0ef0832fc328' },
 };
 
@@ -58,11 +71,16 @@ export interface ErpPriceGroup {
   readonly priceGroupRef: typeof PriceGroupRefSchema.Type;
 }
 
-const clientOf = (credential: string, requestCorrelation: string, baseUrl: string, compositionRevision: string) =>
+const clientOf = (
+  credential: Redacted.Redacted,
+  requestCorrelation: string,
+  baseUrl: string,
+  compositionRevision: string,
+) =>
   makeGovernedEffectBffClient(
     {
       api: PriceGroupCatalogApi,
-      credential: Redacted.make(credential),
+      credential,
       defaultApiPrefix: '/price-group-catalog-api',
       requestCorrelation,
     },
@@ -78,7 +96,7 @@ const withClient = <Success, Failure>(
   call: (client: PriceGroupCatalogClient) => Effect.Effect<Success, Failure>,
 ) =>
   gateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
-    clientOf(credential, requestCorrelation, apiBaseUrl, compositionRevision).pipe(Effect.flatMap(call)),
+    clientOf(Redacted.make(credential), requestCorrelation, apiBaseUrl, compositionRevision).pipe(Effect.flatMap(call)),
   );
 
 type PriceGroupRef = typeof PriceGroupRefSchema.Type;
@@ -109,23 +127,25 @@ const associatedGroups = (
   );
 
 /** The groups that are active now, each by its current definition's name. */
-const namedGroups = (requestCorrelation: string, refs: readonly PriceGroupRef[]) =>
-  Effect.gen(function* named() {
-    const trustedOperationAt = DateTime.formatIso(yield* DateTime.now);
-    const groups = yield* Effect.forEach(
-      refs,
-      (priceGroupRef) =>
-        withClient(requestCorrelation, (client) =>
-          client.priceGroups.definition({ payload: { priceGroupRef, trustedOperationAt } }),
-        ).pipe(
-          Effect.map(({ definition, identity }): readonly ErpPriceGroup[] =>
-            identity.lifecycle.state === 'ACTIVE' ? [{ label: definition.displayName, priceGroupRef }] : [],
-          ),
+const namedGroups = Effect.fn('ErpPriceGroups.namedGroups')(function* named(
+  requestCorrelation: string,
+  refs: readonly PriceGroupRef[],
+) {
+  const trustedOperationAt = yield* DateTime.now;
+  const groups = yield* Effect.forEach(
+    refs,
+    (priceGroupRef) =>
+      withClient(requestCorrelation, (client) =>
+        client.priceGroups.definition({ payload: { priceGroupRef, trustedOperationAt } }),
+      ).pipe(
+        Effect.map(({ definition, identity }): readonly ErpPriceGroup[] =>
+          identity.lifecycle.state === 'ACTIVE' ? [{ label: definition.displayName, priceGroupRef }] : [],
         ),
-      { concurrency: 4 },
-    );
-    return groups.flat().toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
-  });
+      ),
+    { concurrency: 4 },
+  );
+  return groups.flat().toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
+});
 
 /**
  * The company's active Price Groups by their catalog name, or none when the offer's company has no ERP price-list

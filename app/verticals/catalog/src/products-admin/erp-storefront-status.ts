@@ -55,12 +55,11 @@ export const erpStorefrontStatus = (
       ]
     : [];
   // The Akros shop is Czech: its own links name the market locale, so this one opens the page without a redirect.
-  return Option.some({
-    notes,
-    reasons,
-    visible,
-    ...(visible && akrosOrigin !== ''
-      ? { href: `${akrosOrigin}/cs/novinky-z-erp/${encodeURIComponent(item.productRef.resourceId)}` }
-      : {}),
-  });
+  const status: ErpStorefrontStatus = { notes, reasons, visible };
+  if (visible && akrosOrigin !== '') {
+    Object.assign(status, {
+      href: `${akrosOrigin}/cs/novinky-z-erp/${encodeURIComponent(item.productRef.resourceId)}`,
+    });
+  }
+  return Option.some(status);
 };

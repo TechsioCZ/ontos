@@ -12,6 +12,8 @@ import type { Dispatch, SetStateAction } from 'react';
  * unsaved input. `reload-required` is a draft a deploy left behind: the new release refuses this tab until the page
  * reloads, and the draft is still unsaved.
  */
+const reloadRequired = 'reload-required';
+
 export const SaveStateSchema = Schema.Literals([
   'idle',
   'ready',
@@ -22,7 +24,7 @@ export const SaveStateSchema = Schema.Literals([
   'proposed',
   'error',
   'conflict',
-  'reload-required',
+  reloadRequired,
 ]);
 export type SaveState = typeof SaveStateSchema.Type;
 
@@ -38,7 +40,7 @@ export type SaveOutcome = typeof SaveOutcomeSchema.Type;
  * A save the new release refused after a deploy, also once the gateway tried to move the tab to it (`releaseGone`
  * of `@app/shared-contracts`): only a page reload loads the new release, and the draft stays unsaved.
  */
-export type ReloadRequired = 'reload-required';
+export type ReloadRequired = typeof reloadRequired;
 
 /** How one save ended, as the draft controller takes it: a `SaveOutcome`, or `reload-required`. */
 export type DraftSaveOutcome = SaveOutcome | ReloadRequired;
@@ -74,7 +76,7 @@ export const draftUnsaved = (status: SaveState): boolean =>
  * with), or one whose last save failed.
  */
 export const draftSavable = (status: SaveState): boolean =>
-  status === 'dirty' || status === 'ready' || status === 'error' || status === 'reload-required';
+  status === 'dirty' || status === 'ready' || status === 'error' || status === reloadRequired;
 
 type Fork<R> = <A>(effect: Effect.Effect<A, never, R>) => Fiber.Fiber<A>;
 
@@ -130,7 +132,7 @@ export class DraftSaveController<V, R = never> {
     }
     // A conflict holds until the server version is adopted or the draft is back at the confirmed version; so does a
     // release the tab can no longer reach, which only a reload changes.
-    if ((this.state === 'conflict' || this.state === 'reload-required') && !this.same(value, this.saved)) {
+    if ((this.state === 'conflict' || this.state === reloadRequired) && !this.same(value, this.saved)) {
       return;
     }
     this.setState(this.restingState());
@@ -267,9 +269,9 @@ export class DraftSaveController<V, R = never> {
       this.setState(this.same(this.latest, sent) ? 'proposed' : this.restingState());
     } else if (outcome === 'conflict') {
       this.setState('conflict');
-    } else if (outcome === 'reload-required') {
+    } else if (outcome === reloadRequired) {
       // The whole tab is behind the release, whatever was typed while the save ran.
-      this.setState(this.restingState() === 'idle' ? 'idle' : 'reload-required');
+      this.setState(this.restingState() === 'idle' ? 'idle' : reloadRequired);
     } else {
       // A failure belongs to the draft that was sent. When the draft changed while it ran (typed, or a part taken out),
       // the current draft rests as any change after a failure does, so no retry is offered for what is not on screen.
@@ -406,7 +408,9 @@ export interface UseDraftSaveOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 
    * Sends one draft (see `DraftSaveOptions.save`). A save of several commands that stopped after some of them went
    * through returns `PartlySaved`: its `confirmed` becomes the version later saves and "Zahodit změny" go back to.
    */
-  readonly save: (value: V) => Effect.Effect<DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>>, never, R>;
+  readonly save: (
+    value: V,
+  ) => Effect.Effect<DraftSaveOutcome | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>>, never, R>;
   /** The form's draft. Without `initial`, the first render's value is taken as saved. */
   readonly value: V;
 }
@@ -458,10 +462,7 @@ export type DraftSaveResult<V> = RevisionedSaveResult | PartlySaved<V>;
  * A `DraftSaveResult`, or a save a deploy left behind (`ReloadRequired`), also after part of it went through: what a
  * record draft's save may answer.
  */
-export type DraftSaveEnd<V> =
-  | DraftSaveResult<V>
-  | ReloadRequired
-  | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>>;
+export type DraftSaveEnd<V> = DraftSaveResult<V> | ReloadRequired | PartlySaved<V, Exclude<DraftSaveOutcome, 'saved'>>;
 
 interface GenerationOptions<V, R> extends Omit<DraftSaveOptions<V, R>, 'save'> {
   /** The confirmed version of the first generation; `value` when absent. */
@@ -489,7 +490,7 @@ const boundTo = <V, R>(
   save: (value) =>
     options.save(value, base.current(), version.confirmed()).pipe(
       Effect.map((result): DraftSaveOutcome => {
-        if (result === 'reload-required' || isOutcome(result)) {
+        if (result === reloadRequired || isOutcome(result)) {
           return result;
         }
         if (Predicate.isNumber(result)) {

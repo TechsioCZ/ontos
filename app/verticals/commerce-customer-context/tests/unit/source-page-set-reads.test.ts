@@ -29,7 +29,7 @@ it('proves a source-sync page through one declared requirement and one native-re
         rule.entrypointKey === provider &&
         rule.sourceWorkloadKey === 'commerce.customer-context.source-read' &&
         rule.jobKey === 'integration.symmy.execute-symmy-job' &&
-        !('allowRecoverySource' in rule && rule.allowRecoverySource),
+        !('allowRecoverySource' in rule && rule.allowRecoverySource === true),
     );
     expect(rules).toHaveLength(1);
   }

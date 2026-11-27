@@ -337,25 +337,28 @@ describe("market read lifetime at the real server renderer", () => {
     },
   );
 
-  it.live("starts fresh cart scope reads per render and shares the catalogue answer of one revision", () => {
-    const owner = fixture();
-    return Effect.gen(function* independentRenders() {
-      const result = yield* Effect.promise(() => renderReads(2));
-      expect(result).toEqual(
-        Array.from({ length: 2 }, () => ({ cart: readyCart, catalog: readyCatalog })),
-      );
-      // First render: the catalogue's market and records, the cart's market and records (beside the revision head).
-      // Second render: the revision and the catalogue answer are still shared; only the cart scope reads again.
-      expect(ownerReadNames(owner.requests)).toEqual([
-        "current-market-catalog",
-        "current-market-catalog",
-        "current-market-catalog",
-        "records",
-        "records",
-        "records",
-      ]);
-    }).pipe(Effect.provide(owner.layer));
-  });
+  it.live(
+    "starts fresh cart scope reads per render and shares the catalogue answer of one revision",
+    () => {
+      const owner = fixture();
+      return Effect.gen(function* independentRenders() {
+        const result = yield* Effect.promise(() => renderReads(2));
+        expect(result).toEqual(
+          Array.from({ length: 2 }, () => ({ cart: readyCart, catalog: readyCatalog })),
+        );
+        // First render: the catalogue's market and records, the cart's market and records (beside the revision head).
+        // Second render: the revision and the catalogue answer are still shared; only the cart scope reads again.
+        expect(ownerReadNames(owner.requests)).toEqual([
+          "current-market-catalog",
+          "current-market-catalog",
+          "current-market-catalog",
+          "records",
+          "records",
+          "records",
+        ]);
+      }).pipe(Effect.provide(owner.layer));
+    },
+  );
 
   it.live("retries a failed market read once per chain, then recovers on the next render", () => {
     const owner = fixture();

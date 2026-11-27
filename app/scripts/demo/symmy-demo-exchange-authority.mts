@@ -355,9 +355,9 @@ export const bootstrapSymmyDemoExchangeAuthority = Effect.fn('SymmyDemoExchange.
       const authoritySource = Context.get(authorityContext, AccessWorkloadBindingSource);
       yield* sql`set local role ontos_runtime`;
       yield* installOperationalScope(executor, scope, enrollment);
-      const grantWorkload = Effect.fn('SymmyDemoExchange.grant')(function* grant(
-        addition: { readonly workloadKey: string },
-      ) {
+      const grantWorkload = Effect.fn('SymmyDemoExchange.grant')(function* grant(addition: {
+        readonly workloadKey: string;
+      }) {
         const workloadKey = yield* Schema.decodeUnknownEffect(WorkloadKeySchema)(addition.workloadKey);
         const current = yield* sql`select binding_id as "bindingId", status from core.access_workload_bindings
           where tenant_id=${tenantId} and principal_id=${principalId} and workload_key=${workloadKey} for update`;

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug assign-catalog-media
 import type { ActionHandlerContext, ReadServiceFactory } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import {
   ActionTransactionError,
   defineAction,
@@ -34,6 +34,21 @@ const assignCatalogMediaResultCodec = {
   encode: Schema.encodeEffect(CatalogMediaChangeResultSchema),
 };
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
+const imageStorageFailure = (failure: Effect.Error<ReturnType<typeof storeLinkedMediaImage>>) =>
+  Match.value(failure).pipe(
+    Match.tag(
+      'MediaUploadRejected',
+      ({ reason }) => new CatalogMediaConflict({ code: 'catalog_media_conflict', reason }),
+    ),
+    Match.orElse(
+      () =>
+        new CatalogPersistenceUnavailable({
+          code: 'catalog_persistence_unavailable',
+          reason: 'Catalog image storage is temporarily unavailable',
+        }),
+    ),
+  );
+
 const assignCatalogMediaSnapshotServiceFactory = (
   transaction: ScopedTransaction,
   scope: Parameters<typeof catalogMediaActionServiceFactory>[1],
@@ -81,17 +96,7 @@ const assignCatalogMediaSnapshotServiceFactory = (
                 principalId,
                 target: catalogMediaLinkTarget(input.subjectRef.resourceId),
                 upload: input.upload,
-              }).pipe(
-                Effect.asVoid,
-                Effect.mapError((failure) =>
-                  failure._tag === 'MediaUploadRejected'
-                    ? new CatalogMediaConflict({ code: 'catalog_media_conflict', reason: failure.reason })
-                    : new CatalogPersistenceUnavailable({
-                        code: 'catalog_persistence_unavailable',
-                        reason: 'Catalog image storage is temporarily unavailable',
-                      }),
-                ),
-              ),
+              }).pipe(Effect.asVoid, Effect.mapError(imageStorageFailure)),
       }),
     ),
   );

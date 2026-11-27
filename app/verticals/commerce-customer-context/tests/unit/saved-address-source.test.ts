@@ -292,6 +292,7 @@ it.effect('keeps unknown receipts indeterminate without inspecting current profi
             checks += 1;
             return Effect.die('An indeterminate original address receipt must not acquire Privacy authority');
           },
+          checkSet: () => Effect.die('An indeterminate original address receipt must not acquire a Privacy set'),
         }),
       );
     expect(

@@ -233,6 +233,31 @@ const sourceProfileAdmissionItem = (item: CustomerProfileSourceItem): SourceProf
         partySourceReference: item.partySourceReference,
       };
 
+const currentSourceAdmission = (
+  item: CustomerProfileSourceItem,
+  admission: SourceProfileAdmission,
+  legalEntityId: string | undefined,
+) => {
+  const { subject } = item.profile;
+  const retail = admission.kind === 'RETAIL' ? admission.proof : undefined;
+  const counterparty = admission.kind === 'COUNTERPARTY' ? admission.proof : undefined;
+  const retailAdmission =
+    subject.kind === 'RETAIL' &&
+    subject.partyRef.resourceId === item.partyRef.resourceId &&
+    subject.sellingLegalEntityRef.resourceId === legalEntityId &&
+    retail?.outcome === 'CURRENT_PARTY_RESOLVED' &&
+    retail.partyResourceId === item.partyRef.resourceId
+      ? retail.currentAdmission
+      : undefined;
+  const counterpartyAdmission =
+    subject.kind === 'COUNTERPARTY' &&
+    counterparty?.outcome === 'ELIGIBLE' &&
+    counterparty.partyResourceId === item.partyRef.resourceId
+      ? counterparty.currentAdmission
+      : undefined;
+  return retailAdmission ?? counterpartyAdmission;
+};
+
 const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(function* sourceProfileReadServices(
   requirements: SourceReadRequirements,
   transaction: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[0],
@@ -329,7 +354,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     ) {
       return yield* unavailable();
     }
-    yield* privacyCheck(item.source, item, 'customer-profile-source.read');
+    yield* privacyCheck(item.source, item, SOURCE_READ_ROUTINE_KEY);
     return currentAdmission;
   });
   const checkOriginalRecovery = Effect.fn('CustomerProfileSourceRead.checkOriginalRecovery')(
@@ -528,24 +553,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     ) {
       return yield* unavailable();
     }
-    const { subject } = item.profile;
-    const retail = admission.kind === 'RETAIL' ? admission.proof : undefined;
-    const counterparty = admission.kind === 'COUNTERPARTY' ? admission.proof : undefined;
-    const retailAdmission =
-      subject.kind === 'RETAIL' &&
-      subject.partyRef.resourceId === item.partyRef.resourceId &&
-      subject.sellingLegalEntityRef.resourceId === scope.legalEntityId &&
-      retail?.outcome === 'CURRENT_PARTY_RESOLVED' &&
-      retail.partyResourceId === item.partyRef.resourceId
-        ? retail.currentAdmission
-        : undefined;
-    const counterpartyAdmission =
-      subject.kind === 'COUNTERPARTY' &&
-      counterparty?.outcome === 'ELIGIBLE' &&
-      counterparty.partyResourceId === item.partyRef.resourceId
-        ? counterparty.currentAdmission
-        : undefined;
-    const currentAdmission = retailAdmission ?? counterpartyAdmission;
+    const currentAdmission = currentSourceAdmission(item, admission, scope.legalEntityId);
     if (
       currentAdmission === undefined ||
       currentAdmission.partyRef.resourceId !== item.partyRef.resourceId ||
@@ -581,9 +589,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     );
     if (current.length > 0) {
       yield* requireModuleOperation(sourcePageSetRequirements.privacy).pipe(Effect.mapError(unavailable));
-      const requests = current.map((item) =>
-        sourceProfilePrivacyRequest(item.source, item, 'customer-profile-source.read'),
-      );
+      const requests = current.map((item) => sourceProfilePrivacyRequest(item.source, item, SOURCE_READ_ROUTINE_KEY));
       const decisions = yield* privacy
         .checkSet(scope, requests, sourcePageSetRequirements.privacy)
         .pipe(Effect.mapError(customerProfileSourcePrivacyFailure));
@@ -779,6 +785,16 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       return { _tag: 'ORG_RECEIPT' as const, receipt: safe };
     },
   );
+  const projectPageItem = (item: CustomerProfileSourceItem, includeSourceAddresses: boolean) =>
+    projectCurrentItem(item, includeSourceAddresses).pipe(
+      Effect.map(Option.some),
+      Effect.catchTag('ReadHandlerUnavailable', (failure) =>
+        partyStillCurrent(item).pipe(
+          Effect.flatMap((current) => (current ? Effect.fail(failure) : Effect.succeedNone)),
+        ),
+      ),
+    );
+
   return {
     readPage: Effect.fn('CustomerProfileSourceRead.readPage')(function* readPage(
       input: CustomerProfileSourcePageRequest,
@@ -811,15 +827,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
           : Arr.getSomes(
               yield* Effect.forEach(
                 page.items,
-                (item) =>
-                  projectCurrentItem(item, includeSourceAddresses === true).pipe(
-                    Effect.map(Option.some),
-                    Effect.catchTag('ReadHandlerUnavailable', (failure) =>
-                      partyStillCurrent(item).pipe(
-                        Effect.flatMap((current) => (current ? Effect.fail(failure) : Effect.succeedNone)),
-                      ),
-                    ),
-                  ),
+                (item) => projectPageItem(item, includeSourceAddresses === true),
                 // Each item's owner proofs are independent remote reads; one item after another a page of 25
                 // customers took 10-20 s and pushed GET /admin/customers past the 30 s HTTP budget. Order is kept.
                 { concurrency: SOURCE_PAGE_ITEM_CONCURRENCY },

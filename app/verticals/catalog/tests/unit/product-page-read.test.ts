@@ -331,12 +331,11 @@ const importedVariantId = 'b0000000-0000-4000-8000-000000000003';
 const axisId = 'c0000000-0000-4000-8000-000000000001';
 const ancestorId = 'd0000000-0000-4000-8000-000000000001';
 const instant = '2030-01-01T00:00:00.000Z';
-const productOf = (id: string, lifecycle: string, variants: readonly (readonly [string, string])[], name?: string) =>
-  Schema.decodeUnknownSync(ProductSchema)({
+const productOf = (id: string, lifecycle: string, variants: readonly (readonly [string, string])[], name?: string) => {
+  const product = {
     catalogReady: false,
     createdAt: instant,
     lifecycle,
-    ...(name === undefined ? {} : { name }),
     productRef: productRef(id),
     revision: 2,
     updatedAt: instant,
@@ -346,7 +345,12 @@ const productOf = (id: string, lifecycle: string, variants: readonly (readonly [
       variantId,
       variantRef: variantRef(variantId),
     })),
-  });
+  };
+  if (name !== undefined) {
+    Object.assign(product, { name });
+  }
+  return Schema.decodeUnknownSync(ProductSchema)(product);
+};
 const products = new Map([
   [
     activeProductId,
