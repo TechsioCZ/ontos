@@ -8,7 +8,8 @@ const privacySetRead = 'privacy.core.api.source-processing-eligibility-set';
 /** The one requirement and the one native-read rule the gateway admits a Party set read's Privacy call through. */
 const privacySetHop = (entrypointKey: string) => {
   const requirements = (partyRegistryRuntimeManifest.requirements?.operations ?? []).filter(
-    (requirement) => requirement.entrypointKey === entrypointKey && requirement.provider.entrypointKey === privacySetRead,
+    (requirement) =>
+      requirement.entrypointKey === entrypointKey && requirement.provider.entrypointKey === privacySetRead,
   );
   const rules = partyRegistryRegisteredWorkloadCalls.filter(
     (rule) =>
@@ -16,7 +17,7 @@ const privacySetHop = (entrypointKey: string) => {
       rule.entrypointKey === privacySetRead &&
       rule.sourceWorkloadKey === 'party.registry.source-read' &&
       rule.jobKey === 'integration.symmy.execute-symmy-job' &&
-      !('allowRecoverySource' in rule && rule.allowRecoverySource),
+      !('allowRecoverySource' in rule && rule.allowRecoverySource === true),
   );
   return { requirements, rules };
 };
