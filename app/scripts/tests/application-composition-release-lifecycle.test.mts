@@ -330,9 +330,17 @@ it.effect('fences concurrent public writers before acquiring owner leases for bo
     yield* runApplicationCompositionMigration(Effect.void, Effect.void).pipe(Effect.provide(fixture.layer));
     const acquisitions = fixture.events.flatMap((event, index) => (event === OWNER_ACQUIRE ? [index] : []));
     expect(acquisitions).toHaveLength(2);
-    for (const acquisition of acquisitions) {
-      const observation = fixture.events.slice(0, acquisition).lastIndexOf(LEGACY_TRANSACTION_CHECK);
-      expect(observation).toBeGreaterThanOrEqual(0);
+    for (const [position, acquisition] of acquisitions.entries()) {
+      // Entering draining between native releases relies on the exclusive authority lock alone, taken after
+      // admission closed (4fce160ce6: live traffic never leaves the database quiet); the seal still observes legacy
+      // transactions first, after the drain.
+      const before = fixture.events.slice(0, acquisition);
+      const observation =
+        position === 0 ? before.lastIndexOf('COMMITTED admission closed') : before.lastIndexOf(LEGACY_TRANSACTION_CHECK);
+      expect(observation).toBeGreaterThanOrEqual(position === 0 ? 0 : (acquisitions[0] ?? 0));
+      if (position === 0) {
+        expect(before).not.toContain(LEGACY_TRANSACTION_CHECK);
+      }
       expect(fixture.authorityLockPositions.some((position) => position > observation && position <= acquisition)).toBe(
         true,
       );
@@ -366,7 +374,7 @@ it.effect('commits draining and sealing before migration, then records completio
       'SESSION LOCK',
       'COMMITTED admission closed',
       DURABLE_COMPLETE,
-      LEGACY_TRANSACTION_CHECK,
+      // No database-wide legacy transaction check before entering draining (4fce160ce6): the authority lock fences.
       ...ownerObservationEvents,
       COMMITTED_DRAINING,
       OWNER_RELEASE,
