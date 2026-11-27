@@ -24,7 +24,7 @@ export const LoadingSkeleton = ({ label, rows = 4 }: { readonly label?: string; 
       {Array.from({ length: rows }, (_, row) => (
         <span
           aria-hidden="true"
-          className="facilityoperations:animate-pulse"
+          className="animate-pulse"
           key={row}
           style={{
             background: 'var(--color-neutral-200, #e5e7eb)',

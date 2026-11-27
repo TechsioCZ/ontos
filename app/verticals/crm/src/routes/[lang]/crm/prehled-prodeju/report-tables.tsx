@@ -235,7 +235,7 @@ export const SummaryTable = ({
                     <td aria-label={formatNumber(group.count)} className="py-100 pr-200">
                       <span className="flex items-center gap-150">
                         <span className="w-8 text-right tabular-nums">{formatNumber(group.count)}</span>
-                        <span aria-hidden className="h-2 w-28 rounded-sm bg-surface-secondary">
+                        <span aria-hidden className="h-2 w-28 rounded-sm">
                           <span
                             className="block h-full rounded-sm"
                             style={{

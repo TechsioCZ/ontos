@@ -368,7 +368,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   return (
     <aside
       aria-label={t(guideTitleKey)}
-      className="fixed end-0 bottom-0 z-5 flex w-full flex-col border-border-primary border-s bg-base shadow-dialog-content lg:w-(--demo-guide-width)"
+      className="fixed inset-e-0 bottom-0 z-5 flex w-full flex-col border-border-primary border-s bg-base shadow-accordion-content-md lg:w-(--demo-guide-width)"
       id={demoGuidePanelId}
       style={{ top: 'var(--spacing-700)' }}
     >

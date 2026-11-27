@@ -334,7 +334,7 @@ export const VariantDetailEditor = ({
               onPick={() => onChange({ imageSrc: '' })}
               selected={draft.imageSrc === ''}
             >
-              <span aria-hidden className="icon-[mdi--image-off-outline] size-300 text-fg-secondary" />
+              <span aria-hidden className="token-icon-image-unavailable size-300 text-fg-secondary" />
             </ImageChoice>
             {imageChoices.map((image) => (
               <VariantImageTile

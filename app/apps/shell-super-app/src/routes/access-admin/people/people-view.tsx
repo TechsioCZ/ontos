@@ -382,7 +382,7 @@ const EndMembershipDialog = ({
         title={t(pending?.titleKey ?? `${prefix}.title`)}
       >
         <form
-          className="shell:grid shell:gap-4"
+          className="grid gap-4"
           onSubmit={(event) => {
             // Enter never ends the membership: only Potvrdit does.
             event.preventDefault();

@@ -45,7 +45,7 @@ const SignedDocumentReference = ({
   }
   if (/^https?:\/\//u.test(reference)) {
     return (
-      <a className="legalagreements:underline" href={reference} rel="noreferrer" target="_blank">
+      <a className="underline" href={reference} rel="noreferrer" target="_blank">
         Otevřít podepsaný dokument
       </a>
     );
@@ -130,9 +130,9 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
       {state.proposal !== undefined && (
         <output aria-live="polite">{t('legal-agreements.demo.approvalRequired')}</output>
       )}
-      <div className="legalagreements:grid legalagreements:grid-cols-1 legalagreements:items-start legalagreements:gap-6 legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="legalagreements:min-w-0 legalagreements:space-y-6">
-          <div className="legalagreements:grid legalagreements:gap-6 legalagreements:md:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-6 legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0 space-y-6">
+          <div className="grid gap-6 md:grid-cols-2">
             <SectionCard title={t('legal-agreements.detail.contract')}>
               <DetailList
                 items={[
@@ -174,16 +174,16 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
           />
           {selected.note !== null && (
             <SectionCard title={t('legal-agreements.detail.note')}>
-              <p className="legalagreements:whitespace-pre-wrap legalagreements:text-sm">{selected.note}</p>
+              <p className="whitespace-pre-wrap text-sm">{selected.note}</p>
             </SectionCard>
           )}
           <SectionCard title={t('legal-agreements.demo.documents')}>
             {state.detailView.documents.length === 0 && (
-              <p className="legalagreements:text-sm">{t('legal-agreements.detail.noDocuments')}</p>
+              <p className="text-sm">{t('legal-agreements.detail.noDocuments')}</p>
             )}
             {state.detailView.documents.map((record) => (
               <p
-                className={`${surfaceTileClassName} legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:gap-3 legalagreements:p-4 legalagreements:text-sm`}
+                className={`${surfaceTileClassName} flex flex-wrap items-center gap-3 p-4 legalagreements:text-sm`}
                 key={record.documentRef.resourceId}
               >
                 {record.title} · {record.fileName} ·{' '}
@@ -219,9 +219,9 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             />
           )}
         </div>
-        <div className="legalagreements:min-w-0 legalagreements:space-y-6">
+        <div className="min-w-0 space-y-6">
           <SectionCard title={t('legal-agreements.detail.status')}>
-            <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
+            <div className="flex flex-wrap gap-2">
               <Badge
                 severity={
                   ({ ACTIVE: 'success', DRAFT: 'neutral', EXPIRED: 'warning', TERMINATED: 'danger' } as const)[
@@ -257,7 +257,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
               </LinkButton>
             </SectionCard>
           )}
-          <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
+          <div className="flex flex-wrap gap-2">
             {state.detailView.canEdit && (
               <Button appearance="outline" disabled={busy} onClick={editDraft} severity="secondary" size="sm">
                 {t('legal-agreements.demo.editDraft')}
@@ -296,7 +296,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             )}
             {selected.occupancyRef !== null && (
               <a
-                className="legalagreements:inline-flex legalagreements:items-center legalagreements:text-sm legalagreements:underline legalagreements:underline-offset-4"
+                className="inline-flex items-center text-sm underline underline-offset-4"
                 href={`/${language}/najmy?resourceId=${selected.occupancyRef.resourceId}`}
               >
                 {t('legal-agreements.demo.occupancy')}
@@ -326,7 +326,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
     return (
       <>
         <UltramodernRouteHead />
-        <section className="legalagreements:w-full legalagreements:min-w-0 legalagreements:max-w-none legalagreements:space-y-6 legalagreements:p-0 legalagreements:text-(--color-page-fg)">
+        <section className="w-full min-w-0 max-w-none space-y-6 p-0 text-fg-primary">
           <AgreementDocumentPanel language={state.language} state={state.documentState} />
           <AgreementsDraftForm state={state} />
         </section>
@@ -336,7 +336,7 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
   return (
     <>
       <UltramodernRouteHead />
-      <section className="legalagreements:w-full legalagreements:min-w-0 legalagreements:max-w-none legalagreements:space-y-6 legalagreements:p-0 legalagreements:text-(--color-page-fg)">
+      <section className="w-full min-w-0 max-w-none space-y-6 p-0 text-fg-primary">
         {state.linkedResourceId === undefined ? (
           <>
             <PageHeader
@@ -375,8 +375,8 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
               }
               title={t('legal-agreements.pages.records.title')}
             />
-            <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:justify-between legalagreements:gap-4 legalagreements:pb-4">
-              <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   appearance="ghost"
                   aria-pressed={!expiringOnly}
@@ -403,13 +403,11 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
               )}
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p
-                className={`${surfaceTileClassName} legalagreements:p-5 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)`}
-              >
+              <p className={`${surfaceTileClassName} p-5 text-sm legalagreements:text-(--color-fg-secondary)`}>
                 {t('legal-agreements.demo.empty')}
               </p>
             )}
-            <div className="legalagreements:overflow-x-auto">
+            <div className="overflow-x-auto">
               <Table appearance="line" size="sm">
                 <Table.Caption>{t('legal-agreements.demo.list')}</Table.Caption>
                 <Table.Header>
@@ -426,9 +424,9 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                   {visible.map((record) => (
                     <Table.Row key={record.contractRef.resourceId}>
                       <Table.Cell>
-                        <span className="legalagreements:font-medium">{state.titleOf(record)}</span>
+                        <span className="font-medium">{state.titleOf(record)}</span>
                         {record.kind === 'LEASE' && (
-                          <span className="legalagreements:block legalagreements:text-xs legalagreements:text-(--color-fg-secondary)">
+                          <span className="block text-xs text-fg-secondary">
                             {state.counterpartyOf(record)?.displayName ?? ''}
                             {record.subject === undefined ? '' : ` · ${record.subject}`}
                           </span>
@@ -439,14 +437,14 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
                         {record.endDate === null ? t('legal-agreements.demo.openEnd') : formatDate(record.endDate)}
                       </Table.Cell>
                       <Table.Cell>
-                        <span className="legalagreements:tabular-nums">
+                        <span className="tabular-nums">
                           {contractMonthlyTotal(record) === undefined
                             ? '—'
                             : formatMoney(contractMonthlyTotal(record) ?? 0)}
                         </span>
                       </Table.Cell>
                       <Table.Cell>
-                        <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <Badge
                             severity={
                               (

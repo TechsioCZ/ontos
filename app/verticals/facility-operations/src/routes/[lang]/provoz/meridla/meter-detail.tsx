@@ -111,7 +111,7 @@ const ReadingConsumption = ({
       </>
     );
   }
-  return <div className="flex min-w-[9rem] flex-1 flex-col tabular-nums">{content}</div>;
+  return <div className="flex min-w-36 flex-1 flex-col tabular-nums">{content}</div>;
 };
 
 const MeterHistoryItem = ({
@@ -144,7 +144,7 @@ const MeterHistoryItem = ({
       key={reading.id}
     >
       <div className="flex flex-wrap items-start gap-200">
-        <div className="flex min-w-[7rem] flex-col">
+        <div className="flex min-w-28 flex-col">
           <span className={`font-semibold ${struck}`}>{formatDate(reading.date)}</span>
           <span className={`text-fg-secondary text-xs tabular-nums ${struck}`}>
             {t(`${k}.detail.value`)}: {formatQuantity(reading.value, reading.unit)}
@@ -588,7 +588,7 @@ export const MeterDetail = ({
           <figure className="flex flex-col gap-100">
             <img
               alt={photo.name}
-              className="max-h-[320px] rounded-md border border-border-primary object-contain"
+              className="max-h-80 rounded-md border border-border-primary object-contain"
               src={photo.url}
             />
             <figcaption className="flex items-center justify-between text-fg-secondary text-xs">

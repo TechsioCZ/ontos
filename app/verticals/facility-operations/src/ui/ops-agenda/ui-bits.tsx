@@ -97,7 +97,7 @@ export const Pill = ({
     : { background: colors.bg, color: colors.fg };
   const label = (
     <span
-      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:whitespace-nowrap facilityoperations:rounded-full facilityoperations:px-2 facilityoperations:py-0.5 facilityoperations:text-xs facilityoperations:font-medium"
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium"
       style={style}
     >
       {children}
@@ -107,7 +107,7 @@ export const Pill = ({
     label
   ) : (
     <Tooltip content={title}>
-      <button className="facilityoperations:inline-flex facilityoperations:rounded-full" type="button">
+      <button className="inline-flex rounded-full" type="button">
         {label}
       </button>
     </Tooltip>
@@ -117,7 +117,7 @@ export const Pill = ({
 export const Dot = ({ size = 8, tone }: { readonly size?: number; readonly tone: Tone }) => (
   <span
     aria-hidden
-    className="facilityoperations:inline-block facilityoperations:shrink-0 facilityoperations:rounded-full"
+    className="inline-block shrink-0 rounded-full"
     style={{ background: palette[tone].accent, height: size, width: size }}
   />
 );
@@ -184,7 +184,7 @@ export const IconBadge = ({
 }) => (
   <span
     aria-hidden
-    className="facilityoperations:inline-flex facilityoperations:shrink-0 facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-xl"
+    className="inline-flex shrink-0 items-center justify-center rounded-lg"
     style={{ background: palette[tone].bg, color: palette[tone].accent, height: size, width: size }}
   >
     <Icon name={name} size={Math.round(size * 0.55)} />

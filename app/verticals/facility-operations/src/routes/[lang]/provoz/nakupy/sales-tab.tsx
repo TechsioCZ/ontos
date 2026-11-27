@@ -205,7 +205,7 @@ export const SalesTab = ({
                       onClick={() => onOpenOrder(order.id)}
                     >
                       <Table.Cell>
-                        <span className="flex min-w-[12rem] flex-col">
+                        <span className="flex min-w-48 flex-col">
                           <span className="font-medium tabular-nums">{order.number}</span>
                           <span className="text-fg-secondary text-xs">{order.customer.name}</span>
                         </span>
@@ -257,7 +257,7 @@ export const SalesTab = ({
                     onClick={() => onOpenQuote(quote.id)}
                   >
                     <Table.Cell>
-                      <span className="flex min-w-[12rem] flex-col">
+                      <span className="flex min-w-48 flex-col">
                         <span className="font-medium tabular-nums">{quote.number}</span>
                         <span className="text-fg-secondary text-xs">{quote.customer.name}</span>
                       </span>
@@ -742,7 +742,7 @@ const LinesTable = ({
         <Table.Body>
           {lines.map((line) => (
             <Table.Row key={line.id}>
-              <Table.Cell className="min-w-[12rem] font-medium">{line.description}</Table.Cell>
+              <Table.Cell className="min-w-48 font-medium">{line.description}</Table.Cell>
               <Table.Cell className="text-right tabular-nums">{line.quantity}</Table.Cell>
               {delivered === true && (
                 <Table.Cell className="text-right tabular-nums">

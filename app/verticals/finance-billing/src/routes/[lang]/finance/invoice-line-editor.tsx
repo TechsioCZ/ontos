@@ -62,7 +62,7 @@ const InvoiceLineDiscount = ({ line, onChange }: Pick<InvoiceLineEditorProps, 'l
   const { t } = useModernI18n();
   return (
     <>
-      <div className="finance-invoice-line-discount grid grid-cols-1 items-end gap-150 sm:grid-cols-[10rem_8rem_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 items-end gap-150 sm:grid-cols-[10rem_8rem_minmax(0,1fr)]">
         <SelectTemplate
           items={DISCOUNT_KINDS.map(([value, label]) => ({ displayValue: label, label, value }))}
           label={t('finance-billing.financeUi.line.discount')}

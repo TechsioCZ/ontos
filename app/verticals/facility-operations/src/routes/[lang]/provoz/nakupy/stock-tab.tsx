@@ -173,7 +173,7 @@ const StockExpectedCell = ({ row }: CellContext<MaterialPlan>) =>
 const StockProjectedCell = ({ row }: CellContext<MaterialPlan>) => (
   <span
     className={
-      row.original.projected < row.original.item.minimum ? 'font-semibold text-fg-danger tabular-nums' : 'tabular-nums'
+      row.original.projected < row.original.item.minimum ? 'font-semibold text-danger tabular-nums' : 'tabular-nums'
     }
   >
     {formatQuantity(row.original.projected, row.original.item.unit)}
@@ -314,11 +314,9 @@ const PlanFigure = ({
   readonly label: string;
   readonly value: string;
 }) => (
-  <div className="flex flex-col gap-50 rounded-md bg-surface-secondary p-150">
+  <div className="flex flex-col gap-50 rounded-md p-150">
     <span className="text-fg-secondary text-xs">{label}</span>
-    <span className={emphasis ? 'font-semibold text-fg-danger tabular-nums' : 'font-semibold tabular-nums'}>
-      {value}
-    </span>
+    <span className={emphasis ? 'font-semibold text-danger tabular-nums' : 'font-semibold tabular-nums'}>{value}</span>
   </div>
 );
 

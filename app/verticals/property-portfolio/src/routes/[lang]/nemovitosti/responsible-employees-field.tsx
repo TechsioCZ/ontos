@@ -48,7 +48,7 @@ export const ResponsibleEmployeesField = ({
       ? selection.selected.map((choice) => ({ key: choice.id, label: choice.name ?? copy.unavailable }))
       : [{ key: 'legacy', label: selection.legacyName }];
   return (
-    <div className="propertyportfolio:grid gap-100">
+    <div className="grid gap-100">
       <Combobox
         allowCustomValue={false}
         closeOnSelect={false}
@@ -73,7 +73,7 @@ export const ResponsibleEmployeesField = ({
         {...(invalid ? { helpText: copy.required, validateStatus: 'error' as const } : {})}
       />
       {shown.length > 0 && (
-        <ul aria-labelledby={`${fieldId}-label`} className="propertyportfolio:flex propertyportfolio:flex-wrap gap-50">
+        <ul aria-labelledby={`${fieldId}-label`} className="flex flex-wrap gap-50">
           {shown.map((item) => (
             <li key={item.key}>
               <Badge appearance="outline" severity="neutral" size="sm">

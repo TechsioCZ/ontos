@@ -91,7 +91,7 @@ export const CustomerField = ({
   const { language, t } = useModernI18n();
   const handleOpenChange = customers.onOpenChange;
   return (
-    <div className="propertyleasing:space-y-2" onFocus={() => handleOpenChange(true)}>
+    <div className="space-y-2" onFocus={() => handleOpenChange(true)}>
       <Combobox
         clearable
         footer={customers.empty ? t('property-leasing.demo.customersEmpty') : undefined}
@@ -118,7 +118,7 @@ export const CustomerField = ({
 export const PeriodFields = ({ draft, onChange }: { readonly draft: OccupancyDraft; readonly onChange: Change }) => {
   const { t } = useModernI18n();
   return (
-    <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
+    <div className="grid gap-4 md:grid-cols-2">
       <FormInput
         id="occupancy-start-date"
         label={t('property-leasing.demo.startDate')}
@@ -140,9 +140,9 @@ export const PeriodFields = ({ draft, onChange }: { readonly draft: OccupancyDra
 export const RentFields = ({ draft, onChange }: { readonly draft: OccupancyDraft; readonly onChange: Change }) => {
   const { t } = useModernI18n();
   return (
-    <section className="propertyleasing:space-y-3">
-      <h3 className="propertyleasing:text-sm propertyleasing:font-semibold">{t('property-leasing.rent.title')}</h3>
-      <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold">{t('property-leasing.rent.title')}</h3>
+      <div className="grid gap-4 md:grid-cols-3">
         <FormInput
           id="occupancy-rent-monthly"
           inputMode="decimal"
@@ -194,12 +194,10 @@ export const StayFields = ({
   const { t } = useModernI18n();
   const handleSearch = guests.onSearch;
   return (
-    <section className="propertyleasing:space-y-4">
-      <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-        {t('property-leasing.booking.manualHint')}
-      </p>
-      <div className="propertyleasing:flex propertyleasing:items-end propertyleasing:gap-2">
-        <div className="propertyleasing:min-w-0 propertyleasing:flex-1">
+    <section className="space-y-4">
+      <p className="text-sm text-fg-secondary">{t('property-leasing.booking.manualHint')}</p>
+      <div className="flex items-end gap-2">
+        <div className="min-w-0 flex-1">
           <FormInput
             id="booking-guest-query"
             label={t('property-leasing.demo.guestSearch')}

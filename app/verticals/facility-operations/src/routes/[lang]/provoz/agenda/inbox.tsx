@@ -152,14 +152,11 @@ export const NotificationCenter = ({
     <SectionCard
       actions={
         <>
-          <div
-            className="facilityoperations:inline-flex facilityoperations:rounded-lg facilityoperations:p-0.5"
-            style={{ background: 'var(--color-surface-subtle, #f1f5f9)' }}
-          >
+          <div className="inline-flex rounded-lg p-0.5" style={{ background: 'var(--color-surface-subtle, #f1f5f9)' }}>
             {(['all', 'unread'] as const).map((value) => (
               <button
                 aria-pressed={filter === value}
-                className="facilityoperations:cursor-pointer facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-3 facilityoperations:py-1 facilityoperations:text-sm facilityoperations:font-medium"
+                className="cursor-pointer rounded-md border-0 px-3 py-1 text-sm font-medium"
                 key={value}
                 onClick={() => setFilter(value)}
                 style={{
@@ -201,7 +198,7 @@ export const NotificationCenter = ({
           .ops-inbox-actions > a, .ops-inbox-actions > button { min-height: 44px; }
         }
       `}</style>
-      <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+      <p className="m-0 text-xs" style={muted}>
         {canWrite ? t(`${k}.notifications.explain`) : t(`${k}.notifications.readOnly`)}
       </p>
       {rows.length === 0 ? (
@@ -210,17 +207,14 @@ export const NotificationCenter = ({
           title={filter === 'unread' ? t(`${k}.notifications.emptyUnread`) : t(`${k}.notifications.empty`)}
         />
       ) : (
-        <ul
-          className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:p-0"
-          data-testid="notification-list"
-        >
+        <ul className="m-0 flex list-none flex-col gap-2 p-0" data-testid="notification-list">
           {rows.map((entry) => {
             const tone = notificationTone[entry.category];
             const isUnread = entry.readAt === undefined;
             const from = personOf(entry.createdBy.principalId);
             return (
               <li
-                className="ops-inbox-card facilityoperations:items-start facilityoperations:gap-3 facilityoperations:rounded-xl facilityoperations:p-3"
+                className="items-start gap-3 rounded-lg p-3"
                 data-event-key={entry.eventKey}
                 data-unread={isUnread}
                 key={entry.id}
@@ -230,16 +224,14 @@ export const NotificationCenter = ({
                 }}
               >
                 <IconBadge name={notificationIcon[entry.category]} size={36} tone={tone} />
-                <div className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col facilityoperations:gap-0.5">
-                  <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-2">
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Pill solid={isUnread} tone={tone}>
                       {t(`${k}.notifications.category.${entry.category}`)}
                     </Pill>
-                    <span className="ops-inbox-title facilityoperations:w-full facilityoperations:font-medium">
-                      {entry.title}
-                    </span>
+                    <span className="w-full font-medium">{entry.title}</span>
                   </div>
-                  <span className="ops-inbox-meta facilityoperations:text-xs" style={muted}>
+                  <span className="text-xs" style={muted}>
                     {[
                       t(`${k}.sources.${entry.source}`),
                       entry.dueDate === undefined
@@ -257,12 +249,9 @@ export const NotificationCenter = ({
                       .join(' · ')}
                   </span>
                 </div>
-                <div className="ops-inbox-actions">
+                <div className="">
                   {entry.href !== undefined && (
-                    <a
-                      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium"
-                      href={`/${lang}${entry.href}`}
-                    >
+                    <a className="inline-flex items-center gap-1 text-sm font-medium" href={`/${lang}${entry.href}`}>
                       {t(`${k}.open`)}
                       <Icon name="arrowRight" size={14} />
                     </a>
@@ -280,7 +269,7 @@ export const NotificationCenter = ({
                     const label = notificationEmailLabel(receipt, lang, t);
                     return (
                       <span
-                        className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
+                        className="inline-flex items-center gap-1 text-xs"
                         data-testid="notification-email"
                         style={muted}
                       >
@@ -290,10 +279,7 @@ export const NotificationCenter = ({
                     );
                   })()}
                   {!isUnread && entry.readAt !== undefined && (
-                    <span
-                      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
-                      style={muted}
-                    >
+                    <span className="inline-flex items-center gap-1 text-xs" style={muted}>
                       <Icon name="check" size={14} />
                       {t(`${k}.notifications.readAt`, { time: fmt.stamp(lang, DateTime.formatIso(entry.readAt)) })}
                     </span>
@@ -341,17 +327,17 @@ export const MyAgenda = ({
   const person = personOf(me);
   const list = (rows: readonly Deadline[], empty: string) =>
     rows.length === 0 ? (
-      <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
+      <p className="m-0 text-sm" style={muted}>
         {empty}
       </p>
     ) : (
-      <ul className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-1.5 facilityoperations:p-0">
+      <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
         {rows.slice(0, 12).map((row) => {
           const urgency = urgencyOf(row, today);
           return (
             <li key={row.key}>
               <button
-                className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-3 facilityoperations:rounded-lg facilityoperations:px-2 facilityoperations:py-2 facilityoperations:text-left facilityoperations:hover:shadow-sm"
+                className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-left facilityoperations:hover:shadow-sm"
                 data-key={row.key}
                 onClick={() => onOpen(row)}
                 style={{
@@ -363,22 +349,18 @@ export const MyAgenda = ({
                 type="button"
               >
                 <span
-                  className="facilityoperations:flex facilityoperations:h-10 facilityoperations:w-10 facilityoperations:shrink-0 facilityoperations:flex-col facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-lg facilityoperations:text-xs facilityoperations:font-semibold"
+                  className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg text-xs font-semibold"
                   style={{
                     background: toneColors(urgencyTone[urgency]).bg,
                     color: toneColors(urgencyTone[urgency]).fg,
                   }}
                 >
-                  <span className="facilityoperations:text-base facilityoperations:leading-none">
-                    {Number(row.date.slice(8, 10))}
-                  </span>
-                  <span className="facilityoperations:text-[10px] facilityoperations:uppercase">
-                    {fmt.weekday(lang, row.date)}
-                  </span>
+                  <span className="text-base leading-none">{Number(row.date.slice(8, 10))}</span>
+                  <span className="facilityoperations:text-[10px] uppercase">{fmt.weekday(lang, row.date)}</span>
                 </span>
-                <span className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col">
-                  <span className="facilityoperations:truncate facilityoperations:font-medium">{row.title}</span>
-                  <span className="facilityoperations:truncate facilityoperations:text-xs" style={muted}>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-medium">{row.title}</span>
+                  <span className="truncate text-xs" style={muted}>
                     {row.location ?? t(`${k}.sources.${row.source}`)}
                   </span>
                 </span>
@@ -390,8 +372,8 @@ export const MyAgenda = ({
       </ul>
     );
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
-      <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
+    <div className="flex flex-col gap-4">
+      <p className="m-0 text-sm" style={muted}>
         {t(`${k}.mine.intro`, { who: person?.displayName ?? t(`${k}.mine.you`) })}
       </p>
       <StatRow>
@@ -400,10 +382,10 @@ export const MyAgenda = ({
         <StatCard label={t(`${k}.mine.week`)} value={formatNumber(week.length)} />
         <StatCard label={t(`${k}.mine.unread`)} value={formatNumber(unread.length)} />
       </StatRow>
-      <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <SectionCard
           actions={
-            <a className="facilityoperations:text-sm facilityoperations:font-medium" href={`/${lang}/ukoly`}>
+            <a className="text-sm font-medium" href={`/${lang}/ukoly`}>
               {t(`${k}.mine.allTasks`)}
             </a>
           }
@@ -412,7 +394,7 @@ export const MyAgenda = ({
           {workStatus === 'ready' ? (
             list(tasks, t(`${k}.mine.noTasks`))
           ) : (
-            <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
+            <p className="m-0 text-sm" style={muted}>
               {t(`${k}.state.${workStatus}`)}
             </p>
           )}
@@ -422,14 +404,14 @@ export const MyAgenda = ({
         </SectionCard>
       </div>
       <SectionCard title={t(`${k}.mine.byCategory`)}>
-        <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-2">
+        <div className="flex flex-wrap gap-2">
           {[...new Set(mine.map((row) => row.category))].map((category) => (
             <Pill key={category} tone={categoryTone[category]}>
               {t(`${k}.category.${category}`)}: {mine.filter((row) => row.category === category).length}
             </Pill>
           ))}
           {mine.length === 0 && (
-            <span className="facilityoperations:text-sm" style={muted}>
+            <span className="text-sm" style={muted}>
               {t(`${k}.mine.nothing`)}
             </span>
           )}
@@ -509,10 +491,10 @@ export const SettingsPanel = ({
   const handleReloadLatest = record.reloadLatest;
   const handleSave = record.save;
   return (
-    <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
-      <div className="facilityoperations:xl:col-span-2">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+      <div className="xl:col-span-2">
         <SectionCard title={t(`${k}.settings.title`)}>
-          <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
+          <div className="flex flex-col gap-4">
             <Select
               disabled={!canWrite}
               items={['3', '7', '14', '30', '60'].map((value) => ({
@@ -526,27 +508,18 @@ export const SettingsPanel = ({
               size="md"
               value={[leadDays]}
             />
-            <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1">
+            <div className="flex flex-col gap-1">
               <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
                 {t(`${k}.settings.email`)}
               </Switch>
-              <span
-                className="facilityoperations:flex facilityoperations:flex-col facilityoperations:items-start facilityoperations:gap-1 facilityoperations:text-xs"
-                data-testid="email-provider"
-                style={muted}
-              >
+              <span className="flex flex-col items-start gap-1 text-xs" data-testid="email-provider" style={muted}>
                 {providerPill}
                 <span>{providerText}</span>
               </span>
             </div>
             {email && (
-              <fieldset
-                className="facilityoperations:m-0 facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:border-0 facilityoperations:p-0"
-                data-testid="email-events"
-              >
-                <legend className="facilityoperations:mb-1 facilityoperations:p-0 facilityoperations:text-sm facilityoperations:font-medium">
-                  {t(`${k}.settings.emailEvents`)}
-                </legend>
+              <fieldset className="m-0 flex flex-col gap-2 border-0 p-0" data-testid="email-events">
+                <legend className="mb-1 p-0 text-sm font-medium">{t(`${k}.settings.emailEvents`)}</legend>
                 {MANDATORY_EMAIL_CATEGORIES.map((category) => (
                   <FormCheckbox
                     checked
@@ -579,12 +552,12 @@ export const SettingsPanel = ({
                     size="sm"
                   />
                 ))}
-                <span className="facilityoperations:text-xs" style={muted}>
+                <span className="text-xs" style={muted}>
                   {t(`${k}.settings.optionalHint`)}
                 </span>
               </fieldset>
             )}
-            <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+            <p className="m-0 text-xs" style={muted}>
               {current === undefined
                 ? t(`${k}.settings.default`, { count: DEFAULT_LEAD_DAYS })
                 : t(`${k}.settings.savedAt`, { time: fmt.stamp(lang, DateTime.formatIso(current.updatedAt)) })}
@@ -604,51 +577,36 @@ export const SettingsPanel = ({
           </div>
         </SectionCard>
       </div>
-      <div className="facilityoperations:xl:col-span-3">
+      <div className="xl:col-span-3">
         <SectionCard title={t(`${k}.exportsLog.title`)}>
           {exports.length === 0 ? (
             <EmptyState description={t(`${k}.exportsLog.emptyDescription`)} title={t(`${k}.exportsLog.empty`)} />
           ) : (
-            <table
-              className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm"
-              data-testid="export-log"
-            >
+            <table className="w-full border-collapse text-sm" data-testid="export-log">
               <thead>
-                <tr className="facilityoperations:text-left" style={muted}>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.when`)}
-                  </th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.who`)}
-                  </th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.list`)}
-                  </th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.rows`)}
-                  </th>
+                <tr className="text-left" style={muted}>
+                  <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.when`)}</th>
+                  <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.who`)}</th>
+                  <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.list`)}</th>
+                  <th className="px-2 py-1.5 text-right font-medium">{t(`${k}.exportsLog.rows`)}</th>
                 </tr>
               </thead>
               <tbody>
                 {exports.map((entry) => (
                   <tr key={entry.id} style={{ borderTop: '1px solid var(--color-border-muted, #f1f5f9)' }}>
-                    <td className="facilityoperations:whitespace-nowrap facilityoperations:px-2 facilityoperations:py-1.5">
+                    <td className="whitespace-nowrap px-2 py-1.5">
                       {fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}
                     </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5">
-                      {personOf(entry.exportedBy.principalId)?.displayName ?? ''}
-                    </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5">
+                    <td className="px-2 py-1.5">{personOf(entry.exportedBy.principalId)?.displayName ?? ''}</td>
+                    <td className="px-2 py-1.5">
                       <div>{exportListLabel(entry.list, t)}</div>
                       {entry.filter !== undefined && !entry.filter.startsWith('kpi=') && (
-                        <div className="facilityoperations:text-xs" style={muted}>
+                        <div className="text-xs" style={muted}>
                           {entry.filter}
                         </div>
                       )}
                     </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:tabular-nums">
-                      {entry.rowCount}
-                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{entry.rowCount}</td>
                   </tr>
                 ))}
               </tbody>

@@ -349,17 +349,12 @@ const ProjectTargetLoading = () => {
     <section
       aria-busy="true"
       aria-labelledby="project-target-heading"
-      className="projects:mx-auto projects:w-full projects:max-w-5xl projects:px-4 projects:py-8 projects:sm:px-8 projects:lg:px-12"
+      className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 lg:px-12"
     >
-      <h1
-        className="projects:text-3xl projects:font-bold projects:text-(--color-page-fg) projects:sm:text-4xl"
-        id="project-target-heading"
-      >
+      <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id="project-target-heading">
         {t(`${projectDetailKey}.title`)}
       </h1>
-      <p className="projects:mt-4 projects:text-sm projects:text-(--color-fg-secondary)">
-        {t(`${projectDetailKey}.loading`)}
-      </p>
+      <p className="mt-4 text-sm text-fg-secondary">{t(`${projectDetailKey}.loading`)}</p>
     </section>
   );
 };
@@ -375,26 +370,15 @@ const ProjectTargetMessage = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <section
-      aria-labelledby="project-target-heading"
-      className="projects:mx-auto projects:w-full projects:max-w-5xl projects:px-4 projects:py-8 projects:sm:px-8 projects:lg:px-12"
-    >
-      <h1
-        className="projects:text-3xl projects:font-bold projects:text-(--color-page-fg) projects:sm:text-4xl"
-        id="project-target-heading"
-      >
+    <section aria-labelledby="project-target-heading" className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 lg:px-12">
+      <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id="project-target-heading">
         {t(`${projectDetailKey}.title`)}
       </h1>
-      <StatusText
-        className="projects:mt-4"
-        role={notice.tone === 'error' ? 'alert' : 'status'}
-        showIcon
-        status={notice.tone}
-      >
+      <StatusText className="mt-4" role={notice.tone === 'error' ? 'alert' : 'status'} showIcon status={notice.tone}>
         {t(notice.labelKey)}
       </StatusText>
       {(notice.retry && onRetry !== undefined) || showOpenCreate ? (
-        <div className="projects:mt-6 projects:flex projects:flex-wrap projects:gap-3">
+        <div className="mt-6 flex flex-wrap gap-3">
           {notice.retry && onRetry !== undefined && (
             <Button onClick={onRetry} severity="secondary" type="button">
               {t(`${projectDetailKey}.retry`)}
@@ -408,14 +392,14 @@ const ProjectTargetMessage = ({
 };
 
 const ProjectFact = ({ children, label }: { readonly children: ReactNode; readonly label: string }) => (
-  <div className="projects:flex projects:min-w-0 projects:flex-col projects:gap-1">
-    <dt className="projects:text-xs projects:text-(--color-fg-secondary)">{label}</dt>
-    <dd className="projects:break-words projects:text-sm">{children}</dd>
+  <div className="flex min-w-0 flex-col gap-1">
+    <dt className="text-xs text-fg-secondary">{label}</dt>
+    <dd className="break-words text-sm">{children}</dd>
   </div>
 );
 
 const ProjectIdentifier = ({ value }: { readonly value: string }) => (
-  <span className="projects:font-mono projects:text-xs projects:break-all">{value}</span>
+  <span className="font-mono text-xs break-all">{value}</span>
 );
 
 const ProjectDetail = ({ project }: { readonly project: ProjectTargetRecord }) => {
@@ -424,19 +408,13 @@ const ProjectDetail = ({ project }: { readonly project: ProjectTargetRecord }) =
   const shortText = Option.getOrNull(project.shortText);
   const parentProjectId = Option.getOrNull(project.parentProjectId);
   return (
-    <section
-      aria-labelledby="project-target-heading"
-      className="projects:mx-auto projects:w-full projects:max-w-5xl projects:px-4 projects:py-8 projects:sm:px-8 projects:lg:px-12"
-    >
-      <div className="projects:flex projects:flex-wrap projects:items-start projects:justify-between projects:gap-4">
-        <div className="projects:min-w-0">
-          <h1
-            className="projects:text-3xl projects:font-bold projects:text-(--color-page-fg) projects:sm:text-4xl"
-            id="project-target-heading"
-          >
+    <section aria-labelledby="project-target-heading" className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 lg:px-12">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id="project-target-heading">
             {project.name}
           </h1>
-          <p className="projects:mt-2 projects:text-sm projects:text-(--color-fg-secondary)">
+          <p className="mt-2 text-sm text-fg-secondary">
             {t(`${projectDetailKey}.fields.prefix`)}: {project.prefix}
           </p>
         </div>
@@ -445,16 +423,16 @@ const ProjectDetail = ({ project }: { readonly project: ProjectTargetRecord }) =
         </Badge>
       </div>
       {archived && (
-        <StatusText className="projects:mt-4" showIcon status="warning">
+        <StatusText className="mt-4" showIcon status="warning">
           {t(`${projectDetailKey}.archivedNotice`)}
         </StatusText>
       )}
-      <dl className="projects:mt-6 projects:grid projects:gap-4 projects:sm:grid-cols-2">
+      <dl className="mt-6 grid gap-4 sm:grid-cols-2">
         <ProjectFact label={t(`${projectDetailKey}.fields.shortText`)}>
           {shortText === null ? (
             t(`${projectDetailKey}.notProvided`)
           ) : (
-            <p className="projects:whitespace-pre-line">{shortText}</p>
+            <p className="whitespace-pre-line">{shortText}</p>
           )}
         </ProjectFact>
         {/* Field-projected reads omit governed principals; an omitted field is not shown, never guessed. */}

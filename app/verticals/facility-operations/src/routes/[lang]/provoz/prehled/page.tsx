@@ -103,7 +103,7 @@ const OverviewView = ({
       <PageHeader
         actions={
           <a
-            className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-lg facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium facilityoperations:no-underline"
+            className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium no-underline"
             href={`/${lang}/provoz/agenda`}
             style={{ border: '1px solid var(--color-border-primary, #d1d5db)', color: 'inherit' }}
           >
@@ -114,7 +114,7 @@ const OverviewView = ({
         description={t('facility-operations.agenda.overview.description')}
         meta={
           lastRead === undefined ? undefined : (
-            <span className="facilityoperations:text-xs" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
+            <span className="text-xs" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
               {t('facility-operations.agenda.overview.dataAt', { time: fmt.stamp(lang, lastRead) })}
             </span>
           )
@@ -155,11 +155,11 @@ const OverviewView = ({
           onClose={() => select()}
         />
       )}
-      <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
-        <div className="facilityoperations:xl:col-span-3">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+        <div className="xl:col-span-3">
           <UpcomingTimeline deadlines={deadlines} sources={sources} today={today} />
         </div>
-        <div className="facilityoperations:xl:col-span-2">
+        <div className="xl:col-span-2">
           <OccupancyByBuilding sources={sources} today={today} />
         </div>
       </div>

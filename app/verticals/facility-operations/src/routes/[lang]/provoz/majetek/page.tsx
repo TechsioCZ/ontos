@@ -549,7 +549,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
   return (
     <Tabs.Content className="flex flex-col gap-200 py-250" value="register">
       <div className="flex flex-wrap items-end gap-150">
-        <div className="min-w-[16rem] flex-1">
+        <div className="min-w-64 flex-1">
           <Input
             aria-label={k('filters.search')}
             onChange={(event) => setSearch(event.target.value)}
@@ -558,7 +558,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
             value={search}
           />
         </div>
-        <div className="w-[11rem]">
+        <div className="w-44">
           <Select
             items={filterItems([
               { label: k('filters.active'), value: 'active' },
@@ -573,7 +573,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
             value={[statusFilter]}
           />
         </div>
-        <div className="w-[11rem]">
+        <div className="w-44">
           <Select
             items={filterItems([
               { label: k('filters.allKinds'), value: ALL },
@@ -586,7 +586,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
             value={[kindFilter]}
           />
         </div>
-        <div className="w-[15rem]">
+        <div className="w-60">
           <Select
             items={filterItems([
               { label: k('filters.allProperties'), value: ALL },
@@ -599,7 +599,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
             value={[propertyFilter]}
           />
         </div>
-        <div className="w-[13rem]">
+        <div className="w-52">
           <Select
             items={filterItems([
               { label: k('filters.allResponsible'), value: ALL },
@@ -612,7 +612,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
             value={[responsibleFilter]}
           />
         </div>
-        <div className="w-[10rem]">
+        <div className="w-40">
           <TextField
             id="assets-acquired-from"
             label={k('filters.acquiredFrom')}
@@ -621,7 +621,7 @@ const AssetRegister = ({ vm }: { readonly vm: AssetsViewModel }) => {
             value={acquiredFrom}
           />
         </div>
-        <div className="w-[10rem]">
+        <div className="w-40">
           <TextField
             id="assets-acquired-to"
             label={k('filters.acquiredTo')}

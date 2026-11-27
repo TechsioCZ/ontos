@@ -71,7 +71,7 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
   const properties = usePropertyOptions();
   const people = useAgendaPeople();
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3">
+    <div className="flex flex-col gap-3">
       <FormInput
         autoComplete="off"
         id="ops-agenda-title"
@@ -81,7 +81,7 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
         required
         value={draft.title}
       />
-      <div className="facilityoperations:grid facilityoperations:grid-cols-2 facilityoperations:gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <FormInput
           id="ops-agenda-date"
           label={t(`${k}.fields.date`)}
@@ -307,7 +307,7 @@ export const CreateEventPanel = ({
         size="md"
         title={t(`${k}.create.title`)}
       >
-        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:py-2">
+        <div className="flex flex-col gap-3 py-2">
           {record.status === 'invalid' && (
             <StatusText showIcon status="error">
               {t(requiredKey)}
@@ -437,7 +437,7 @@ const EventEditPanel = ({
         size="md"
         title={title}
       >
-        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:py-2">
+        <div className="flex flex-col gap-4 py-2">
           {record.status === 'invalid' && (
             <StatusText showIcon status="error">
               {t(requiredKey)}
@@ -546,7 +546,7 @@ const renderDeadlineActions = ({
 }: ReturnType<typeof useDeadlinePanel>) => {
   if (event !== undefined && canWrite) {
     return (
-      <div className="ops-event-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
+      <div className="" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
         <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
         {status === 'PLANNED' && (
           <Button
@@ -591,7 +591,7 @@ const renderDeadlineActions = ({
   }
   if (deadline !== undefined && deadline.eventId === undefined) {
     return (
-      <a className="facilityoperations:font-medium" href={`/${lang}${deadline.href}`}>
+      <a className="font-medium" href={`/${lang}${deadline.href}`}>
         {t(`${k}.event.openSource`, { source: t(`${k}.sources.${deadline.source}`) })}
       </a>
     );
@@ -679,11 +679,8 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
       title={deadline?.title ?? ''}
     >
       {deadline !== undefined && (
-        <div
-          className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:py-2"
-          data-testid="deadline-panel"
-        >
-          <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-2">
+        <div className="flex flex-col gap-4 py-2" data-testid="deadline-panel">
+          <div className="flex flex-wrap gap-2">
             <Pill tone={categoryTone[deadline.category]}>{t(`${k}.category.${deadline.category}`)}</Pill>
             <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
             {event !== undefined && <Pill tone="neutral">{t(`${k}.eventStatus.${status}`)}</Pill>}
@@ -698,10 +695,7 @@ export const DeadlinePanel = (props: Parameters<typeof useDeadlinePanel>[0]) => 
           )}
           {renderDeadlineDetails(model)}
           {deadline.eventId === undefined && (
-            <p
-              className="facilityoperations:m-0 facilityoperations:rounded-lg facilityoperations:p-3 facilityoperations:text-sm"
-              style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}
-            >
+            <p className="m-0 rounded-lg p-3 text-sm" style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}>
               {t(`${k}.event.derivedNote`, { source: t(`${k}.sources.${deadline.source}`) })}
             </p>
           )}

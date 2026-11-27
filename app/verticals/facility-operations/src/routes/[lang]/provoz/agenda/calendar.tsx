@@ -91,7 +91,7 @@ const Toggle = ({
 }) => (
   <button
     aria-pressed={active}
-    className="facilityoperations:inline-flex facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-1 facilityoperations:rounded-full facilityoperations:px-3 facilityoperations:py-1 facilityoperations:text-xs facilityoperations:font-medium"
+    className="inline-flex cursor-pointer items-center gap-1 rounded-full px-3 py-1 text-xs font-medium"
     onClick={onToggle}
     style={{
       background: active ? toneColors('primary').bg : 'transparent',
@@ -122,7 +122,7 @@ const EventChip = ({
   return (
     <Tooltip content={`${categoryLabel}: ${row.title}`}>
       <button
-        className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-1 facilityoperations:truncate facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-1.5 facilityoperations:py-0.5 facilityoperations:text-left facilityoperations:text-[11px] facilityoperations:font-medium"
+        className="flex w-full cursor-pointer items-center gap-1 truncate rounded-md border-0 px-1.5 py-0.5 text-left facilityoperations:text-[11px] font-medium"
         data-key={row.key}
         onClick={() => onOpen(row)}
         style={{
@@ -134,7 +134,7 @@ const EventChip = ({
         }}
         type="button"
       >
-        <span className="facilityoperations:truncate">{row.title}</span>
+        <span className="truncate">{row.title}</span>
       </button>
     </Tooltip>
   );
@@ -163,22 +163,18 @@ const MonthGrid = ({
   const days = Array.from({ length: 42 }, (_, index) => addDays(start, index));
   return (
     <div
-      className="facilityoperations:overflow-hidden facilityoperations:rounded-2xl"
+      className="overflow-hidden rounded-lg"
       data-testid="calendar-month"
       style={{ border: '1px solid var(--color-border-primary, #e5e7eb)' }}
     >
-      <div className="facilityoperations:grid facilityoperations:grid-cols-7" style={{ background: '#f4f5f7' }}>
+      <div className="grid grid-cols-7" style={{ background: '#f4f5f7' }}>
         {weekdayHeaders(lang, start).map((label) => (
-          <div
-            className="facilityoperations:px-2 facilityoperations:py-2 facilityoperations:text-xs facilityoperations:font-semibold facilityoperations:uppercase"
-            key={label}
-            style={muted}
-          >
+          <div className="px-2 py-2 text-xs font-semibold uppercase" key={label} style={muted}>
             {label}
           </div>
         ))}
       </div>
-      <div className="facilityoperations:grid facilityoperations:grid-cols-7">
+      <div className="grid grid-cols-7">
         {days.map((date) => {
           const rows = byDate.get(date) ?? [];
           const more = rows.at(3);
@@ -187,7 +183,7 @@ const MonthGrid = ({
           const weekend = [5, 6].includes(mondayWeekday(date));
           return (
             <div
-              className="facilityoperations:flex facilityoperations:min-h-[112px] facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:p-1.5"
+              className="flex min-h-28 flex-col gap-1 p-1.5"
               data-date={date}
               key={date}
               style={{
@@ -197,7 +193,7 @@ const MonthGrid = ({
               }}
             >
               <span
-                className="facilityoperations:inline-flex facilityoperations:h-6 facilityoperations:w-6 facilityoperations:items-center facilityoperations:justify-center facilityoperations:self-end facilityoperations:rounded-full facilityoperations:text-xs facilityoperations:font-semibold"
+                className="inline-flex h-6 w-6 items-center justify-center self-end rounded-full text-xs font-semibold"
                 style={
                   isToday
                     ? { background: toneColors('primary').accent, color: '#fff' }
@@ -211,7 +207,7 @@ const MonthGrid = ({
               ))}
               {rows.length > 3 && more !== undefined && (
                 <button
-                  className="facilityoperations:cursor-pointer facilityoperations:border-0 facilityoperations:bg-transparent facilityoperations:px-1 facilityoperations:text-left facilityoperations:text-[11px] facilityoperations:font-medium"
+                  className="cursor-pointer border-0 bg-transparent px-1 text-left facilityoperations:text-[11px] font-medium"
                   onClick={() => onOpen(more)}
                   style={muted}
                   type="button"
@@ -243,16 +239,13 @@ const WeekGrid = ({
   const { t } = useModernI18n();
   const days = Array.from({ length: 7 }, (_, index) => addDays(start, index));
   return (
-    <div
-      className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-2 facilityoperations:md:grid-cols-7"
-      data-testid="calendar-week"
-    >
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-7" data-testid="calendar-week">
       {days.map((date) => {
         const rows = byDate.get(date) ?? [];
         const isToday = date === today;
         return (
           <div
-            className="facilityoperations:flex facilityoperations:min-h-[260px] facilityoperations:flex-col facilityoperations:gap-1.5 facilityoperations:rounded-xl facilityoperations:p-2"
+            className="flex facilityoperations:min-h-[260px] flex-col gap-1.5 rounded-lg p-2"
             data-date={date}
             key={date}
             style={{
@@ -261,19 +254,14 @@ const WeekGrid = ({
               boxShadow: isToday ? `0 0 0 2px ${toneColors('primary').ring}` : 'none',
             }}
           >
-            <div className="facilityoperations:flex facilityoperations:items-baseline facilityoperations:justify-between">
-              <span
-                className="facilityoperations:text-xs facilityoperations:font-semibold facilityoperations:uppercase"
-                style={muted}
-              >
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs font-semibold uppercase" style={muted}>
                 {fmt.weekday(lang, date)}
               </span>
-              <span className="facilityoperations:text-lg facilityoperations:font-semibold">
-                {fmt.dayMonth(lang, date)}
-              </span>
+              <span className="text-lg font-semibold">{fmt.dayMonth(lang, date)}</span>
             </div>
             {rows.length === 0 ? (
-              <span className="facilityoperations:text-xs" style={muted}>
+              <span className="text-xs" style={muted}>
                 {t(`${k}.calendar.free`)}
               </span>
             ) : (
@@ -306,20 +294,14 @@ const ListView = ({
     groups.set(row.date, [...(groups.get(row.date) ?? []), row]);
   }
   return (
-    <div
-      className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4"
-      data-testid="calendar-list"
-    >
+    <div className="flex flex-col gap-4" data-testid="calendar-list">
       {[...groups.entries()].map(([date, items]) => {
         const days = daysUntil(date, today);
         return (
-          <section
-            className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1.5"
-            key={date}
-          >
-            <h3 className="facilityoperations:m-0 facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-sm facilityoperations:font-semibold facilityoperations:first-letter:uppercase">
+          <section className="flex flex-col gap-1.5" key={date}>
+            <h3 className="m-0 flex items-center gap-2 text-sm font-semibold facilityoperations:first-letter:uppercase">
               {fmt.long(lang, date)}
-              <span className="facilityoperations:text-xs facilityoperations:font-normal" style={muted}>
+              <span className="text-xs font-normal" style={muted}>
                 {relativeDayLabel(days, t)}
               </span>
             </h3>
@@ -327,7 +309,7 @@ const ListView = ({
               const urgency = urgencyOf(row, today);
               return (
                 <button
-                  className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-3 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:text-left facilityoperations:hover:shadow-md"
+                  className="flex w-full cursor-pointer flex-wrap items-center gap-3 rounded-lg px-3 py-2.5 text-left facilityoperations:hover:shadow-md"
                   data-key={row.key}
                   key={row.key}
                   onClick={() => onOpen(row)}
@@ -335,14 +317,14 @@ const ListView = ({
                   type="button"
                 >
                   <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
-                  <span className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col">
+                  <span className="flex min-w-0 flex-1 flex-col">
                     <span
-                      className="facilityoperations:truncate facilityoperations:font-medium"
+                      className="truncate font-medium"
                       style={{ textDecoration: row.done ? 'line-through' : 'none' }}
                     >
                       {row.title}
                     </span>
-                    <span className="facilityoperations:truncate facilityoperations:text-xs" style={muted}>
+                    <span className="truncate text-xs" style={muted}>
                       {[t(`${k}.sources.${row.source}`), row.location].filter((part) => part !== undefined).join(' · ')}
                     </span>
                   </span>
@@ -554,9 +536,9 @@ export const CalendarView = ({
   );
 
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3">
-      <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:justify-between facilityoperations:gap-3">
-        <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
           <Button
             appearance="outline"
             aria-label={t(`${k}.calendar.previous`)}
@@ -579,21 +561,21 @@ export const CalendarView = ({
             <Icon name="chevronRight" size={18} />
           </Button>
           <h2
-            className="facilityoperations:m-0 facilityoperations:ml-2 facilityoperations:text-lg facilityoperations:font-semibold facilityoperations:first-letter:uppercase"
+            className="m-0 ml-2 text-lg font-semibold facilityoperations:first-letter:uppercase"
             data-testid="calendar-period"
           >
             {overdueOnly ? t(`${k}.calendar.overduePeriod`) : periodLabel}
           </h2>
         </div>
-        <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2">
+        <div className="flex items-center gap-2">
           <fieldset
-            className="facilityoperations:inline-flex facilityoperations:rounded-lg facilityoperations:p-0.5"
+            className="inline-flex rounded-lg p-0.5"
             style={{ background: 'var(--color-surface-subtle, #f1f5f9)', border: 0, margin: 0, minWidth: 0 }}
           >
             {(['mesic', 'tyden', 'seznam'] as const).map((value) => (
               <button
                 aria-pressed={mode === value}
-                className="facilityoperations:cursor-pointer facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium"
+                className="cursor-pointer rounded-md border-0 px-3 py-1.5 text-sm font-medium"
                 data-mode={value}
                 key={value}
                 onClick={() => setChosenMode(value)}
@@ -614,7 +596,7 @@ export const CalendarView = ({
         </div>
       </div>
 
-      <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {calendarSources.map((source) => {
           const off = hidden.has(source);
           const { status } = sources[source];
@@ -622,7 +604,7 @@ export const CalendarView = ({
             <Tooltip content={t(`${k}.state.${status}`)} key={source}>
               <button
                 aria-pressed={!off}
-                className="facilityoperations:inline-flex facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-1.5 facilityoperations:rounded-full facilityoperations:px-3 facilityoperations:py-1 facilityoperations:text-xs facilityoperations:font-medium"
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
                 data-source={source}
                 onClick={() =>
                   setHidden((current) => {
@@ -650,10 +632,7 @@ export const CalendarView = ({
             </Tooltip>
           );
         })}
-        <span
-          className="facilityoperations:mx-1 facilityoperations:h-5 facilityoperations:w-px"
-          style={{ background: 'var(--color-border-primary, #d1d5db)' }}
-        />
+        <span className="mx-1 h-5 w-px" style={{ background: 'var(--color-border-primary, #d1d5db)' }} />
         <Toggle active={mineOnly} label={t(`${k}.calendar.mineOnly`)} onToggle={() => setMineOnly((value) => !value)} />
         <Toggle
           active={overdueOnly}
@@ -663,7 +642,7 @@ export const CalendarView = ({
         <Toggle active={showDone} label={t(`${k}.calendar.showDone`)} onToggle={() => setShowDone((value) => !value)} />
         <input
           aria-label={t(`${k}.calendar.filter`)}
-          className="facilityoperations:ml-auto facilityoperations:min-w-[200px] facilityoperations:rounded-lg facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm"
+          className="ml-auto facilityoperations:min-w-[200px] rounded-lg px-3 py-1.5 text-sm"
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t(`${k}.calendar.filter`)}
           style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #d1d5db)' }}
@@ -673,10 +652,7 @@ export const CalendarView = ({
       </div>
 
       {missing.length > 0 && (
-        <p
-          className="facilityoperations:m-0 facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-xs"
-          style={muted}
-        >
+        <p className="m-0 flex items-center gap-2 text-xs" style={muted}>
           <Icon name="info" size={14} />
           {t(`${k}.calendar.missingSources`, {
             sources: missing
@@ -691,7 +667,7 @@ export const CalendarView = ({
       )}
 
       {renderCalendarGrid(mode, overdueOnly, { byDate, cursor, lang, onOpen, range, rows: inRange, today })}
-      <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+      <p className="m-0 text-xs" style={muted}>
         {t(`${k}.calendar.readOnlyNote`)}
       </p>
     </div>

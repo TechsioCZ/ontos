@@ -111,7 +111,7 @@ const IncidentCard = ({
         <p className="whitespace-pre-line text-sm">{incident.description}</p>
       )}
       {incident.resolution !== undefined && (
-        <p className="rounded-md bg-surface-secondary p-150 text-sm">
+        <p className="rounded-md p-150 text-sm">
           <span className="font-medium">{k('fields.resolution')}: </span>
           {incident.resolution}
           {incident.resolvedAt !== undefined && (
@@ -440,7 +440,7 @@ const DeviceFacts = ({ device, overdue }: { readonly device: SecurityDevice; rea
           {device.nextInspectionDate === undefined ? (
             <Missing />
           ) : (
-            <span className={overdue ? 'font-semibold text-fg-danger' : ''}>
+            <span className={overdue ? 'font-semibold text-danger' : ''}>
               {formatDate(device.nextInspectionDate)}
               {overdue ? ` · ${k('detail.overdue')}` : ''}
             </span>
@@ -448,7 +448,7 @@ const DeviceFacts = ({ device, overdue }: { readonly device: SecurityDevice; rea
         </Fact>
       </dl>
       {device.note !== undefined && device.note !== '' && (
-        <p className="whitespace-pre-line rounded-md bg-surface-secondary p-150 text-sm">{device.note}</p>
+        <p className="whitespace-pre-line rounded-md p-150 text-sm">{device.note}</p>
       )}
       <p className="text-fg-secondary text-xs">
         {k('detail.createdInfo', { at: stamp(device.createdAt) })}

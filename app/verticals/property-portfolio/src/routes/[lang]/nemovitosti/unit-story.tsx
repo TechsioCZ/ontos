@@ -17,11 +17,10 @@ const K = 'property-portfolio.pages.records.unitStory';
 
 const LeaseBlockSchema = Schema.Literals(['building', 'outOfService', 'retired']);
 export type LeaseBlock = typeof LeaseBlockSchema.Type;
-const cardClass =
-  'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:p-4';
+const cardClass = 'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base min-w-0 space-y-3 p-4';
 const rowClass =
-  'propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:justify-between propertyportfolio:gap-2 propertyportfolio:py-3 propertyportfolio:text-sm border-b border-border-primary/60 last:border-b-0';
-const mutedClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
+  'flex flex-wrap items-center justify-between gap-2 py-3 text-sm border-b border-border-primary/60 last:border-b-0';
+const mutedClass = 'text-sm text-fg-secondary';
 const occupancyBadge = {
   ACTIVE: 'success',
   CANCELLED: 'danger',
@@ -92,10 +91,8 @@ const LeaseSection = ({
     .toSorted((left, right) => right.startDate.localeCompare(left.startDate));
   return (
     <section aria-label={t(`${K}.leases`)} className={cardClass}>
-      <div className="propertyportfolio:flex propertyportfolio:items-center propertyportfolio:justify-between propertyportfolio:gap-2">
-        {showHeading && (
-          <h3 className="propertyportfolio:text-sm propertyportfolio:font-semibold">{t(`${K}.leases`)}</h3>
-        )}
+      <div className="flex items-center justify-between gap-2">
+        {showHeading && <h3 className="text-sm font-semibold">{t(`${K}.leases`)}</h3>}
         {leaseBlock === undefined && (
           <LinkButton
             appearance="ghost"
@@ -118,8 +115,8 @@ const LeaseSection = ({
       )}
       {leases.map((item) => (
         <div className={rowClass} key={item.occupancyRef.resourceId}>
-          <div className="propertyportfolio:min-w-0">
-            <span className="propertyportfolio:block propertyportfolio:font-medium">
+          <div className="min-w-0">
+            <span className="block font-medium">
               {formatDay(item.startDate)} – {item.endDate === null ? t(`${K}.openEnd`) : formatDay(item.endDate)}
             </span>
             <span className={mutedClass}>
@@ -130,7 +127,7 @@ const LeaseSection = ({
                   })}
             </span>
           </div>
-          <div className="propertyportfolio:flex propertyportfolio:items-center propertyportfolio:gap-2">
+          <div className="flex items-center gap-2">
             <Badge severity={occupancyBadge[item.state]} size="sm">
               {t(`property-portfolio.pages.records.occupancyStates.${item.state}`)}
             </Badge>
@@ -167,22 +164,18 @@ const AgreementSection = ({
     .toSorted((left, right) => right.startDate.localeCompare(left.startDate));
   return (
     <section aria-label={t(`${K}.contracts`)} className={cardClass}>
-      {showHeading && (
-        <h3 className="propertyportfolio:text-sm propertyportfolio:font-semibold">{t(`${K}.contracts`)}</h3>
-      )}
+      {showHeading && <h3 className="text-sm font-semibold">{t(`${K}.contracts`)}</h3>}
       {agreements === undefined && <p className={mutedClass}>{t(`${K}.notLoaded`)}</p>}
       {agreements !== undefined && contracts.length === 0 && <p className={mutedClass}>{t(`${K}.noContracts`)}</p>}
       {contracts.map((item) => (
         <div className={rowClass} key={item.contractRef.resourceId}>
-          <div className="propertyportfolio:min-w-0">
-            <span className="propertyportfolio:block propertyportfolio:font-medium">
-              {item.subject ?? t(`${K}.contract`)}
-            </span>
+          <div className="min-w-0">
+            <span className="block font-medium">{item.subject ?? t(`${K}.contract`)}</span>
             <span className={mutedClass}>
               {formatDay(item.startDate)} – {item.endDate === null ? t(`${K}.openEnd`) : formatDay(item.endDate)}
             </span>
           </div>
-          <div className="propertyportfolio:flex propertyportfolio:items-center propertyportfolio:gap-2">
+          <div className="flex items-center gap-2">
             <Badge severity={contractBadge[item.lifecycleState]} size="sm">
               {t(`property-portfolio.pages.records.agreementStates.${item.lifecycleState}`)}
             </Badge>
@@ -228,10 +221,8 @@ const TaskSection = ({
   );
   return (
     <section aria-label={t(`${K}.tasks`)} className={cardClass}>
-      <div className="propertyportfolio:flex propertyportfolio:items-center propertyportfolio:justify-between propertyportfolio:gap-2">
-        {showHeading && (
-          <h3 className="propertyportfolio:text-sm propertyportfolio:font-semibold">{t(`${K}.tasks`)}</h3>
-        )}
+      <div className="flex items-center justify-between gap-2">
+        {showHeading && <h3 className="text-sm font-semibold">{t(`${K}.tasks`)}</h3>}
         <LinkButton appearance="ghost" href={`/${language}/ukoly`} severity="secondary" size="sm">
           {t(`${K}.openTasks`)}
         </LinkButton>
@@ -240,11 +231,8 @@ const TaskSection = ({
       {tasks !== undefined && unitTasks.length === 0 && <p className={mutedClass}>{t(`${K}.noTasks`)}</p>}
       {unitTasks.map((task) => (
         <div className={rowClass} key={task.ref.resourceId}>
-          <div className="propertyportfolio:min-w-0">
-            <a
-              className="propertyportfolio:block propertyportfolio:font-medium"
-              href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}
-            >
+          <div className="min-w-0">
+            <a className="block font-medium" href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}>
               {task.title} →
             </a>
             {task.dueDate !== undefined && (
@@ -272,13 +260,7 @@ export const UnitStory = ({
   unit,
   unitAssets,
 }: UnitStoryProps) => (
-  <div
-    className={
-      section === undefined
-        ? 'propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:lg:grid-cols-3'
-        : undefined
-    }
-  >
+  <div className={section === undefined ? 'grid gap-4 lg:grid-cols-3' : undefined}>
     {(section === undefined || section === 'leases') && (
       <LeaseSection
         language={language}

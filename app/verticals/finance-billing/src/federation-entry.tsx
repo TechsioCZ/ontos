@@ -15,12 +15,12 @@ const FinanceBillingRouteContent = () => {
 
   return (
     <section
-      className="financebilling:rounded-2xl financebilling:bg-white/90 financebilling:p-5 financebilling:shadow-xl financebilling:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalFinanceBilling"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="financebilling:text-2xl financebilling:font-black">{t('finance-billing.title')}</h2>
-      <p className="financebilling:mt-2 financebilling:text-stone-600">{t('finance-billing.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('finance-billing.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('finance-billing.routeSurface')}</p>
     </section>
   );
 };

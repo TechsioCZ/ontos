@@ -167,7 +167,7 @@ const confirmedRunFailureState = (failure: ConfirmedRunProblem): ChangeState => 
 const PrerequisiteItem = ({ prerequisite }: { readonly prerequisite: SymmyPrerequisite }) => {
   const { t } = useModernI18n();
   return (
-    <li className="[overflow-wrap:anywhere]">
+    <li className="vertical-navigation-control">
       {prerequisite.kind === 'enrollExecutor'
         ? t(`${copyKey}.prerequisite.enrollExecutor`, {
             moduleKey: prerequisite.moduleKey,
@@ -190,7 +190,7 @@ const PrerequisiteItem = ({ prerequisite }: { readonly prerequisite: SymmyPrereq
 const RefusalList = ({ refusals }: { readonly refusals: Refusals }) => (
   <ul className="list-disc pl-200">
     {refusals.map((refusal) => (
-      <li className="[overflow-wrap:anywhere]" key={`${refusal.code}:${refusal.detail}`}>
+      <li className="vertical-navigation-control" key={`${refusal.code}:${refusal.detail}`}>
         {refusal.detail}
       </li>
     ))}
@@ -209,7 +209,7 @@ const RouteRow = ({
   const { t } = useModernI18n();
   return (
     <li className="flex min-w-0 flex-wrap items-center gap-100 text-sm">
-      <span className="[overflow-wrap:anywhere]">
+      <span className="vertical-navigation-control">
         {t(`${copyKey}.route.${route.routeKey}`)}
         {route.routeCode === undefined ? '' : ` · ${route.routeCode}`}
       </span>

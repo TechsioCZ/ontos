@@ -328,7 +328,7 @@ export const ConnectionsAdminPanel = () => {
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
         {tiles(stats).map((tile) => (
-          <div className="ontos-tile rounded-lg bg-surface p-250" key={tile.label}>
+          <div className="rounded-lg bg-surface p-250" key={tile.label}>
             <p className="text-fg-secondary text-sm">{tile.label}</p>
             <p className="font-semibold text-2xl">{tile.value}</p>
           </div>
@@ -451,7 +451,7 @@ export const ConnectionsAdminPanel = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li className="ontos-tile rounded-lg bg-surface p-250" key={c.grantId}>
+              <li className="rounded-lg bg-surface p-250" key={c.grantId}>
                 <div className="grid gap-100 text-sm">
                   <p>
                     <span className="font-semibold">{c.client.name}</span>{' '}

@@ -234,7 +234,7 @@ export const InvoiceDraftForm = ({
       />
       <div className="flex flex-col gap-100">
         {order.lines.map((line) => (
-          <div className="rounded-md bg-surface-secondary p-150 text-sm" key={line.id}>
+          <div className="rounded-md p-150 text-sm" key={line.id}>
             <span className="font-medium">{line.description}</span>
             <div>
               {line.quantity} × {formatAmount(line.unitPriceMinor)} bez DPH

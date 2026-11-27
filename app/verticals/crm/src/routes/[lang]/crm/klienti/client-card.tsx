@@ -396,7 +396,7 @@ const CardBody = ({
 
           <ClientCardFacts client={client} facts={facts} owner={owner} writeAll={records.viewer.writeAll} />
           {client.note !== undefined && (
-            <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
+            <div className="flex gap-100 rounded-lg p-200 text-sm">
               <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-200 shrink-0 text-fg-secondary" />
               <p className="whitespace-pre-line">{client.note}</p>
             </div>

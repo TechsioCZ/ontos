@@ -94,7 +94,7 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
             <li className="flex items-start gap-100" key={step}>
               <span
                 aria-hidden
-                className="mt-[5px] size-[10px] shrink-0 rounded-full"
+                className="mt-[5px] size-2.5 shrink-0 rounded-full"
                 style={{
                   background: reached(step) ? 'var(--color-success)' : 'transparent',
                   border: `2px solid ${reached(step) ? 'var(--color-success)' : 'var(--color-fg-secondary)'}`,

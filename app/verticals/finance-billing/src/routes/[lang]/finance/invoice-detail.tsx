@@ -487,7 +487,7 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
             <InvoiceReminders counterpartyName={counterpartyName} invoice={invoice} vm={vm} />
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-250 xl:sticky xl:top-[5rem]">
+        <div className="flex min-w-0 flex-col gap-250 xl:sticky xl:top-20">
           <InvoiceTotals {...model} />
           <InvoiceStatusActions {...model} />
           <div className="print:hidden">

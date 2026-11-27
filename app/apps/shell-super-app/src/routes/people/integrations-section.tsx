@@ -238,7 +238,7 @@ const IntegrationCard = ({
   return (
     <li className="flex min-w-0 flex-col gap-100 rounded-md border border-border-primary/60 p-200">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
-        <span className="font-medium [overflow-wrap:anywhere]">{entry.displayName ?? t(`${copyKey}.unnamed`)}</span>
+        <span className="font-medium vertical-navigation-control">{entry.displayName ?? t(`${copyKey}.unnamed`)}</span>
         <Badge appearance="outline" severity="neutral" size="sm">
           {partner === null ? t(`${copyKey}.genericPartner`) : partner.label}
         </Badge>
@@ -247,7 +247,7 @@ const IntegrationCard = ({
         </Badge>
       </div>
       {partner !== null && (
-        <p className="text-fg-secondary text-xs [overflow-wrap:anywhere]">
+        <p className="text-fg-secondary text-xs vertical-navigation-control">
           {t(`${copyKey}.usage`, { header: partner.apiKeyHeader, url: `${origin}${partner.ingressPrefix}` })}{' '}
           <a className="underline" href={partner.docsPath} rel="noreferrer" target="_blank">
             {t(`${copyKey}.docs`)}

@@ -311,9 +311,7 @@ const CustomerDetailPageContent = ({ context, routeParams }: CustomerDetailPageP
     <>
       <UltramodernRouteHead titleKey={`${KEY}.title`} />
       <Toaster />
-      <section className="partyregistry:mx-auto partyregistry:flex partyregistry:w-full partyregistry:max-w-4xl partyregistry:flex-col partyregistry:gap-5 partyregistry:px-4 partyregistry:py-8 partyregistry:sm:px-8">
-        {pageBody()}
-      </section>
+      <section className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-8 sm:px-8">{pageBody()}</section>
     </>
   );
 };

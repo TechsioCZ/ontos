@@ -355,7 +355,7 @@ export const InvestmentPlan = ({
         />
       </StatRow>
       <div className="flex flex-wrap items-end gap-150">
-        <div className="w-[12rem]">
+        <div className="w-48">
           <SelectField
             label={k(STATUS_LABEL)}
             name="investment-status-filter"
@@ -368,7 +368,7 @@ export const InvestmentPlan = ({
             value={statusFilter}
           />
         </div>
-        <div className="w-[14rem]">
+        <div className="w-56">
           <SelectField
             label={k(PRIORITY_LABEL)}
             name="investment-priority-filter"
@@ -408,7 +408,7 @@ export const InvestmentPlan = ({
                       onClick={() => onEdit(investment)}
                     >
                       <Table.Cell>
-                        <span className="flex min-w-[14rem] flex-col">
+                        <span className="flex min-w-56 flex-col">
                           <span className="font-medium">{investment.title}</span>
                           <span className="text-fg-secondary text-xs">
                             {investment.location?.label.replace(/ \([^)]*\)$/u, '') ?? k('notProvided')}

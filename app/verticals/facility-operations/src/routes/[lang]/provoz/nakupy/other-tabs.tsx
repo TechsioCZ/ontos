@@ -70,7 +70,7 @@ export const ReplenishTab = ({
   const drafts = state.orders.filter((order) => order.status === 'draft');
   return (
     <div className="flex flex-col gap-200">
-      <div className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-200 text-sm">
+      <div className="flex flex-wrap items-center gap-100 rounded-md p-200 text-sm">
         <Badge severity="warning" size="sm">
           {k('replenish.ruleBadge')}
         </Badge>
@@ -216,7 +216,7 @@ export const MovementsTab = ({
               (movement) => movement.kind === 'issue' && movement.date.startsWith(month),
             ).length;
             return (
-              <div className="flex flex-col gap-50 rounded-md bg-surface-secondary p-150" key={month}>
+              <div className="flex flex-col gap-50 rounded-md p-150" key={month}>
                 <span className="text-fg-secondary text-xs">{`${monthNumber}/${year}`}</span>
                 <span className="font-semibold tabular-nums">
                   {k('movements.issuedUnits', { count: quantity, units: formatNumber(quantity) })}

@@ -180,7 +180,7 @@ export const UploadTile = ({
           )}
         </div>
       </div>
-      <span className={`text-xs ${upload.phase === 'failed' ? 'text-fg-danger' : 'text-fg-secondary'}`}>
+      <span className={`text-xs ${upload.phase === 'failed' ? 'text-danger' : 'text-fg-secondary'}`}>
         {upload.phase === 'failed' ? (upload.message ?? phase) : phase}
       </span>
       {upload.phase === 'failed' && (

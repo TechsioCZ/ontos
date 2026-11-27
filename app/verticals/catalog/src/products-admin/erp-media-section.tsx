@@ -226,7 +226,7 @@ export const ErpMediaSection = ({ item, reason }: ErpMediaSectionProps) => {
           ) : (
             <img
               alt="Hlavní obrázek produktu"
-              className="h-[96px] w-[96px] rounded-md border border-border-primary object-contain"
+              className="h-24 w-24 rounded-md border border-border-primary object-contain"
               src={preview}
             />
           )}

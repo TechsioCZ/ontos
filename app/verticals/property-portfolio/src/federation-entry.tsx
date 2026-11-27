@@ -15,12 +15,12 @@ const PropertyPortfolioRouteContent = () => {
 
   return (
     <section
-      className="propertyportfolio:rounded-2xl propertyportfolio:bg-white/90 propertyportfolio:p-5 propertyportfolio:shadow-xl propertyportfolio:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalPropertyPortfolio"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="propertyportfolio:text-2xl propertyportfolio:font-black">{t('property-portfolio.title')}</h2>
-      <p className="propertyportfolio:mt-2 propertyportfolio:text-stone-600">{t('property-portfolio.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('property-portfolio.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('property-portfolio.routeSurface')}</p>
     </section>
   );
 };

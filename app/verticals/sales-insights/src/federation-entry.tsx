@@ -15,12 +15,12 @@ const SalesInsightsRouteContent = () => {
 
   return (
     <section
-      className="salesinsights:rounded-2xl salesinsights:bg-white/90 salesinsights:p-5 salesinsights:shadow-xl salesinsights:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalSalesInsights"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="salesinsights:text-2xl salesinsights:font-black">{t('sales-insights.title')}</h2>
-      <p className="salesinsights:mt-2 salesinsights:text-stone-600">{t('sales-insights.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('sales-insights.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('sales-insights.routeSurface')}</p>
     </section>
   );
 };

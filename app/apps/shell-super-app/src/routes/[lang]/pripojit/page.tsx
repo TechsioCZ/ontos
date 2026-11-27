@@ -235,13 +235,13 @@ const ActingChoices = ({
       <label className="flex items-start gap-150 rounded bg-surface px-150 py-100" htmlFor="connect-acting-me">
         <input
           checked={acting === ME}
-          className="mt-050 accent-primary"
+          className="accent-primary"
           id="connect-acting-me"
           name="acting"
           onChange={() => onSelect(ME)}
           type="radio"
         />
-        <span className="grid gap-050 font-semibold">
+        <span className="grid font-semibold">
           {t('shell.connect.acting.me', { name: userDisplayName })}
           <span className="font-normal text-fg-secondary text-sm">{t('shell.connect.acting.meHint')}</span>
         </span>
@@ -254,13 +254,13 @@ const ActingChoices = ({
         >
           <input
             checked={acting === candidate.principalId}
-            className="mt-050 accent-primary"
+            className="accent-primary"
             id={`connect-acting-${candidate.principalId}`}
             name="acting"
             onChange={() => onSelect(candidate.principalId)}
             type="radio"
           />
-          <span className="grid gap-050 font-semibold">
+          <span className="grid font-semibold">
             {t('shell.connect.acting.agent', { name: candidate.displayName })}
             <span className="font-normal text-fg-secondary text-sm">{t('shell.connect.acting.agentHint')}</span>
           </span>
@@ -321,7 +321,7 @@ const AccessChoices = ({
                 className="flex flex-wrap items-center justify-between gap-150 rounded bg-surface px-150 py-100"
                 key={module.moduleId}
               >
-                <span className="grid min-w-0 gap-050">
+                <span className="grid min-w-0">
                   <span className="break-words">{module.label}</span>
                   {module.write ? null : (
                     <span className="text-fg-secondary text-sm">
@@ -394,17 +394,17 @@ const PolicyChoices = ({
       {POLICIES.map((candidate) => {
         const state = policyOptionState(candidate, cap);
         return (
-          <label className="grid gap-050 rounded bg-surface px-150 py-100" key={candidate}>
+          <label className="grid rounded bg-surface px-150 py-100" key={candidate}>
             <span className="flex items-start gap-150">
               <input
                 checked={policy === candidate}
-                className="mt-050 accent-primary"
+                className="accent-primary"
                 disabled={state.disabled}
                 name="policy"
                 onChange={() => onPolicyChange(candidate)}
                 type="radio"
               />
-              <span className="grid gap-050">
+              <span className="grid">
                 <span className="font-semibold">{t(`shell.connect.policy.${candidate}`)}</span>
                 {candidate === 'read_only' ? null : (
                   <span className="text-fg-secondary text-sm">{t(policyHint(candidate, isAgent))}</span>

@@ -95,7 +95,7 @@ const CategoryImagePicker = ({ onPick }: { readonly onPick: (src: string) => voi
             return (
               <button
                 aria-label="Použít tuto fotku"
-                className="h-[80px] w-[80px] overflow-hidden rounded border border-border-secondary"
+                className="h-20 w-20 overflow-hidden rounded border border-border-secondary"
                 key={ref}
                 onClick={() => {
                   onPick(src);

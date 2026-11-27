@@ -40,7 +40,7 @@ export const ContactCard = ({
         <div className="flex min-w-0 items-center gap-150">
           <span
             aria-hidden
-            className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-surface-secondary text-fg-secondary"
+            className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-fg-secondary"
           >
             <span className="icon-[mdi--account-outline] size-5" />
           </span>
@@ -106,9 +106,7 @@ export const ContactCard = ({
         </span>
       </div>
       {contact.note !== undefined && (
-        <p className="whitespace-pre-line rounded-md bg-surface-secondary px-150 py-100 text-fg-secondary text-sm">
-          {contact.note}
-        </p>
+        <p className="whitespace-pre-line rounded-md px-150 py-100 text-fg-secondary text-sm">{contact.note}</p>
       )}
     </li>
   );

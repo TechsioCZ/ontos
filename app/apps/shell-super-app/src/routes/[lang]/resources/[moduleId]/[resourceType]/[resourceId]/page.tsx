@@ -169,7 +169,7 @@ const UnsupportedDetail = ({
   const { t } = useModernI18n();
   return (
     <>
-      <section className="ontos-card flex w-full max-w-2xl flex-col items-start gap-200 rounded-lg border border-border-primary/60 bg-base p-300">
+      <section className="flex w-full max-w-2xl flex-col items-start gap-200 rounded-lg border border-border-primary/60 bg-base p-300">
         <p className="text-sm">{t('shell.resource.detail_not_supported')}</p>
         <LinkButton
           appearance="solid"

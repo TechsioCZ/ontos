@@ -361,7 +361,7 @@ const ManagedKeyRow = ({
   return (
     <li className="flex min-w-0 flex-col gap-100 border-border-primary/60 border-b py-150 last:border-b-0">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
-        <span className="font-medium text-sm [overflow-wrap:anywhere]">{item.name ?? t(`${copyKey}.unnamed`)}</span>
+        <span className="font-medium text-sm vertical-navigation-control">{item.name ?? t(`${copyKey}.unnamed`)}</span>
         <Badge severity={item.bindingStatus === 'active' ? 'success' : 'neutral'} size="sm">
           {t(`${copyKey}.status.${item.bindingStatus}`)}
         </Badge>

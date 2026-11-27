@@ -815,11 +815,9 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       title={t('property-leasing.rent.formTitle')}
     >
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-      <div className="propertyleasing:space-y-4 propertyleasing:py-2">
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-          {t('property-leasing.rent.formHint')}
-        </p>
-        <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
+      <div className="space-y-4 py-2">
+        <p className="text-sm text-fg-secondary">{t('property-leasing.rent.formHint')}</p>
+        <div className="grid gap-4 md:grid-cols-3">
           <FormInput
             id="occupancy-rent-monthly"
             inputMode="decimal"
@@ -941,7 +939,7 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
         title={`${unitName(selected.unitRef.resourceId)}${tenantSuffix}`}
       />
       {feedback !== 'ready' && feedback !== 'loading' && (
-        <output aria-live="polite" className="sp-occupancy-feedback">
+        <output aria-live="polite" className="">
           {state.collision === undefined ? t(`property-leasing.demo.feedback.${feedback}`) : state.collision.text}
           {state.collision !== undefined && (
             <>
@@ -952,7 +950,7 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
         </output>
       )}
       {!state.canWrite && (
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        <p className="text-sm text-fg-secondary">
           Máte oprávnění tento záznam pouze číst. Změny provádí vedení, provoz nebo obchod.
         </p>
       )}
@@ -1050,7 +1048,7 @@ const OccupancyOverview = ({ model, state }: OccupancyDetailProps) => {
           t={t}
         />
       )}
-      <div className="propertyleasing:grid propertyleasing:gap-6 propertyleasing:md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2">
         <SectionCard title={t('property-leasing.detail.lease')}>
           <DetailList
             items={[
@@ -1137,7 +1135,7 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
         />
       )}
       {customerNameFeedback !== undefined && (
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        <p className="text-sm text-fg-secondary">
           {t('property-leasing.detail.customerUnavailable')}{' '}
           {t(`property-leasing.demo.feedback.${customerNameFeedback}`)}
         </p>
@@ -1185,7 +1183,7 @@ const OccupancyDocuments = ({ model, state }: OccupancyDetailProps) => {
       )}
       {selected.note !== null && (
         <SectionCard title={t('property-leasing.detail.note')}>
-          <p className="propertyleasing:whitespace-pre-wrap propertyleasing:text-sm">{selected.note}</p>
+          <p className="whitespace-pre-wrap text-sm">{selected.note}</p>
         </SectionCard>
       )}{' '}
     </>
@@ -1202,7 +1200,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
             {t(`property-leasing.demo.stateLabels.${selected.state}`)}
           </Badge>
         </div>
-        <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2" hidden={!state.canWrite}>
+        <div className="flex flex-wrap gap-2" hidden={!state.canWrite}>
           {selected.state === 'DRAFT' && (
             <Button appearance="outline" disabled={busy} onClick={editDraft} severity="secondary" size="sm">
               {t(LABEL_EDIT_DRAFT)}
@@ -1222,7 +1220,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
             <>
               {isLease && (
                 <a
-                  className="propertyleasing:inline-flex propertyleasing:items-center propertyleasing:text-sm propertyleasing:underline propertyleasing:underline-offset-4"
+                  className="inline-flex items-center text-sm underline underline-offset-4"
                   href={`/${language}/smlouvy`}
                 >
                   {t('property-leasing.demo.contract')}
@@ -1259,7 +1257,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
       {isLease && <ContractCard contract={contract} language={language} t={t} />}
       <UnitCard language={language} property={property} t={t} unit={unit} />
       {property !== undefined && (
-        <div className={`${surfaceCardClassName} propertyleasing:min-w-0 propertyleasing:p-4`}>
+        <div className={`${surfaceCardClassName} min-w-0 propertyleasing:p-4`}>
           <PropertyEquipment
             language={language}
             propertyId={property.propertyRef.resourceId}
@@ -1280,10 +1278,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
   if (selected === undefined) {
     return (
       <>
-        <a
-          className="propertyleasing:inline-flex propertyleasing:text-sm propertyleasing:underline"
-          href={`/${language}/najmy`}
-        >
+        <a className="inline-flex text-sm underline" href={`/${language}/najmy`}>
           {t('property-leasing.detail.back')}
         </a>
         <PageHeader title={t(LABEL_DETAIL)} />
@@ -1302,13 +1297,13 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
     <>
       <OccupancyDetailHeader model={model} state={state} />
       <OccupancyStory model={model} state={state} />
-      <div className="propertyleasing:grid propertyleasing:grid-cols-1 propertyleasing:items-start propertyleasing:gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
+      <div className="grid grid-cols-1 items-start gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0 space-y-6">
           <OccupancyOverview model={model} state={state} />
           <OccupancyRelations model={model} state={state} />
           <OccupancyDocuments model={model} state={state} />
         </div>
-        <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
+        <div className="min-w-0 space-y-6">
           <OccupancyAside model={model} state={state} />
         </div>
       </div>
@@ -1409,7 +1404,7 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
   );
   const withoutRent = active.filter((record) => record.rentTerms === undefined).length;
   return (
-    <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:sm:grid-cols-2 propertyleasing:xl:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label={state.t('property-leasing.list.summaryActive')} value={String(active.length)} />
       <StatCard label={state.t('property-leasing.list.summaryUpcoming')} value={String(upcoming.length)} />
       <StatCard label={state.t('property-leasing.list.summaryEnded')} value={String(ended.length)} />
@@ -1457,7 +1452,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
   return (
     <>
       <UltramodernRouteHead />
-      <section className="propertyleasing:w-full propertyleasing:min-w-0 propertyleasing:max-w-none propertyleasing:space-y-6 propertyleasing:p-0 propertyleasing:text-(--color-page-fg)">
+      <section className="w-full min-w-0 max-w-none space-y-6 p-0 text-fg-primary">
         <ProposalNotice state={state} />
         {state.linkedCounterpartyId !== undefined && state.linkedResourceId === undefined ? (
           <CounterpartyDossierView
@@ -1544,7 +1539,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 snapshot={snapshot}
               />
             )}
-            <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+            <div className="flex flex-wrap gap-2">
               <LinkButton appearance="outline" href="#tenants" severity="secondary" size="sm">
                 Nájemci, zájemci a kontaktní osoby ↓
               </LinkButton>
@@ -1557,8 +1552,8 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 Kalendář a přehled nemovitostí →
               </LinkButton>
             </div>
-            <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-4 propertyleasing:pb-4">
-              <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4">
+              <div className="flex flex-wrap gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
                   <Button
                     appearance="ghost"
@@ -1572,9 +1567,9 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                   </Button>
                 ))}
               </div>
-              <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 {state.cancelledCount > 0 && (
-                  <label className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+                  <label className="text-sm text-fg-secondary">
                     <input
                       checked={state.showCancelled}
                       onChange={(event) => state.setShowCancelled(event.target.checked)}
@@ -1592,13 +1587,11 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p
-                className={`${surfaceTileClassName} propertyleasing:p-5 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
-              >
+              <p className={`${surfaceTileClassName} p-5 text-sm propertyleasing:text-(--color-fg-secondary)`}>
                 {t('property-leasing.demo.empty')}
               </p>
             )}
-            <div className="propertyleasing:overflow-x-auto">
+            <div className="overflow-x-auto">
               <Table appearance="line" size="sm">
                 <Table.Caption>{t('property-leasing.demo.list')}</Table.Caption>
                 <Table.Header>
@@ -1615,12 +1608,8 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                   {visible.map((record) => (
                     <Table.Row key={record.occupancyRef.resourceId}>
                       <Table.Cell>
-                        <span className="propertyleasing:block propertyleasing:font-medium">
-                          {unitName(record.unitRef.resourceId)}
-                        </span>
-                        <span className="propertyleasing:text-xs propertyleasing:text-(--color-fg-secondary)">
-                          {state.propertyOf(record)?.name ?? ''}
-                        </span>
+                        <span className="block font-medium">{unitName(record.unitRef.resourceId)}</span>
+                        <span className="text-xs text-fg-secondary">{state.propertyOf(record)?.name ?? ''}</span>
                       </Table.Cell>
                       <Table.Cell>{state.partyNameOf(record) ?? '—'}</Table.Cell>
                       <Table.Cell>
@@ -1628,12 +1617,12 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                         {record.endDate === null ? t(LABEL_OPEN_END) : formatDate(record.endDate)}
                       </Table.Cell>
                       <Table.Cell>
-                        <span className="propertyleasing:tabular-nums">
+                        <span className="tabular-nums">
                           {record.rentTerms === undefined ? '—' : formatMoney(monthlyTotal(record.rentTerms))}
                         </span>
                       </Table.Cell>
                       <Table.Cell>
-                        <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <Badge
                             severity={
                               (
@@ -1650,9 +1639,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                           >
                             {t(`property-leasing.demo.stateLabels.${record.state}`)}
                           </Badge>
-                          <span className="propertyleasing:text-(--color-fg-secondary)">
-                            {t(`property-leasing.demo.kind.${record.kind}`)}
-                          </span>
+                          <span className="text-fg-secondary">{t(`property-leasing.demo.kind.${record.kind}`)}</span>
                         </div>
                       </Table.Cell>
                       <Table.Cell>

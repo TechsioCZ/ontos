@@ -50,26 +50,19 @@ export interface PropertyWorkspaceProps {
   readonly units: readonly UnitNavigationItem[];
 }
 
-const panelClass =
-  'propertyportfolio:min-w-0 space-y-250 propertyportfolio:rounded-lg propertyportfolio:border border-border-primary p-300';
-const stackClass =
-  'propertyportfolio:flex propertyportfolio:min-w-0 propertyportfolio:flex-col propertyportfolio:gap-4';
-const rowClass =
-  'propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-3';
-const badgeRowClass =
-  'propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:gap-2';
-const unitRowClass = 'propertyportfolio:flex propertyportfolio:flex-col propertyportfolio:gap-1';
-const cardsClass =
-  'propertyportfolio:grid propertyportfolio:gap-4 propertyportfolio:md:grid-cols-2 propertyportfolio:2xl:grid-cols-3';
-const workspaceClass =
-  'propertyportfolio:grid propertyportfolio:items-start propertyportfolio:gap-6 propertyportfolio:lg:grid-cols-[21rem_minmax(0,1fr)]';
-const branchClass =
-  'border-s border-border-primary/60 propertyportfolio:ms-4 propertyportfolio:flex propertyportfolio:flex-col propertyportfolio:gap-2 propertyportfolio:ps-4';
-const detailClass = 'propertyportfolio:min-w-0 propertyportfolio:space-y-4';
-const titleClass = 'propertyportfolio:text-lg';
-const groupLabelClass = 'propertyportfolio:text-sm propertyportfolio:font-semibold';
-const mutedClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
-const metaClass = 'propertyportfolio:text-xs propertyportfolio:text-(--color-fg-secondary)';
+const panelClass = 'min-w-0 space-y-250 rounded-lg border border-border-primary p-300';
+const stackClass = 'flex min-w-0 flex-col gap-4';
+const rowClass = 'flex flex-wrap items-center gap-3';
+const badgeRowClass = 'flex flex-wrap items-center gap-2';
+const unitRowClass = 'flex flex-col gap-1';
+const cardsClass = 'grid gap-4 md:grid-cols-2 2xl:grid-cols-3';
+const workspaceClass = 'grid items-start gap-6 propertyportfolio:lg:grid-cols-[21rem_minmax(0,1fr)]';
+const branchClass = 'border-s border-border-primary/60 ms-4 flex flex-col gap-2 ps-4';
+const detailClass = 'min-w-0 space-y-4';
+const titleClass = 'text-lg';
+const groupLabelClass = 'text-sm font-semibold';
+const mutedClass = 'text-sm text-fg-secondary';
+const metaClass = 'text-xs text-fg-secondary';
 
 /** Lifecycle and archive badges of one record, exactly as the parent labelled them. */
 const StateBadges = ({
@@ -114,16 +107,11 @@ const PortfolioCards = ({
       {properties.map((item) => (
         <article className={panelClass} key={item.id}>
           <div className={`${rowClass} propertyportfolio:justify-between`}>
-            <span className="propertyportfolio:font-semibold">{item.code}</span>
+            <span className="font-semibold">{item.code}</span>
             <StateBadges archived={item.archived} stateLabel={item.stateLabel} t={t} />
           </div>
           <h2 className={titleClass}>
-            <Button
-              className="propertyportfolio:font-semibold"
-              onClick={() => onSelectResource(item.id)}
-              size="current"
-              unstyled
-            >
+            <Button className="font-semibold" onClick={() => onSelectResource(item.id)} size="current" unstyled>
               {item.name}
             </Button>
           </h2>

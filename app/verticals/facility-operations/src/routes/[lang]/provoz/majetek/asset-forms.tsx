@@ -976,7 +976,7 @@ export const InventoryCreateForm = ({ onSubmit, state }: FormProps & { readonly 
       <AreaField id="inventory-note" label={k(formText.note)} onChange={setNote} value={note} />
       <div className={`${surfaceTileClassName} p-150 text-sm`}>
         <p className="font-medium">{k('inventory.candidates', { count: candidates.length })}</p>
-        <ul className="mt-100 flex max-h-[14rem] flex-col gap-50 overflow-auto text-fg-secondary">
+        <ul className="mt-100 flex max-h-56 flex-col gap-50 overflow-auto text-fg-secondary">
           {candidates.map((asset) => (
             <li key={asset.id}>
               <span className="tabular-nums">{asset.inventoryNumber}</span> · {asset.name}

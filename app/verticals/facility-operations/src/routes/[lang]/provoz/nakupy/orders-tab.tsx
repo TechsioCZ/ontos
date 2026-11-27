@@ -78,8 +78,8 @@ const DeliveryProgress = ({ order }: { readonly order: PurchaseOrder }) => {
   const received = order.lines.reduce((sum, line) => sum + Math.min(line.quantity, line.receivedQuantity), 0);
   const ratio = ordered === 0 ? 0 : received / ordered;
   return (
-    <div className="flex min-w-[8rem] flex-col gap-50">
-      <div className="h-[6px] w-full overflow-hidden rounded-full bg-surface-secondary">
+    <div className="flex min-w-32 flex-col gap-50">
+      <div className="h-1.5 w-full overflow-hidden rounded-full">
         <div
           className={ratio >= 1 ? 'h-full bg-success' : 'h-full bg-primary'}
           style={{ width: `${Math.round(ratio * 100)}%` }}
@@ -776,10 +776,7 @@ const OrderRecordSections = ({
       </SectionCard>
       <SectionCard title={k('orders.invoices')}>
         {sourceInvoices.map((invoice) => (
-          <div
-            className="flex flex-wrap items-center gap-100 rounded-md bg-surface-secondary p-150 text-sm"
-            key={invoice.resourceId}
-          >
+          <div className="flex flex-wrap items-center gap-100 rounded-md p-150 text-sm" key={invoice.resourceId}>
             <Badge severity="warning" size="sm">
               Doklad z objednávky
             </Badge>

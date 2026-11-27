@@ -35,7 +35,7 @@ import type { useRecordsPage } from './use-agreements-records.ts';
 
 type PageState = ReturnType<typeof useRecordsPage>;
 const P = 'legal-agreements';
-const mutedClass = 'legalagreements:text-sm legalagreements:text-(--color-fg-secondary)';
+const mutedClass = 'text-sm text-fg-secondary';
 
 export const contractMonthlyTotal = (record: Contract) =>
   record.rentTerms === undefined ? undefined : record.rentTerms.monthlyRentMinor + record.rentTerms.serviceChargesMinor;
@@ -60,10 +60,8 @@ export const ContractTermsCard = ({ state }: { readonly state: PageState }) => {
       title={t(`${P}.terms.title`)}
     >
       {total !== undefined && (
-        <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:items-baseline legalagreements:gap-3">
-          <span className="legalagreements:text-2xl legalagreements:font-semibold legalagreements:tabular-nums">
-            {formatMoney(total)}
-          </span>
+        <div className="flex flex-wrap items-baseline gap-3">
+          <span className="text-2xl font-semibold tabular-nums">{formatMoney(total)}</span>
           <span className={mutedClass}>{t(`${P}.terms.monthlyTotal`)}</span>
         </div>
       )}
@@ -156,7 +154,7 @@ export const ContractLinksCard = ({ state }: { readonly state: PageState }) => {
       {counterpartyName !== null && counterpartyName !== undefined && (
         <DetailList items={[{ label: t(`${P}.links.tenant`), value: counterpartyName }]} />
       )}
-      <div className="legalagreements:flex legalagreements:flex-col legalagreements:items-start legalagreements:gap-2">
+      <div className="flex flex-col items-start gap-2">
         {links.map((link) => (
           <LinkButton
             appearance="outline"
@@ -262,7 +260,7 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
       title={t(`${P}.terms.title`)}
     >
       <form
-        className="legalagreements:space-y-4 legalagreements:py-2"
+        className="space-y-4 py-2"
         noValidate
         onSubmit={(event) => {
           // Enter never saves: only Uložit in the panel footer sends the draft.
@@ -276,7 +274,7 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
           onChange={(event) => change('subject')(event.target.value)}
           value={draft.subject}
         />
-        <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           <FormInput
             id="contract-terms-owner"
             label={t(`${P}.terms.responsiblePerson`)}
@@ -290,8 +288,8 @@ export const ContractTermsPanel = ({ contract, onClose, onProposal, revision }: 
             value={draft.noticePeriod}
           />
         </div>
-        <h3 className="legalagreements:text-sm legalagreements:font-semibold">{t(`${P}.terms.rentSection`)}</h3>
-        <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-3">
+        <h3 className="text-sm font-semibold">{t(`${P}.terms.rentSection`)}</h3>
+        <div className="grid gap-4 md:grid-cols-3">
           <FormInput
             id="contract-terms-monthly"
             inputMode="decimal"

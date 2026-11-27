@@ -78,14 +78,14 @@ export const SignatureForm = ({ busy, onSave, reload }: SignatureFormProps) => {
   };
   return (
     <form
-      className="legalagreements:w-full legalagreements:space-y-3"
+      className="w-full space-y-3"
       noValidate
       onSubmit={(event) => {
         // Enter never records the signature: only Uložit does.
         event.preventDefault();
       }}
     >
-      <p className="legalagreements:text-sm">{t('legal-agreements.demo.manualSignatureHint')}</p>
+      <p className="text-sm">{t('legal-agreements.demo.manualSignatureHint')}</p>
       {FIELDS.map((field) => (
         <FormInput
           disabled={busy || saving}

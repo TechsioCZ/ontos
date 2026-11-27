@@ -93,10 +93,7 @@ const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
           .merchandise-order-workflow > li > span:last-child { width: auto !important; overflow-wrap: normal !important; }
         }
       `}</style>
-      <ol
-        aria-label={t('merchandise.ui.orderWorkflow')}
-        className="merchandise-order-workflow grid grid-cols-5 gap-100"
-      >
+      <ol aria-label={t('merchandise.ui.orderWorkflow')} className="grid grid-cols-5 gap-100">
         {workflowSteps.map((step, index) => {
           const done = index < current;
           const active = index === current;

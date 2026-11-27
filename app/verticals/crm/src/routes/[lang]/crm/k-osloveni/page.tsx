@@ -281,7 +281,10 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
             const visit = records.state.visits.items.find((entry) => entry.id === item.doneVisitId);
             return (
               <li className="flex flex-wrap items-start gap-200 px-250 py-200" key={item.id}>
-                <span aria-hidden="true" className="icon-[mdi--check-circle] mt-50 size-250 shrink-0 text-success" />
+                <span
+                  aria-hidden="true"
+                  className="token-icon-availability-status-available mt-50 size-250 shrink-0 text-success"
+                />
                 <div className="flex min-w-0 flex-1 flex-col gap-50">
                   <span className="flex flex-wrap items-center gap-100">
                     <a

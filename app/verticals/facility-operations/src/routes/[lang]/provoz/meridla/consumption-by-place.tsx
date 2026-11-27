@@ -45,7 +45,7 @@ export const ConsumptionByPlace = ({
     <SectionCard
       actions={
         <div className="flex flex-wrap items-end gap-150">
-          <div className="min-w-[16rem]">
+          <div className="min-w-64">
             <Select
               items={places.map((option) => ({ displayValue: option.label, label: option.label, value: option.value }))}
               label={t(`${k}.byUnit.place`)}

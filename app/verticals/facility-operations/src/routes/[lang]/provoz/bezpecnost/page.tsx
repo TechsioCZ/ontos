@@ -125,8 +125,8 @@ const DeviceInspectionCell = ({ row }: CellContext<SecurityDevice>) => {
   }
   return isInspectionOverdue(row.original, today) ? (
     <span className="flex flex-col">
-      <span className="font-semibold text-fg-danger">{formatDate(next)}</span>
-      <span className="text-fg-danger text-xs">{k('detail.overdue')}</span>
+      <span className="font-semibold text-danger">{formatDate(next)}</span>
+      <span className="text-danger text-xs">{k('detail.overdue')}</span>
     </span>
   ) : (
     formatDate(next)

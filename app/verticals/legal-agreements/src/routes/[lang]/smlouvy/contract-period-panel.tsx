@@ -109,7 +109,7 @@ export const ContractPeriodPanel = ({
       title={t('legal-agreements.demo.editDraft')}
     >
       <form
-        className="legalagreements:space-y-4 legalagreements:py-2"
+        className="space-y-4 py-2"
         noValidate
         onSubmit={(event) => {
           // Enter never saves: only Uložit in the panel footer sends the draft.
@@ -117,7 +117,7 @@ export const ContractPeriodPanel = ({
         }}
       >
         <p>{label}</p>
-        <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           <FormInput
             id="contract-start-date"
             label={t('legal-agreements.demo.startDate')}

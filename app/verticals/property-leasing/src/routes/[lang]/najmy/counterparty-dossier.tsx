@@ -30,17 +30,14 @@ const CounterpartyLeases = ({
   return (
     <SectionCard title={t('property-leasing.demo.list')}>
       {leases === undefined || leases.length === 0 ? (
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        <p className="text-sm text-fg-secondary">
           Zatím bez nájmu. Až bude dohodnut, založte ho tlačítkem Nový nájem v přehledu nájmů.
         </p>
       ) : (
-        <ul className="propertyleasing:space-y-2 propertyleasing:text-sm">
+        <ul className="space-y-2 text-sm">
           {leases.map((record) => (
             <li key={record.occupancyRef.resourceId}>
-              <a
-                className="propertyleasing:underline"
-                href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}
-              >
+              <a className="underline" href={`/${language}/najmy?resourceId=${record.occupancyRef.resourceId}`}>
                 {unitName(record.unitRef.resourceId)} · {formatDate(record.startDate)} –{' '}
                 {record.endDate === null ? 'bez konce' : formatDate(record.endDate)} · {stateLabels[record.state]}
               </a>
@@ -117,13 +114,13 @@ export const CounterpartyDossierView = ({
       />
       {feedbackText !== undefined && <output aria-live="polite">{feedbackText}</output>}
       {directoryLoaded && entry === undefined && (
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        <p className="text-sm text-fg-secondary">
           Protistrana není v registru této společnosti nebo k ní nemáte oprávnění.
         </p>
       )}
       {entry !== undefined && (
-        <div className="propertyleasing:grid propertyleasing:grid-cols-1 propertyleasing:items-start propertyleasing:gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
-          <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
+        <div className="grid grid-cols-1 items-start gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
+          <div className="min-w-0 space-y-6">
             {snapshot !== undefined && (
               <TenantDossierCard
                 busy={busy}
@@ -143,7 +140,7 @@ export const CounterpartyDossierView = ({
               <PartyDocuments counterpartyId={counterpartyId} label={name} language={language} />
             </SectionCard>
           </div>
-          <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
+          <div className="min-w-0 space-y-6">
             <SectionCard title={t('property-leasing.dossier.detailsTitle')}>
               <DetailList
                 items={[

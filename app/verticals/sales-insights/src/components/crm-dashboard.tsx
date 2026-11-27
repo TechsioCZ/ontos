@@ -31,18 +31,18 @@ export const CrmDashboard = (props: CrmDashboardProps) => {
   useEffect(() => dashboardData.ensure({ legalEntityId: input.legalEntityId }), [input.legalEntityId]);
   const values = data.state === 'ready' ? data.value : [];
   return (
-    <div className="salesinsights:flex salesinsights:min-w-0 salesinsights:flex-col salesinsights:gap-4">
-      <header className="salesinsights:flex salesinsights:flex-wrap salesinsights:items-start salesinsights:justify-between salesinsights:gap-3">
-        <div className="salesinsights:flex salesinsights:min-w-0 salesinsights:flex-col salesinsights:gap-1">
-          <h2 className="salesinsights:font-semibold text-md">{t(`${key}.title`)}</h2>
-          <p className="salesinsights:text-sm">{t(`${key}.description`)}</p>
+    <div className="flex min-w-0 flex-col gap-4">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="font-semibold text-md">{t(`${key}.title`)}</h2>
+          <p className="text-sm">{t(`${key}.description`)}</p>
           <StatusText showIcon size="sm" status="default">
             {t(`${key}.scope`)}
           </StatusText>
         </div>
       </header>
       {data.state === 'ready' ? (
-        <div className="salesinsights:grid salesinsights:gap-4 salesinsights:sm:grid-cols-2 salesinsights:xl:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {values.map((value) => (
             <StatCard
               action={
@@ -55,7 +55,7 @@ export const CrmDashboard = (props: CrmDashboardProps) => {
                     appearance="ghost"
                     aria-label={t(`${key}.openSource`, { metric: t(`${key}.metric.${value.id}`) })}
                     as={LocalizedLink}
-                    className="salesinsights:-ml-2"
+                    className="-ml-2"
                     icon="icon-[mdi--arrow-right]"
                     iconPosition="right"
                     // The Shell already prepares these menu routes on render without polluting Home's replay list.

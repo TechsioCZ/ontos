@@ -883,10 +883,7 @@ const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch, scopeKey
   const [value, setValue] = useState('');
   const suggestions = useShellSearchSuggestions(compositionRevision, scopeKey);
   return hidden ? null : (
-    <Header.Container
-      className="flex w-auto min-w-0 flex-1 items-center justify-center lg:min-w-[16rem]"
-      position="center"
-    >
+    <Header.Container className="flex w-auto min-w-0 flex-1 items-center justify-center lg:min-w-64" position="center">
       <div className="w-full max-w-xl">
         <ShellSearchBar
           onDismissSuggestions={suggestions.handleDismiss}

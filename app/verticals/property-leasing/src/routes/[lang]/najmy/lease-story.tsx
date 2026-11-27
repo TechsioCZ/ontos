@@ -32,8 +32,8 @@ export interface LeaseRelated {
 }
 
 const P = 'property-leasing';
-const mutedClass = 'propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)';
-const rowClass = `${surfaceTileClassName} propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-3 propertyleasing:p-3 propertyleasing:text-sm`;
+const mutedClass = 'text-sm text-fg-secondary';
+const rowClass = `${surfaceTileClassName} flex flex-wrap items-center justify-between gap-3 p-3 propertyleasing:text-sm`;
 
 export const loadedList = <A,>(value: Option.Option<Result.Result<readonly A[], Feedback>>): readonly A[] =>
   value.pipe(
@@ -95,45 +95,37 @@ export interface StoryStep {
 
 /** Clickable chain building → unit → tenant → contract → lease → service tasks → invoice. */
 export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep[]; readonly t: Translate }) => (
-  <nav
-    aria-label={t(`${P}.story.title`)}
-    className={`${surfaceTileClassName} propertyleasing:overflow-x-auto propertyleasing:p-3`}
-  >
-    <ol className="propertyleasing:flex propertyleasing:min-w-max propertyleasing:items-stretch propertyleasing:gap-2">
+  <nav aria-label={t(`${P}.story.title`)} className={`${surfaceTileClassName} overflow-x-auto propertyleasing:p-3`}>
+    <ol className="flex min-w-max items-stretch gap-2">
       {steps.map((step, index) => {
         const body = (
           <>
-            <span className="propertyleasing:block propertyleasing:text-xs propertyleasing:uppercase propertyleasing:tracking-wide propertyleasing:text-(--color-fg-secondary)">
+            <span className="block text-xs uppercase tracking-wide text-fg-secondary">
               {index + 1}. {step.label}
             </span>
-            <span className="propertyleasing:block propertyleasing:max-w-48 propertyleasing:truncate propertyleasing:text-sm propertyleasing:font-medium">
-              {step.value ?? '—'}
-            </span>
+            <span className="block max-w-48 truncate text-sm font-medium">{step.value ?? '—'}</span>
           </>
         );
-        const tone =
-          step.current === true
-            ? 'propertyleasing:border-2 propertyleasing:border-(--color-fg-secondary) bg-base'
-            : 'propertyleasing:border-transparent bg-base';
+        const tone = step.current === true ? 'border-2 border-fg-secondary bg-base' : 'border-transparent bg-base';
         return (
-          <li className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2" key={step.label}>
+          <li className="flex items-center gap-2" key={step.label}>
             {step.href === undefined || step.current === true ? (
               <div
                 aria-current={step.current === true ? 'step' : undefined}
-                className={`propertyleasing:rounded-md propertyleasing:border propertyleasing:px-3 propertyleasing:py-2 ${tone}`}
+                className={`propertyleasing:rounded-md border px-3 py-2 ${tone}`}
               >
                 {body}
               </div>
             ) : (
               <a
-                className={`propertyleasing:rounded-md propertyleasing:border propertyleasing:px-3 propertyleasing:py-2 propertyleasing:no-underline hover:bg-surface ${tone}`}
+                className={`propertyleasing:rounded-md border px-3 py-2 no-underline hover:bg-surface ${tone}`}
                 href={step.href}
               >
                 {body}
               </a>
             )}
             {index < steps.length - 1 && (
-              <span aria-hidden className="propertyleasing:text-(--color-fg-secondary)">
+              <span aria-hidden className="text-fg-secondary">
                 →
               </span>
             )}
@@ -163,8 +155,8 @@ export const RentTermsCard = ({
         <p className={mutedClass}>{t(`${P}.rent.missing`)}</p>
       ) : (
         <>
-          <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-baseline propertyleasing:gap-3">
-            <span className="propertyleasing:text-2xl propertyleasing:font-semibold propertyleasing:tabular-nums">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <span className="text-2xl font-semibold tabular-nums">
               {formatMoney(monthlyTotal(terms), terms.currency)}
             </span>
             <span className={mutedClass}>{t(`${P}.rent.monthlyTotal`)}</span>
@@ -210,7 +202,7 @@ export const UnitCard = ({
         { label: t(`${P}.related.address`), value: property?.address ?? t(`${P}.related.notProvided`) },
       ]}
     />
-    <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+    <div className="flex flex-wrap gap-2">
       {unit !== undefined && (
         <LinkButton
           appearance="outline"
@@ -269,7 +261,7 @@ export const TenantCard = ({
         ]}
       />
       {tenant !== undefined && (
-        <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+        <div className="flex flex-wrap gap-2">
           <LinkButton
             appearance="outline"
             href={`/${language}/ukoly?partyId=${tenant.partyId}`}
@@ -330,7 +322,7 @@ export const ContractCard = ({
       </>
     ) : (
       <>
-        <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+        <div className="flex flex-wrap gap-2">
           <Badge severity={contractBadge[contract.lifecycleState]} size="sm">
             {t(`${P}.related.contractStates.${contract.lifecycleState}`)}
           </Badge>
@@ -413,16 +405,13 @@ export const TasksCard = ({
       )}
       {tasks !== undefined && tasks.length === 0 && <p className={mutedClass}>{t(`${P}.related.noTasks`)}</p>}
       {tasks !== undefined && tasks.length > 0 && (
-        <ul className="propertyleasing:space-y-2">
+        <ul className="space-y-2">
           {tasks.map((task) => (
             <li className={rowClass} key={task.ref.resourceId}>
-              <a
-                className="propertyleasing:min-w-0 propertyleasing:font-medium"
-                href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}
-              >
+              <a className="min-w-0 font-medium" href={`/${language}/ukoly?resourceId=${task.ref.resourceId}`}>
                 {task.title} →
               </a>
-              <span className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2">
+              <span className="flex items-center gap-2">
                 {task.dueDate !== undefined && (
                   <span className={mutedClass}>{t(`${P}.related.due`, { date: formatDate(task.dueDate) })}</span>
                 )}
@@ -472,18 +461,16 @@ export const InvoicesCard = ({
       )}
       {invoices !== undefined && invoices.length === 0 && <p className={mutedClass}>{t(`${P}.related.noInvoices`)}</p>}
       {invoices !== undefined && invoices.length > 0 && (
-        <ul className="propertyleasing:space-y-2">
+        <ul className="space-y-2">
           {invoices.map((invoice) => (
             <li className={rowClass} key={invoice.ref.resourceId}>
-              <span className="propertyleasing:min-w-0">
-                <span className="propertyleasing:block propertyleasing:font-medium">
-                  {invoice.number ?? invoice.documentNumber}
-                </span>
+              <span className="min-w-0">
+                <span className="block font-medium">{invoice.number ?? invoice.documentNumber}</span>
                 <span className={mutedClass}>
                   {formatDate(invoice.issueDate)} · {formatMoney(invoice.totalMinor, invoice.currency)}
                 </span>
               </span>
-              <span className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 <Badge severity={invoiceBadge[invoice.businessState]} size="sm">
                   {t(`${P}.related.invoiceStates.${invoice.businessState}`)}
                 </Badge>

@@ -491,9 +491,7 @@ export const makeCurrentPricingDecisionAttemptSource = (
               quantityBasis: { ...line.catalog.quantityBasis, targetRef, unitRef: line.pricingBasis.unitRef },
             },
           })
-          .pipe(
-            Effect.mapError(unavailable('catalog:quantity-basis', 'Catalog Quantity-basis authority is unavailable')),
-          );
+          .pipe(Effect.mapError(unavailable('', 'Catalog Quantity-basis authority is unavailable')));
         const quantityBasis = yield* assessPricingQuantityBasis({
           attempt: {
             catalog: line.catalog,
@@ -622,11 +620,7 @@ export const makeCurrentPricingDecisionAttemptSource = (
             quantityBasis: tier.identityKey.quantityBasis.catalogQuantityBasis,
           },
         })
-        .pipe(
-          Effect.mapError(
-            unavailable('catalog:quantity-basis', 'Catalog Tier Quantity-basis authority is unavailable'),
-          ),
-        );
+        .pipe(Effect.mapError(unavailable('', 'Catalog Tier Quantity-basis authority is unavailable')));
       return yield* assessPricingQuantityBasis({ attempt: { ...attempt, tier }, ownerDecision });
     },
   ),
@@ -730,12 +724,7 @@ const tierReaderFor = (
           participants.length === 1 && singleParticipant !== undefined
             ? singleParticipant.normalizedQuantity
             : yield* catalogEquivalence.resolve(aggregationAttempt).pipe(
-                Effect.mapError(
-                  unavailable(
-                    'catalog:pricing-purpose-equivalence',
-                    'Catalog Pricing-purpose equivalence is unavailable',
-                  ),
-                ),
+                Effect.mapError(unavailable('', 'Catalog Pricing-purpose equivalence is unavailable')),
                 Effect.flatMap((resolution) =>
                   aggregateQuantityTierLines({ attempt: aggregationAttempt, catalogEquivalence: resolution }),
                 ),

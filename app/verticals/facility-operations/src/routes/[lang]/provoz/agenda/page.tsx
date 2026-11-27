@@ -315,18 +315,12 @@ const AgendaView = (props: Parameters<typeof useAgendaView>[0]) => {
       />
       <SourceHealth sources={sources} />
       {sources.ops.data?.agenda?.assignedOnly === true && (
-        <p
-          className="facilityoperations:m-0 facilityoperations:text-sm"
-          style={{ color: 'var(--color-fg-secondary, #6b7280)' }}
-        >
+        <p className="m-0 text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
           {t(`${k}.state.readOnly`)}
         </p>
       )}
       {!agendaReadable && sources.ops.status !== 'loading' && (
-        <p
-          className="facilityoperations:m-0 facilityoperations:text-sm"
-          style={{ color: 'var(--color-fg-secondary, #6b7280)' }}
-        >
+        <p className="m-0 text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
           {t(`${k}.state.agendaUnavailable`)}
         </p>
       )}

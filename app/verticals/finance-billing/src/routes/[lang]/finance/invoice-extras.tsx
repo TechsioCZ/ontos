@@ -143,7 +143,7 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
               <li className="flex items-center gap-150 py-100" key={document.id}>
                 <span
                   aria-hidden
-                  className={`size-6 shrink-0 text-fg-secondary ${document.mimeType === 'application/pdf' ? 'icon-[mdi--file-pdf-box]' : 'icon-[mdi--file-image-outline]'}`}
+                  className={`size-6 shrink-0 text-fg-secondary ${document.mimeType === 'application/pdf' ? 'icon-[mdi--file-pdf-box]' : 'token-icon-file-upload-image'}`}
                 />
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate font-medium text-sm">{document.fileName}</span>
@@ -299,7 +299,7 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
             Zbývá <strong className="tabular-nums">{formatMoney(remaining)}</strong>
           </span>
         </div>
-        <div aria-hidden className="h-2 overflow-hidden rounded-full bg-surface-secondary">
+        <div aria-hidden className="h-2 overflow-hidden rounded-full">
           <div
             className="h-full rounded-full bg-(--color-chart-series-1)"
             style={{ width: `${Math.min(100, (invoice.paidMinor / Math.max(1, invoice.totalMinor)) * 100)}%` }}

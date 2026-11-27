@@ -66,11 +66,8 @@ const greetingForHour = (hour: number) => {
 const PendingBar = () => {
   const { t } = useLang();
   return (
-    <span
-      className="facilityoperations:inline-block facilityoperations:h-3 facilityoperations:w-16 facilityoperations:animate-pulse facilityoperations:rounded"
-      style={{ background: trackBackground }}
-    >
-      <span className="facilityoperations:sr-only">{t('facility-operations.common.loading')}</span>
+    <span className="inline-block h-3 w-16 animate-pulse rounded" style={{ background: trackBackground }}>
+      <span className="sr-only">{t('facility-operations.common.loading')}</span>
     </span>
   );
 };
@@ -82,11 +79,8 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   const reserved = Number(kpi?.secondary?.['reserved'] ?? 0);
   const ready = kpi?.status === 'ready' && kpi.value !== undefined && total > 0;
   return (
-    <div
-      className="facilityoperations:flex facilityoperations:w-full facilityoperations:flex-col facilityoperations:gap-3"
-      style={{ maxWidth: 300 }}
-    >
-      <span className="facilityoperations:text-sm facilityoperations:font-medium" style={muted}>
+    <div className="flex w-full flex-col gap-3" style={{ maxWidth: 300 }}>
+      <span className="text-sm font-medium" style={muted}>
         {t(`${k}.overview.occupiedToday`)}
       </span>
       <strong style={{ fontSize: 56, fontWeight: 600, letterSpacing: '-0.04em', lineHeight: 1.1 }}>
@@ -97,7 +91,7 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
           <meter
             aria-label={t(`${k}.kpi.occupancy.label`)}
             aria-valuetext={t(`${k}.kpi.occupancy.secondary`, { occupied, reserved, total })}
-            className="facilityoperations:sr-only"
+            className="sr-only"
             max={total}
             min={0}
             value={occupied}
@@ -112,17 +106,14 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
               }}
             />
           </div>
-          <div
-            className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-x-4 facilityoperations:gap-y-1 facilityoperations:text-xs"
-            style={muted}
-          >
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs" style={muted}>
             <span>{t(`${k}.overview.legend.occupied`, { count: occupied })}</span>
             <span>{t(`${k}.overview.legend.reserved`, { count: reserved })}</span>
             <span>{t(`${k}.overview.legend.free`, { count: total - occupied - reserved })}</span>
           </div>
         </>
       ) : (
-        <span className="facilityoperations:text-sm" style={muted}>
+        <span className="text-sm" style={muted}>
           {kpi === undefined || kpi.status === 'loading' ? (
             <PendingBar />
           ) : (
@@ -138,13 +129,11 @@ const HeroStat = ({ label, tone, value }: { readonly label: string; readonly ton
   const colors = toneColors(tone);
   return (
     <span
-      className="facilityoperations:inline-flex facilityoperations:items-baseline facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2"
+      className="inline-flex items-baseline gap-2 rounded-lg px-3 py-2"
       style={{ background: colors.bg, color: 'var(--color-fg-primary, #111827)' }}
     >
-      <span className="facilityoperations:text-xl facilityoperations:font-semibold facilityoperations:tabular-nums">
-        {formatNumber(value)}
-      </span>
-      <span className="facilityoperations:text-xs facilityoperations:font-medium">{label}</span>
+      <span className="text-xl font-semibold tabular-nums">{formatNumber(value)}</span>
+      <span className="text-xs font-medium">{label}</span>
     </span>
   );
 };
@@ -152,11 +141,8 @@ const HeroStat = ({ label, tone, value }: { readonly label: string; readonly ton
 export const SourceHealth = ({ sources }: { readonly sources: RentalOverviewSources }) => {
   const { lang, t } = useLang();
   return (
-    <div
-      className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-x-3 facilityoperations:gap-y-1 facilityoperations:text-xs"
-      style={muted}
-    >
-      <span className="facilityoperations:font-medium">{t(`${k}.overview.sourcesLabel`)}</span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" style={muted}>
+      <span className="font-medium">{t(`${k}.overview.sourcesLabel`)}</span>
       {sourceKeys.map((key) => {
         const source = sources[key];
         const when = source.loadedAt === undefined ? '' : ` · ${fmt.clock(lang, source.loadedAt)}`;
@@ -165,7 +151,7 @@ export const SourceHealth = ({ sources }: { readonly sources: RentalOverviewSour
         return (
           <fieldset
             aria-label={`${sourceLabel}: ${stateLabel}${when}`}
-            className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1"
+            className="inline-flex items-center gap-1"
             data-source={key}
             data-status={source.status}
             key={key}
@@ -210,50 +196,40 @@ export const Hero = ({
   const week = open.filter((row) => row.date >= today && daysUntil(row.date, today) <= 7).length;
   return (
     <section
-      className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-6 facilityoperations:rounded-2xl facilityoperations:p-6 facilityoperations:lg:grid-cols-[minmax(0,1fr)_auto]"
+      className="grid grid-cols-1 gap-6 rounded-lg p-6 facilityoperations:lg:grid-cols-[minmax(0,1fr)_auto]"
       style={{
         background:
           'radial-gradient(1200px 300px at 0% 0%, var(--color-primary-100, #fef3c7) 0%, transparent 60%), linear-gradient(135deg, #ffffff 0%, var(--color-surface-subtle, #f8fafc) 100%)',
       }}
     >
-      <div className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-col facilityoperations:gap-4">
-        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1">
-          <span
-            className="facilityoperations:text-xs facilityoperations:font-medium facilityoperations:uppercase facilityoperations:tracking-wider"
-            style={muted}
-          >
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide" style={muted}>
             {fmt.long(lang, today)}
           </span>
-          <h2 className="facilityoperations:m-0 facilityoperations:text-2xl facilityoperations:font-semibold">
+          <h2 className="m-0 text-2xl font-semibold">
             {t(`${k}.overview.greeting.${greeting}`)}
             {personalName === undefined ? '' : `, ${personalName}`}
           </h2>
-          <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
+          <p className="m-0 text-sm" style={muted}>
             {t(`${k}.overview.summary`, { overdue, today: todayCount, unread, week })}
           </p>
         </div>
-        <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-2">
+        <div className="flex flex-wrap gap-2">
           <HeroStat label={t(`${k}.overview.todayLabel`)} tone="primary" value={todayCount} />
           <HeroStat label={t(`${k}.overview.weekLabel`)} tone="info" value={week} />
           <HeroStat label={t(`${k}.overview.overdueLabel`)} tone={overdue > 0 ? 'danger' : 'success'} value={overdue} />
-          <a
-            className="facilityoperations:no-underline"
-            href={`/${lang}/provoz/agenda?tab=notifikace`}
-            style={{ color: 'inherit' }}
-          >
+          <a className="no-underline" href={`/${lang}/provoz/agenda?tab=notifikace`} style={{ color: 'inherit' }}>
             <HeroStat label={t(`${k}.overview.unreadLabel`)} tone={unread > 0 ? 'warning' : 'neutral'} value={unread} />
           </a>
         </div>
-        <label className="facilityoperations:relative facilityoperations:block facilityoperations:max-w-2xl">
-          <span className="facilityoperations:sr-only">{t(`${k}.search.label`)}</span>
-          <span
-            className="facilityoperations:pointer-events-none facilityoperations:absolute facilityoperations:left-3 facilityoperations:top-1/2 facilityoperations:-translate-y-1/2"
-            style={muted}
-          >
+        <label className="relative block max-w-2xl">
+          <span className="sr-only">{t(`${k}.search.label`)}</span>
+          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={muted}>
             <Icon name="magnify" size={20} />
           </span>
           <input
-            className="facilityoperations:w-full facilityoperations:rounded-xl facilityoperations:py-3 facilityoperations:pl-10 facilityoperations:pr-3 facilityoperations:text-base facilityoperations:outline-none"
+            className="w-full rounded-lg py-3 pl-10 pr-3 text-base facilityoperations:outline-none"
             id="ops-global-search"
             onChange={(event) => onQuery(event.target.value)}
             placeholder={t(`${k}.search.placeholder`)}
@@ -268,7 +244,7 @@ export const Hero = ({
         </label>
         <SourceHealth sources={sources} />
       </div>
-      <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:justify-center">
+      <div className="flex items-center justify-center">
         <OccupancyFigure kpi={kpis.find((kpi) => kpi.id === 'occupancy')} />
       </div>
     </section>
@@ -310,7 +286,7 @@ const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
     return (
       <output
         aria-label={t('facility-operations.common.loading')}
-        className="facilityoperations:block facilityoperations:h-9 facilityoperations:w-24 facilityoperations:animate-pulse facilityoperations:rounded-lg"
+        className="block h-9 w-24 animate-pulse rounded-lg"
         style={{ background: trackBackground }}
       />
     );
@@ -318,17 +294,14 @@ const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
   if (kpi.status !== 'ready' || kpi.value === undefined) {
     const state = kpi.status === 'ready' ? 'noData' : kpi.status;
     return (
-      <span
-        className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-lg facilityoperations:font-semibold"
-        style={muted}
-      >
+      <span className="inline-flex items-center gap-2 text-lg font-semibold" style={muted}>
         <Icon name={kpiStateIcon[state]} size={18} />
         {t(`${k}.state.${state}`)}
       </span>
     );
   }
   return (
-    <span className="facilityoperations:text-4xl facilityoperations:font-semibold facilityoperations:leading-none">
+    <span className="text-4xl font-semibold leading-none">
       {kpi.kind === 'percent' ? formatPercent(kpi.value) : formatNumber(kpi.value)}
     </span>
   );
@@ -350,7 +323,7 @@ export const KpiGrid = ({
     <section
       aria-busy={!settled}
       aria-label={t(`${k}.overview.kpiSection`)}
-      className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:sm:grid-cols-2 facilityoperations:xl:grid-cols-4"
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"
     >
       {kpis.map((kpi) => {
         const colors = toneColors(kpi.tone);
@@ -360,7 +333,7 @@ export const KpiGrid = ({
           <button
             aria-describedby={`kpi-${kpi.id}-definition`}
             aria-pressed={active}
-            className="facilityoperations:group facilityoperations:flex facilityoperations:min-h-[184px] facilityoperations:cursor-pointer facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:rounded-2xl facilityoperations:p-4 facilityoperations:text-left facilityoperations:transition-shadow facilityoperations:hover:shadow-lg"
+            className="flex facilityoperations:min-h-[184px] cursor-pointer flex-col gap-3 rounded-lg p-4 text-left facilityoperations:transition-shadow facilityoperations:hover:shadow-lg"
             data-kpi={kpi.id}
             data-value={ready ? String(kpi.value) : kpi.status}
             key={kpi.id}
@@ -377,40 +350,32 @@ export const KpiGrid = ({
             <span hidden id={`kpi-${kpi.id}-definition`}>
               {t(`${k}.kpi.${kpi.id}.definition`)}
             </span>
-            <div className="facilityoperations:flex facilityoperations:items-start facilityoperations:justify-between facilityoperations:gap-2">
+            <div className="flex items-start justify-between gap-2">
               <IconBadge name={kpiIcon[kpi.id]} tone={ready ? kpi.tone : 'neutral'} />
               <span
-                className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs facilityoperations:font-medium"
+                className="inline-flex items-center gap-1 text-xs font-medium"
                 style={{ color: 'var(--color-fg-secondary, #4b5563)' }}
               >
                 {t(`${k}.overview.drill`)}
                 <Icon name="arrowRight" size={14} />
               </span>
             </div>
-            <span className="facilityoperations:text-sm facilityoperations:font-medium" style={muted}>
+            <span className="text-sm font-medium" style={muted}>
               {t(`${k}.kpi.${kpi.id}.label`)}
             </span>
             <KpiValue kpi={kpi} />
             {kpi.kind === 'percent' && ready && (
-              <span
-                className="facilityoperations:block facilityoperations:h-1.5 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full"
-                style={{ background: trackBackground }}
-              >
+              <span className="block h-1.5 w-full overflow-hidden rounded-full" style={{ background: trackBackground }}>
                 <span
-                  className="facilityoperations:block facilityoperations:h-full facilityoperations:rounded-full"
+                  className="block h-full rounded-full"
                   style={{ background: colors.accent, width: `${Math.round((kpi.value ?? 0) * 100)}%` }}
                 />
               </span>
             )}
             {ready && kpi.secondary !== undefined && (
-              <span className="facilityoperations:text-sm">
-                {t(`${k}.kpi.${kpi.id}.secondary`, secondaryValues(kpi))}
-              </span>
+              <span className="text-sm">{t(`${k}.kpi.${kpi.id}.secondary`, secondaryValues(kpi))}</span>
             )}
-            <span
-              className="facilityoperations:mt-auto facilityoperations:text-[11px] facilityoperations:leading-snug"
-              style={muted}
-            >
+            <span className="mt-auto facilityoperations:text-[11px] leading-snug" style={muted}>
               {t(`${k}.overview.sourceLine`, {
                 sources: kpi.sources.map((source) => t(`${k}.sources.${source}`)).join(', ') || '—',
                 time: kpi.loadedAt === undefined ? '—' : fmt.clock(lang, kpi.loadedAt),
@@ -431,59 +396,45 @@ const statusLabel = (t: (key: string) => string, status: string | undefined) =>
 const RecordTable = ({ rows }: { readonly rows: readonly DrillRow[] }) => {
   const { lang, t } = useLang();
   return (
-    <div className="facilityoperations:overflow-x-auto">
-      <table
-        className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm"
-        data-testid="ops-drill-table"
-      >
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-sm" data-testid="ops-drill-table">
         <thead>
-          <tr className="facilityoperations:text-left" style={muted}>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">
-              {t(`${k}.columns.title`)}
-            </th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">
-              {t(`${k}.columns.date`)}
-            </th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">
-              {t(`${k}.columns.status`)}
-            </th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:text-right facilityoperations:font-medium">
-              {t(`${k}.columns.amount`)}
-            </th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2">
-              <span className="facilityoperations:sr-only">{t(`${k}.columns.link`)}</span>
+          <tr className="text-left" style={muted}>
+            <th className="px-3 py-2 font-medium">{t(`${k}.columns.title`)}</th>
+            <th className="px-3 py-2 font-medium">{t(`${k}.columns.date`)}</th>
+            <th className="px-3 py-2 font-medium">{t(`${k}.columns.status`)}</th>
+            <th className="px-3 py-2 text-right font-medium">{t(`${k}.columns.amount`)}</th>
+            <th className="px-3 py-2">
+              <span className="sr-only">{t(`${k}.columns.link`)}</span>
             </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.id} style={{ borderTop: '1px solid var(--color-border-muted, #f1f5f9)' }}>
-              <td className="facilityoperations:px-3 facilityoperations:py-2.5">
-                <div className="facilityoperations:font-medium">{row.title}</div>
+              <td className="px-3 py-2.5">
+                <div className="font-medium">{row.title}</div>
                 {row.subtitle !== undefined && row.subtitle !== '' && (
-                  <div className="facilityoperations:text-xs" style={muted}>
+                  <div className="text-xs" style={muted}>
                     {row.subtitle}
                   </div>
                 )}
               </td>
-              <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:tabular-nums">
+              <td className="whitespace-nowrap px-3 py-2.5 tabular-nums">
                 {row.date === undefined ? '—' : fmt.short(lang, row.date)}
               </td>
-              <td className="facilityoperations:px-3 facilityoperations:py-2.5">
+              <td className="px-3 py-2.5">
                 {row.status === undefined ? (
                   '—'
                 ) : (
                   <Pill tone={row.tone ?? 'neutral'}>{statusLabel(t, row.status)}</Pill>
                 )}
               </td>
-              <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:text-right facilityoperations:tabular-nums">
+              <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">
                 {row.amountMinor === undefined ? '' : formatMoney(row.amountMinor)}
               </td>
-              <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:text-right">
-                <a
-                  className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:font-medium"
-                  href={linkTo(lang, row.href)}
-                >
+              <td className="whitespace-nowrap px-3 py-2.5 text-right">
+                <a className="inline-flex items-center gap-1 font-medium" href={linkTo(lang, row.href)}>
                   {t(`${k}.open`)}
                   <Icon name="arrowRight" size={14} />
                 </a>
@@ -568,7 +519,7 @@ export const DrillDown = ({
         title={`${label} — ${detail}`}
       >
         <div
-          className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:text-sm"
+          className="flex flex-col gap-1 rounded-lg p-3 text-sm"
           style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}
         >
           <span>
@@ -667,7 +618,7 @@ export const SearchResults = ({
       }
       title={t(`${k}.search.results`, { count: results.length, query: query.trim() })}
     >
-      <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+      <p className="m-0 text-xs" style={muted}>
         {t(`${k}.search.scope`, { count: index.length })}
         {hidden.length > 0 && ' '}
         {hidden.length > 0 &&
@@ -676,27 +627,24 @@ export const SearchResults = ({
       {results.length === 0 ? (
         <EmptyState description={t(`${k}.search.emptyDescription`)} title={t(`${k}.search.empty`)} />
       ) : (
-        <ul
-          className="facilityoperations:m-0 facilityoperations:grid facilityoperations:list-none facilityoperations:grid-cols-1 facilityoperations:gap-2 facilityoperations:p-0 facilityoperations:md:grid-cols-2"
-          data-testid="ops-search-results"
-        >
+        <ul className="m-0 grid list-none grid-cols-1 gap-2 p-0 md:grid-cols-2" data-testid="ops-search-results">
           {results.map((row) => (
             <li key={`${row.kind}:${row.id}`}>
               <a
-                className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-3 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:no-underline facilityoperations:transition-colors facilityoperations:hover:shadow-md"
+                className="flex items-center gap-3 rounded-lg p-3 no-underline transition-colors facilityoperations:hover:shadow-md"
                 href={linkTo(lang, row.href)}
                 style={{ ...card, color: 'inherit' }}
               >
                 <Pill tone={kindTone[row.kind]}>{t(`${k}.search.kind.${row.kind}`)}</Pill>
-                <span className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-col">
-                  <span className="facilityoperations:truncate facilityoperations:font-medium">{row.title}</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate font-medium">{row.title}</span>
                   {row.subtitle !== undefined && (
-                    <span className="facilityoperations:truncate facilityoperations:text-xs" style={muted}>
+                    <span className="truncate text-xs" style={muted}>
                       {row.subtitle}
                     </span>
                   )}
                 </span>
-                <span className="facilityoperations:ml-auto" style={muted}>
+                <span className="ml-auto" style={muted}>
                   <Icon name="chevronRight" size={18} />
                 </span>
               </a>
@@ -734,10 +682,7 @@ export const UpcomingTimeline = ({
   return (
     <SectionCard
       actions={
-        <a
-          className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium"
-          href={`/${lang}/provoz/agenda`}
-        >
+        <a className="inline-flex items-center gap-1 text-sm font-medium" href={`/${lang}/provoz/agenda`}>
           {t(`${k}.overview.fullCalendar`)}
           <Icon name="arrowRight" size={14} />
         </a>
@@ -746,7 +691,7 @@ export const UpcomingTimeline = ({
     >
       {overdue.length > 0 && (
         <a
-          className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2 facilityoperations:text-sm facilityoperations:font-medium facilityoperations:no-underline"
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium no-underline"
           href={`/${lang}/provoz/agenda?view=seznam&filtr=po-terminu`}
           style={{ background: toneColors('danger').bg, color: toneColors('danger').fg }}
         >
@@ -757,45 +702,36 @@ export const UpcomingTimeline = ({
       {visible.length === 0 ? (
         <EmptyState description={t(`${k}.overview.noUpcomingDescription`)} title={t(`${k}.overview.noUpcoming`)} />
       ) : (
-        <ol className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-3 facilityoperations:p-0">
+        <ol className="m-0 flex list-none flex-col gap-3 p-0">
           {[...groups.entries()].map(([date, rows]) => {
             const urgency = urgencyOf({ date, done: false }, today);
             const tone = urgencyTone[urgency];
             const days = daysUntil(date, today);
             return (
-              <li className="facilityoperations:flex facilityoperations:gap-3" key={date}>
+              <li className="flex gap-3" key={date}>
                 <div
-                  className="facilityoperations:flex facilityoperations:h-14 facilityoperations:w-14 facilityoperations:shrink-0 facilityoperations:flex-col facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-xl"
+                  className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-lg"
                   style={{ background: toneColors(tone).bg, color: toneColors(tone).fg }}
                 >
-                  <span className="facilityoperations:text-lg facilityoperations:font-semibold facilityoperations:leading-none">
-                    {Number(date.slice(8, 10))}
-                  </span>
-                  <span className="facilityoperations:text-[11px] facilityoperations:uppercase">
-                    {fmt.weekday(lang, date)}
-                  </span>
+                  <span className="text-lg font-semibold leading-none">{Number(date.slice(8, 10))}</span>
+                  <span className="facilityoperations:text-[11px] uppercase">{fmt.weekday(lang, date)}</span>
                 </div>
-                <div className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col facilityoperations:gap-1.5">
-                  <span className="facilityoperations:text-xs facilityoperations:font-medium" style={muted}>
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="text-xs font-medium" style={muted}>
                     {fmt.dayMonth(lang, date)} ·{' '}
                     {days === 0 ? t(`${k}.relative.today`) : t(`${k}.relative.inDays`, { count: days })}
                   </span>
                   {rows.map((row) => (
                     <a
-                      className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-lg facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:no-underline facilityoperations:hover:shadow-sm"
+                      className="flex items-center gap-2 rounded-lg px-2 py-1.5 no-underline facilityoperations:hover:shadow-sm"
                       href={linkTo(lang, row.href)}
                       key={row.key}
                       style={{ background: 'var(--color-surface-subtle, #f8fafc)', color: 'inherit' }}
                     >
                       <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
-                      <span className="facilityoperations:truncate facilityoperations:text-sm facilityoperations:font-medium">
-                        {row.title}
-                      </span>
+                      <span className="truncate text-sm font-medium">{row.title}</span>
                       {row.location !== undefined && (
-                        <span
-                          className="facilityoperations:hidden facilityoperations:truncate facilityoperations:text-xs facilityoperations:md:inline"
-                          style={muted}
-                        >
+                        <span className="hidden truncate text-xs md:inline" style={muted}>
                           {row.location}
                         </span>
                       )}
@@ -815,7 +751,7 @@ export const UpcomingTimeline = ({
         </Button>
       )}
       {missing.length > 0 && (
-        <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+        <p className="m-0 text-xs" style={muted}>
           {t(`${k}.calendar.missingSources`, {
             sources: missing
               .map((key) => {
@@ -877,29 +813,20 @@ export const OccupancyByBuilding = ({
       buildings.length === 0 ? (
         <EmptyState description={t(`${k}.overview.noBuildingsDescription`)} title={t(`${k}.state.noData`)} />
       ) : (
-        <ul className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:p-0">
+        <ul className="m-0 flex list-none flex-col gap-4 p-0">
           {buildings.map((building) => (
-            <li
-              className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1.5"
-              key={building.id}
-            >
-              <div className="facilityoperations:flex facilityoperations:items-baseline facilityoperations:justify-between facilityoperations:gap-2">
-                <a
-                  className="facilityoperations:truncate facilityoperations:font-medium"
-                  href={`/${lang}/nemovitosti?resourceId=${building.id}`}
-                >
+            <li className="flex flex-col gap-1.5" key={building.id}>
+              <div className="flex items-baseline justify-between gap-2">
+                <a className="truncate font-medium" href={`/${lang}/nemovitosti?resourceId=${building.id}`}>
                   {building.name}
                 </a>
-                <span className="facilityoperations:text-sm facilityoperations:tabular-nums" style={muted}>
+                <span className="text-sm tabular-nums" style={muted}>
                   {building.total === 0
                     ? t(`${k}.state.noData`)
                     : `${formatPercent(building.occupied / building.total)} · ${building.occupied}/${building.total}`}
                 </span>
               </div>
-              <div
-                className="facilityoperations:flex facilityoperations:h-3 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full"
-                style={{ background: trackBackground }}
-              >
+              <div className="flex h-3 w-full overflow-hidden rounded-full" style={{ background: trackBackground }}>
                 {building.total > 0 && (
                   <>
                     <span
@@ -917,7 +844,7 @@ export const OccupancyByBuilding = ({
                   </>
                 )}
               </div>
-              <span className="facilityoperations:text-xs" style={muted}>
+              <span className="text-xs" style={muted}>
                 {t(`${k}.overview.buildingLine`, {
                   free: building.free,
                   occupied: building.occupied,
@@ -948,7 +875,7 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
   const { ops } = sources;
   return (
     <SectionCard title={t(`${k}.overview.opsTitle`)}>
-      <div className="facilityoperations:grid facilityoperations:grid-cols-2 facilityoperations:gap-3 facilityoperations:md:grid-cols-3 facilityoperations:xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {agendaIds.map((agenda) => {
           const envelope = ops.data?.agendas.find((entry) => entry.agenda === agenda);
           const locked = ops.status === 'ready' && envelope === undefined;
@@ -966,7 +893,7 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
           }
           return (
             <a
-              className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:no-underline facilityoperations:hover:shadow-md"
+              className="flex flex-col gap-2 rounded-lg p-3 no-underline facilityoperations:hover:shadow-md"
               data-agenda={agenda}
               href={`/${lang}/provoz/${opsSegments[agenda] ?? agenda}`}
               key={agenda}
@@ -977,10 +904,8 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
                 size={34}
                 tone={locked ? 'neutral' : 'primary'}
               />
-              <span className="facilityoperations:text-sm facilityoperations:font-medium">
-                {t(`facility-operations.${agenda}.title`)}
-              </span>
-              <span className="facilityoperations:text-xs" style={muted}>
+              <span className="text-sm font-medium">{t(`facility-operations.${agenda}.title`)}</span>
+              <span className="text-xs" style={muted}>
                 {summary}
               </span>
             </a>

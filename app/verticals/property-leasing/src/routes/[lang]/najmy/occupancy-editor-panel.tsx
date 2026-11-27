@@ -177,10 +177,10 @@ export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
       size="lg"
       title={t(title)}
     >
-      <div className="propertyleasing:space-y-4 propertyleasing:py-2">
+      <div className="space-y-4 py-2">
         {props.feedbackText !== undefined && <output aria-live="polite">{props.feedbackText}</output>}
         {creating && (
-          <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2">
             <ChoiceSelect
               items={props.units}
               label={t('property-leasing.demo.unit')}

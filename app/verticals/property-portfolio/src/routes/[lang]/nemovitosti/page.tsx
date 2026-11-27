@@ -290,10 +290,10 @@ const usePropertyRecords = (input: RecordsInput) => {
     work,
   };
 };
-const secondaryTextClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
-const relatedCardClass = 'propertyportfolio:min-w-0 space-y-250';
-const detailHeadingClass = 'propertyportfolio:font-semibold';
-const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
+const secondaryTextClass = 'text-sm text-fg-secondary';
+const relatedCardClass = 'min-w-0 space-y-250';
+const detailHeadingClass = 'font-semibold';
+const tableWrapperClass = 'min-w-0 overflow-x-auto';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
 type RecordsModel = ReturnType<typeof usePropertyRecords>;
@@ -566,7 +566,7 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
       })}
     >
       <form
-        className="propertyportfolio:grid gap-250"
+        className="grid gap-250"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
@@ -647,7 +647,7 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
       }
     >
       <form
-        className="propertyportfolio:grid gap-250"
+        className="grid gap-250"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
@@ -692,7 +692,7 @@ const RecordsTables = ({ kind, view }: { readonly kind: 'units' | 'assets'; read
   return (
     <div className={tableWrapperClass}>
       <Table appearance="line" size="sm">
-        <Table.Caption className="propertyportfolio:sr-only">{t(`${key}.${kind}`)}</Table.Caption>
+        <Table.Caption className="sr-only">{t(`${key}.${kind}`)}</Table.Caption>
         <Table.Header>
           <Table.Row>
             {['code', 'name', 'state', 'detail'].map((column) => (
@@ -869,10 +869,10 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
   return (
     <div className="space-y-200">
       <DocumentTitle title={name} />
-      <h2 className="propertyportfolio:text-xl propertyportfolio:font-semibold">{name}</h2>
+      <h2 className="text-xl font-semibold">{name}</h2>
       <p className={secondaryTextClass}>{unit === undefined ? property.address : unit.code}</p>
       {unit === undefined ? (
-        <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">
+        <dl className="grid gap-200 sm:grid-cols-2">
           <div>
             <dt className={secondaryTextClass}>{t(`${key}.editor.propertyType`)}</dt>
             <dd>{property.propertyType ?? t(`${key}.notProvided`)}</dd>
@@ -893,7 +893,7 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
           </div>
         </dl>
       ) : (
-        <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">
+        <dl className="grid gap-200 sm:grid-cols-2">
           <div>
             <dt className={secondaryTextClass}>{t(`${key}.kind`)}</dt>
             <dd>{unit.unitKind ?? t(`${key}.notProvided`)}</dd>
@@ -1096,7 +1096,7 @@ const RecordsFilters = ({ view }: { readonly view: RecordsView }) => {
     (model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0) +
     (model.records?.units.filter((item) => item.archive !== undefined).length ?? 0);
   return (
-    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center gap-250">
+    <div className="flex flex-wrap items-center gap-250">
       <FormCheckbox
         checked={search.includeClosed === true}
         disabled={editor.busy}
@@ -1207,7 +1207,7 @@ const RecordsPageContent = (input: RecordsInput) => {
   return (
     <>
       <UltramodernRouteHead />
-      <h1 className="mb-300 propertyportfolio:text-3xl propertyportfolio:font-semibold">{t(`${key}.title`)}</h1>
+      <h1 className="mb-300 text-3xl font-semibold">{t(`${key}.title`)}</h1>
       {confirmation !== undefined && (
         <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} view={view} />
       )}
@@ -1223,7 +1223,7 @@ const RecordsPageContent = (input: RecordsInput) => {
       ) : (
         <PropertyWorkspace
           actions={
-            <div className="propertyportfolio:flex propertyportfolio:flex-wrap gap-200">
+            <div className="flex flex-wrap gap-200">
               {unit === undefined ? <RecordsPropertyActions view={view} /> : <RecordsUnitActions view={view} />}
             </div>
           }

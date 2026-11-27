@@ -128,7 +128,7 @@ export const buildTaskColumns = ({
         }
         const label = formatDueDate(task.dueDate);
         return isOverdue(task, today) ? (
-          <span className="text-fg-accent-danger whitespace-nowrap tabular-nums">{label}</span>
+          <span className="text-danger whitespace-nowrap tabular-nums">{label}</span>
         ) : (
           <span className="whitespace-nowrap tabular-nums">{label}</span>
         );

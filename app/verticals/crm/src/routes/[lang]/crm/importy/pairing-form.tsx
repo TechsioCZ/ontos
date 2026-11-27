@@ -117,7 +117,10 @@ export const PairingFields = ({
               >
                 <span className="flex items-center gap-50 font-medium">
                   {draft.clientId === candidate.clientId && (
-                    <span aria-hidden="true" className="icon-[mdi--check-circle] size-200 text-success" />
+                    <span
+                      aria-hidden="true"
+                      className="token-icon-availability-status-available size-200 text-success"
+                    />
                   )}
                   {clientLabel(records, candidate.clientId) ?? NOT_PROVIDED}
                 </span>

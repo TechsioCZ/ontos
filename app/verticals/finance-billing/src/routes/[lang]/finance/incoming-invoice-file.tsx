@@ -57,7 +57,7 @@ export const IncomingFileField = ({
         </StatusText>
       )}
       <label
-        className="flex cursor-pointer flex-col items-center justify-center gap-100 rounded-md border border-border-primary border-dashed bg-surface-secondary px-300 py-300 text-center text-sm hover:bg-fill-hover"
+        className="flex cursor-pointer flex-col items-center justify-center gap-100 rounded-md border border-border-primary border-dashed px-300 py-300 text-center text-sm hover:bg-fill-hover"
         htmlFor="incoming-file"
       >
         <span aria-hidden className="icon-[mdi--file-upload-outline] size-6 text-fg-secondary" />

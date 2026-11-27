@@ -190,7 +190,7 @@ export const ConnectedAppsSection = () => {
   const connections = connectionsView?.connections ?? [];
 
   return (
-    <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full min-w-0 max-w-6xl gap-200 p-300">
+    <section className="rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full min-w-0 max-w-6xl gap-200 p-300">
       <div className="grid min-w-0 gap-100">
         <h2 className="font-semibold text-lg">Připojené aplikace</h2>
         <p className="text-fg-secondary text-sm">
@@ -280,7 +280,7 @@ export const ConnectedAppsSection = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li className="ontos-tile grid min-w-0 gap-150 rounded-md bg-surface p-200" key={c.grantId}>
+              <li className="grid min-w-0 gap-150 rounded-md bg-surface p-200" key={c.grantId}>
                 <AppIdentity connection={c} />
                 <Field label={t('shell.connect.company.title')}>{c.legalName}</Field>
                 <Field label={t('shell.profile.connections.acting')}>

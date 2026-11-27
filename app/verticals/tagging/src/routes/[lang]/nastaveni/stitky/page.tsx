@@ -254,7 +254,7 @@ const KindSection = ({ kind, tagId, total }: { kind: SubjectKind; tagId: TagId; 
         type="button"
       >
         <span className="flex items-center gap-100">
-          <span aria-hidden className={open ? 'icon-[mdi--chevron-down]' : 'icon-[mdi--chevron-right]'} />
+          <span aria-hidden className={open ? 'token-icon-accordion-chevron' : 'token-icon-breadcrumb-separator'} />
           {t(`tagging.kinds.${kind}`)}
         </span>
         <span className="tabular-nums">{total}</span>

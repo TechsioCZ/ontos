@@ -635,7 +635,7 @@ const MetersView = () => {
             {t(`${k}.filters.anomaliesOnly`)}
             {anomalies.length > 0 ? ` (${anomalies.length})` : ''}
           </Button>
-          <div className="min-w-[16rem] flex-1">
+          <div className="min-w-64 flex-1">
             <Input
               aria-label={t(`${k}.filters.search`)}
               onChange={(event) => setSearch(event.target.value)}

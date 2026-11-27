@@ -40,7 +40,7 @@ export const InvoicePrint = ({
           <p>{incoming ? issuerName : counterpartyName}</p>
         </div>
       </div>
-      <dl className="finance-print-dates">
+      <dl className="">
         <dt>Datum vystavení</dt>
         <dd>{formatDate(invoice.issueDate)}</dd>
         <dt>Datum splatnosti</dt>

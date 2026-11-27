@@ -268,7 +268,7 @@ const AgentCard = ({
     >
       <header className="flex flex-wrap items-start justify-between gap-150">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
-          <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{agent.displayName}</span>
+          <span className="min-w-0 font-semibold vertical-navigation-control">{agent.displayName}</span>
           <Badge severity={statusVariant[agent.status]} size="sm">
             {t(`${connectionsKey}.status.${agent.status}`)}
           </Badge>
@@ -577,7 +577,7 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
                   className={`mt-50 size-150 shrink-0 rounded-full ${denied ? 'bg-danger' : 'bg-success'}`}
                 />
                 <div className="order-2 flex min-w-0 basis-full flex-col gap-50 sm:order-none sm:flex-1 sm:basis-auto">
-                  <p className="text-sm [overflow-wrap:anywhere]">
+                  <p className="text-sm vertical-navigation-control">
                     <span className="font-medium">
                       {Option.getOrElse(entry.actorName, () => t(`${key}.audit.system`))}
                     </span>{' '}

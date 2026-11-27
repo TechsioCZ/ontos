@@ -466,19 +466,16 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
   return (
     <>
       <UltramodernRouteHead />
-      <section
-        aria-labelledby="records-heading"
-        className="crmactivities:w-full crmactivities:min-w-0 crmactivities:max-w-none crmactivities:p-0 crmactivities:space-y-6 crmactivities:text-(--color-page-fg)"
-      >
-        <header className="crmactivities:flex crmactivities:flex-wrap crmactivities:items-center crmactivities:justify-between crmactivities:gap-4">
-          <div className="crmactivities:space-y-1">
-            <h1 className="crmactivities:text-3xl crmactivities:font-semibold" id="records-heading">
+      <section aria-labelledby="records-heading" className="w-full min-w-0 max-w-none p-0 space-y-6 text-fg-primary">
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-semibold" id="records-heading">
               {t(`${key}.title`)}
             </h1>
-            <p className="crmactivities:text-sm crmactivities:text-(--color-fg-secondary)">{t(`${key}.intro`)}</p>
+            <p className="text-sm text-fg-secondary">{t(`${key}.intro`)}</p>
           </div>
         </header>
-        <output aria-live="polite" className="crmactivities:block crmactivities:text-sm">
+        <output aria-live="polite" className="block text-sm">
           {message}
         </output>
         {loadFailed && (
@@ -488,7 +485,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
         )}
         {records !== undefined && (
           <>
-            <div className="crmactivities:overflow-x-auto">
+            <div className="overflow-x-auto">
               <Table appearance="line" size="sm">
                 <Table.Caption>{t(`${key}.timeline`)}</Table.Caption>
                 <Table.Header>
@@ -503,7 +500,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                 <Table.Body>
                   {records.items.map((activity) => (
                     <Table.Row key={activity.ref.resourceId}>
-                      <Table.Cell className="crmactivities:whitespace-nowrap crmactivities:text-(--color-fg-secondary)">
+                      <Table.Cell className="whitespace-nowrap text-fg-secondary">
                         <time dateTime={DateTime.formatIso(activity.occurredAt)}>
                           {DateTime.format(activity.occurredAt, {
                             day: '2-digit',
@@ -530,7 +527,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                           {t(`${key}.kinds.${activity.kind}`)}
                         </Badge>
                       </Table.Cell>
-                      <Table.Cell className="crmactivities:font-medium">{activity.summary}</Table.Cell>
+                      <Table.Cell className="font-medium">{activity.summary}</Table.Cell>
                       <Table.Cell>
                         {activity.followUpTaskRef === undefined ? (
                           '—'
@@ -559,10 +556,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                   ))}
                   {records.items.length === 0 && (
                     <Table.Row>
-                      <Table.Cell
-                        className="crmactivities:py-8 crmactivities:text-center crmactivities:text-(--color-fg-secondary)"
-                        colSpan={5}
-                      >
+                      <Table.Cell className="py-8 text-center text-fg-secondary" colSpan={5}>
                         {t(`${key}.empty`)}
                       </Table.Cell>
                     </Table.Row>
@@ -570,28 +564,24 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                 </Table.Body>
               </Table>
             </div>
-            <div className="crmactivities:grid crmactivities:items-start crmactivities:gap-6 crmactivities:lg:grid-cols-2">
+            <div className="grid items-start gap-6 lg:grid-cols-2">
               {card !== undefined && (
                 <article
                   aria-label={t(`${key}.contact`)}
-                  className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:p-5"
+                  className="rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5"
                 >
-                  <div className="crmactivities:space-y-1">
-                    <p className="crmactivities:text-sm crmactivities:text-(--color-fg-secondary)">
-                      {t(`${key}.contact`)}
-                    </p>
-                    <h2 className="crmactivities:text-xl crmactivities:font-semibold">
-                      {card.party.displayName ?? t(`${key}.unnamed`)}
-                    </h2>
+                  <div className="space-y-1">
+                    <p className="text-sm text-fg-secondary">{t(`${key}.contact`)}</p>
+                    <h2 className="text-xl font-semibold">{card.party.displayName ?? t(`${key}.unnamed`)}</h2>
                   </div>
-                  <dl className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:grid crmactivities:gap-4 crmactivities:p-4 crmactivities:text-sm">
-                    <div className="crmactivities:space-y-1">
-                      <dt className="crmactivities:text-(--color-fg-secondary)">{t(`${key}.partyType`)}</dt>
+                  <dl className="rounded-lg bg-surface [&_.ontos-tile]:bg-base grid gap-4 p-4 text-sm">
+                    <div className="space-y-1">
+                      <dt className="text-fg-secondary">{t(`${key}.partyType`)}</dt>
                       <dd>{t(`${key}.partyTypes.${card.party.partyType}`)}</dd>
                     </div>
-                    <div className="crmactivities:space-y-2">
-                      <dt className="crmactivities:text-(--color-fg-secondary)">{t(`${key}.roles`)}</dt>
-                      <dd className="crmactivities:flex crmactivities:flex-wrap crmactivities:gap-2">
+                    <div className="space-y-2">
+                      <dt className="text-fg-secondary">{t(`${key}.roles`)}</dt>
+                      <dd className="flex flex-wrap gap-2">
                         {card.currentRoles.map((role) => (
                           <Badge appearance="outline" key={role.roleType} severity="neutral" size="sm">
                             {t(`${key}.roleTypes.${role.roleType}`)}
@@ -604,15 +594,15 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
               )}
               {records.canWrite && (
                 <form
-                  className={`ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:p-5 ${card === undefined ? 'crmactivities:lg:col-span-2' : ''}`}
+                  className={`ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 min-w-0 space-y-5 p-5 ${card === undefined ? 'lg:col-span-2' : ''}`}
                   // Enter never records the activity: only Uložit does.
                   onSubmit={(event) => event.preventDefault()}
                 >
-                  <h2 className="crmactivities:text-xl crmactivities:font-semibold">{t(`${key}.record`)}</h2>
-                  <div className="crmactivities:grid crmactivities:items-start crmactivities:gap-4 crmactivities:md:grid-cols-2">
-                    <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
-                      <div className="crmactivities:flex crmactivities:flex-wrap crmactivities:items-end crmactivities:gap-3">
-                        <div className="crmactivities:min-w-0 crmactivities:flex-1">
+                  <h2 className="text-xl font-semibold">{t(`${key}.record`)}</h2>
+                  <div className="grid items-start gap-4 md:grid-cols-2">
+                    <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base space-y-4 p-4">
+                      <div className="flex flex-wrap items-end gap-3">
+                        <div className="min-w-0 flex-1">
                           <FormInput
                             id="counterparty-query"
                             label={t(`${key}.query`)}
@@ -657,7 +647,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                         </Select.Positioner>
                       </Select>
                     </div>
-                    <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
+                    <div className="rounded-lg bg-surface [&_.ontos-tile]:bg-base space-y-4 p-4">
                       <Select items={taskItems} onValueChange={({ value }) => setTaskId(value)} value={[...taskId]}>
                         <Select.Label>{t(`${key}.followUp`)}</Select.Label>
                         <Select.Control>
@@ -685,7 +675,7 @@ const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
                     required
                     value={summary}
                   />
-                  <div className="crmactivities:border-t border-border-primary/60 crmactivities:pt-4">
+                  <div className="border-t border-border-primary/60 pt-4">
                     <SaveBar
                       labels={saveLabelsFor(language)}
                       onReloadLatest={constVoid}

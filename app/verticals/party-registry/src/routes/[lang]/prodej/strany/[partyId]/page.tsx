@@ -36,7 +36,7 @@ const PartyIdentityPageContent = ({ context, routeParams }: PartyIdentityPagePro
   return (
     <>
       <UltramodernRouteHead titleKey={`${PARTY_IDENTITY_KEY}.title`} />
-      <section className="partyregistry:mx-auto partyregistry:flex partyregistry:w-full partyregistry:max-w-4xl partyregistry:flex-col partyregistry:gap-5 partyregistry:px-4 partyregistry:py-8 partyregistry:sm:px-8">
+      <section className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-8 sm:px-8">
         <PartyIdentityPageView input={input} onBack={handleBack} onReload={handleReload} read={read.view} />
       </section>
     </>

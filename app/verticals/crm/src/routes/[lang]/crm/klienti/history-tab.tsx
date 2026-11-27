@@ -91,7 +91,7 @@ export const HistoryTab = ({ client, records }: { readonly client: Client; reado
       {entries.map((entry, index) => (
         <li className="relative flex gap-150" key={entry.id}>
           {index < entries.length - 1 && (
-            <span aria-hidden className="absolute start-[0.95rem] top-9 bottom-[-1rem] w-px bg-border-primary" />
+            <span aria-hidden className="absolute start-[0.95rem] top-9 -bottom-4 w-px bg-border-primary" />
           )}
           <span className="z-10 inline-flex size-400 shrink-0 items-center justify-center rounded-full border border-border-primary bg-surface">
             <span aria-hidden className={`${entry.icon} size-200 text-fg-secondary`} />
