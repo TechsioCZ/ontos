@@ -1,5 +1,5 @@
 import { merchandiseRegistration } from '../../vertical.registration.ts';
-import { cleanupDemoAction } from '../../src/actions/cleanup-demo.action.ts';
+import { manageCatalogAction } from '../../src/actions/manage-catalog.action.ts';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { ContextAccess } from '@app/core-runtime';
@@ -101,7 +101,7 @@ it.effect('business mutation commits its targeted projection request atomically 
       access: 'allowed',
       ownerRegistration: merchandiseRegistration,
       services: [
-        bindActionTestServices(cleanupDemoAction, {
+        bindActionTestServices(manageCatalogAction, {
           apply: () => Effect.succeed({ entityIds: [EntityIdSchema.make('product-1')], revision: 1 }),
           productImage: () => Effect.die('No media read during mutation'),
           records: () => Effect.die('No records read during mutation'),
@@ -111,11 +111,11 @@ it.effect('business mutation commits its targeted projection request atomically 
     yield* harness.runtime
       .runAction({
         payload: {
-          command: { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Remove demo fixture' },
+          command: { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' },
           expectedRevision: 0,
         },
         principal,
-        registration: cleanupDemoAction,
+        registration: manageCatalogAction,
         transport: { correlationId: 'merchandise-search-test', idempotencyKey: 'archive-1' },
       })
       .pipe(Effect.provide(unusedRuntimeDependencies));
@@ -135,7 +135,7 @@ it.effect('failed business mutation leaves no projection intent or outbox messag
       access: 'allowed',
       ownerRegistration: merchandiseRegistration,
       services: [
-        bindActionTestServices(cleanupDemoAction, {
+        bindActionTestServices(manageCatalogAction, {
           apply: () =>
             Effect.fail(
               new MerchandiseRevisionConflict({ code: 'merchandise_revision_conflict', reason: 'Stale revision' }),
@@ -148,11 +148,11 @@ it.effect('failed business mutation leaves no projection intent or outbox messag
     const error = yield* harness.runtime
       .runAction({
         payload: {
-          command: { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Remove demo fixture' },
+          command: { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' },
           expectedRevision: 0,
         },
         principal,
-        registration: cleanupDemoAction,
+        registration: manageCatalogAction,
         transport: { correlationId: 'merchandise-search-test', idempotencyKey: 'archive-conflict-1' },
       })
       .pipe(Effect.provide(unusedRuntimeDependencies), Effect.flip);

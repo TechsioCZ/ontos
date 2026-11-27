@@ -166,7 +166,7 @@ export const cases = [
   },
   { command: { _tag: 'UpdateProduct', id, patch: { name: 'Updated product' } }, slug: 'manage-catalog' },
   { command: { _tag: 'SetProductMarketOffer', marketId: id, offered: true, productId: id }, slug: 'manage-markets' },
-  { command: { _tag: 'ArchiveDemoProduct', id, reason: 'HTTP cleanup' }, slug: 'cleanup-demo' },
+  { command: { _tag: 'RemoveDemoOrder', id, reason: 'HTTP cleanup' }, slug: 'cleanup-demo' },
   {
     command: { _tag: 'ChangeProductImages', change: { _tag: 'Reorder', images: [] }, id },
     slug: 'change-product-images',

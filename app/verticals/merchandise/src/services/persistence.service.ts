@@ -95,9 +95,9 @@ import { storefrontBrandOf } from '../../shared/domain/storefront-brand.ts';
 import {
   assignCategory,
   assignCategoryMemberships,
-  createCategoryCommand,
-  updateCategoryCommand,
+  categoryCommand,
   withContentHistory,
+  withExistingCategories,
 } from './catalog-content.ts';
 import {
   categoryTrailsOf,
@@ -2133,19 +2133,15 @@ export const evolveMerchandiseState = (
         };
       }),
     ),
-    Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
-    Match.tag('CreateCategory', (value) => createCategoryCommand(state, value)),
+    Match.tag('UpdateCategory', 'CreateCategory', 'DeleteCategory', (value) => categoryCommand(state, value, input)),
     // Replaces every row of the company in parts, so persistence (applyOnce) performs it; the pure evolve never does.
     Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
     Match.tag('ChangeProductImages', () => Effect.fail(conflict('Gallery changes run only through persistence'))),
     Match.tag(
-      'ArchiveDemoProduct',
-      Effect.fn('Merchandise.archiveDemoProduct')(function* archiveDemoProduct(value: CommandOf<'ArchiveDemoProduct'>) {
+      'ArchiveProduct',
+      Effect.fn('Merchandise.archiveProduct')(function* archiveProduct(value: CommandOf<'ArchiveProduct'>) {
         const product = yield* findProduct(state.products, value.id);
         const entity = yield* entityIdOf(product.id);
-        if (product.active || product.published !== false) {
-          return yield* conflict('Před archivací produkt deaktivujte a skryjte v e-shopu');
-        }
         if (product.demoArchive !== undefined) {
           return { entityIds: [entity], state };
         }
@@ -2161,6 +2157,23 @@ export const evolveMerchandiseState = (
           input,
         );
         return { entityIds: [entity], state: withProduct(state, archived) };
+      }),
+    ),
+    Match.tag(
+      'RestoreProduct',
+      Effect.fn('Merchandise.restoreProduct')(function* restoreProduct(value: CommandOf<'RestoreProduct'>) {
+        const product = yield* findProduct(state.products, value.id);
+        const entity = yield* entityIdOf(product.id);
+        if (product.demoArchive === undefined) {
+          return { entityIds: [entity], state };
+        }
+        const { demoArchive: _archive, ...live } = product;
+        void _archive;
+        const restored = yield* withExistingCategories(live, state.categories ?? []);
+        return {
+          entityIds: [entity],
+          state: withProduct(state, withContentHistory(product, { ...restored, updatedAt: input.now }, input)),
+        };
       }),
     ),
     Match.tag(
@@ -2330,7 +2343,7 @@ export const workingSetRequestOf = (
 ): WorkingSetRequest =>
   Match.value(command).pipe(
     Match.tagsExhaustive({
-      ArchiveDemoProduct: (value): WorkingSetRequest => ({ productIds: [value.id] }),
+      ArchiveProduct: (value): WorkingSetRequest => ({ productIds: [value.id] }),
       BulkUpdateProducts: (value): WorkingSetRequest =>
         value.patch.categoryId === undefined && value.patch.additionalCategoryIds === undefined
           ? { productIds: value.ids }
@@ -2379,6 +2392,8 @@ export const workingSetRequestOf = (
               ],
             };
       },
+      // The category, its ancestors, and any subcategory or live product that still holds it.
+      DeleteCategory: (value): WorkingSetRequest => ({ categoryDependents: value.id, categoryIds: [value.id] }),
       EditOrder: (value): WorkingSetRequest => ({
         movements: true,
         orderIds: [value.id],
@@ -2396,6 +2411,8 @@ export const workingSetRequestOf = (
       }),
       RecordStockMovement: (value): WorkingSetRequest => ({ movements: true, productIds: [value.productId] }),
       RemoveDemoOrder: (value): WorkingSetRequest => ({ movements: true, orderIds: [value.id] }),
+      // The product's categories as stored: a restore drops memberships of categories deleted meanwhile.
+      RestoreProduct: (value): WorkingSetRequest => ({ productCategoryMemberships: true, productIds: [value.id] }),
       // A sync touches only the head row and the stored prices, which persistence reprices in place.
       SyncTaxRates: (): WorkingSetRequest => ({}),
       UpdateCategory: (value): WorkingSetRequest => {

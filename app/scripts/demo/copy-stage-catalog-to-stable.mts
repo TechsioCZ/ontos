@@ -24,7 +24,6 @@ import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
   ChangeProductImagesPayloadSchema,
-  CleanupDemoPayloadSchema,
   ManageCatalogPayloadSchema,
   RecordStockMovementPayloadSchema,
 } from '../../verticals/merchandise/shared/actions/apply-command.ts';
@@ -550,21 +549,14 @@ const program = Effect.gen(function* program() {
   if (STEPS.includes('samples')) {
     for (const { sku } of SALES_PRODUCTS) {
       const res = yield* target.read({ limit: 5, search: sku, summary: true });
-      let { revision } = res;
       const p = res.products.find((x) => x.sku.toLowerCase() === sku.toLowerCase());
       if (!p) {
         log('sample', sku, 'absent or archived');
         continue;
       }
-      if (p.active !== false || p.published !== false) {
-        revision = (yield* target.call('/merchandise/actions/manage-catalog', ManageCatalogPayloadSchema, {
-          command: { _tag: 'UpdateProduct', id: p.id, patch: { active: false, published: false } },
-          expectedRevision: revision,
-        })).revision;
-      }
-      yield* target.call('/merchandise/actions/cleanup-demo', CleanupDemoPayloadSchema, {
-        command: { _tag: 'ArchiveDemoProduct', id: p.id, reason: 'Ukázkový produkt prodejního prostředí' },
-        expectedRevision: revision,
+      yield* target.call('/merchandise/actions/manage-catalog', ManageCatalogPayloadSchema, {
+        command: { _tag: 'ArchiveProduct', id: p.id, reason: 'Ukázkový produkt prodejního prostředí' },
+        expectedRevision: res.revision,
       });
       log('sample', sku, 'archived');
     }

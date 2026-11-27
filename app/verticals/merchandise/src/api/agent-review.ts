@@ -43,11 +43,13 @@ const moneyOptions = (fields: AgentCommand): AgentDiffValueOptions => ({
 
 /** Commands that change the catalog or prices (records `canManageCatalog`). */
 const CATALOG_COMMANDS: ReadonlySet<string> = new Set([
-  'ArchiveDemoProduct',
+  'ArchiveProduct',
   'BulkUpdateProducts',
   'ChangePrice',
   'CreateProduct',
   'CreateCategory',
+  'DeleteCategory',
+  'RestoreProduct',
   'UpdateCategory',
   'UpdateProduct',
 ]);

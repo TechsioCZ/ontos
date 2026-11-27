@@ -1435,6 +1435,11 @@ export const lockHeadForWrite = Effect.fn('MerchandiseStore.lockHeadForWrite')(f
 /** What one command needs to see; everything else stays in the database. */
 export interface WorkingSetRequest {
   readonly aiChanges?: boolean;
+  /**
+   * A category about to be deleted: also load, from the stored rows, one of its subcategories and one live (not
+   * archived) product in it or below it, if any, so the command can refuse to delete a category that is not empty.
+   */
+  readonly categoryDependents?: string;
   /** Category rows by id, each with its ancestor chain (category path of a product move). */
   readonly categoryIds?: readonly string[];
   /** Load scoped category slug collisions before creation. */
@@ -1566,6 +1571,53 @@ const workingSetCategoryIds = Effect.fn('MerchandiseStore.workingSetCategoryIds'
   return [...(named ?? []), ...holders.map((category) => category.id)];
 });
 
+const NO_DEPENDENTS = { categoryIds: [], productIds: [] } as const;
+
+/** One stored subcategory and one live product of the category, the ones that keep it from being deleted. */
+const categoryDependentsOf = Effect.fn('MerchandiseStore.categoryDependentsOf')(function* categoryDependentsOf(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  categoryId: string | undefined,
+) {
+  if (categoryId === undefined) {
+    return NO_DEPENDENTS;
+  }
+  // One transaction connection: the two reads run one after the other.
+  const [children, members] = yield* Effect.all(
+    [
+      query(
+        db
+          .select({ id: categories.id })
+          .from(categories)
+          .where(and(whereScope(categories, scope), eq(categories.parentId, categoryId)))
+          .limit(1),
+        'Category children could not be read',
+      ),
+      query(
+        db
+          .select({ id: products.id })
+          .from(products)
+          .where(
+            and(
+              whereScope(products, scope),
+              eq(products.archived, false),
+              // The stored path names the primary and every additional category with their ancestors.
+              or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
+            ),
+          )
+          .limit(1),
+        'Category products could not be read',
+      ),
+    ],
+    { concurrency: 1 },
+  );
+  return { categoryIds: children.map((row) => row.id), productIds: members.map((row) => row.id) };
+});
+
+/** The categories a working set loads, with those that keep a category from being deleted. */
+const withDependentCategories = (named: readonly string[] | undefined, dependents: readonly string[]) =>
+  dependents.length === 0 ? named : [...(named ?? []), ...dependents];
+
 /** Loads the rows `request` names under the locked head row. */
 /** The lines of one order as stored; none when the company has no such order. */
 export const loadOrderLines = Effect.fn('MerchandiseStore.loadOrderLines')(function* loadOrderLines(
@@ -1634,8 +1686,14 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
             .groupBy(stockMovements.productId),
         )).map((row) => row.productId)
       : [];
+  const dependents = yield* categoryDependentsOf(db, scope, request.categoryDependents);
   const productIds = [
-    ...new Set([...(request.productIds ?? []), ...loadedOrders.flatMap(orderLineProductIds), ...referencedProductIds]),
+    ...new Set([
+      ...(request.productIds ?? []),
+      ...loadedOrders.flatMap(orderLineProductIds),
+      ...referencedProductIds,
+      ...dependents.productIds,
+    ]),
   ];
   const keyFilters = productKeyFilters(request.productKeys);
   const productFilters = [...(productIds.length === 0 ? [] : [inArray(products.id, productIds)]), ...keyFilters];
@@ -1659,12 +1717,13 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
           'Stock movements could not be read',
         )
       : [];
-  const categoryIds = yield* workingSetCategoryIds(
+  const namedCategoryIds = yield* workingSetCategoryIds(
     db,
     scope,
     request,
     loaded.map(({ product }) => product),
   );
+  const categoryIds = withDependentCategories(namedCategoryIds, dependents.categoryIds);
   const [movements, loadedCategories] = yield* Effect.all(
     [
       query(Effect.forEach(movementRows, decodeMovementRow, { concurrency: 1 }), 'Stored movement does not decode'),
@@ -1859,6 +1918,29 @@ const CATEGORY_WRITE_FAILED = 'Category could not be written';
 const CategoryIdListSchema = Schema.Array(Schema.String);
 const decodeCategoryIdList = Schema.decodeUnknownOption(CategoryIdListSchema);
 
+/** The parent's hasChildren follows the children it has left in the stored tree. */
+const refreshHasChildren = Effect.fn('MerchandiseStore.refreshHasChildren')(function* refreshHasChildren(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  parentId: string,
+) {
+  const children = yield* query(
+    db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(whereScope(categories, scope), eq(categories.parentId, parentId)))
+      .limit(1),
+    'Category children could not be read',
+  );
+  yield* query(
+    db
+      .update(categories)
+      .set({ hasChildren: children.length > 0 })
+      .where(and(whereScope(categories, scope), eq(categories.id, parentId))),
+    CATEGORY_WRITE_FAILED,
+  );
+});
+
 /**
  * After a category moved under another parent: the old parent's hasChildren follows its remaining children, and every
  * product whose stored category path names the moved category gets its path recomputed from the stored tree.
@@ -1870,21 +1952,7 @@ const repathMovedCategory = Effect.fn('MerchandiseStore.repathMovedCategory')(fu
   previousParentId: string | null,
 ) {
   if (previousParentId !== null) {
-    const children = yield* query(
-      db
-        .select({ id: categories.id })
-        .from(categories)
-        .where(and(whereScope(categories, scope), eq(categories.parentId, previousParentId)))
-        .limit(1),
-      'Category children could not be read',
-    );
-    yield* query(
-      db
-        .update(categories)
-        .set({ hasChildren: children.length > 0 })
-        .where(and(whereScope(categories, scope), eq(categories.id, previousParentId))),
-      CATEGORY_WRITE_FAILED,
-    );
+    yield* refreshHasChildren(db, scope, previousParentId);
   }
   const treeRows = yield* query(
     db
@@ -1991,6 +2059,24 @@ const persistCategories = Effect.fn('MerchandiseStore.persistCategories')(functi
             .where(and(whereScope(products, scope), eq(products.categoryId, category.id))),
           'Category products could not be renamed',
         );
+      }
+    }),
+    { concurrency: 1, discard: true },
+  );
+  // A category the command removed from its working set (DeleteCategory): its row goes, its parent's flag follows.
+  const remaining = new Set((after.categories ?? []).map((category) => category.id));
+  const removed =
+    after.categories === undefined ? [] : [...previousCategories.values()].filter(({ id }) => !remaining.has(id));
+  yield* Effect.forEach(
+    removed,
+    Effect.fn('MerchandiseStore.deleteCategory')(function* deleteCategoryRow(category: CatalogCategory) {
+      yield* query(
+        db.delete(categories).where(and(whereScope(categories, scope), eq(categories.id, category.id))),
+        CATEGORY_WRITE_FAILED,
+      );
+      const parentId = Option.getOrNull(category.parentId);
+      if (parentId !== null) {
+        yield* refreshHasChildren(db, scope, parentId);
       }
     }),
     { concurrency: 1, discard: true },

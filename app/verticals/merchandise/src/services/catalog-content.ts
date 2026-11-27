@@ -1,5 +1,5 @@
-// Catalog content editing: content history, category assignment and the UpdateCategory command.
-import { Effect, Option, Predicate, Result, Schema } from 'effect';
+// Catalog content editing: content history, category assignment and the category commands.
+import { Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { MerchandiseLifecycleConflict, MerchandiseNotFound } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
@@ -397,3 +397,89 @@ export const createCategoryCommand = Effect.fn('Merchandise.createCategoryComman
     },
   };
 });
+
+type DeleteCategoryCommand = Extract<MerchandiseCommand, { readonly _tag: 'DeleteCategory' }>;
+
+const lifecycleConflict = (reason: string) =>
+  new MerchandiseLifecycleConflict({ code: 'merchandise_lifecycle_conflict', reason });
+
+/** Whether the product is in the category: as its primary or additional category, or below either. */
+const productInCategory = (product: Product, id: string) =>
+  product.categoryId === id ||
+  (product.additionalCategoryIds ?? []).includes(CatalogCategoryIdSchema.make(id)) ||
+  (product.categoryPathIds ?? []).includes(CatalogCategoryIdSchema.make(id));
+
+/**
+ * Deletes one empty category: one without a subcategory and without a live product. Archived products do not hold it;
+ * restoring one drops the membership (`withExistingCategories`). The working set carries the category, its ancestors
+ * and, read from the stored rows under the locked head, one subcategory and one live product that still hold it.
+ */
+export const deleteCategoryCommand = Effect.fn('Merchandise.deleteCategoryCommand')(function* deleteCategoryCommand(
+  state: MerchandiseState,
+  value: DeleteCategoryCommand,
+): Effect.fn.Return<MerchandiseChange, MerchandiseCommandError> {
+  const categories = state.categories ?? [];
+  const current = categories.find((category) => category.id === value.id);
+  if (current === undefined) {
+    return yield* new MerchandiseNotFound({ code: 'merchandise_not_found', reason: 'Kategorie neexistuje' });
+  }
+  if (categories.some((category) => Option.getOrNull(category.parentId) === current.id)) {
+    return yield* lifecycleConflict('Kategorie má podkategorie. Nejdřív je smažte nebo přesuňte jinam.');
+  }
+  if (state.products.some((product) => product.demoArchive === undefined && productInCategory(product, current.id))) {
+    return yield* lifecycleConflict(
+      'V kategorii jsou produkty. Nejdřív je přesuňte do jiné kategorie nebo archivujte.',
+    );
+  }
+  const entity = yield* Schema.decodeEffect(EntityIdSchema)(current.id).pipe(Effect.orDie);
+  return {
+    entityIds: [entity],
+    state: { ...state, categories: categories.filter((category) => category.id !== current.id) },
+  };
+});
+
+/**
+ * The product without memberships of categories deleted while it was archived: an existing primary category stays
+ * with the additional ones that still exist; without its primary category the product keeps no category.
+ * `categories` holds every stored category the product names, with their ancestors.
+ */
+export const withExistingCategories = (
+  product: Product,
+  categories: readonly CatalogCategory[],
+): Effect.Effect<Product, MerchandiseCommandError> => {
+  const { additionalCategoryIds, categoryId } = product;
+  if (categoryId === undefined) {
+    return Effect.succeed(product);
+  }
+  const known = new Set(categories.map((category) => category.id));
+  if (!known.has(categoryId)) {
+    const {
+      additionalCategoryIds: _additional,
+      categoryId: _primary,
+      categoryPathIds: _path,
+      ...uncategorized
+    } = product;
+    void _additional;
+    void _primary;
+    void _path;
+    return Effect.succeed(uncategorized);
+  }
+  const existing = (additionalCategoryIds ?? []).filter((id) => known.has(id));
+  return existing.length === (additionalCategoryIds ?? []).length
+    ? Effect.succeed(product)
+    : assignCategoryMemberships(product, categoryId, existing, categories);
+};
+
+/** The storefront category commands: edit, add and delete one category of the tree. */
+export const categoryCommand = (
+  state: MerchandiseState,
+  value: UpdateCategoryCommand | CreateCategoryCommand | DeleteCategoryCommand,
+  input: MerchandiseCommandInput,
+): Effect.Effect<MerchandiseChange, MerchandiseCommandError> =>
+  Match.value(value).pipe(
+    Match.tagsExhaustive({
+      CreateCategory: (command) => createCategoryCommand(state, command),
+      DeleteCategory: (command) => deleteCategoryCommand(state, command),
+      UpdateCategory: (command) => updateCategoryCommand(state, command, input),
+    }),
+  );

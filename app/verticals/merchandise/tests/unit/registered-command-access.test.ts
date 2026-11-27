@@ -198,7 +198,8 @@ commandTests(manageCatalogAction, {
   storefrontAppId: 'akros-storefront',
 });
 commandTests(manageMarketsAction, { _tag: 'RemoveMarket', marketId: '50000000-0000-4000-8000-000000000001' });
-commandTests(cleanupDemoAction, { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Remove demo fixture' });
+commandTests(cleanupDemoAction, { _tag: 'RemoveDemoOrder', id: 'order-1', reason: 'Remove demo fixture' });
+commandTests(manageCatalogAction, { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' });
 commandTests(changeProductImagesAction, {
   _tag: 'ChangeProductImages',
   change: { _tag: 'Reorder', images: [] },

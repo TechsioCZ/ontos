@@ -89,7 +89,7 @@ const staffCommands: readonly CommandInput[] = [
   { _tag: 'ChangePrice', id: 'product-1', priceMinor: 16 },
   { _tag: 'ChangeOrderStatus', id: 'order-1', status: 'CONFIRMED' },
   { _tag: 'RecordStockMovement', delta: 1, productId: 'product-1', reason: 'RECEIPT' },
-  { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Remove demo fixture' },
+  { _tag: 'ArchiveProduct', id: 'product-1', reason: 'Remove demo fixture' },
 ];
 
 const decodesAsCommand = Schema.decodeUnknownOption(MerchandiseCommandSchema);

@@ -34,6 +34,8 @@ import {
 import type { CategoryDraft, NewCategoryDraft } from './category-save.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { fieldError } from './product-form-validation.ts';
+import { LiveShopConfirm } from './live-shop-confirm.tsx';
+import { useCommandFailure } from './product-form-labels.ts';
 import { loadProductRecord } from './product-reads.ts';
 import type { ProductRecordState } from './product-reads.ts';
 import { useImageSource } from './product-image-source.ts';
@@ -473,9 +475,84 @@ const CategoryCreateForm = ({ onCancel, onCreated, revision }: CategoryCreateFor
   );
 };
 
+/**
+ * Deletes the category after a confirmation that names it. The server refuses a category that still has a subcategory
+ * or a product that is not archived; a category with subcategories cannot even be asked for.
+ */
+const CategoryDeleteSection = ({
+  category,
+  disabled,
+  onDeleted,
+  onReload,
+  revision,
+}: {
+  readonly category: CategoryNode;
+  readonly disabled: boolean;
+  readonly onDeleted: () => void;
+  readonly onReload: () => void;
+  readonly revision: number;
+}) => {
+  const failure = useCommandFailure();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const handleConfirm = () => {
+    setAsking(false);
+    setBusy(true);
+    setError(null);
+    runCommand({ _tag: 'DeleteCategory', id: category.id }, revision, (outcome) => {
+      setBusy(false);
+      if (outcome.ok) {
+        onDeleted();
+        return;
+      }
+      setError(
+        outcome.reason === 'rejected' && outcome.proposal === undefined
+          ? 'Kategorii nelze smazat: má podkategorie nebo v ní jsou produkty. Přesuňte je do jiné kategorie, nebo produkty archivujte.'
+          : failure(outcome.reason, onReload, outcome.proposal),
+      );
+    });
+  };
+  return (
+    <div className="flex flex-col gap-100 border-border-secondary border-t pt-200">
+      <p className="text-fg-secondary text-sm">
+        {category.hasChildren
+          ? 'Kategorii s podkategoriemi nelze smazat. Nejdřív smažte nebo přesuňte její podkategorie.'
+          : 'Smazat lze jen prázdnou kategorii: bez podkategorií a bez produktů (archivované produkty se nepočítají).'}
+      </p>
+      <Button
+        data-testid="category-delete"
+        disabled={disabled || busy || category.hasChildren}
+        isLoading={busy}
+        onClick={() => setAsking(true)}
+        theme="outlined"
+        type="button"
+        variant="danger"
+      >
+        Smazat kategorii
+      </Button>
+      {error !== null && (
+        <StatusText showIcon status="error">
+          {error}
+        </StatusText>
+      )}
+      <LiveShopConfirm
+        confirmLabel="Smazat"
+        description={`Kategorie „${category.name}“ zmizí ze stromu kategorií i z e-shopu. Smazání nelze vrátit.`}
+        destructive
+        onCancel={() => setAsking(false)}
+        onConfirm={handleConfirm}
+        open={asking}
+        title={`Smazat kategorii ${category.name}?`}
+      />
+    </div>
+  );
+};
+
 interface CategoryEditPanelProps {
   readonly category: CategoryNode;
   readonly onBack: () => void;
+  readonly onDeleted: () => void;
   readonly onSaved: (next: CategoryNode, revision: number) => void;
   readonly parentName: string | undefined;
   readonly revision: number;
@@ -487,7 +564,15 @@ interface CategoryEditPanelProps {
  * revision the draft builds on. When someone else changed the category, the panel offers the version they saved
  * instead. Leaving with unsaved changes asks first.
  */
-const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, siblings }: CategoryEditPanelProps) => {
+const CategoryEditPanel = ({
+  category,
+  onBack,
+  onDeleted,
+  onSaved,
+  parentName,
+  revision,
+  siblings,
+}: CategoryEditPanelProps) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const record = useRecordDraft<CategoryDraft, never>({
@@ -559,6 +644,13 @@ const CategoryEditPanel = ({ category, onBack, onSaved, parentName, revision, si
             slugError={errors.slug}
           />
         </form>
+        <CategoryDeleteSection
+          category={category}
+          disabled={record.dirty}
+          onDeleted={onDeleted}
+          onReload={handleReloadLatest}
+          revision={revision}
+        />
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -644,12 +736,21 @@ const useCategoryAdmin = ({ onCommitted }: CategoryAdminButtonProps) => {
     setSavedOnce(true);
   };
 
+  /** A deleted category leaves the editor for the reread list. */
+  const deleted = () => {
+    setSelection(null);
+    setSavedOnce(false);
+    reload();
+    onCommitted('Kategorie smazána.');
+  };
+
   return {
     backToList,
     categories,
     commitSaved,
     created,
     creating,
+    deleted,
     list,
     loaded,
     open,
@@ -682,6 +783,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
     commitSaved,
     created,
     creating,
+    deleted,
     list,
     loaded,
     open,
@@ -710,6 +812,7 @@ export const CategoryAdminButton = (props: CategoryAdminButtonProps) => {
           category={selected}
           key={selection.id}
           onBack={backToList}
+          onDeleted={deleted}
           onSaved={commitSaved}
           parentName={parentName}
           revision={selection.revision}

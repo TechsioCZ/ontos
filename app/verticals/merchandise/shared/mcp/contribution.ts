@@ -23,7 +23,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     AiDecideChanges: 'hidden',
     AiProposeChanges: 'hidden',
     AiRevertBatch: 'hidden',
-    ArchiveDemoProduct: 'hidden',
+    ArchiveProduct: 'hidden',
     BulkUpdateProducts: {
       agentProposalOnly: true,
       liveRight: 'canManageCatalog',
@@ -58,6 +58,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canManageCatalog',
       title: { cs: 'Vytvořit produkt', en: 'Create a product' },
     },
+    DeleteCategory: 'hidden',
     EditOrder: {
       agentProposalOnly: true,
       liveRight: 'canEditOrders',
@@ -78,6 +79,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       title: { cs: 'Odebrat sortiment a ceník trhu', en: 'Remove a market offer and price list' },
     },
     ResetDemoData: 'hidden',
+    RestoreProduct: 'hidden',
     SetMarketProductOffers: {
       agentProposalOnly: true,
       description: {

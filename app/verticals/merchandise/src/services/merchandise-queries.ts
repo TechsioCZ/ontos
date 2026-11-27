@@ -440,8 +440,19 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   return { head, held, products: records, rates: pricedRates, total } satisfies ProductPage;
 });
 
+/** Archived products: only in a staff list that asks for them, and in the staff detail of one product. */
+const archivedFilter = (view: RecordsView, storefront: boolean): SQL | undefined => {
+  if (storefront) {
+    return eq(products.archived, false);
+  }
+  if (view.archived === true) {
+    return eq(products.archived, true);
+  }
+  return view.productId === undefined ? eq(products.archived, false) : undefined;
+};
+
 const staffProductFilters = (view: RecordsView, storefront: boolean, scope: StoreScope): (SQL | undefined)[] => [
-  eq(products.archived, false),
+  archivedFilter(view, storefront),
   ...(storefront ? [eq(products.active, true), eq(products.published, true), sellableClassificationFilter(scope)] : []),
   view.productId === undefined ? undefined : eq(products.id, view.productId),
   view.productIds === undefined ? undefined : idsFilter(products.id, view.productIds),
