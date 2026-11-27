@@ -220,14 +220,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         .slice(0, 3);
 
   const purchaseStock = getProductStockStatus(purchaseItem);
-  const simpleStockLabel =
-    purchaseStock === "unknown"
-      ? cs.product.availabilityNowUnknown
-      : purchaseStock === "in-stock"
-        ? cs.product.inStockCount(purchaseItem.stockCount, purchaseItem.unit)
-        : purchaseStock === "below-package"
-          ? stockStatusLabel(cs, purchaseStock, purchaseItem.belowPackage, purchaseItem.unit)
-          : cs.product.outOfStock;
+  const simpleStockLabel = stockStatusLabel(
+    cs,
+    purchaseStock,
+    purchaseItem.belowPackage,
+    purchaseItem.unit,
+  );
   const stockState =
     purchaseStock === "unknown"
       ? "limited"

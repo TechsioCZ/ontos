@@ -39,16 +39,8 @@ interface ProductPurchaseFormProps {
 
 const noVariants: CatalogPurchaseVariant[] = [];
 
-const variantAvailabilityLabel = (cs: Dictionary, variant: CatalogPurchaseVariant): string => {
-  const status = getProductStockStatus(variant);
-  return status === "unknown"
-    ? cs.product.variantAvailability.unknown
-    : status === "in-stock"
-      ? cs.product.variantAvailability.inStock
-      : status === "below-package"
-        ? stockStatusLabel(cs, status, variant.belowPackage, variant.unit)
-        : cs.product.variantAvailability.outOfStock;
-};
+const variantAvailabilityLabel = (cs: Dictionary, variant: CatalogPurchaseVariant): string =>
+  stockStatusLabel(cs, getProductStockStatus(variant), variant.belowPackage, variant.unit);
 
 const getVariantCartItem = (product: CatalogPurchaseProduct, variant: CatalogPurchaseVariant) => ({
   vatRate: product.vatRate,
@@ -519,7 +511,7 @@ export function ProductPurchaseForm({
                     priceUnavailableText(purchaseItem.priceUnavailableReason, cs, money),
                   )
                 : purchaseItem.availabilityUnknown
-                  ? cs.product.availabilityUnknownTitle
+                  ? stockStatusLabel(cs, "unknown")
                   : undefined
             }
             icon="token-icon-cart"

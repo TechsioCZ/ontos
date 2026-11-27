@@ -53,6 +53,8 @@ export interface RemoteSearchResponse {
   items: RemoteSearchSuggestion[];
   total: number;
   categories?: RemoteCategorySuggestion[];
+  /** The ERP part was not ready yet: the answer is shown, never kept, and asked again (header search). */
+  erpPartial?: true;
 }
 
 /** Kai's placeholder groups (a product literally named "AKCE") are not real goods. */

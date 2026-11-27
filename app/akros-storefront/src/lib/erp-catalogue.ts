@@ -380,22 +380,16 @@ export const erpPriceLabel = (price: ErpPrice, locale: string): string =>
     ? `${formatErpAmount(price.amount, price.currencyCode, locale)} ${erpCopy.excludingVat}`
     : erpCopy.priceOnRequest;
 
-/** One ERP variant's stock line on its detail page, in the words of the shop's product page for one unit. */
-export const erpStockLabel = (cs: Dictionary, stock: ErpStock): string => {
-  const status = getProductStockStatus(stock);
-  return status === "unknown"
-    ? cs.product.availabilityNowUnknown
-    : status === "in-stock"
-      ? cs.product.inStockCount(stock.stockCount, stock.unit)
-      : status === "below-package"
-        ? stockStatusLabel(cs, status, stock.belowPackage, stock.unit)
-        : cs.product.outOfStock;
-};
-
 /** The stock line of an ERP detail page, in the words of the shop's product page (one unit, or a variant group). */
 export function erpDetailStockLabel(product: ErpProduct, cs: Dictionary): string {
   const [only] = product.variants;
-  if (product.variants.length === 1 && only !== undefined) return erpStockLabel(cs, only.stock);
+  if (product.variants.length === 1 && only !== undefined)
+    return stockStatusLabel(
+      cs,
+      getProductStockStatus(only.stock),
+      only.stock.belowPackage,
+      only.stock.unit,
+    );
   const statuses = product.variants.map(({ stock }) => getProductStockStatus(stock));
   const available = statuses.filter((status) => status === "in-stock").length;
   return available > 0

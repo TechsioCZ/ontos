@@ -6,7 +6,6 @@ import {
   erpCopy,
   erpPriceLabel,
   isYourPrice,
-  erpStockLabel,
   hasUndecidedPrice,
   toErpProducts,
   withGuestPricesWhereUndecided,
@@ -15,6 +14,7 @@ import {
   type CatalogVariantOnHand,
 } from "@/lib/erp-catalogue";
 import { cs } from "@/i18n/cs";
+import { getProductStockStatus, stockStatusLabel } from "@/lib/product-stock";
 import { parseErpOffers } from "@/ontos/erp-config";
 import { imagePlaceholder } from "@/ontos/media-path";
 
@@ -108,15 +108,20 @@ describe("ERP product page model", () => {
       item.sku,
       item.options.join(", "),
       erpPriceLabel(item.price, "cs"),
-      erpStockLabel(cs, item.stock),
+      stockStatusLabel(
+        cs,
+        getProductStockStatus(item.stock),
+        item.stock.belowPackage,
+        item.stock.unit,
+      ),
     ]);
     expect(rows).toEqual([
-      ["ERP-1", "M1, 10 mm", "1\u00a0234,50\u00a0Kč bez DPH", "Skladem 42 ks"],
+      ["ERP-1", "M1, 10 mm", "1\u00a0234,50\u00a0Kč bez DPH", "Skladem"],
       ["ERP-2", "M2, 20 mm", "99,00\u00a0Kč bez DPH", "Není skladem"],
-      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
-      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
-      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
-      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost nyní nelze ověřit"],
+      ["ERP-3", "M3, 30 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-4", "M4, 40 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-5", "M5, 50 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
+      ["ERP-6", "M6, 60 mm", "Cena na dotaz", "Dostupnost nelze ověřit"],
     ]);
     expect(erpCardSummary(product!, cs, "cs")).toEqual({
       priceLabel: "od 99,00\u00a0Kč bez DPH",

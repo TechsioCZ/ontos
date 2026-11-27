@@ -94,7 +94,6 @@ export const sk: Dictionary = {
     availabilityByVariant: "Dostupnosť podľa variantu",
     from: "od",
     variantPrice: "Cena podľa variantu",
-    inStock: "Skladom",
     unitPrice: "Cena za jednotku",
     sku: "Kód produktu",
     details: "Popis produktu",
@@ -119,14 +118,11 @@ export const sk: Dictionary = {
     minimumOrder: "Minimálny odber",
     minimumOrderByVariant: "Podľa zvoleného variantu",
     variantCount: "Počet variantov",
-    inStockCount: (quantity: number, unit: string) => `Skladom ${count(quantity)} ${unit}`,
     belowPackageCount: (quantity: number, firstOrder: number, unit: string) =>
       `Skladom ${count(quantity)} ${unit}, predaj po ${count(firstOrder)} ${unit}`,
-    availabilityNowUnknown: "Dostupnosť teraz nemožno overiť",
-    outOfStock: "Nie je skladom",
     variantsInStock: (available: number, total: number) =>
       `Skladom ${count(available)} z ${count(total)} variantov`,
-    variantsUnknown: "Dostupnosť variantov teraz nemožno overiť",
+    variantsUnknown: "Dostupnosť variantov nemožno overiť",
     variantsOutOfStock: "Momentálne nie je skladom žiadny variant",
     imageNumber: (index: number) => `obrázok ${index}`,
     technicalDrawing: (name: string) => `Technický výkres: ${name}`,
@@ -151,11 +147,6 @@ export const sk: Dictionary = {
     variantPriceFilter: (symbol: string, unit: string) => `Cena (${symbol}/${unit})`,
     applyVariantFilters: "Filtrovať",
     variantsPagination: "Stránkovanie variantov",
-    variantAvailability: {
-      unknown: "Nemožno overiť",
-      inStock: "Skladom",
-      outOfStock: "Nie je skladom",
-    },
     variantAvailabilityUnknown: "OntOS teraz nemôže potvrdiť dostupnosť tohto variantu.",
     noVariantsForFilters: "Pre zadané filtre sa nenašiel žiadny variant.",
     orderIncrement: (quantity: string, unit: string) => `Odber po ${quantity} ${unit}`,
@@ -187,7 +178,6 @@ export const sk: Dictionary = {
       missingPrice: "OntOS pre túto položku nevrátil cenu.",
       zeroPrice: "Cena v OntOS je nulová, položku preto nemožno objednať.",
     },
-    availabilityUnknownTitle: "Dostupnosť teraz nemožno overiť.",
     code: "Kód",
     table: {
       name: "Názov",
@@ -393,18 +383,14 @@ export const sk: Dictionary = {
     quantityAdjusted: (quantity: string, unit: string) => `Upravené na ${quantity} ${unit}`,
     quantityStockLimit: (quantity: string, unit: string) => `Zo skladu max. ${quantity} ${unit}`,
     lineState: {
-      inStock: "Skladom",
-      unverified: "Nemožno overiť",
       unchecked: "Neoverené",
       checking: "Overujem…",
       blocked: "Nemožno objednať",
     },
     issue: {
-      AVAILABILITY_UNKNOWN: "Nemožno overiť",
       PRICE_UNAVAILABLE: "Cena nie je dostupná",
       NOT_AVAILABLE: "Nie je v ponuke",
       NOT_OFFERED_IN_MARKET: "Nie je v ponuke trhu",
-      OUT_OF_STOCK: "Nie je skladom",
       INSUFFICIENT_STOCK: "Nedostatočná zásoba",
       MINIMUM_QUANTITY: "Upravte množstvo",
       PACKAGE_QUANTITY: "Upravte množstvo",
@@ -1069,7 +1055,7 @@ export const sk: Dictionary = {
       priceUnavailable: (label: string, reason: string) =>
         `${label}: cena nie je dostupná. ${reason}`.trim(),
       availabilityUnknown: (label: string) =>
-        `${label}: dostupnosť teraz nemožno overiť, objednávku preto nemožno dokončiť. Položku odoberte alebo to skúste neskôr.`,
+        `${label}: dostupnosť nemožno overiť, objednávku preto nemožno dokončiť. Položku odoberte alebo to skúste neskôr.`,
       outOfStock: (label: string) => `${label}: momentálne nie je na sklade.`,
       belowPackage: (label: string, stock: number, firstOrder: number, unit: string) =>
         `${label}: na sklade je len ${count(stock)} ${unit}, predáva sa po ${count(firstOrder)} ${unit}.`,

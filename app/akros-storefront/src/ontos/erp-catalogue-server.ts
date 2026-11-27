@@ -27,7 +27,7 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { getErpOffer, type ErpOffer } from "./erp-config";
 import { createOperation, OntosError, readRecords } from "./gateway";
 import type { Operation, OperationOptions } from "./gateway";
-import { freshRead } from "./fresh-read";
+import { freshRead, latestFreshRead } from "./fresh-read";
 
 /** The owners answer at most 100 variants per stock or price read. */
 const VARIANT_PAGE = 100;
@@ -299,9 +299,10 @@ interface ErpSnapshot {
   readonly products: ReadonlyMap<string, ErpProduct>;
 }
 
+const erpSnapshotKey = (locale: string) => `erp-snapshot:${locale}`;
 const erpSnapshot = (offer: ErpOffer, locale: string, caller: Operation) =>
   freshRead(
-    `erp-snapshot:${locale}`,
+    erpSnapshotKey(locale),
     ERP_SNAPSHOT_TIMING,
     async (operation): Promise<ErpSnapshot> => {
       const items: ErpPageItem[] = [];
@@ -316,17 +317,8 @@ const erpSnapshot = (offer: ErpOffer, locale: string, caller: Operation) =>
     caller,
   );
 
-/** The ERP products a search query finds (the same products „Novinky z ERP“ shows), priced as a guest. */
-export const searchErpProducts = async (
-  query: string,
-  limit: number,
-  operation: Operation,
-): Promise<{ count: number; products: ErpProduct[] }> => {
-  const offer = getErpOffer();
-  const term = query.trim();
-  if (offer === undefined || term === "") return { count: 0, products: [] };
-  const { locale } = await getActiveMarket(marketReadsFor(operation));
-  const snapshot = await erpSnapshot(offer, locale, operation);
+/** The ERP products of a snapshot that a search query finds (the same products „Novinky z ERP“ shows). */
+const snapshotMatches = (snapshot: ErpSnapshot, term: string, limit: number) => {
   const matched = snapshot.items.filter((item) => erpItemMatches(item, term));
   return {
     count: matched.length,
@@ -337,28 +329,49 @@ export const searchErpProducts = async (
   };
 };
 
-/** The ERP search answer, or none when it is not ready within `ms` (search never waits on the ERP read). */
+/**
+ * The ERP products a search query finds, priced as a guest, within `ms` (search never waits longer on the ERP read).
+ * A snapshot read slower than that answers from the newest snapshot an owner outage would still serve, while the read
+ * goes on for the next search. Only a search before any snapshot was read (or one that cannot learn its market in
+ * time) answers without ERP products, and says so (`partial`) so the header asks again instead of keeping it.
+ */
 export const searchErpProductsWithin = async (
   query: string,
   limit: number,
   operation: Operation,
   ms: number,
-): Promise<{ count: number; products: ErpProduct[] }> => {
-  const none = { count: 0, products: [] as ErpProduct[] };
+): Promise<{ count: number; products: ErpProduct[]; partial: boolean }> => {
+  const offer = getErpOffer();
+  const term = query.trim();
+  if (offer === undefined || term === "") return { count: 0, products: [], partial: false };
+  const market: { locale?: string } = {};
+  const read = (async () => {
+    market.locale = (await getActiveMarket(marketReadsFor(operation))).locale;
+    return snapshotMatches(await erpSnapshot(offer, market.locale, operation), term, limit);
+  })().catch((error: unknown) => {
+    if (!operation.signal.aborted) console.error(`[ontos] ERP search failed (${String(error)})`);
+    return undefined;
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
-      searchErpProducts(query, limit, operation).catch((error: unknown) => {
-        console.error(
-          `[ontos] ERP search failed (${String(error)}); searched without ERP products`,
-        );
-        return none;
-      }),
-      new Promise<typeof none>((resolve) => {
-        timer = setTimeout(() => resolve(none), ms);
+    const answer = await Promise.race([
+      read,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ms);
       }),
     ]);
+    if (answer !== undefined) return { ...answer, partial: false };
   } finally {
     clearTimeout(timer);
   }
+  const kept =
+    market.locale === undefined
+      ? undefined
+      : latestFreshRead<ErpSnapshot>(erpSnapshotKey(market.locale));
+  if (kept !== undefined) return { ...snapshotMatches(kept, term, limit), partial: false };
+  if (!operation.signal.aborted)
+    console.error(
+      `[ontos] ERP search had no snapshot within ${ms} ms; searched without ERP products`,
+    );
+  return { count: 0, products: [], partial: true };
 };

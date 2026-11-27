@@ -30,12 +30,16 @@ export const getProductStockStatus = ({
   return belowPackage ? "below-package" : "out-of-stock";
 };
 
-/** The words of one stock status; below one package they name both quantities of a unit. */
+/**
+ * The shop's only words for a stock status, on every surface: cards, header suggestions, search results, the product
+ * page and its variant table, the variant dialog, favourites and the cart. Below one package they name both quantities
+ * of a unit; any other state reads the same for every unit and every count.
+ */
 export const stockStatusLabel = (
   cs: Dictionary,
   status: ProductStockStatus,
-  belowPackage: StockBelowPackage | undefined,
-  unit: string | undefined,
+  belowPackage?: StockBelowPackage,
+  unit?: string,
 ): string =>
   status === "below-package" &&
   belowPackage?.firstOrderableQuantity !== undefined &&

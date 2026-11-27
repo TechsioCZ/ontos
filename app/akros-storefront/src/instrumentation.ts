@@ -2,22 +2,38 @@ let observing = false;
 
 // Shared owner reads are served stale for at most 10 minutes (shared-read.ts). One request to the landing page every
 // few minutes keeps the market directory, the category tree and the featured products inside that window, so the first
-// shopper after a deploy or a quiet spell gets a warm answer instead of a chain of blocking owner reads.
+// shopper after a deploy or a quiet spell gets a warm answer instead of a chain of blocking owner reads. A header search
+// right after it reads the shared ERP snapshot (erp-catalogue-server.ts) before the first shopper searches and keeps it
+// read in the background, so the first search after a deploy or a quiet spell finds the ERP products too.
 const WARM_EVERY_MS = 4 * 60_000;
 let warming = false;
 const warmLanding = () => {
   if (warming) return;
   warming = true;
-  const landing = `http://127.0.0.1:${process.env.PORT ?? "3000"}/cs`;
+  const origin = `http://127.0.0.1:${process.env.PORT ?? "3000"}`;
+  const agent = "ontos-akros-storefront-warmup";
   const visit = async () => {
     try {
-      const response = await fetch(landing, {
+      const landing = await fetch(`${origin}/cs`, {
         cache: "no-store",
-        headers: { "user-agent": "ontos-akros-storefront-warmup" },
+        headers: { "user-agent": agent },
         signal: AbortSignal.timeout(30_000),
       });
-      await response.arrayBuffer();
-      return response.ok;
+      await landing.arrayBuffer();
+      if (!landing.ok) return false;
+      const search = await fetch(`${origin}/api/ontos/search`, {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "user-agent": agent,
+          "content-type": "application/json",
+          "x-akros-market-locale": "cs",
+        },
+        body: JSON.stringify({ q: "vrut" }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      await search.arrayBuffer();
+      return search.ok;
     } catch {
       return false;
     }

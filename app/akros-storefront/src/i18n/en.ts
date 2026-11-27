@@ -94,7 +94,6 @@ export const en: Dictionary = {
     availabilityByVariant: "Availability by variant",
     from: "from",
     variantPrice: "Price by variant",
-    inStock: "In stock",
     unitPrice: "Unit price",
     sku: "Product code",
     details: "Product description",
@@ -119,14 +118,11 @@ export const en: Dictionary = {
     minimumOrder: "Minimum order",
     minimumOrderByVariant: "Depends on the variant",
     variantCount: "Variants",
-    inStockCount: (quantity: number, unit: string) => `In stock: ${count(quantity)} ${unit}`,
     belowPackageCount: (quantity: number, firstOrder: number, unit: string) =>
       `In stock: ${count(quantity)} ${unit}, sold in ${count(firstOrder)} ${unit}`,
-    availabilityNowUnknown: "Availability cannot be verified right now",
-    outOfStock: "Out of stock",
     variantsInStock: (available: number, total: number) =>
       `${count(available)} of ${count(total)} variants in stock`,
-    variantsUnknown: "Variant availability cannot be verified right now",
+    variantsUnknown: "Variant availability cannot be verified",
     variantsOutOfStock: "No variants are in stock right now",
     imageNumber: (index: number) => `image ${index}`,
     technicalDrawing: (name: string) => `Technical drawing: ${name}`,
@@ -151,11 +147,6 @@ export const en: Dictionary = {
     variantPriceFilter: (symbol: string, unit: string) => `Price (${symbol}/${unit})`,
     applyVariantFilters: "Filter",
     variantsPagination: "Variant pagination",
-    variantAvailability: {
-      unknown: "Cannot verify",
-      inStock: "In stock",
-      outOfStock: "Out of stock",
-    },
     variantAvailabilityUnknown: "OntOS cannot confirm the availability of this variant right now.",
     noVariantsForFilters: "No variant matches the selected filters.",
     orderIncrement: (quantity: string, unit: string) =>
@@ -188,7 +179,6 @@ export const en: Dictionary = {
       missingPrice: "OntOS returned no price for this item.",
       zeroPrice: "The price in OntOS is zero, so this item cannot be ordered.",
     },
-    availabilityUnknownTitle: "Availability cannot be verified right now.",
     code: "Code",
     table: {
       name: "Name",
@@ -396,18 +386,14 @@ export const en: Dictionary = {
     quantityAdjusted: (quantity: string, unit: string) => `Adjusted to ${quantity} ${unit}`,
     quantityStockLimit: (quantity: string, unit: string) => `Up to ${quantity} ${unit} in stock`,
     lineState: {
-      inStock: "In stock",
-      unverified: "Cannot verify",
       unchecked: "Not verified",
       checking: "Checking…",
       blocked: "Cannot order",
     },
     issue: {
-      AVAILABILITY_UNKNOWN: "Cannot verify",
       PRICE_UNAVAILABLE: "Price unavailable",
       NOT_AVAILABLE: "Not available",
       NOT_OFFERED_IN_MARKET: "Not offered in this market",
-      OUT_OF_STOCK: "Out of stock",
       INSUFFICIENT_STOCK: "Insufficient stock",
       MINIMUM_QUANTITY: "Adjust the quantity",
       PACKAGE_QUANTITY: "Adjust the quantity",
@@ -1078,7 +1064,7 @@ export const en: Dictionary = {
       priceUnavailable: (label: string, reason: string) =>
         `${label}: price not available. ${reason}`.trim(),
       availabilityUnknown: (label: string) =>
-        `${label}: availability cannot be verified right now, so the order cannot be completed. Remove the item or try again later.`,
+        `${label}: availability cannot be verified, so the order cannot be completed. Remove the item or try again later.`,
       outOfStock: (label: string) => `${label}: currently out of stock.`,
       belowPackage: (label: string, stock: number, firstOrder: number, unit: string) =>
         `${label}: only ${count(stock)} ${unit} in stock, sold in ${count(firstOrder)} ${unit}.`,

@@ -19,11 +19,17 @@ import { formatCartProductName } from "./cart-product-name";
 import { useCartQuote, type CartQuoteState } from "@/ontos/cart-revalidation";
 import { useDictionary, useMoney } from "@/ontos/market-context";
 import type { Dictionary } from "@/i18n";
+import { stockStatusLabel } from "@/lib/product-stock";
 
+/** A blocked line in the shop's stock words where the issue is a stock state, else the issue's own short name. */
 const blockedLabel = (cs: Dictionary, code: string) =>
-  code in cs.cart.issue
-    ? cs.cart.issue[code as keyof Dictionary["cart"]["issue"]]
-    : cs.cart.lineState.blocked;
+  code === "AVAILABILITY_UNKNOWN"
+    ? stockStatusLabel(cs, "unknown")
+    : code === "OUT_OF_STOCK"
+      ? stockStatusLabel(cs, "out-of-stock")
+      : code in cs.cart.issue
+        ? cs.cart.issue[code as keyof Dictionary["cart"]["issue"]]
+        : cs.cart.lineState.blocked;
 
 function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteState | null }) {
   const cs = useDictionary();
@@ -32,7 +38,7 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
   if (!quote?.enabled)
     return (
       <span className={`${base} text-(--color-fg-status-success)`}>
-        {cs.cart.lineState.inStock}
+        {stockStatusLabel(cs, "in-stock")}
       </span>
     );
   if (quote.status !== "ready")
@@ -54,7 +60,7 @@ function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteSta
     );
   return (
     <span className={`${base} text-(--color-fg-status-success)`} data-sf-line-state="verified">
-      {cs.cart.lineState.inStock}
+      {stockStatusLabel(cs, "in-stock")}
     </span>
   );
 }

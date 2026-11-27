@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { cs } from "@/i18n/cs";
 import {
   erpDetailStockLabel,
-  erpStockLabel,
   erpStockSummary,
   toErpStock,
   type CatalogVariantOnHand,
@@ -188,12 +187,12 @@ describe("one stock rule: in stock only when stock covers one first order", () =
   it.each([
     {
       onHand: { outcome: "ON_HAND", total: { amount: "155" } },
-      label: "Skladem 155 ks",
+      label: "Skladem",
       status: "in-stock",
     },
     {
       onHand: { outcome: "ON_HAND", total: { amount: "1" } },
-      label: "Skladem 1 ks",
+      label: "Skladem",
       status: "in-stock",
     },
     {
@@ -208,18 +207,17 @@ describe("one stock rule: in stock only when stock covers one first order", () =
     },
     {
       onHand: { outcome: "ON_HAND_UNKNOWN" },
-      label: "Dostupnost nyní nelze ověřit",
+      label: "Dostupnost nelze ověřit",
       status: "unknown",
     },
-    { onHand: undefined, label: "Dostupnost nyní nelze ověřit", status: "unknown" },
+    { onHand: undefined, label: "Dostupnost nelze ověřit", status: "unknown" },
   ])(
     "an ERP variant with $onHand.outcome $onHand.total.amount reads „$label“",
     ({ onHand, label, status }) => {
       const stock = toErpStock(
         onHand && ({ ...onHand, variantRef: erpVariantRef } as CatalogVariantOnHand),
       );
-      expect(getProductStockStatus(stock)).toBe(status);
-      expect(erpStockLabel(cs, stock)).toBe(label);
+      expect(shown(stock)).toMatchObject({ status, label });
     },
   );
 
@@ -232,7 +230,7 @@ describe("one stock rule: in stock only when stock covers one first order", () =
     expect(held.belowPackage?.firstOrderableQuantity).toBe(firstOrderableQuantity({}));
   });
 
-  it("words an ERP card as a shop card and an ERP detail page as the shop's product page", () => {
+  it("words one ERP unit alike on its card, suggestion and detail page, and a group as the shop's product page", () => {
     const stock = (amount?: string) =>
       toErpStock(
         amount === undefined
@@ -261,8 +259,10 @@ describe("one stock rule: in stock only when stock covers one first order", () =
       stockLabel: "Skladem méně než balení",
       stockTone: "out-of-stock",
     });
-    expect(erpDetailStockLabel(product("155"), cs)).toBe("Skladem 155 ks");
-    expect(erpDetailStockLabel(product(undefined), cs)).toBe("Dostupnost nyní nelze ověřit");
+    for (const amount of ["155", "0.5", "0", undefined])
+      expect(erpDetailStockLabel(product(amount), cs)).toBe(card(product(amount)).stockLabel);
+    expect(erpDetailStockLabel(product("155"), cs)).toBe("Skladem");
+    expect(erpDetailStockLabel(product(undefined), cs)).toBe("Dostupnost nelze ověřit");
     expect(erpDetailStockLabel(product("0", "155"), cs)).toBe("Skladem 1 z 2 variant");
     expect(erpDetailStockLabel(product("0.5", "0"), cs)).toBe("Skladem méně než balení");
     expect(erpDetailStockLabel(product("0", "0"), cs)).toBe(

@@ -92,7 +92,6 @@ export const cs = {
     availabilityByVariant: "Dostupnost podle varianty",
     from: "od",
     variantPrice: "Cena dle varianty",
-    inStock: "Skladem",
     unitPrice: "Cena za jednotku",
     sku: "Kód produktu",
     details: "Popis produktu",
@@ -117,14 +116,11 @@ export const cs = {
     minimumOrder: "Minimální odběr",
     minimumOrderByVariant: "Podle zvolené varianty",
     variantCount: "Počet variant",
-    inStockCount: (quantity: number, unit: string) => `Skladem ${count(quantity)} ${unit}`,
     belowPackageCount: (quantity: number, firstOrder: number, unit: string) =>
       `Skladem ${count(quantity)} ${unit}, prodej po ${count(firstOrder)} ${unit}`,
-    availabilityNowUnknown: "Dostupnost nyní nelze ověřit",
-    outOfStock: "Není skladem",
     variantsInStock: (available: number, total: number) =>
       `Skladem ${count(available)} z ${count(total)} variant`,
-    variantsUnknown: "Dostupnost variant nyní nelze ověřit",
+    variantsUnknown: "Dostupnost variant nelze ověřit",
     variantsOutOfStock: "Momentálně není skladem žádná varianta",
     imageNumber: (index: number) => `obrázek ${index}`,
     technicalDrawing: (name: string) => `Technický nákres: ${name}`,
@@ -149,11 +145,6 @@ export const cs = {
     variantPriceFilter: (symbol: string, unit: string) => `Cena (${symbol}/${unit})`,
     applyVariantFilters: "Filtruj",
     variantsPagination: "Stránkování variant",
-    variantAvailability: {
-      unknown: "Nelze ověřit",
-      inStock: "Skladem",
-      outOfStock: "Není skladem",
-    },
     variantAvailabilityUnknown: "OntOS nyní nemůže potvrdit dostupnost této varianty.",
     noVariantsForFilters: "Pro zadané filtry nebyla nalezena varianta.",
     orderIncrement: (quantity: string, unit: string) => `Odběr po ${quantity} ${unit}`,
@@ -185,7 +176,6 @@ export const cs = {
       missingPrice: "OntOS pro tuto položku nevrátil cenu.",
       zeroPrice: "Cena v OntOS je nulová, položku proto nelze objednat.",
     },
-    availabilityUnknownTitle: "Dostupnost nyní nelze ověřit.",
     code: "Kód",
     table: {
       name: "Název",
@@ -391,18 +381,14 @@ export const cs = {
     quantityAdjusted: (quantity: string, unit: string) => `Upraveno na ${quantity} ${unit}`,
     quantityStockLimit: (quantity: string, unit: string) => `Ze skladu max. ${quantity} ${unit}`,
     lineState: {
-      inStock: "Skladem",
-      unverified: "Nelze ověřit",
       unchecked: "Neověřeno",
       checking: "Ověřuji…",
       blocked: "Nelze objednat",
     },
     issue: {
-      AVAILABILITY_UNKNOWN: "Nelze ověřit",
       PRICE_UNAVAILABLE: "Cena není dostupná",
       NOT_AVAILABLE: "Není v nabídce",
       NOT_OFFERED_IN_MARKET: "Není v nabídce trhu",
-      OUT_OF_STOCK: "Není skladem",
       INSUFFICIENT_STOCK: "Nedostatek kusů",
       MINIMUM_QUANTITY: "Upravte množství",
       PACKAGE_QUANTITY: "Upravte množství",
@@ -1066,7 +1052,7 @@ export const cs = {
       priceUnavailable: (label: string, reason: string) =>
         `${label}: cena není dostupná. ${reason}`.trim(),
       availabilityUnknown: (label: string) =>
-        `${label}: dostupnost nyní nelze ověřit, objednávku proto nelze dokončit. Položku odeberte nebo to zkuste později.`,
+        `${label}: dostupnost nelze ověřit, objednávku proto nelze dokončit. Položku odeberte nebo to zkuste později.`,
       outOfStock: (label: string) => `${label}: momentálně není skladem.`,
       belowPackage: (label: string, stock: number, firstOrder: number, unit: string) =>
         `${label}: skladem je jen ${count(stock)} ${unit}, prodává se po ${count(firstOrder)} ${unit}.`,

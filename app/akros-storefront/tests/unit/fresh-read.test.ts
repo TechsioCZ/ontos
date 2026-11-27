@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createOperation } from "@ontos/storefront-runtime";
-import { clearFreshReads, freshRead } from "@/ontos/fresh-read";
+import { clearFreshReads, freshRead, latestFreshRead } from "@/ontos/fresh-read";
 
 // The owner's state, changed by an "admin save"; every load records when it ran.
 let owner = "N";
@@ -59,6 +59,20 @@ it("keeps the last answer while the owner is down, and refuses it once it is 10 
   expect(await read(down)).toBe("N");
   vi.advanceTimersByTime(11 * 60_000);
   await expect(read(down)).rejects.toThrow("owner down");
+});
+
+it("hands a caller that cannot wait the newest answer while a slow read goes on, never one 10 minutes old", async () => {
+  expect(latestFreshRead("key")).toBeUndefined();
+  expect(await read()).toBe("N");
+  vi.advanceTimersByTime(20_000);
+  let finish: (value: string) => void = () => undefined;
+  const slow = read(() => new Promise<string>((resolve) => (finish = resolve)));
+  expect(latestFreshRead("key")).toBe("N");
+  finish("N+1");
+  expect(await slow).toBe("N+1");
+  expect(latestFreshRead("key")).toBe("N+1");
+  vi.advanceTimersByTime(11 * 60_000);
+  expect(latestFreshRead("key")).toBeUndefined();
 });
 
 it("repeats the read in the background while visits come, so a later visit gets a fresh answer at once", async () => {

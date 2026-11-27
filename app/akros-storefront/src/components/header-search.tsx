@@ -97,6 +97,8 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
   const [searchAttempt, setSearchAttempt] = useState(0);
   // Answers already seen in this page: repeated or backspaced queries show at once.
   const seen = useRef(new Map<string, typeof remote>());
+  // Terms whose answer came before its ERP part was ready: each is asked once more, a second later.
+  const askedAgain = useRef(new Set<string>());
   useEffect(() => {
     if (!ready || idle) return;
     const held = seen.current.get(trimmedQuery);
@@ -105,6 +107,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
       return;
     }
     const controller = new AbortController();
+    let again: number | undefined;
     // Ask once the shopper pauses: every new term is an owner search, so not one per keystroke while typing.
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
@@ -134,7 +137,12 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
             total: typeof body.total === "number" ? body.total : 0,
             categories: Array.isArray(body.categories) ? body.categories : [],
           };
-          seen.current.set(trimmedQuery, next);
+          // An answer without its ERP part is shown, never kept: the ERP products fill in when it is asked again.
+          if (body.erpPartial !== true) seen.current.set(trimmedQuery, next);
+          else if (!askedAgain.current.has(trimmedQuery)) {
+            askedAgain.current.add(trimmedQuery);
+            again = window.setTimeout(() => setSearchAttempt((attempt) => attempt + 1), 1_000);
+          }
           setRemote(next);
         })
         .catch((error: unknown) => {
@@ -153,6 +161,7 @@ export function HeaderSearch({ initialQuery = "" }: { initialQuery?: string }) {
     }, 300);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(again);
       controller.abort();
     };
   }, [ready, idle, trimmedQuery, searchAttempt, cs]);

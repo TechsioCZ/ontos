@@ -9,7 +9,8 @@ import { joined, MAX_STALE_MS } from "./shared-read";
 // While visitors keep coming, and for `keepAliveMs` after the last one, the read repeats in the background, one at a
 // time and at most every `intervalMs`, so a visit takes the newest answer at once instead of waiting for the owner.
 // A visit after a longer quiet waits for its own read. When a read fails, visits keep the newest answer for up to
-// 10 minutes, as during an owner outage.
+// 10 minutes, as during an owner outage; a caller that cannot wait for a slow read takes that answer too
+// (`latestFreshRead`) while the read goes on for the visits after it.
 interface Answer<A> {
   startedAt: number;
   value: A;
@@ -74,6 +75,14 @@ const poll = async <A>(state: State<A>, timing: FreshReadTiming, owner: number) 
   } finally {
     state.polling = false;
   }
+};
+
+/** The newest answer of `key` that an owner outage would still serve (MAX_STALE_MS), whatever its age otherwise. */
+export const latestFreshRead = <A>(key: string): A | undefined => {
+  const latest = states.get(key)?.latest;
+  return latest !== undefined && Date.now() - latest.startedAt < MAX_STALE_MS
+    ? (latest.value as A)
+    : undefined;
 };
 
 export function freshRead<A>(

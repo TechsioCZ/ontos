@@ -229,7 +229,7 @@ describe("server cart quote", () => {
     expect(quote.lineIssues).toEqual([
       expect.objectContaining({ code: "AVAILABILITY_UNKNOWN", productId: "p", variantId: "v" }),
     ]);
-    expect(quote.issues[0]).toMatch(/^Vruty \(3,5 × 16\): dostupnost nyní nelze ověřit/);
+    expect(quote.issues[0]).toMatch(/^Vruty \(3,5 × 16\): dostupnost nelze ověřit/);
     expect(actionRequests()).toEqual([]);
   });
 
@@ -275,8 +275,7 @@ describe("server cart quote", () => {
             code: "AVAILABILITY_UNKNOWN",
             productId: "p",
             variantId: "v",
-            message:
-              "Vruty (3,5 × 16): dostupnost nyní nelze ověřit, objednávku proto nelze dokončit.",
+            message: "Vruty (3,5 × 16): dostupnost nelze ověřit, objednávku proto nelze dokončit.",
           },
         ],
       },
@@ -324,13 +323,10 @@ describe("cart quote messages follow the market language", () => {
       body: JSON.stringify(body),
     });
   it.each([
-    ["cs", "Vruty (3,5 × 16): dostupnost nyní nelze ověřit, objednávku proto nelze dokončit."],
-    ["sk", "Vruty (3,5 × 16): dostupnosť teraz nemožno overiť, objednávku preto nemožno dokončiť."],
-    [
-      "en",
-      "Vruty (3,5 × 16): availability cannot be verified right now, so the order cannot be completed.",
-    ],
-    ["de", "Vruty (3,5 × 16): availability cannot be verified right now"],
+    ["cs", "Vruty (3,5 × 16): dostupnost nelze ověřit, objednávku proto nelze dokončit."],
+    ["sk", "Vruty (3,5 × 16): dostupnosť nemožno overiť, objednávku preto nemožno dokončiť."],
+    ["en", "Vruty (3,5 × 16): availability cannot be verified, so the order cannot be completed."],
+    ["de", "Vruty (3,5 × 16): availability cannot be verified"],
   ])("words a blocked line for locale %s", async (locale, expected) => {
     catalog = { revision: 3, products: [product({ availability: "UNKNOWN" })] };
     const response = await ask({ cart: cart(10, 121) }, locale);

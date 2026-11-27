@@ -61,7 +61,7 @@ export async function POST(request: Request) {
       return Response.json({ items: [], total: 0, categories: [] } satisfies RemoteSearchResponse, {
         headers: noStore,
       });
-    // The ERP catalogue is searched beside the shop catalogue (shared, cached reads), never after it.
+    // The ERP catalogue is searched beside the shop catalogue (one shared snapshot), never after it.
     const [listing, erp] = await Promise.all([
       getCatalogPage({ q: term, page: 1, pageSize: 6 }, { operation: lifetime }),
       searchErpProductsWithin(term, 4, lifetime, 700),
@@ -80,7 +80,12 @@ export async function POST(request: Request) {
       term,
     );
     return Response.json(
-      { items, total: listing.total + erp.count, categories } satisfies RemoteSearchResponse,
+      {
+        items,
+        total: listing.total + erp.count,
+        categories,
+        ...(erp.partial ? { erpPartial: true } : {}),
+      } satisfies RemoteSearchResponse,
       {
         headers: noStore,
       },

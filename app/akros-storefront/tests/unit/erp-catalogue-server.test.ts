@@ -40,6 +40,8 @@ let hold: boolean;
 let marketReads: number;
 let release: ReturnType<typeof Promise.withResolvers<void>>;
 let started: ReturnType<typeof Promise.withResolvers<void>>;
+let lifecycle: string;
+let slowCatalog: Promise<void> | undefined;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -50,6 +52,8 @@ beforeEach(async () => {
   peak = 0;
   hold = false;
   marketReads = 0;
+  lifecycle = "DRAFT";
+  slowCatalog = undefined;
   release = Promise.withResolvers<void>();
   started = Promise.withResolvers<void>();
   network = await serveHttp(async (request) => {
@@ -69,14 +73,15 @@ beforeEach(async () => {
       marketReads += 1;
       return Response.json({ markets: [], associations: [] }, { headers });
     }
-    if (!portal && body.audience === "catalog")
+    if (!portal && body.audience === "catalog") {
+      await slowCatalog;
       return Response.json(
         {
           count: 1,
           items: [
             {
               productRef,
-              lifecycle: "DRAFT",
+              lifecycle,
               localized,
               categories: [],
               media: [],
@@ -91,6 +96,7 @@ beforeEach(async () => {
         },
         { headers },
       );
+    }
     const audience = portal ? "customer-pricing" : body.audience;
     const query = portal ? body : body.query;
     const refs: unknown[] =
@@ -253,5 +259,52 @@ describe("bounded ERP owner joins", () => {
     variantCount = 1;
     oversizedStock = true;
     await expect(read()).rejects.toMatchObject({ code: "erp_stock_oversize" });
+  });
+});
+
+describe("ERP header search", () => {
+  const search = async (query: string, ms: number) => {
+    const context = nextRequest(`${network.origin}/cs`, {
+      headers: { host: new URL(network.origin).host, "x-akros-market-locale": "cs" },
+    });
+    const { createOperation } = await import("@/ontos/gateway");
+    const operation = Effect.runSync(createOperation());
+    try {
+      return await context.run(() => server.searchErpProductsWithin(query, 4, operation, ms));
+    } finally {
+      operation.dispose();
+      await context.close();
+    }
+  };
+
+  it("finds the product in the last snapshot when its fresh read is slower than the search limit", async () => {
+    variantCount = 1;
+    lifecycle = "ACTIVE";
+    expect(await search("imported", 5_000)).toMatchObject({ count: 1, partial: false });
+    const slow = Promise.withResolvers<void>();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      // The snapshot is too old to be served as fresh, and its next read does not answer in time.
+      vi.setSystemTime(Date.now() + 5_000);
+      slowCatalog = slow.promise;
+      const answer = await search("imported", 300);
+      expect(answer.partial).toBe(false);
+      expect(answer.products.map(({ id }) => id)).toEqual([productRef.resourceId]);
+    } finally {
+      vi.useRealTimers();
+      slow.resolve();
+    }
+  });
+
+  it("says the ERP part is missing when no snapshot was read in time", async () => {
+    variantCount = 1;
+    lifecycle = "ACTIVE";
+    const slow = Promise.withResolvers<void>();
+    slowCatalog = slow.promise;
+    try {
+      expect(await search("imported", 300)).toEqual({ count: 0, products: [], partial: true });
+    } finally {
+      slow.resolve();
+    }
   });
 });

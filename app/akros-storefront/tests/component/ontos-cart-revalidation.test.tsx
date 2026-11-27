@@ -117,8 +117,7 @@ it("shows an explicit error with 'Zkusit znovu' and keeps the continue action di
 });
 
 it("marks a blocked line with its unavailable state and names the variant", async () => {
-  const message =
-    "Vruty (3,5 × 16): dostupnost nyní nelze ověřit, objednávku proto nelze dokončit.";
+  const message = "Vruty (3,5 × 16): dostupnost nelze ověřit, objednávku proto nelze dokončit.";
   network = await serveHttp((request) => {
     if (request.method !== "POST" || new URL(request.url).pathname !== "/api/ontos/cart")
       return new Response("Unknown endpoint", { status: 404 });
@@ -145,7 +144,7 @@ it("marks a blocked line with its unavailable state and names the variant", asyn
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByText("Objednávku teď nelze dokončit");
   await settleBrowser();
-  expect(screen.getByText("Nelze ověřit")).toBeTruthy();
+  expect(screen.getByText("Dostupnost nelze ověřit")).toBeTruthy();
   expect(screen.queryByText("Skladem")).toBeNull();
   expect(screen.getAllByText(message).length).toBeGreaterThan(0);
   expect(
