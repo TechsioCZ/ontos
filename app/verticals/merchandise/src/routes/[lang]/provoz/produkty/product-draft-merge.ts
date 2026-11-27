@@ -14,7 +14,7 @@ export interface DraftMerge<V> {
 }
 
 /** A plain record of fields (a form draft or part of one); class instances such as an Option are single values. */
-const isFields = (value: unknown): value is Record<string, unknown> => {
+const isFields = <T>(value: T): value is T & object => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
   }
