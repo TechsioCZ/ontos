@@ -24,6 +24,10 @@ export const lowStockErrorKey = (lowStock: number): string | undefined =>
 export const fieldError = (submitted: boolean, message: string | undefined) =>
   submitted && message !== undefined ? { helpText: message, validateStatus: 'error' as const } : {};
 
+/** `fieldError` for a field binding of the form model: the form's verdict on the field and its message. */
+export const fieldVerdict = (shown: boolean, message: string | undefined) =>
+  shown && message !== undefined ? { helpText: message, invalid: true } : {};
+
 /**
  * After a refused submit, moves focus to the first invalid field so keyboard and screen-reader users land on
  * the problem. Each entry is the field's DOM id and whether it is invalid, in form order.
