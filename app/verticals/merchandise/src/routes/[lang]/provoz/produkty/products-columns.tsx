@@ -95,7 +95,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
     enableSorting: false,
     header: 'E-shop',
     id: 'storefront',
-    meta: { align: 'center', type: 'string', width: 64 },
+    meta: { align: 'center', type: 'string', width: 72 },
   },
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
