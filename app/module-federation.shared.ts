@@ -3,7 +3,18 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 
-import { Array as EffectArray, Order, Result, Schema } from 'effect';
+import { sort } from 'effect/Array';
+import { mapInput, String as StringOrder } from 'effect/Order';
+import { isFailure } from 'effect/Result';
+import {
+  decodeUnknownResult,
+  fromJsonString,
+  NonEmptyString,
+  optionalKey,
+  Record,
+  String as StringSchema,
+  Struct,
+} from 'effect/Schema';
 
 type SharedRuntimeVersions = Readonly<
   Record<
@@ -15,17 +26,23 @@ type SharedRuntimeVersions = Readonly<
 /** The design system. The Shell provides every one of its subpaths; a browser remote never ships a copy. */
 export const UI_KIT_PACKAGE = '@techsio/ui-kit';
 
+/** One JavaScript subpath the kit exports and the installed file it resolves to. */
+export interface UiKitModule {
+  readonly file: string;
+  readonly request: string;
+}
+
 /** The kit as one installation sees it: its version and every JavaScript subpath it exports. */
 export interface UiKitShare {
-  readonly subpaths: readonly string[];
+  readonly modules: readonly UiKitModule[];
   readonly version: string;
 }
 
-const UiKitPackageSchema = Schema.Struct({
-  exports: Schema.Record(Schema.String, Schema.Struct({ import: Schema.optionalKey(Schema.String) })),
-  version: Schema.NonEmptyString,
+const UiKitPackageSchema = Struct({
+  exports: Record(StringSchema, Struct({ import: optionalKey(StringSchema) })),
+  version: NonEmptyString,
 });
-const decodeUiKitPackage = Schema.decodeUnknownResult(Schema.fromJsonString(UiKitPackageSchema));
+const decodeUiKitPackage = decodeUnknownResult(fromJsonString(UiKitPackageSchema));
 
 /**
  * Reads the kit installed for the delivery unit at `fromUrl` and lists every JavaScript subpath its exports
@@ -41,27 +58,33 @@ export const resolveUiKitShare = (fromUrl: string): UiKitShare => {
     throw new Error(`${UI_KIT_PACKAGE} is not installed for ${fromUrl}`);
   }
   const decoded = decodeUiKitPackage(readFileSync(path.join(root, 'package.json'), 'utf-8'));
-  if (Result.isFailure(decoded)) {
+  if (isFailure(decoded)) {
     throw new Error(`${UI_KIT_PACKAGE} at ${root} has no readable version and exports map: ${decoded.failure.message}`);
   }
   const kit = decoded.success;
-  const subpaths = Object.entries(kit.exports).flatMap(([key, { import: target }]) => {
+  const modules = Object.entries(kit.exports).flatMap(([key, { import: target }]) => {
     if (target === undefined) {
       return [];
     }
     if (!key.includes('*')) {
-      return [`${UI_KIT_PACKAGE}${key.slice(1)}`];
+      return [{ file: path.join(root, target), request: `${UI_KIT_PACKAGE}${key.slice(1)}` }];
     }
     const [prefix = '', suffix = ''] = target.split('*');
     const files: readonly string[] = readdirSync(path.join(root, prefix), { encoding: 'utf-8' });
     return files.flatMap((name) => {
       const stem = name.slice(0, name.length - suffix.length);
       return name.endsWith(suffix) && !stem.includes('.')
-        ? [`${UI_KIT_PACKAGE}${key.slice(1).replace('*', stem)}`]
+        ? [{ file: path.join(root, prefix, name), request: `${UI_KIT_PACKAGE}${key.slice(1).replace('*', stem)}` }]
         : [];
     });
   });
-  return { subpaths: EffectArray.sort(subpaths, Order.String), version: kit.version };
+  return {
+    modules: sort(
+      modules,
+      mapInput(StringOrder, ({ request }: UiKitModule) => request),
+    ),
+    version: kit.version,
+  };
 };
 
 const strictSingleton = (requiredVersion: string) => ({
@@ -96,10 +119,12 @@ export const createSharedRuntimeConfig = (
 ) => ({
   ...sharedRuntime(versions),
   ...Object.fromEntries(
-    (delivery.uiKit?.subpaths ?? []).map((subpath) => [
-      subpath,
+    (delivery.uiKit?.modules ?? []).map(({ file: kitFile, request }) => [
+      request,
+      // The Shell imports each subpath by its installed file: an absolute import is provided to the share
+      // scope whether or not the Shell's own code uses it, so a module may use any component of the kit.
       delivery.role === 'host'
-        ? strictSingleton(delivery.uiKit.version)
+        ? { ...strictSingleton(delivery.uiKit.version), import: kitFile, version: delivery.uiKit.version }
         : { ...strictSingleton(delivery.uiKit?.version ?? ''), import: false as const },
     ]),
   ),
