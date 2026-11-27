@@ -5,6 +5,7 @@ import { ImportSourceCatalogPayloadSchema } from '@app/merchandise/contracts/imp
 import { CatalogPagePricesApi, CatalogPagePricesRequestSchema } from '@app/pricing-contracts/catalog-page-prices';
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Cause, Console, Effect, Redacted, Schema } from 'effect';
+import { HttpClientError } from 'effect/http';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 import { symmyUnavailableProblem } from './contract.ts';
 import { symmyDemoCatalogDigest, symmyDemoCatalogScopeIdentity } from './demo-catalog-identity.ts';
@@ -264,6 +265,18 @@ const readOnHandPage = Effect.fn('SymmyMerchandiseCopy.onHandPage')(function* on
 
 const describe = (cause: Cause.Cause<unknown>) => Cause.pretty(cause).slice(0, 400);
 
+/** An owner's refusal with its status and body (the refusal code), which an undeclared-status decode error drops. */
+const describeRefusal = (cause: Cause.Cause<unknown>) => {
+  const error = Cause.squash(cause);
+  const response = HttpClientError.isHttpClientError(error) ? error.response : undefined;
+  return response === undefined
+    ? Effect.succeed(describe(cause))
+    : response.text.pipe(
+        Effect.map((body) => `${String(response.status)} ${body.slice(0, 600)} (${describe(cause).slice(0, 200)})`),
+        Effect.orElseSucceed(() => describe(cause)),
+      );
+};
+
 /**
  * The current price and on-hand of every Variant of the products, read page by page. A product whose price page
  * failed is left out of the answer (`skipped`): it is not copied in this sweep rather than sent without a price.
@@ -287,7 +300,10 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* f
   let stocked = true;
   const key = yield* readPriceKey(admission, legalEntityId).pipe(
     Effect.catchCause((cause) =>
-      Console.error(`${LOG} price key unreadable, no prices sent: ${describe(cause)}`).pipe(Effect.as(undefined)),
+      describeRefusal(cause).pipe(
+        Effect.flatMap((text) => Console.error(`${LOG} price key unreadable, no prices sent: ${text}`)),
+        Effect.as(undefined),
+      ),
     ),
   );
   // The Inventory configuration of the company's Symmy stock: on the products route, else on the stock route.
@@ -303,7 +319,8 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* f
     if (key !== undefined) {
       const prices = yield* readPricePage(admission, legalEntityId, key, page).pipe(
         Effect.catchCause((cause) =>
-          Console.error(`${LOG} prices unreadable, ${String(page.length)} variants skipped: ${describe(cause)}`).pipe(
+          describeRefusal(cause).pipe(
+            Effect.flatMap((text) => Console.error(`${LOG} prices unreadable, ${String(page.length)} variants skipped: ${text}`)),
             Effect.as(undefined),
           ),
         ),
@@ -325,7 +342,10 @@ const readVariantFigures = Effect.fn('SymmyMerchandiseCopy.figures')(function* f
         page.map(({ variantRef }) => variantRef),
       ).pipe(
         Effect.catchCause((cause) =>
-          Console.error(`${LOG} on-hand unreadable, stock kept: ${describe(cause)}`).pipe(Effect.as(undefined)),
+          describeRefusal(cause).pipe(
+            Effect.flatMap((text) => Console.error(`${LOG} on-hand unreadable, stock kept: ${text}`)),
+            Effect.as(undefined),
+          ),
         ),
       );
       if (onHand === undefined) {
