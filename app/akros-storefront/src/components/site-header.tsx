@@ -2,6 +2,7 @@
 
 import StoreLink from "@/components/store-link";
 import Image from "next/image";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Drawer } from "@techsio/ui-kit/molecules/drawer";
@@ -165,10 +166,12 @@ function MobileNavigation({ pathname }: { pathname: string }) {
   );
 }
 
-/** `searchQuery`: the results page's q, kept in the search box (a new q gives a fresh box). */
-export function SiteHeader({ searchQuery }: { searchQuery?: string }) {
+export function SiteHeader() {
   // Without the market prefix, so current-page state matches Kai's unprefixed routes.
   const pathname = useStorePathname();
+  // The results page keeps its q in the box, in its loading shell too (a new q gives a fresh box).
+  const q = useSearchParams()?.get("q");
+  const searchQuery = pathname === "/vyhledavani" ? (q ?? "").trim() : "";
   const cs = useDictionary();
   const brand = useBrand();
 
