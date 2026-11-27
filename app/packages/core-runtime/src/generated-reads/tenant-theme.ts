@@ -16,6 +16,10 @@ export { TenantThemeRequestSchema, TenantThemeResponseSchema } from '../themes/c
  * revision a client compares to notice a change without diffing the tokens. It is NOT a capability: every signed-in
  * member of a tenant sees the tenant's look, so the entrypoint is `authenticated_principal` and carries no access
  * declaration. The input names nothing; the tenant is the trusted scope's.
+ *
+ * The theme belongs to the tenant, not to a company, so the Read is tenant-wide (`forbidden` company scope) and the
+ * Shell calls it without the selected company. With `optional` scope the legacy module target would need a company
+ * to decide on, and a member without one would get a 503 instead of the theme.
  */
 
 const readFailureOf = (failure: Schema.SchemaError | TenantThemeUnavailable): ReadHandlerUnavailable =>
@@ -47,7 +51,7 @@ export const tenantThemeRead = defineRead<
     }),
     evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.themes.api.tenant-theme.access.v1' },
     inputSchema: TenantThemeRequestSchema,
-    legalEntityScope: 'optional',
+    legalEntityScope: 'forbidden',
     owningModuleKey: CORE_THEMES_MODULE_ID,
     permissionTarget: 'module',
     policies: [],
