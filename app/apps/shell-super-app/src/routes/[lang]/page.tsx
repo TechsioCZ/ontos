@@ -22,7 +22,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
       <>
         <UltramodernRouteHead />
         <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
-          <LinkButton as={LocalizedLink} size="md" theme="solid" to="/login" variant="primary">
+          <LinkButton appearance="solid" as={LocalizedLink} severity="primary" size="md" to="/login">
             {t('shell.auth.loginLink')}
           </LinkButton>
         </main>

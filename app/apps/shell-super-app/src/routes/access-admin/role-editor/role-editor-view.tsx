@@ -249,7 +249,7 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
           {t(`shell.accessAdmin.${statusKey}`)}
         </StatusText>
       )}
-      <Button disabled={busy} onClick={props.onRefresh} type="button" variant="secondary">
+      <Button disabled={busy} onClick={props.onRefresh} severity="secondary" type="button">
         {t('shell.accessAdmin.common.refresh')}
       </Button>
       <fieldset className="shell:grid shell:gap-2" disabled={blocked}>
@@ -263,8 +263,8 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
               disabled={blocked || template.catalogSnapshotId !== props.catalogSnapshotId}
               key={template.templateKey}
               onClick={() => props.onTemplate(template)}
+              severity="secondary"
               type="button"
-              variant="secondary"
             >
               {template.name}
             </Button>
@@ -306,8 +306,8 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
                         )
                       }
                       onClick={() => props.onLevel(moduleKey, level)}
+                      severity="secondary"
                       type="button"
-                      variant="secondary"
                     >
                       {t(`shell.accessAdmin.role.${levelKeys[level]}`)}
                     </Button>

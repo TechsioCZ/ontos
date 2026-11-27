@@ -323,12 +323,12 @@ const DashboardModuleNavigationItem = ({ currentModuleId, module }: DashboardMod
         <span>{module.label}</span>
       )}
       {module.state === 'read_only' ? (
-        <Badge size="sm" variant="warning">
+        <Badge severity="warning" size="sm">
           {t('shell.modules.state.readOnly')}
         </Badge>
       ) : null}
       {module.state === 'deprecated' ? (
-        <Badge size="sm" variant="warning">
+        <Badge severity="warning" size="sm">
           {t('shell.modules.state.deprecated')}
         </Badge>
       ) : null}
