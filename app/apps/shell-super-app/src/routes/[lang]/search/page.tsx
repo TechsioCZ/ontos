@@ -31,10 +31,7 @@ const SearchResultItem = ({
     return result.kind === 'party' ? t('shell.search.party') : t('shell.search.counterparty');
   };
   return (
-    <li
-      className="shell:grid shell:gap-2"
-      key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
-    >
+    <li className="grid gap-150" key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}>
       <LinkButton
         as={LocalizedLink}
         params={{
@@ -42,49 +39,47 @@ const SearchResultItem = ({
           resourceId: result.ref.resourceId,
           resourceType: result.ref.resourceType,
         }}
+        severity="secondary"
         to="/resources/$moduleId/$resourceType/$resourceId"
-        variant="secondary"
       >
         {result.title ?? t('shell.search.name_hidden')}
       </LinkButton>
-      <div className="shell:flex shell:flex-wrap shell:gap-2">
-        <Badge size="sm" variant="outline">
+      <div className="flex flex-wrap gap-150">
+        <Badge appearance="outline" severity="neutral" size="sm">
           {resultKindLabel()}
         </Badge>
         {party?.archived === true ? (
-          <Badge size="sm" variant="warning">
+          <Badge severity="warning" size="sm">
             {t('shell.search.archived')}
           </Badge>
         ) : null}
         {party?.matchedViaAlias === true ? (
-          <Badge size="sm" variant="info">
+          <Badge severity="info" size="sm">
             {t('shell.search.alias_match')}
           </Badge>
         ) : null}
         {result.kind === 'counterparty'
           ? result.currentRoles.map((role) => (
-              <Badge key={role} size="sm" variant="info">
+              <Badge key={role} severity="info" size="sm">
                 {t(`shell.search.roles.${role}`)}
               </Badge>
             ))
           : null}
         {result.kind === 'counterparty' && result.collision !== undefined ? (
-          <Badge size="sm" variant="warning">
+          <Badge severity="warning" size="sm">
             {t('shell.search.reconciliation_required')}
           </Badge>
         ) : null}
       </div>
-      <p className="shell:text-body-sm">
+      <p className="text-sm">
         {`${result.ref.tenantId ?? currentTenantId}:${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}
       </p>
       {result.kind === 'counterparty' ? (
         <>
-          <p className="shell:text-body-sm">
+          <p className="text-sm">
             {`${t('shell.search.party')}: ${result.party.ref.tenantId}:${result.party.ref.moduleId}:${result.party.ref.resourceType}:${result.party.ref.resourceId}`}
           </p>
-          <p className="shell:text-body-sm">
-            {`${t('shell.search.legal_entity')}: ${result.legalEntity.legalEntityId}`}
-          </p>
+          <p className="text-sm">{`${t('shell.search.legal_entity')}: ${result.legalEntity.legalEntityId}`}</p>
         </>
       ) : null}
     </li>
@@ -97,7 +92,7 @@ const SearchPage = () => {
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.state === 'reload_required' || model.shell.state === 'reload_required' || controls.reloadRequired) {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <StatusText aria-live="polite" showIcon status="error">
           {t('shell.moduleTarget.reload_required')}
         </StatusText>
@@ -106,7 +101,7 @@ const SearchPage = () => {
   }
   if (model.shell.state !== 'authenticated') {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-300 px-200 py-400">
         <StatusText aria-live="polite" showIcon status="error">
           {t(model.shell.state === 'unavailable' ? 'shell.dashboard.unavailable' : 'shell.search.selection_required')}
         </StatusText>
@@ -120,8 +115,8 @@ const SearchPage = () => {
         {t(`shell.search.${model.state}`)}
       </StatusText>
     ) : (
-      <section aria-labelledby="search-results-title" className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6">
-        <h2 className="shell:text-title-lg" id="search-results-title">
+      <section aria-labelledby="search-results-title" className="grid w-full max-w-5xl gap-300">
+        <h2 className="text-2xl" id="search-results-title">
           {t('shell.search.title')}
         </h2>
         {model.response.partial ? (
@@ -132,7 +127,7 @@ const SearchPage = () => {
         {model.response.results.length === 0 ? (
           <StatusText status="default">{t('shell.search.empty')}</StatusText>
         ) : (
-          <ul className="shell:grid shell:gap-3">
+          <ul className="grid gap-150">
             {model.response.results.map((result) => (
               <SearchResultItem
                 currentTenantId={currentTenantId}

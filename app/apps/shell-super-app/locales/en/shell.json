@@ -168,6 +168,7 @@
         "invalidAmount": "Enter a whole number in minor currency units.",
         "existingAmountHelp": "An existing cell's amount ceiling cannot be changed in place. Remove the cell, save the removal, then add it back with a new ceiling.",
         "invalidEdit": "This role change is invalid. Review its cells and limits.",
+        "invalidCompanyId": "Enter a valid company ID.",
         "namedEffect": "Named effect",
         "dangerousConfirmEffect": "I confirm the effect: {{effect}}",
         "writesUnavailable": "Saving is disabled until a verified writer is available.",
@@ -205,6 +206,9 @@
         "noAmountLimit": "No explicit ceiling (not the same as unlimited)",
         "localTime": "Dates and times use the timezone of your device.",
         "invalid": "The value is not valid.",
+        "invalidAmount": "Enter a whole number of minor currency units, or leave it empty.",
+        "invalidCurrency": "Enter a three-letter currency code in capitals, such as CZK.",
+        "choiceWithdrawn": "A choice here is no longer offered after a refresh. Choose again.",
         "permissions": "Permissions",
         "amountLimit": "Amount limit",
         "currency": "Currency",
@@ -422,6 +426,8 @@
         "subjectPickerLabel": "Person whose access to check",
         "morePeople": "Load more people",
         "currentPersonChoice": "My access",
+        "subjectWithdrawn": "This person is no longer in the list. Choose the person again.",
+        "capabilityKeyRequired": "Enter the capability key to check.",
         "checkingPerson": "Checking access for {{name}}",
         "invalidInput": "Fill in the action or read, the record and an amount in whole minor units.",
         "unknownReason": "This reason has no wording yet. Contact a tenant administrator.",
@@ -647,6 +653,9 @@
     "seo": {
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
-    "title": "UltraModern Workspace"
+    "title": "UltraModern Workspace",
+    "uiKit": {
+      "requiredLabel": "(required)"
+    }
   }
 }

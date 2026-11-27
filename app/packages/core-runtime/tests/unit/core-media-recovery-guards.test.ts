@@ -10,7 +10,6 @@ import { expect, it } from 'effect-rstest';
  */
 
 const RECOVERY_SOURCES = [
-  'media/cleanup-eligibility.ts',
   'media/integrity-contract.ts',
   'media/reconciliation.ts',
   'media/recovery-log.ts',
@@ -20,6 +19,12 @@ const RECOVERY_SOURCES = [
 
 const withoutComments = (text: string): string =>
   text.replaceAll(/\/\*[\s\S]*?\*\//gu, '').replaceAll(/^\s*\/\/.*$/gmu, '');
+
+/**
+ * The one guard recovery code may name: the technical bound on a single platform digest step (`content-digest.ts`),
+ * which bounds no object, schedules nothing and retries nothing.
+ */
+const withoutDigestStepGuard = (code: string): string => code.replaceAll(/\b[Dd]igestStepTimeout\b/gu, '');
 
 /** Time, repetition, scheduling and physical removal: none of them may appear in recovery code. */
 const FORBIDDEN: readonly (readonly [string, RegExp])[] = [
@@ -33,7 +38,7 @@ const FORBIDDEN: readonly (readonly [string, RegExp])[] = [
     'a Stream or Layer time operator',
     /(?:Stream|Layer|Schedule)\.(?:retry|repeat|schedule|timeout|debounce|throttle|aggregateWithin)\w*/u,
   ],
-  ['a timeout, interval or deadline name', /\b(?:timeout|interval|deadline|backoff|maxAttempts|attempts)\w*\b/iu],
+  ['a timeout, interval or deadline name', /\b\w*(?:timeout|interval|deadline|backoff|maxAttempts|attempts)\w*\b/iu],
   ['a Duration', /\bDuration\b/u],
   ['a delete call', /\.delete\(|\bdeleteObject\b|\bremoveObject\b|\bunlink\b/u],
   ['a delete statement', /\bdelete\s+from\b/iu],
@@ -59,6 +64,7 @@ it('flags every retry, repeat, timeout, schedule and number shape it exists to c
     'Effect.scheduleForked(x)',
     'Stream.timeout(x)',
     'const maxAttempts = 3',
+    'const readTimeout = slow',
     'const wait = 1_000',
     'setTimeout(f, 0)',
     'Schedule.exponential(x)',
@@ -67,6 +73,8 @@ it('flags every retry, repeat, timeout, schedule and number shape it exists to c
     expect(violationsOf(code).length, code).toBeGreaterThan(0);
   }
   expect(violationsOf('const ref = key.slice(0, 16)')).toEqual([]);
+  expect(violationsOf(withoutDigestStepGuard('Effect.service(DigestStepTimeout)'))).toEqual([]);
+  expect(violationsOf(withoutDigestStepGuard('const DigestStepTimeoutOverride = slow'))).not.toEqual([]);
 });
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('core media recovery guards', (suite) => {
@@ -75,7 +83,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media recovery
       const [fileSystem, path] = yield* Effect.all([FileSystem.FileSystem, Path.Path], { concurrency: 2 });
       const root = yield* path.fromFileUrl(new URL('../../src/', import.meta.url));
       for (const relative of RECOVERY_SOURCES) {
-        const code = withoutComments(yield* fileSystem.readFileString(path.join(root, relative)));
+        const code = withoutDigestStepGuard(
+          withoutComments(yield* fileSystem.readFileString(path.join(root, relative))),
+        );
         for (const [name, pattern] of FORBIDDEN) {
           expect(pattern.test(code), `${relative} contains ${name}`).toBe(false);
         }

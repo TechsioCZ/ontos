@@ -1,5 +1,5 @@
 import { toaster } from '@techsio/ui-kit/molecules/toast';
-import { cleanup, screen } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect, Latch, Redacted, Schema } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
@@ -50,7 +50,7 @@ const loginRouter = (language: ShellLanguage = 'en') =>
 const renderLogin = (router: ShellRouter = loginRouter(), language: ShellLanguage = 'en') =>
   renderShellRoute(router, shellTestCopy(language, copy));
 
-const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
+const getLogin = () => screen.getByRole('textbox', { name: 'Login (required)' });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 /** The submit control, idle or announcing the sign-in it started. */
@@ -89,9 +89,26 @@ it.effect('the back link resolves Czech from the same canonical target', () =>
   }),
 );
 
-/** Every Effect the page has handed to the browser runtime, settled. */
-const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly { readonly value: unknown }[] } }) =>
-  Effect.promise(() => Promise.allSettled(runs.mock.results.map((result) => result.value)));
+/**
+ * Spies on the browser runtime the page hands its navigation home to; `navigation` resolves with
+ * that run as soon as the page starts it, once the sign-in the form submitted has been answered.
+ */
+const observePageRuns = () => {
+  const started = Promise.withResolvers<Promise<unknown>>();
+  const run = browserRuntime.runPromise.bind(browserRuntime);
+  const runs = rstest.spyOn(browserRuntime, 'runPromise').mockImplementation((effect, options) => {
+    const running = run(effect, options);
+    started.resolve(running);
+    return running;
+  });
+  return { navigation: started.promise, runs };
+};
+
+/** The sign-in the form submitted, answered, and the navigation home the page started, settled. */
+const signInSettled = (navigation: Promise<Promise<unknown>>) =>
+  Effect.promise(() => navigation).pipe(
+    Effect.flatMap((running) => Effect.promise(() => Promise.allSettled([running]))),
+  );
 
 /**
  * Renders the login route and submits the given values. The page's own Effects are observed, so a
@@ -100,7 +117,7 @@ const pageEffectsSettled = (runs: { readonly mock: { readonly results: readonly 
 const submitLogin = (login: string, password: string, router: ShellRouter = loginRouter()) =>
   Effect.gen(function* submitLoginEffect() {
     const user = userEvent.setup();
-    const runs = rstest.spyOn(browserRuntime, 'runPromise');
+    const { navigation, runs } = observePageRuns();
     yield* renderLogin(router);
     if (login.length > 0) {
       yield* Effect.promise(() => user.type(getLogin(), login));
@@ -109,7 +126,7 @@ const submitLogin = (login: string, password: string, router: ShellRouter = logi
       yield* Effect.promise(() => user.type(getPassword(), password));
     }
     yield* Effect.promise(() => user.click(getSubmit()));
-    return { runs, user };
+    return { navigation, runs, user };
   });
 
 interface LoginValidationCase {
@@ -177,7 +194,7 @@ it.effect.each(validationCases)(
       const answered = yield* Latch.make();
       const bff = signInBff(answered);
       yield* Effect.gen(function* submitAndRead() {
-        const { runs } = yield* submitLogin(login, password);
+        const { navigation } = yield* submitLogin(login, password);
 
         const incompleteToasts = loginInvalid || passwordInvalid ? 1 : 0;
         expect(getLogin().getAttribute('aria-invalid')).toBe(loginInvalid ? 'true' : null);
@@ -189,7 +206,9 @@ it.effect.each(validationCases)(
         expect(document.activeElement).toBe(focusTargets[focus]());
         // Only a complete submission reaches the authentication client.
         yield* answered.open;
-        yield* pageEffectsSettled(runs);
+        if (incompleteToasts === 0) {
+          yield* signInSettled(navigation);
+        }
         expect(bff.requests).toHaveLength(incompleteToasts === 0 ? 1 : 0);
       }).pipe(Effect.provide(bff.browser));
     }),
@@ -210,7 +229,7 @@ it.effect('clears stale errors after both fields are corrected', () =>
     const answered = yield* Latch.make();
     const bff = signInBff(answered);
     yield* Effect.gen(function* correctAndResubmit() {
-      const { runs, user } = yield* submitLogin('', '');
+      const { navigation, user } = yield* submitLogin('', '');
 
       yield* Effect.promise(() => user.type(getLogin(), 'admin'));
       yield* Effect.promise(() => user.type(getPassword(), 'secret'));
@@ -220,7 +239,7 @@ it.effect('clears stale errors after both fields are corrected', () =>
       expect(screen.queryByText('Enter your login.')).toBeNull();
       expect(screen.queryByText('Enter your password.')).toBeNull();
       yield* answered.open;
-      yield* pageEffectsSettled(runs);
+      yield* signInSettled(navigation);
       expect(bff.requests.map((received) => received.endpoint)).toEqual(['signIn']);
     }).pipe(Effect.provide(bff.browser));
   }),
@@ -246,8 +265,8 @@ it.effect('submits valid values through the Shell authentication client and navi
     const router = loginRouter();
     const invalidations = rstest.spyOn(router, 'invalidate');
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation, runs } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(runs).toHaveBeenCalledTimes(1);
     expect(bff.requests).toHaveLength(1);
@@ -267,14 +286,18 @@ it.effect('reports navigation failure and restores the login form after authenti
   return Effect.gen(function* reportsNavigationFailure() {
     const router = loginRouter();
     const navigations = rstest.spyOn(router, 'navigate').mockRejectedValueOnce('Navigation failed');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(navigations).toHaveBeenCalledWith(expect.objectContaining({ to: '/en/' }));
     expect(router.state.location.pathname).toBe('/en/login');
     expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-    expect(getSubmit().hasAttribute('disabled')).toBe(false);
-    expect(document.activeElement).toBe(getLogin());
+    yield* Effect.promise(() =>
+      waitFor(() => {
+        expect(getSubmit().hasAttribute('disabled')).toBe(false);
+        expect(document.activeElement).toBe(getLogin());
+      }),
+    );
   }).pipe(Effect.provide(bff.browser));
 });
 
@@ -284,13 +307,13 @@ it.effect('keeps navigation on the login route when auth cache refresh fails', (
     const router = loginRouter();
     const invalidations = rstest.spyOn(router, 'invalidate').mockRejectedValueOnce('Route refresh failed');
     const navigations = rstest.spyOn(router, 'navigate');
-    const { runs } = yield* submitLogin('admin', 'secret', router);
-    yield* pageEffectsSettled(runs);
+    const { navigation } = yield* submitLogin('admin', 'secret', router);
+    yield* signInSettled(navigation);
 
     expect(invalidations).toHaveBeenCalledWith({ sync: true });
     expect(navigations).not.toHaveBeenCalled();
     expect(router.state.location.pathname).toBe('/en/login');
     expect(screen.getByText('shell.login.error.internal')).toBeDefined();
-    expect(getSubmit().hasAttribute('disabled')).toBe(false);
+    yield* Effect.promise(() => waitFor(() => expect(getSubmit().hasAttribute('disabled')).toBe(false)));
   }).pipe(Effect.provide(bff.browser));
 });

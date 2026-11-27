@@ -78,13 +78,13 @@ const login = async (page: Page, language: 'cs' | 'en', credentials: Authenticat
   const labels =
     language === 'en'
       ? {
-          login: /^Login\s*\*$/u,
+          login: /^Login \(required\)$/u,
           password: /^Password/u,
           submit: 'Login',
           url: /\/en\/?$/u,
         }
       : {
-          login: /^Přihlašovací jméno\s*\*$/u,
+          login: /^Přihlašovací jméno \(povinné\)$/u,
           password: /^Heslo/u,
           submit: 'Přihlásit se',
           url: /\/cs\/?$/u,
@@ -173,7 +173,7 @@ test('shows one generic error for invalid English credentials', async ({ authent
     .then(
       async () =>
         await hydratedLoginForm(page)
-          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .getByRole('textbox', { name: /^Login \(required\)$/u })
           .fill(authentication.credentials.email),
     )
     .then(
@@ -187,7 +187,7 @@ test('shows one generic error for invalid English credentials', async ({ authent
       async () =>
         await Promise.all([
           expect(page.getByText('The email address or password is invalid.')).toHaveCount(1),
-          expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
+          expect(page.getByRole('textbox', { name: /^Login \(required\)$/u })).toBeFocused(),
         ]),
     ));
 
@@ -211,7 +211,7 @@ test('logs a user in without any server-error response', async ({ authentication
 
   await gotoHydratedLogin(page, 'en');
   const form = hydratedLoginForm(page);
-  await form.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(authentication.credentials.email);
+  await form.getByRole('textbox', { name: /^Login \(required\)$/u }).fill(authentication.credentials.email);
   await form.getByLabel(/^Password/u).fill(authentication.credentials.password);
 
   const signInResponsePromise = page.waitForResponse(
@@ -314,7 +314,9 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   // The sidebar search is controlled: typed text reaches the query only through the renderer's change event.
   await waitForInteractiveAccountMenu(page);
   const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
-  await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('Unit 1');
+  await sidebar
+    .getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' })
+    .fill('Unit 1');
   await sidebar.getByRole('button', { exact: true, name: 'Search' }).click();
   await expect(page).toHaveURL(/\/en\/search\?q=Unit%201$/u);
 
@@ -423,7 +425,8 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
   const approvedExposeChunks = approvedManifest.exposes
     .filter(({ path }) => path === approved.federation.expose)
     .flatMap(({ assets }) => assets.js.sync.map((asset) => new URL(asset, approvedPublicPath).href));
-  expect(approvedExposeChunks).toHaveLength(1);
+  // The expose may split into several sync chunks (its own and shared ones); the approved code is any of them.
+  expect(approvedExposeChunks.length).toBeGreaterThan(0);
   const navigation = page.getByRole('navigation', { name: 'Dashboard navigation' });
   const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
   await expect(navigation.getByRole('link', { exact: true, name: 'Party Registry' })).toBeVisible();
@@ -447,9 +450,13 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
     await expect(page.getByRole('button', { exact: true, name: 'Reload page' })).toBeEnabled();
     await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
     await expect(sidebar).toBeVisible();
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).fill('still usable');
-    await expect(sidebar.getByRole('searchbox', { exact: true, name: 'Search' })).toHaveValue('still usable');
-    await sidebar.getByRole('searchbox', { exact: true, name: 'Search' }).clear();
+    await sidebar
+      .getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' })
+      .fill('still usable');
+    await expect(
+      sidebar.getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' }),
+    ).toHaveValue('still usable');
+    await sidebar.getByRole('searchbox', { exact: true, name: 'Search this tenant and selected legal entity' }).clear();
     await waitForInteractiveAccountMenu(page);
   } finally {
     await restoreFault.evaluate((restore) => restore());
@@ -477,7 +484,10 @@ test('contains a Contacts render-phase failure and rechecks revoked access acros
           approved.compositionRevision,
         );
         await expect(page.locator(contactsSectionSelector)).toHaveCount(0);
-        await expect(page.getByRole('alert')).toHaveCount(0);
+        // The denial is an error StatusText, which the kit announces as an alert; no render failure remains.
+        await expect(
+          page.getByText('This module could not be displayed. Reload the page to try again.', { exact: true }),
+        ).toHaveCount(0);
         const deniedResponse = await page.request.post(moduleTargetPath, requestOptions);
         expect(deniedResponse.status()).toBe(403);
         const deniedBody = await deniedResponse.json();
@@ -709,7 +719,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(
       async () =>
         await hydratedLoginForm(page)
-          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .getByRole('textbox', { name: /^Login \(required\)$/u })
           .fill(authentication.credentials.email),
     )
     .then(
@@ -881,7 +891,7 @@ test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
   await gotoHydratedLogin(page, 'cs');
   const form = hydratedLoginForm(page);
   const loginInput = form.getByRole('textbox', {
-    name: /^Přihlašovací jméno\s*\*$/u,
+    name: /^Přihlašovací jméno \(povinné\)$/u,
   });
   await expect(async () => {
     await loginInput.fill('hydration-probe');

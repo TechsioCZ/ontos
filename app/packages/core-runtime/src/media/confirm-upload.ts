@@ -1,6 +1,7 @@
 import { Effect, Schema } from 'effect';
 
 import type { MediaAssetRef } from '../resources/media-asset.ts';
+import { isCallersReservation } from './byte-source-contract.ts';
 import type { MediaByteSourceOffer } from './byte-source-contract.ts';
 import { MediaIngestUncertain, MediaIntegrityFailed, mediaAssetNotFound } from './errors.ts';
 import { reconcileUncertainUpload } from './reconciliation.ts';
@@ -47,14 +48,7 @@ export const confirmReservedUpload = Effect.fn('MediaConfirmUpload.confirm')(fun
     mediaAssetId: input.mediaAssetRef.resourceId,
     tenantId: input.mediaAssetRef.tenantId,
   });
-  if (
-    asset.storageKey !== namedKey ||
-    asset.ingestedByPrincipalId === null ||
-    asset.ingestedByPrincipalId !== input.principalId ||
-    (input.selectedLegalEntityId !== undefined &&
-      asset.legalEntityId !== null &&
-      asset.legalEntityId !== input.selectedLegalEntityId)
-  ) {
+  if (asset.storageKey !== namedKey || !isCallersReservation(asset, input)) {
     return yield* mediaAssetNotFound();
   }
   if (asset.processingStatus !== 'uploaded') {

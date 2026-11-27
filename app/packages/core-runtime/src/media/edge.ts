@@ -17,7 +17,7 @@ export { assetDownloadRead } from '../generated-reads/asset-download.ts';
 export { isMediaFailure, mediaAssetNotFound, mediaUnavailable } from './errors.ts';
 export type { MediaFailure } from './errors.ts';
 export { MediaDownloadSource } from './download-contract.ts';
-export { streamConfirmedBytes } from './download.ts';
+export { checkConfirmedBytes, streamConfirmedBytes } from './download.ts';
 export { downloadResponseHeaders } from './download-headers.ts';
 export { MediaIntegrityRecorder, integrityRecordRequest } from './integrity-recorder.ts';
 export { ProvenMediaIntegrityFinding } from './integrity-contract.ts';

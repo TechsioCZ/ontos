@@ -24,20 +24,22 @@ const ApprovalCard = ({
   const { t } = useModernI18n();
   const id = useId();
   return (
-    <li className="shell:grid shell:gap-4">
-      <article aria-labelledby={`${id}-title`} className="shell:grid shell:gap-4">
-        <header className="shell:grid shell:gap-2">
-          <h3 className="shell:text-title-md" id={`${id}-title`}>
+    <li className="grid gap-200">
+      <article aria-labelledby={`${id}-title`} className="grid gap-200">
+        <header className="grid gap-150">
+          <h3 className="text-xl" id={`${id}-title`}>
             {item.title}
           </h3>
-          <div className="shell:flex shell:flex-wrap shell:gap-2">
-            <Badge variant="outline">{t(`shell.accessAdmin.approvals.status.${item.status}`)}</Badge>
-            <Badge variant={item.risk === 'routine' ? 'info' : 'warning'}>
+          <div className="flex flex-wrap gap-150">
+            <Badge appearance="outline" severity="neutral">
+              {t(`shell.accessAdmin.approvals.status.${item.status}`)}
+            </Badge>
+            <Badge severity={item.risk === 'routine' ? 'info' : 'warning'}>
               {t(`shell.accessAdmin.risk.${item.risk}`)}
             </Badge>
           </div>
         </header>
-        <dl className="shell:grid shell:gap-2 shell:text-body-sm">
+        <dl className="grid gap-150 text-sm">
           <div>
             <dt>{t('shell.accessAdmin.approvals.scope')}</dt>
             <dd>
@@ -85,20 +87,20 @@ const ApprovalCard = ({
             </>
           )}
         </dl>
-        <p className="shell:text-body-sm">{t('shell.accessAdmin.deadline.proposal')}</p>
-        <p className="shell:text-body-sm">
+        <p className="text-sm">{t('shell.accessAdmin.deadline.proposal')}</p>
+        <p className="text-sm">
           {t(
             item.risk === 'critical'
               ? 'shell.accessAdmin.deadline.mandateCritical'
               : 'shell.accessAdmin.deadline.mandate',
           )}
         </p>
-        <section aria-labelledby={`${id}-command`} className="shell:grid shell:gap-2">
-          <h4 className="shell:text-title-sm" id={`${id}-command`}>
+        <section aria-labelledby={`${id}-command`} className="grid gap-150">
+          <h4 className="text-lg" id={`${id}-command`}>
             {t('shell.accessAdmin.approvals.frozenCommand')}
           </h4>
-          <p className="shell:text-body-sm">{t('shell.accessAdmin.approvals.frozenCommandHelp')}</p>
-          <dl className="shell:grid shell:gap-2 shell:text-body-sm">
+          <p className="text-sm">{t('shell.accessAdmin.approvals.frozenCommandHelp')}</p>
+          <dl className="grid gap-150 text-sm">
             <div>
               <dt>{t('shell.accessAdmin.kind.action')}</dt>
               <dd>{item.command.actionKey}</dd>
@@ -118,8 +120,8 @@ const ApprovalCard = ({
               <dd>{item.command.targetLabel ?? t(notAvailableKey)}</dd>
             </div>
           </dl>
-          <h5 className="shell:text-title-sm">{t('shell.accessAdmin.approvals.frozenFields')}</h5>
-          <dl className="shell:grid shell:gap-2 shell:text-body-sm">
+          <h5 className="text-lg">{t('shell.accessAdmin.approvals.frozenFields')}</h5>
+          <dl className="grid gap-150 text-sm">
             {item.command.fields.map((field) => (
               <div key={field.label}>
                 <dt>{field.label}</dt>
@@ -134,15 +136,15 @@ const ApprovalCard = ({
         {item.requesterKind === 'agent' ? (
           <StatusText status="warning">{t('shell.accessAdmin.agents.unavailable')}</StatusText>
         ) : null}
-        <p className="shell:text-body-sm">{t('shell.accessAdmin.approvals.ownAuthority')}</p>
-        <div className="shell:flex shell:flex-wrap shell:gap-2">
+        <p className="text-sm">{t('shell.accessAdmin.approvals.ownAuthority')}</p>
+        <div className="flex flex-wrap gap-150">
           {item.canApprove ? (
             <Button disabled={pending} onClick={() => onDecision(item.id, 'approve')} type="button">
               {t('shell.accessAdmin.approvals.actions.approve')}
             </Button>
           ) : null}
           {item.canReject ? (
-            <Button disabled={pending} onClick={() => onDecision(item.id, 'reject')} type="button" variant="secondary">
+            <Button disabled={pending} onClick={() => onDecision(item.id, 'reject')} severity="secondary" type="button">
               {t('shell.accessAdmin.approvals.actions.reject')}
             </Button>
           ) : null}
@@ -150,8 +152,8 @@ const ApprovalCard = ({
             <Button
               disabled={pending}
               onClick={() => onDecision(item.id, 'withdraw')}
+              severity="secondary"
               type="button"
-              variant="secondary"
             >
               {t('shell.accessAdmin.approvals.actions.withdraw')}
             </Button>
@@ -165,7 +167,7 @@ const ApprovalCard = ({
             {t('shell.accessAdmin.approvals.actions.execute')}
           </Button>
         </div>
-        <p className="shell:text-body-sm" id={`${id}-execution`}>
+        <p className="text-sm" id={`${id}-execution`}>
           {item.canExecute ? null : t(item.executionReasonKey)} {t('shell.accessAdmin.approvals.executeHelp')}
         </p>
       </article>
@@ -202,7 +204,7 @@ export const ApprovalsInbox = ({
     <section
       aria-busy={pending || model.state === 'loading'}
       aria-label={t('shell.accessAdmin.approvals.title')}
-      className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
+      className="grid w-full max-w-5xl gap-300"
     >
       <p>{t('shell.accessAdmin.approvals.description')}</p>
       {pending ? (
@@ -214,7 +216,7 @@ export const ApprovalsInbox = ({
         <StatusText status="default">{t('shell.accessAdmin.approvals.empty')}</StatusText>
       )}
       {model.state === 'ready' && model.items.length > 0 && (
-        <ul aria-label={t('shell.accessAdmin.accessible.approvalList')} className="shell:grid shell:gap-6">
+        <ul aria-label={t('shell.accessAdmin.accessible.approvalList')} className="grid gap-300">
           {model.items.map((item) => (
             <ApprovalCard item={item} key={item.id} onDecision={onDecision} onExecute={onExecute} pending={pending} />
           ))}
@@ -226,12 +228,12 @@ export const ApprovalsInbox = ({
         </StatusText>
       )}
       {model.state === 'ready' && model.nextCursor !== null ? (
-        <Button disabled={pending} onClick={onNextPage} type="button" variant="secondary">
+        <Button disabled={pending} onClick={onNextPage} severity="secondary" type="button">
           {t('shell.accessAdmin.approvals.nextPage')}
         </Button>
       ) : null}
       {refreshable ? (
-        <Button disabled={pending} onClick={onRefresh} type="button" variant="secondary">
+        <Button disabled={pending} onClick={onRefresh} severity="secondary" type="button">
           {t('shell.accessAdmin.common.refresh')}
         </Button>
       ) : null}

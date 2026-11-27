@@ -55,7 +55,11 @@ import type { ShellNativeOwnedDatabase } from '../support/api-key-gateway-auth-r
 import { allocateLoopbackPort, startCompiledSymmyShell } from '../support/server-owner-relay-native-fixture.ts';
 import { GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { ShellGatewayReleaseDiagnosticSchema } from '../../api/auth/gateway-release-diagnostic.ts';
-import { SwitchLegalEntityPayloadSchema } from '../../shared/browser-api.ts';
+import {
+  ChangeSystemWorkloadEnrollmentPayloadSchema,
+  SwitchLegalEntityPayloadSchema,
+  SystemWorkloadEnrollmentResponseSchema,
+} from '../../shared/browser-api.ts';
 import { SymmyRegionsProjectionConfigurationSchema } from '../../api/symmy/regions-projection.ts';
 import { SymmyPriceReadProjectionConfigurationSchema } from '../../api/symmy/source-read-projections.ts';
 
@@ -74,10 +78,12 @@ const appRoot = new URL('../../../../', import.meta.url).pathname;
 const sourceIssueTag = 'relay-source-issue';
 const sourceBoundTag = 'relay-source-bound';
 const sessionGatewayTag = 'session-gateway';
+const humanSessionTag = 'human-session';
 const gatewayDiagnosticsTag = 'gateway-diagnostics';
 const issuerDiagnosticsTag = 'issuer-diagnostics';
 const requestDiagnosticsTag = 'request-diagnostics';
 const releaseDiagnosticsTag = 'release-diagnostics';
+const systemWorkloadEnrollmentTag = 'system-workload-enrollment';
 const marketAppId = 'commerce-market-catalog';
 const customerContextAppId = 'commerce-customer-context';
 export interface ApiKeyGatewayNativeFixtureOptions {
@@ -174,6 +180,25 @@ export const ShellNativeSetupGatewayResponseSchema = Schema.TaggedStruct('setup-
   gateway: GatewayContextResponseSchema,
 });
 export const ShellNativeBoundCommandSchema = Schema.TaggedStruct('bound', {});
+/**
+ * The signed-in Tenant administrator changes a system workload enrollment through the Shell's own HTTP endpoint of
+ * `core.identity.change-system-workload-enrollment`, in the session the child holds for that human.
+ */
+export const ShellNativeSystemWorkloadEnrollmentCommandSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
+  idempotencyKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+    Schema.brand('IdempotencyKey'),
+  ),
+  payload: ChangeSystemWorkloadEnrollmentPayloadSchema,
+});
+export const ShellNativeSystemWorkloadEnrollmentResponseSchema = Schema.TaggedStruct(systemWorkloadEnrollmentTag, {
+  enrollment: SystemWorkloadEnrollmentResponseSchema,
+});
+/** The signed-in fixture human's own session, for the Shell routes that accept only a browser session. */
+export const ShellNativeHumanSessionCommandSchema = Schema.TaggedStruct(humanSessionTag, {});
+export const ShellNativeHumanSessionResponseSchema = Schema.TaggedStruct(humanSessionTag, {
+  cookie: Schema.String,
+  origin: Schema.String,
+});
 export const ShellNativeRelaySourceIssueCommandSchema = Schema.TaggedStruct(sourceIssueTag, {
   issuerPrincipalId: Schema.optionalKey(PrincipalIdSchema),
   principalId: PrincipalIdSchema,
@@ -340,6 +365,8 @@ export const ShellNativeChildCommandSchema = Schema.Union([
   ShellNativeSetupKeyIssueCommandSchema,
   ShellNativeSetupKeyBoundCommandSchema,
   ShellNativeTenantSetupGatewayCommandSchema,
+  ShellNativeSystemWorkloadEnrollmentCommandSchema,
+  ShellNativeHumanSessionCommandSchema,
   Schema.TaggedStruct('enabled', { enabled: Schema.Boolean }),
 ]);
 export const ShellNativeIssuedResponseSchema = Schema.TaggedStruct('issued', {
@@ -378,6 +405,8 @@ export const ShellNativeChildResponseSchema = Schema.Union([
   ShellNativeReleaseDiagnosticsResponseSchema,
   ShellNativeSetupKeyIssuedResponseSchema,
   ShellNativeSetupGatewayResponseSchema,
+  ShellNativeSystemWorkloadEnrollmentResponseSchema,
+  ShellNativeHumanSessionResponseSchema,
   Schema.TaggedStruct('ack', {}),
   ShellNativeUnavailableResponseSchema,
 ]);
@@ -943,7 +972,28 @@ export const makeApiKeyGatewayNativeFixture = Effect.fn('ApiKeyGatewayNativeFixt
     return Object.freeze({
       additionalRelaySourceProviderUsers: ready.additionalRelaySourceProviderUsers ?? [],
       baseUrl: ready.baseUrl,
+      changeFixtureSystemWorkloadEnrollment: Effect.fn('ApiKeyGatewayNativeFixture.changeSystemWorkloadEnrollment')(
+        function* changeFixtureSystemWorkloadEnrollment(
+          input: Omit<typeof ShellNativeSystemWorkloadEnrollmentCommandSchema.Encoded, '_tag'>,
+        ) {
+          yield* ensureOpen;
+          const response = yield* exchange({ _tag: systemWorkloadEnrollmentTag, ...input });
+          return Schema.is(ShellNativeSystemWorkloadEnrollmentResponseSchema)(response)
+            ? response.enrollment
+            : yield* unavailable();
+        },
+      ),
       compositionSourceUrl: sourceUrl,
+      fixtureHumanSession: Effect.fn('ApiKeyGatewayNativeFixture.fixtureHumanSession')(function* fixtureHumanSession() {
+        yield* ensureOpen;
+        if (options.productionGate !== true || Option.isNone(yield* Ref.get(fixtureBoundActor))) {
+          return yield* unavailable();
+        }
+        const response = yield* exchange({ _tag: humanSessionTag });
+        return Schema.is(ShellNativeHumanSessionResponseSchema)(response)
+          ? Object.freeze({ cookie: Redacted.make(response.cookie), origin: response.origin })
+          : yield* unavailable();
+      }),
       gatewayDiagnostics: Effect.fn('ApiKeyGatewayNativeFixture.gatewayDiagnostics')(function* gatewayDiagnostics() {
         yield* ensureOpen;
         if (options.productionGate !== true) {

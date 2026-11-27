@@ -19,6 +19,7 @@ import {
   OntosModuleIdSchema,
   buildInstalledModuleCatalog,
 } from '../packages/core-runtime/src/index.ts';
+import { coreSystemModuleDeclarations } from '../packages/core-runtime/src/modules/core-system-workloads.ts';
 import type {
   InstalledDeploymentContractInput,
   OntosModuleDeploymentContract,
@@ -77,6 +78,10 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
 } from './scaffolding/shared.mts';
+import {
+  coreSystemWorkloadRegistrationIssues,
+  systemWorkloadRegistrationIssues,
+} from './system-workload-registrations.mts';
 
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
@@ -116,7 +121,9 @@ const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts',
 
 type TopologyVertical = (typeof TopologySchema.Type.verticals)[number];
 
-const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem> =>
+export const walkSourceFiles = (
+  directory: string,
+): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem> =>
   Effect.gen(function* walkSourceDirectory() {
     const fileSystem = yield* FileSystem.FileSystem;
     if (!(yield* fileSystem.exists(directory))) {
@@ -126,7 +133,8 @@ const walkSourceFiles = (directory: string): Effect.Effect<readonly string[], Pl
     const files = yield* Effect.all(
       entries.map((entry) =>
         Effect.gen(function* inspectSourceEntry() {
-          if (entry === 'node_modules' || entry.startsWith('dist')) {
+          // Installed dependencies and gitignored build output (`.output`, `dist*`) are not the module's source.
+          if (entry === 'node_modules' || entry === '.output' || entry.startsWith('dist')) {
             return [];
           }
           const target = path.join(directory, entry);
@@ -465,6 +473,62 @@ const validateSplitMarkerOwnership = (manifest: string, registration: string, de
     return yield* Effect.void;
   });
 
+/**
+ * The system workloads a module's own source registers are exactly the ones its manifest declares in
+ * `systemWorkloads`, so the published contract names every key Core may enroll a Tenant's system Principal for, and
+ * no other. Tests are not the module's source.
+ */
+const validateSystemWorkloadRegistrations = (
+  verticalDirectory: string,
+  appId: string,
+  derived: OntosModuleDeploymentContract,
+) =>
+  Effect.gen(function* validateSystemWorkloads() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const paths = (yield* walkSourceFiles(verticalDirectory)).filter(
+      (filePath) => !filePath.includes(`${path.sep}tests${path.sep}`),
+    );
+    const files = [];
+    for (const filePath of paths) {
+      const content = yield* fileSystem.readFileString(filePath);
+      if (content.includes('registerSystemWorkload')) {
+        files.push({ content, path: path.relative(verticalDirectory, filePath) });
+      }
+    }
+    const issues = systemWorkloadRegistrationIssues({
+      appId,
+      declared: derived.manifest.systemWorkloads ?? [],
+      files,
+    });
+    return issues.length === 0 ? yield* Effect.void : yield* failure(issues.join('\n'));
+  });
+
+/**
+ * The system workloads the Shell's own source registers are exactly keys Core declares for its core modules
+ * (`core-system-workloads.ts`), which have no manifest. Only the Shell is read: the core-runtime package defines and
+ * re-exports `registerSystemWorkload`, which is not a registration. Tests are not Core's source.
+ */
+const validateCoreSystemWorkloadRegistrations = (workspaceRoot: string) =>
+  Effect.gen(function* validateCoreSystemWorkloads() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const shellDirectory = path.join(workspaceRoot, 'apps/shell-super-app');
+    const paths = (yield* walkSourceFiles(shellDirectory)).filter(
+      (filePath) => !filePath.includes(`${path.sep}tests${path.sep}`),
+    );
+    const files = [];
+    for (const filePath of paths) {
+      const content = yield* fileSystem.readFileString(filePath);
+      if (content.includes('registerSystemWorkload')) {
+        files.push({ content, path: path.relative(shellDirectory, filePath) });
+      }
+    }
+    const issues = coreSystemWorkloadRegistrationIssues({
+      declared: coreSystemModuleDeclarations.flatMap(({ systemWorkloads }) => systemWorkloads),
+      files,
+    });
+    return issues.length === 0 ? yield* Effect.void : yield* failure(issues.join('\n'));
+  });
+
 const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contractUrl: string) =>
   Effect.gen(function* checkVerticalContract() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -529,6 +593,7 @@ const checkVertical = (workspaceRoot: string, vertical: TopologyVertical, contra
     if (derived.deployment.appId !== appId || derived.manifest.module.id !== manifestModuleId) {
       return yield* failure(`${appId} authored module contract disagrees with generated owner metadata`);
     }
+    yield* validateSystemWorkloadRegistrations(verticalDirectory, appId, derived);
     yield* Effect.all([
       validateEmittedContract(verticalDirectory, 'dist', derived),
       validateEmittedContract(verticalDirectory, 'dist-cloudflare', derived),
@@ -564,6 +629,7 @@ const checkOntosModuleContractsEffect = (workspaceRoot: string) =>
         checkVertical(workspaceRoot, vertical, overlay.ontosModuleManifests[vertical.id]),
       ),
     );
+    yield* validateCoreSystemWorkloadRegistrations(workspaceRoot);
     const moduleIds = contracts.map((entry) => entry.contract.manifest.module.id);
     const duplicateModuleId = moduleIds.find((moduleId, index) => moduleIds.indexOf(moduleId) !== index);
     if (duplicateModuleId !== undefined) {

@@ -114,11 +114,12 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/catalog-selection-contracts": "workspace:*",
+    "@app/commerce-cart-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
-    "@app/shared-design-tokens": "workspace:*",
     "@effect/opentelemetry": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",
@@ -141,9 +142,7 @@
     "effect": "4.0.7",
     "i18next": "26.4.2",
     "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "@app/catalog-selection-contracts": "workspace:*",
-    "@app/commerce-cart-contracts": "workspace:*"
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@effect/tsgo": "0.69.0",
@@ -151,7 +150,6 @@
     "@modern-js/app-tools-extensions": "catalog:ultramodern",
     "@modern-js/plugin-bff-build-extensions": "catalog:ultramodern",
     "@modern-js/ultramodern-app-tools": "catalog:ultramodern",
-    "@rsbuild/plugin-tailwindcss": "^2.0.3",
     "@rstest/core": "0.12.6",
     "@types/node": "^26.4.1",
     "@types/react": "^19.3.0",
@@ -160,7 +158,6 @@
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "1.0.0",
     "pg": "8.22.0",
-    "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
     "wrangler": "4.137.0",
     "zephyr-rspack-plugin": "1.2.4",

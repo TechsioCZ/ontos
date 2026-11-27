@@ -17,9 +17,9 @@ export const ChangeCells = ({ cells }: { readonly cells: readonly ChangeCellView
     return <p>{t('shell.accessAdmin.common.none')}</p>;
   }
   return (
-    <ul className="shell:grid shell:gap-2">
+    <ul className="grid gap-150">
       {cells.map((cell) => (
-        <li className="shell:grid shell:gap-1" key={`${cell.capabilityKey}:${cell.mode}:${cell.selector._tag}`}>
+        <li className="grid gap-100" key={`${cell.capabilityKey}:${cell.mode}:${cell.selector._tag}`}>
           <span>{cell.capabilityKey}</span>
           <span>{t(`shell.accessAdmin.mode.${cell.mode}`)}</span>
           <span>{t(scopeKeys[cell.selector._tag])}</span>
@@ -51,15 +51,15 @@ export const ChangeRoleDiff = ({ changes }: { readonly changes: readonly RoleCha
     return <p>{t('shell.accessAdmin.changes.noRoleChanges')}</p>;
   }
   return (
-    <div className="shell:grid shell:gap-4">
+    <div className="grid gap-200">
       {changes.map((change) => (
-        <section className="shell:grid shell:gap-2" key={change.roleId}>
+        <section className="grid gap-150" key={change.roleId}>
           <h4>{change.roleName}</h4>
           <dl>
             <dt>{t('shell.accessAdmin.changes.roleRevision')}</dt>
             <dd>{change.expectedRevisionId}</dd>
           </dl>
-          <div className="shell:grid shell:gap-4 shell:md:grid-cols-2">
+          <div className="grid gap-200 md:grid-cols-2">
             <div>
               <h5>{t('shell.accessAdmin.common.beforeState')}</h5>
               <ChangeCells cells={change.before} />
@@ -87,7 +87,7 @@ export const ChangeSkips = ({ skipped }: { readonly skipped: ChangeReceiptView['
     );
   }
   return (
-    <ul className="shell:grid shell:gap-2">
+    <ul className="grid gap-150">
       {skipped.map((skip) => (
         <li key={`${skip.roleId}:${skip.capabilityKey}:${skip.slot}`}>
           {t('shell.accessAdmin.changes.undoSkippedItem', {

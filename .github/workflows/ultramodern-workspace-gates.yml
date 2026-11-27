@@ -962,6 +962,15 @@ jobs:
       ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
       ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
       ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      # The throwaway object store and loopback relay ports of the one lane that runs whole:core-media. The
+      # application reads none of these names, so no other suite of the row sees a configured object store.
+      ONTOS_CI_CORE_MEDIA_COMPOSITION_PORT: '19012'
+      ONTOS_CI_CORE_MEDIA_ENGINE_RELAY_PORT: '19011'
+      ONTOS_CI_CORE_MEDIA_S3_RELAY_PORT: '19010'
+      ONTOS_CI_MINIO_BUCKET: ontos-ci-core-media
+      ONTOS_CI_MINIO_PORT: '19000'
+      ONTOS_CI_MINIO_ROOT_PASSWORD: ontos-ci-core-media-secret
+      ONTOS_CI_MINIO_ROOT_USER: ontos-ci-core-media
       # One login per runtime database identity, each with its own development-only password.
       PARTY_REGISTRY_DATABASE_URL: postgresql://party_registry_runtime:party_registry_runtime@localhost:5433/ontos_ci
       PARTY_REGISTRY_WORKER_DATABASE_URL: postgresql://party_registry_worker:party_registry_worker@localhost:5433/ontos_ci
@@ -1235,6 +1244,11 @@ jobs:
       - name: Wait for the restored worker clusters
         wait: integration-workers
 
+      - name: Start the Core Media object store
+        if: matrix.suite == 'integration' && contains(matrix.tasks, 'whole:core-media')
+        working-directory: app
+        run: bash scripts/ci/start-core-media-object-store.sh
+
       - name: Derive the fresh built Composition for native owner fixtures
         if: matrix.native-composition == true
         working-directory: app
@@ -1256,7 +1270,6 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
           mise exec -- pnpm mf:types
           mise exec -- pnpm performance:readiness
 
@@ -1280,6 +1293,7 @@ jobs:
         run: mise exec -- pnpm active-composition:publish prove-build
 
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
+        id: integration-suites
         if: matrix.suite == 'integration'
         working-directory: app
         # The job environment above is the whole configuration. Native fixtures refuse to start unless
@@ -1290,8 +1304,21 @@ jobs:
           INTEGRATION_TASKS: ${{ toJSON(matrix.tasks) }}
           ONTOS_CI_ISOLATED_WORKERS: '2'
           INTEGRATION_LANES: ${{ matrix.lanes }}
+          # whole:core-media writes its evidence record here.
+          CORE_MEDIA_EVIDENCE_DIR: ${{ runner.temp }}/core-media-evidence
         # Same commands as `pnpm test:integration`, with separate Rstest shards for the root and large packages.
         run: bash scripts/ci/run-integration-suites.sh
+
+      # The record is generated from this run's own test reports, so it is kept when a case failed too. It is
+      # named per attempt for the same reason as the diagnostics below.
+      - name: Upload the Core Media evidence record
+        if: ${{ !cancelled() && steps.integration-suites.outcome != 'skipped' && matrix.suite == 'integration' && contains(matrix.tasks, 'whole:core-media') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: core-media-evidence-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/core-media-evidence/core-media-evidence.json
+          if-no-files-found: error
+          retention-days: 90
 
       # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
@@ -1491,6 +1518,19 @@ jobs:
             filters+=(--filter "./$unit")
           done
           mise exec -- pnpm -r --no-sort --workspace-concurrency=2 "${filters[@]}" run build
+
+      # A module ships no CSS of its own: the kit stylesheet the Shell loads styles every module.
+      - name: Check that the shard's module browser bundles ship no CSS
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          flags=()
+          for unit in "${units[@]}"; do
+            flags+=(--unit "$unit")
+          done
+          mise exec -- node ./scripts/check-module-browser-css.mts "${flags[@]}"
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs

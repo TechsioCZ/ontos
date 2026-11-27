@@ -4,6 +4,7 @@ import type { Scope } from 'effect';
 
 import { PrincipalIdSchema, TenantIdSchema } from '../access/ids.ts';
 import { makeAccessWorkloadBindingDrizzleStore } from '../access/workloads/binding-store.ts';
+import { bindSystemWorkloadPrincipal } from '../access/workloads/system-workload-enrollment.ts';
 import { AccessWorkloadBindingIdSchema } from '../access/workloads/store.ts';
 import { makePrincipalResolver, ProviderSubjectSchema } from '../auth/principal-resolver.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../auth/staff-authentication-namespace.ts';
@@ -11,6 +12,7 @@ import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
 import { makeCoreDatabase } from '../db/client.ts';
 import { accessWorkloadBindings, principals } from '../db/schema.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import { stageScopeOf } from '../install/stage-context-bootstrap.ts';
 import { makeOperationalScopeRepository } from '../operations/context.ts';
@@ -122,7 +124,11 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
 
     const runVerified = Effect.fn('NativeWorkloadBindingControl.runVerified')(
       function* runOwnedWriterControl<Value, Failure>(
-        body: (transaction: CoreTransaction, operatorScope: OperationalScope) => Effect.Effect<Value, Failure>,
+        body: (
+          transaction: CoreTransaction,
+          operatorScope: OperationalScope,
+          scoped: ScopedTransactionExecutor,
+        ) => Effect.Effect<Value, Failure>,
       ) {
         yield* requireOwnership;
         return yield* database.executor.transaction(
@@ -136,7 +142,7 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
             if (runtime?.valid !== true) {
               return yield* unavailable('The owned enrollment control requires its exact non-privileged runtime role');
             }
-            yield* installOperationalScope(transaction, scope);
+            const scoped = yield* installOperationalScope(transaction, scope);
             const targetRows = transaction
               .select({ principalId: principals.principalId })
               .from(principals)
@@ -175,7 +181,7 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
               );
             }
             // The native store uses this same client's active transaction context, including its savepoint.
-            const result = yield* body(transaction, scope);
+            const result = yield* body(transaction, scope, scoped);
             yield* requireOwnership;
             return result;
           }),
@@ -248,7 +254,7 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
       }),
     );
     const rebind = runVerified(
-      Effect.fn('NativeWorkloadBindingControl.rebindFresh')(function* rebindFresh(transaction, operatorScope) {
+      Effect.fn('NativeWorkloadBindingControl.rebindFresh')(function* rebindFresh(transaction, operatorScope, scoped) {
         if ((yield* activeBindings(transaction)).length !== 0) {
           return yield* unavailable('A later enrollment already occupies this exact workload');
         }
@@ -280,18 +286,22 @@ const makeOwnedWorkloadBindingControlNative = Effect.fn('NativeWorkloadBindingCo
         ) {
           return yield* unavailable('A rebind requires genuinely new binding and incarnation identities');
         }
-        yield* writer.registerBindings(operatorScope, {
-          bindings: [
-            {
-              bindingId,
-              createdAt: DateTime.toDateUtc(yield* DateTime.now),
-              incarnation,
-              principalId: pins.targetPrincipalId,
-              tenantId: pins.tenantId,
-              workloadKey,
-            },
-          ],
-        });
+        // A system Principal's bindings have one writer, its enrollment's, which the generic store refuses to stand in
+        // for: this is the write a later enrollment makes for an owner workload its holder no longer holds.
+        yield* pins.principalKind === 'system'
+          ? bindSystemWorkloadPrincipal(scoped, pins.targetPrincipalId, [{ bindingId, incarnation, workloadKey }])
+          : writer.registerBindings(operatorScope, {
+              bindings: [
+                {
+                  bindingId,
+                  createdAt: DateTime.toDateUtc(yield* DateTime.now),
+                  incarnation,
+                  principalId: pins.targetPrincipalId,
+                  tenantId: pins.tenantId,
+                  workloadKey,
+                },
+              ],
+            });
         const current = yield* activeBindings(transaction);
         if (current.length !== 1 || current[0]?.bindingId !== bindingId || current[0].incarnation !== incarnation) {
           return yield* unavailable('The native writer did not establish the exact fresh enrollment');

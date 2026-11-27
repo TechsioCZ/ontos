@@ -19,6 +19,7 @@ import {
   metadataOf,
   patternBytes,
   putBytes,
+  refOf,
   rowOf,
   rowsOf,
   renameOverHttp,
@@ -36,7 +37,8 @@ import {
  *
  * Authentication is the one substitute (a header names the seeded principal); every authorization answer is
  * SpiceDB's. Object store: the real S3 adapter on an S3-compatible EMULATOR (MinIO), NOT R2. The `object stored out of
- * band` steps write the emulator directly, standing for a client whose PUT answer was lost after the write.
+ * band` steps write the emulator directly, standing for a client whose PUT answer was lost after the write. No
+ * product code enters `scanning` (no scanner exists), so that one status is written to the row directly.
  */
 
 const platform = {
@@ -206,6 +208,13 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               // Without the capability the engine refuses, and nothing is created.
               expect((yield* reserveOverHttp(edge, nobody, bytes, { idempotencyKey: 'denied' })).status).toBe(403);
               expect((yield* rowsOf(world)).length).toBe(2);
+              // One byte more than 10,000 parts of 5 GiB: the store can never write it, so nothing is reserved.
+              const tooLarge = yield* reserveOverHttp(edge, uploader, bytes, {
+                declaredByteSize: 10_000 * 5 * 1024 ** 3 + 1,
+                idempotencyKey: 'too-large',
+              });
+              expect(tooLarge.status).toBe(422);
+              expect((yield* rowsOf(world)).length).toBe(2);
               // A rename needs its own key and its own capability, which the uploader does not hold.
               expect((yield* renameOverHttp(edge, owner, id, 'Named.pdf', null)).status).toBe(428);
               expect((yield* renameOverHttp(edge, uploader, id, 'Named.pdf', 'rename-denied')).status).toBe(403);
@@ -325,6 +334,10 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               expect((yield* confirmOverHttp(edge, uploader, closed, 'close-confirm')).status).toBe(422);
               const settled = yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm');
               expect(settled.status).toBe(200);
+              // While the grant stands the same key is answered with the saved reply: the control for the refusal below.
+              const replayed = yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm');
+              expect(replayed.status).toBe(200);
+              expect(replayed.json).toEqual(settled.json);
 
               // A foreign tenant named in the reference is "not found" before any read-back, whatever the asset's state.
               const foreignTenant = '00000000-0000-4000-8000-0000000000aa';
@@ -334,10 +347,63 @@ it.layer(templateDatabaseLayer, { excludeTestServices: true, timeout: '600 secon
               yield* world.revoke(confirmGrant.incarnationId);
               expect((yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm-new')).status).toBe(403);
               expect((yield* confirmOverHttp(edge, uploader, closed, 'close-confirm-new')).status).toBe(403);
-              // Nor is the saved reply of the earlier key handed to a caller who may no longer confirm.
-              expect((yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm')).status).not.toBe(200);
+              // Nor is the saved reply of the earlier key handed to a caller who may no longer confirm. Core refuses a
+              // replay as an already committed invocation: the policy conflict, with no sealed identity in it.
+              const refusedReplay = yield* confirmOverHttp(edge, uploader, sealed, 'seal-confirm');
+              expect(refusedReplay.status).toBe(409);
+              expect(JSON.parse(textOf(refusedReplay.bytes))).toMatchObject({
+                status: 409,
+                type: 'https://ontos.dev/problems/policy-conflict',
+              });
+              expect(textOf(refusedReplay.bytes)).not.toMatch(/contentSha256|byteSize|mediaAssetRef/u);
               expect((yield* rowOf(world, sealed))?.processing_status).toBe('ready');
               expect((yield* rowOf(world, closed))?.processing_status).toBe('failed');
+            }),
+          ),
+        ),
+    );
+
+    suite.effect(
+      'a scanning asset passes the real metadata gate as unverified content: only a metadata holder reads it, and it is neither downloadable nor confirmable',
+      (ctx) =>
+        withMediaE2eWorld(ctx, platform, (world) =>
+          Effect.scoped(
+            Effect.gen(function* scanningMetadata() {
+              const uploader = person(world, 'uploader');
+              const reader = person(world, 'downloader');
+              const outsider = person(world, 'outsider');
+              yield* world.grant(uploader, uploaderCapabilities);
+              yield* world.grant(reader, readerCapabilities);
+              const edge = yield* world.shell;
+              const bytes = patternBytes(512);
+              const id = assetIdOf(yield* reserveOverHttp(edge, uploader, bytes, { idempotencyKey: 'scanning' }));
+              yield* storeObjectOutOfBand(world, id, bytes);
+              yield* world.admin
+                .unsafe(
+                  `update core.media_assets set processing_status = 'scanning' where tenant_id = $1 and media_asset_id = $2`,
+                  [world.tenantId, id],
+                )
+                .pipe(Effect.orDie);
+
+              const metadata = yield* metadataOf(edge, reader, id);
+              expect(metadata.status).toBe(200);
+              // Exactly these fields: no size and no digest, because nothing has been proven about the content.
+              expect(metadata.json).toEqual({
+                contentVerified: false,
+                displayFilename: 'Brochure.pdf',
+                ingestionSource: 'user',
+                mediaAssetRef: refOf(world.tenantId, id),
+                mimeType: 'application/pdf',
+                processingStatus: 'scanning',
+              });
+              // The engine decides: uploading the file gives no right to read about it, and neither does nothing.
+              expect((yield* metadataOf(edge, uploader, id)).status).toBe(403);
+              expect((yield* metadataOf(edge, outsider, id)).status).toBe(403);
+
+              // Not usable: no bytes leave, and a confirm with the right bytes stored is unavailable, never success.
+              expect((yield* downloadOf(edge, reader, id)).status).toBe(409);
+              expect((yield* confirmOverHttp(edge, uploader, id, 'confirm-scanning')).status).toBe(503);
+              expect(yield* rowOf(world, id)).toMatchObject({ processing_status: 'scanning', sealed_at: null });
             }),
           ),
         ),

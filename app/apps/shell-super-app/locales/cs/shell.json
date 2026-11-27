@@ -170,6 +170,7 @@
         "invalidAmount": "Zadejte celé číslo v minoritních jednotkách měny.",
         "existingAmountHelp": "Limit částky u existující buňky nelze změnit na místě. Odeberte buňku, uložte odebrání a potom ji přidejte s novým limitem.",
         "invalidEdit": "Tato změna role není platná. Zkontrolujte buňky a limity.",
+        "invalidCompanyId": "Zadejte platné ID firmy.",
         "namedEffect": "Pojmenovaný následek",
         "dangerousConfirmEffect": "Potvrzuji následek: {{effect}}",
         "writesUnavailable": "Uložení je vypnuté, dokud není doložený zapisující příkaz.",
@@ -207,6 +208,9 @@
         "noAmountLimit": "Bez zadaného limitu (neznamená neomezeně)",
         "localTime": "Datum a čas se zobrazují v časovém pásmu vašeho zařízení.",
         "invalid": "Hodnota není platná.",
+        "invalidAmount": "Zadejte celé číslo v minoritních jednotkách měny, nebo pole nechte prázdné.",
+        "invalidCurrency": "Zadejte třípísmenný kód měny velkými písmeny, například CZK.",
+        "choiceWithdrawn": "Některá volba zde po obnovení už není k dispozici. Vyberte znovu.",
         "permissions": "Oprávnění",
         "amountLimit": "Limit částky",
         "currency": "Měna",
@@ -428,6 +432,8 @@
         "subjectPickerLabel": "Osoba, jejíž oprávnění ověřujete",
         "morePeople": "Načíst další lidi",
         "currentPersonChoice": "Moje oprávnění",
+        "subjectWithdrawn": "Tato osoba už v seznamu není. Vyberte osobu znovu.",
+        "capabilityKeyRequired": "Zadejte klíč oprávnění, který chcete ověřit.",
         "checkingPerson": "Ověřuji oprávnění pro {{name}}",
         "invalidInput": "Doplňte akci nebo čtení, záznam a částku v celých minoritních jednotkách.",
         "unknownReason": "Důvod zatím neumíme pojmenovat. Obraťte se na správce tenanta.",
@@ -653,6 +659,9 @@
     "seo": {
       "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
     },
-    "title": "UltraModern Workspace"
+    "title": "UltraModern Workspace",
+    "uiKit": {
+      "requiredLabel": "(povinné)"
+    }
   }
 }

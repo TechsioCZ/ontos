@@ -23,15 +23,19 @@ import {
   whyDecisionView,
   whySearchFromRequest,
 } from '../../src/routes/[lang]/access/why/why-page-model.ts';
-import { WhySubjectPicker } from '../../src/routes/access-admin/why/why-subject-picker.tsx';
-import { AgentsUnavailable, WhyResult, WhyView } from '../../src/routes/access-admin/why/why-view.tsx';
+import {
+  AgentsUnavailable,
+  WhyResult,
+  WhySubjectPicker,
+  WhyView,
+} from '../../src/routes/access-admin/why/why-view.tsx';
 import {
   completeWhyCheck,
   emptyWhySearch,
   hiddenWhySubjects,
   whyReasonKey,
 } from '../../src/routes/access-admin/why/why-view-model.ts';
-import type { WhySearchDraft } from '../../src/routes/access-admin/why/why-view-model.ts';
+import type { WhySearchDraft, WhySubjectOptions } from '../../src/routes/access-admin/why/why-view-model.ts';
 import { AuthenticationUnavailableProblemSchema, CurrentSessionSchema } from '../../shared/browser-api.ts';
 import { adaSelectingCompany, adaSignedIn, makeShellBff, signedInShellReads } from '../support/shell-bff-double.ts';
 import type { ShellBffScript } from '../support/shell-bff-double.ts';
@@ -358,14 +362,14 @@ it.effect('hides the person picker on a governed list denial and does not guess 
   Effect.gen(function* forbiddenPicker() {
     const options = yield* loadWhySubjects().pipe(Effect.provide(whyBff().layer));
     expect(options).toEqual({ state: 'hidden' });
-    renderCopy(<WhySubjectPicker onChange={noop} options={options} pending={false} value="" />);
+    renderCopy(<WhySubjectPicker options={options} pending={false} />);
     expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.queryByText(en.shell.accessAdmin.why.subjectPickerLabel)).toBeNull();
   }),
 );
 
 test('unbacked person lookup shows unavailability, not an enabled picker or fake directory', () => {
-  renderCopy(<WhySubjectPicker onChange={noop} options={{ state: 'unavailable' }} pending={false} value="" />);
+  renderCopy(<WhySubjectPicker options={{ state: 'unavailable' }} pending={false} />);
   expect(screen.getByText(en.shell.accessAdmin.why.subjectPickerUnavailable)).toBeTruthy();
   expect(screen.queryByRole('combobox')).toBeNull();
 });
@@ -375,7 +379,17 @@ it.effect('admin picker uses only governed tenant members and loads another page
     const bff = whyBff({ listAccessPeople: () => Effect.succeed(peopleResponse()) });
     const options = yield* loadWhySubjects().pipe(Effect.provide(bff.layer));
     const more = rstest.fn<() => void>();
-    renderCopy(<WhySubjectPicker onChange={noop} onMore={more} options={options} pending={false} value="" />);
+    renderCopy(
+      <WhyView
+        draft={query}
+        onCheck={noop}
+        onMorePeople={more}
+        onRetry={noop}
+        pending={false}
+        result={{ state: 'idle' }}
+        subjects={options}
+      />,
+    );
     expect(screen.getByRole('combobox', { name: en.shell.accessAdmin.why.subjectPickerLabel })).toBeTruthy();
     expect(peopleReads(bff)).toEqual([{ limit: 100 }]);
     expect(more).not.toHaveBeenCalled();
@@ -484,3 +498,88 @@ test('does not merge people from different list revisions or retain names after 
     people: [...previous.people, ...next.people],
   });
 });
+
+/** The Why view as a person sees it for a given picker state, reporting checks to `check`. */
+const checkingView = (check: (draft: WhySearchDraft) => void, options: WhySubjectOptions) => (
+  <WhyView draft={query} onCheck={check} onRetry={noop} pending={false} result={{ state: 'idle' }} subjects={options} />
+);
+
+it.effect('a picked person a new people list no longer offers must be chosen again before a check', () =>
+  Effect.gen(function* withdrawnSubject() {
+    const bff = whyBff({ listAccessPeople: () => Effect.succeed(peopleResponse()) });
+    const subjects = yield* loadWhySubjects().pipe(Effect.provide(bff.layer));
+    const check = rstest.fn<(draft: WhySearchDraft) => void>();
+    const view = (options: WhySubjectOptions) => checkingView(check, options);
+    const rendered = renderCopy(view(subjects));
+    const user = userEvent.setup();
+    const picker = screen.getByRole('combobox', { name: en.shell.accessAdmin.why.subjectPickerLabel });
+    picker.focus();
+    yield* Effect.promise(() => user.keyboard('{ArrowDown}{ArrowDown}{Enter}'));
+    expect(picker.textContent).toContain('Ada Lovelace');
+    rendered.rerender(
+      view({
+        nextCursor: null,
+        people: [{ label: 'Grace Hopper', value: '20000000-0000-4000-8000-000000000002' }],
+        revision: 'r2',
+        state: 'ready',
+      }),
+    );
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: en.shell.accessAdmin.why.submit })));
+    expect(yield* Effect.promise(() => screen.findByText(en.shell.accessAdmin.why.subjectWithdrawn))).toBeTruthy();
+    expect(picker.getAttribute('aria-invalid')).toBe('true');
+    expect(check).not.toHaveBeenCalled();
+  }),
+);
+it.effect('refuses a picked person once the picker is unavailable and lets the person check their own access', () =>
+  Effect.gen(function* unavailablePicker() {
+    const check = rstest.fn<(draft: WhySearchDraft) => void>();
+    const subjects = {
+      nextCursor: 'next',
+      people: [{ label: 'Ada Lovelace', value: '20000000-0000-4000-8000-000000000001' }],
+      revision: 'r1',
+      state: 'ready',
+    } as const;
+    const view = (options: WhySubjectOptions) => checkingView(check, options);
+    const rendered = renderCopy(view(subjects));
+    const user = userEvent.setup();
+    const picker = screen.getByRole('combobox', { name: en.shell.accessAdmin.why.subjectPickerLabel });
+    picker.focus();
+    yield* Effect.promise(() => user.keyboard('{ArrowDown}{ArrowDown}{Enter}'));
+    rendered.rerender(view({ state: 'unavailable' }));
+    expect(screen.getByText(en.shell.accessAdmin.why.subjectWithdrawn)).toBeTruthy();
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: en.shell.accessAdmin.why.submit })));
+    expect(check).not.toHaveBeenCalled();
+    yield* Effect.promise(() =>
+      user.click(screen.getByRole('button', { name: en.shell.accessAdmin.why.currentPersonChoice })),
+    );
+    expect(screen.queryByText(en.shell.accessAdmin.why.subjectWithdrawn)).toBeNull();
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: en.shell.accessAdmin.why.submit })));
+    expect(check).toHaveBeenCalledWith({ ...query, subject: '' });
+  }),
+);
+
+it.effect('Check without a capability key asks for one and keeps the previous result', () =>
+  Effect.gen(function* missingCapability() {
+    const check = rstest.fn<(draft: WhySearchDraft) => void>();
+    renderCopy(
+      <WhyView
+        draft={{ ...query, capabilityKey: '' }}
+        onCheck={check}
+        onRetry={noop}
+        pending={false}
+        result={whyDecisionView(response(), query)}
+      />,
+    );
+    const user = userEvent.setup();
+    const capabilityKey = screen.getByLabelText(en.shell.accessAdmin.why.capabilityKey, { exact: false });
+    yield* Effect.promise(() => user.type(capabilityKey, '   '));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: en.shell.accessAdmin.why.submit })));
+    expect(yield* Effect.promise(() => screen.findByText(en.shell.accessAdmin.why.capabilityKeyRequired))).toBeTruthy();
+    expect(capabilityKey.getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByText(en.shell.accessAdmin.outcome.allowed)).toBeTruthy();
+    expect(check).not.toHaveBeenCalled();
+    yield* Effect.promise(() => user.type(capabilityKey, 'commerce.order.order.read'));
+    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: en.shell.accessAdmin.why.submit })));
+    expect(check).toHaveBeenCalledWith(query);
+  }),
+);

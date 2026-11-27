@@ -66,6 +66,8 @@ const notFound = () =>
  * 3. a second transaction re-reads the same set with that evidence and proves it is still the same assignment set
  *    revision, so no owner answer is ever paired with a set that changed meanwhile.
  * An owner failure (`unavailable`) fails the whole read safely; nothing is promoted and no other Resource is chosen.
+ * An answer naming another Resource is that assignment's RESOURCE_MISMATCH; an assignment with no answer is
+ * OWNER_CHECK_REQUIRED, which the public response cannot carry, so the read stays unavailable.
  */
 export const runCatalogDocumentCurrent = Effect.fn('CatalogDocumentCurrentRead.run')(function* run(
   input: CatalogDocumentCurrentRequest,
@@ -84,12 +86,12 @@ export const runCatalogDocumentCurrent = Effect.fn('CatalogDocumentCurrentRead.r
     return readAnswer({ assignments: [], setRevision: catalogOnly.value.setRevision }, { resultCount: 0 });
   }
   const resources = catalogOnly.value.assignments.map(({ assignment }) => assignment.resourceRef);
-  const ownerEvidence = yield* coreMediaOwnerAvailability(
+  const ownerAnswers = yield* coreMediaOwnerAvailability(
     { call: (payload) => context.call('ownerCurrent', payload) },
     resources,
   ).pipe(Effect.mapError(unavailable));
   const revalidated = yield* context
-    .transaction((services) => services.current(input.target, ownerEvidence))
+    .transaction((services) => services.current(input.target, ownerAnswers))
     .pipe(Effect.mapError(unavailable));
   if (Option.isNone(revalidated)) {
     return yield* notFound();

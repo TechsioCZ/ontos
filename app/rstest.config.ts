@@ -1,5 +1,7 @@
 import { defineConfig } from '@rstest/core';
 
+import { jsonReportConfig } from './scripts/ci/rstest-json-report.mts';
+
 // SWC rejects every generic arrow function in `.mts` files (even `<T,>(...)`) under its
 // default mts/cts parser mode, and Rstest bundles the imported scripts through SWC.
 const swc = {
@@ -13,6 +15,7 @@ const shared = {
 } as const;
 
 export default defineConfig({
+  ...jsonReportConfig,
   projects: [
     {
       ...shared,

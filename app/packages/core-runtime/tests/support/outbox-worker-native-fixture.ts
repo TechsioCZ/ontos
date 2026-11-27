@@ -56,8 +56,10 @@ export const makeNativeOutboxWorkerFixture = (
     // `OntosMcpContributionInput` (the catalog has no `reads`). A synthetic Core-owned worker module
     // contributes no MCP tools, so the authored surface names none.
     const { mcp: _serializedMcp, ...serializedSurface } = contract.manifest.publicSurface;
+    // Its `systemWorkloads` are the published keys, not authored registrations; a synthetic worker module has none.
+    const { systemWorkloads: _serializedSystemWorkloads, ...serializedManifest } = contract.manifest;
     const manifest = defineOntosModuleManifest({
-      ...contract.manifest,
+      ...serializedManifest,
       publicSurface: {
         ...serializedSurface,
         actions: [],

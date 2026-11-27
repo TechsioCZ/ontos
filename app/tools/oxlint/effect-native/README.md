@@ -91,3 +91,18 @@ Place examples under `invalid/` and `valid/`; `// expect-count: N` at the start 
 Playwright/e2e adapters remain exempt through `ignorePaths`. Type-only imports, non-Effect bindings, and ManagedRuntime instance methods are not Effect root-function violations. Nested Effect re-entry is diagnosed by `no-nested-effect-run`. Additional rule options are `testPaths`, `effectModules`, and `effectModuleSources`; there is no fixer or suggestion.
 
 The workspace import policy rejects `node:test`, `node:assert`, `node:assert/strict`, and `@rstest/core` in application, package, vertical, script, and tooling tests, with `tests/e2e/**` exempt for Playwright. Test files disable Sonar's hard-coded runner detector and the async-Promise-function rule because Effect-native test APIs and `Effect.promise`/`Effect.tryPromise` thunks are intentional.
+
+## UI kit rules
+
+Module UI is built from `@techsio/ui-kit` only, and these rules reject anything else in `apps/**`, `verticals/**` and `packages/**` (tests excluded). There are no per-file exceptions: where a screen needs something the kit lacks, the kit gets it.
+
+| Rule                             | Rejects                                                                                                                                                           |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ui-kit-no-intrinsic-control`    | `<button>`, `<input>`, `<select>`, `<option>`, `<textarea>`, `<label>`, `<a>`, `<dialog>`, `<details>`, `<summary>`, `<datalist>` where the kit has the component |
+| `ui-kit-no-colour-literal`       | hex colours, CSS colour functions and Tailwind palette classes (`text-stone-600`, `bg-white/90`)                                                                  |
+| `ui-kit-no-inline-style`         | every `style` prop                                                                                                                                                |
+| `ui-kit-no-module-stylesheet`    | a module's own stylesheet import, CSS build tooling (`tailwindcss`, `@rsbuild/plugin-tailwindcss`) and `tailwind.config.*`/`postcss.config.*`                     |
+| `ui-kit-import-through-surface`  | UI libraries past the one surface (`@zag-js/*`, `@radix-ui/*`, `clsx`, `tailwind-variants`, …)                                                                    |
+| `ui-kit-class-in-kit-stylesheet` | a class name the kit stylesheet (`@techsio/ui-kit/styles.css`) does not define, so nothing would style it                                                         |
+
+The allowed surface is the `uiSurface` constant in `app/oxlint.config.ts`. When the CoreSDK re-exports the kit, that constant becomes the CoreSDK UI entry and the kit joins `uiSurfaceBypass`. A module's browser bundle is checked after its build too: `pnpm ui:module-css:check` (`scripts/check-module-browser-css.mts`, run by the Node build shards in CI) fails when a module ships any CSS.

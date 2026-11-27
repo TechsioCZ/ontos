@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -830,7 +831,6 @@ export const ${resourcesName} = {
       `verticals/${vertical.slug}/src/routes/ultramodern-route-head.tsx`,
       'export const UltramodernRouteHead = () => null;\n',
     );
-    yield* write(root, `verticals/${vertical.slug}/src/routes/index.css`, '.fixture-owner-style { display: block; }\n');
   });
 
 const createFixture = (): Effect.Effect<Fixture, unknown> =>
@@ -4873,7 +4873,6 @@ it.live(
         expect(page).toBe(`import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { inventoryStockI18nResources } from '../../../../i18n/resources';
-import '../../../index.css';
 
 const PurchaseOrdersPageContent = () => {
   const { t } = useModernI18n();
@@ -4882,14 +4881,8 @@ const PurchaseOrdersPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <section
-        aria-labelledby={headingId}
-        className="inventory:mx-auto inventory:w-full inventory:max-w-5xl inventory:px-4 inventory:py-8 inventory:sm:px-8 inventory:lg:px-12"
-      >
-        <h1
-          className="inventory:text-3xl inventory:font-bold inventory:text-(--color-page-fg) inventory:sm:text-4xl"
-          id={headingId}
-        >
+      <section aria-labelledby={headingId} className="mx-auto w-full max-w-5xl px-200 py-400 sm:px-400 lg:px-550">
+        <h1 className="text-3xl font-bold text-fg-primary sm:text-4xl" id={headingId}>
           {t('inventory.pages.purchaseOrders.title')}
         </h1>
       </section>
@@ -5101,7 +5094,8 @@ process.stdout.write(renderToStaticMarkup(<Page />));
         );
         expect(bundle.error).toBeUndefined();
         expect(bundle.status, bundle.stderr).toBe(0);
-        expect(yield* readFixtureFile(fixture.root, 'render-generated-page.css')).toMatch(/\.fixture-owner-style/u);
+        // A generated page ships no CSS of its own: the kit stylesheet the Shell loads styles it.
+        expect(existsSync(path.join(fixture.root, 'render-generated-page.css'))).toBe(false);
         const renderLanguage = (language: 'cs' | 'en') =>
           spawnSync(process.execPath, [bundlePath], {
             cwd: fixture.root,
@@ -6010,17 +6004,6 @@ it.live(
 it.live(
   'page prerequisite and nested-route failures are preflighted, while refresh failure is safely rerunnable',
   Effect.fn(function* scenario126() {
-    yield* withFixture(
-      Effect.fn(function* missingOwnerStylesheet(fixture) {
-        yield* Effect.promise(() => rm(path.join(fixture.root, 'verticals/inventory-stock/src/routes/index.css')));
-        yield* assertScaffoldRefused(
-          fixture,
-          scaffoldCommand.microverticalPage,
-          [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
-          /stylesheet is missing/u,
-        );
-      }),
-    );
     yield* withFixture(
       Effect.fn(function* scenario127(fixture) {
         yield* Effect.promise(() =>

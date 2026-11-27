@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -89,6 +91,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/no-hand-built-http-server-in-tests': 'error',
   'effect-native/no-hand-built-problem-details': 'error',
   'effect-native/no-hand-parsed-environment-value': 'error',
+  'effect-native/no-hand-rolled-form-state': 'error',
   'effect-native/no-hand-rolled-tagged-union': 'error',
   'effect-native/no-imperative-loop-in-effect-gen': 'error',
   'effect-native/no-interface-first-codec': 'error',
@@ -181,6 +184,57 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/require-context-service-for-service-interface': 'error',
   'effect-native/require-observability-layers-at-runtime-root': 'error',
   'effect-native/require-timeout-on-external-effect': 'error',
+} as const;
+
+// The one UI import surface of OntOS UI source. When the CoreSDK re-exports the kit, this becomes the CoreSDK UI
+// entry and '@techsio/ui-kit' moves to the bypass list; nothing else changes. See docs/frontend/FRONTEND.md.
+const uiSurface = '@techsio/ui-kit';
+// The one stylesheet the Shell loads for every module; a module's classes must be rules in it.
+const uiSurfaceStylesheet = createRequire(new URL('apps/shell-super-app/package.json', import.meta.url)).resolve(
+  `${uiSurface}/styles.css`,
+);
+const uiSurfaceBypass = [
+  '@ark-ui/*',
+  '@base-ui-components/*',
+  '@chakra-ui/*',
+  '@dnd-kit/*',
+  '@emotion/*',
+  '@headlessui/*',
+  '@heroicons/*',
+  '@iconify/*',
+  '@mantine/*',
+  '@mui/*',
+  '@radix-ui/*',
+  '@react-aria/*',
+  '@tanstack/react-table',
+  '@tanstack/react-virtual',
+  '@vidstack/react',
+  '@zag-js/*',
+  'antd',
+  'better-themes',
+  'class-variance-authority',
+  'classnames',
+  'clsx',
+  'framer-motion',
+  'lucide-react',
+  'motion',
+  'react-aria',
+  'react-aria-components',
+  'react-icons',
+  'styled-components',
+  'tailwind-merge',
+  'tailwind-variants',
+  'tw-animate-css',
+];
+
+// Module UI is built from the kit only; see tools/oxlint/effect-native/README.md#ui-kit-rules.
+const uiKitRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
+  'effect-native/ui-kit-class-in-kit-stylesheet': ['error', { stylesheet: uiSurfaceStylesheet }],
+  'effect-native/ui-kit-import-through-surface': ['error', { bypass: uiSurfaceBypass, surface: uiSurface }],
+  'effect-native/ui-kit-no-colour-literal': 'error',
+  'effect-native/ui-kit-no-inline-style': 'error',
+  'effect-native/ui-kit-no-intrinsic-control': 'error',
+  'effect-native/ui-kit-no-module-stylesheet': 'error',
 } as const;
 
 export default defineConfig({
@@ -1356,6 +1410,7 @@ export default defineConfig({
     ...antiSlopRules,
     ...antiSlopEffectRules,
     ...effectNativeRules,
+    ...uiKitRules,
   },
   settings: jsPluginSettings,
 });

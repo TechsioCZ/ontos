@@ -8,6 +8,7 @@ import type {
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
 import { decodeOntosModuleDeploymentContract } from './manifest.ts';
+import { coreSystemWorkloadKeys, isCoreSystemModule } from './core-system-workloads.ts';
 import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
@@ -108,6 +109,14 @@ const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDep
   if (contract.manifest.module.kind !== 'business_module') {
     throw invalid('V0 deployments may claim only one business module');
   }
+  // A core system module is declared by Core itself (`core-system-workloads.ts`) and is always active: no deployment
+  // claims its id or a system workload key it declares, so one owner stands behind each.
+  if (isCoreSystemModule(contract.manifest.module.id)) {
+    throw invalid('a deployment may not claim the module ID of a core system module');
+  }
+  if ((contract.manifest.systemWorkloads ?? []).some((key) => coreSystemWorkloadKeys.has(key))) {
+    throw invalid('a deployment may not declare a system workload key a core system module declares');
+  }
   const { publicSurface } = contract.manifest;
   try {
     validateShellContributions(publicSurface.shellContributions, {
@@ -144,6 +153,23 @@ const validateOwnedOutboxSubscriptions = (contract: OntosModuleDeploymentContrac
     workerKeys.add(subscription.workerKey);
   }
 };
+
+const borrowedSystemWorkloadReason =
+  'a registered call may run under a system workload key only for that workload’s own job';
+
+/**
+ * Whether a contract's registered calls run under a system workload's key for another job. An enrollment binds the
+ * workload of each call its job makes, so such a call would bind one system workload to another's Principal: the two
+ * would share it, and ending one would end both. Core's own keys count beside the ones the deployments declare.
+ */
+const borrowsSystemWorkload = (
+  contract: OntosModuleDeploymentContract,
+  declaredKeys: { readonly has: (key: string) => boolean },
+): boolean =>
+  (contract.manifest.registeredWorkloadCalls ?? []).some(
+    ({ jobKey, workloadKey }) =>
+      jobKey !== workloadKey && (declaredKeys.has(workloadKey) || coreSystemWorkloadKeys.has(workloadKey)),
+  );
 
 const assembleInstalledModuleCatalog = (
   contractsInput: readonly OntosModuleDeploymentContract[],
@@ -241,6 +267,19 @@ export const buildInstalledModuleCatalog = (
       workerKeys.add(workerKey);
     }
   }
+  // `core.identity.change-system-workload-enrollment` relies on one owning module per system workload key.
+  const systemWorkloadKeys = new Set<string>();
+  for (const contract of byModuleId.values()) {
+    for (const workloadKey of contract.manifest.systemWorkloads ?? []) {
+      if (systemWorkloadKeys.has(workloadKey)) {
+        throw invalid('a system workload key may be declared by only one module in the installed catalog');
+      }
+      systemWorkloadKeys.add(workloadKey);
+    }
+  }
+  if ([...byModuleId.values()].some((contract) => borrowsSystemWorkload(contract, systemWorkloadKeys))) {
+    throw invalid(borrowedSystemWorkloadReason);
+  }
   return assembleInstalledModuleCatalog(
     [...byModuleId.values()],
     [...byAppId.values()].map((contract) => ({
@@ -258,6 +297,7 @@ const findConflictingDeploymentAppIds = (
   const byAppId = new Map<OntosDeploymentAppId, OntosModuleDeploymentContract[]>();
   const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
   const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
+  const bySystemWorkloadKey = new Map<string, OntosModuleDeploymentContract[]>();
   for (const contract of candidates) {
     const {
       deployment: { appId },
@@ -270,12 +310,27 @@ const findConflictingDeploymentAppIds = (
     for (const { workerKey } of contract.runtime.outboxSubscriptions) {
       byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
     }
+    for (const workloadKey of contract.manifest.systemWorkloads ?? []) {
+      bySystemWorkloadKey.set(workloadKey, [...(bySystemWorkloadKey.get(workloadKey) ?? []), contract]);
+    }
   }
-  for (const conflicts of [...byAppId.values(), ...byModuleId.values(), ...byWorkerKey.values()]) {
+  for (const conflicts of [
+    ...byAppId.values(),
+    ...byModuleId.values(),
+    ...byWorkerKey.values(),
+    ...bySystemWorkloadKey.values(),
+  ]) {
     if (conflicts.length > 1) {
       for (const contract of conflicts) {
         conflictingAppIds.add(contract.deployment.appId);
       }
+    }
+  }
+
+  // Only the deployment whose call borrows a key is excluded, never the one that declares it.
+  for (const contract of candidates) {
+    if (borrowsSystemWorkload(contract, bySystemWorkloadKey)) {
+      conflictingAppIds.add(contract.deployment.appId);
     }
   }
 

@@ -1,6 +1,9 @@
 import { defineConfig } from '@rstest/core';
 
+import { jsonReportConfig } from '../../scripts/ci/rstest-json-report.mts';
+
 export default defineConfig({
+  ...jsonReportConfig,
   projects: [
     {
       include: ['tests/unit/**/*.test.ts'],
@@ -10,6 +13,13 @@ export default defineConfig({
       // and 43844802542, instead of the silent 5000 ms Rstest default. The few tests that spawn a
       // real child process carry their own measured budget.
       testTimeout: 2856,
+    },
+    {
+      include: ['tests/component/**/*.test.tsx'],
+      name: 'component',
+      testEnvironment: 'happy-dom',
+      testTimeout: 2856,
+      tools: { swc: { jsc: { transform: { react: { runtime: 'automatic' } } } } },
     },
     {
       include: ['tests/integration/**/*.test.ts'],

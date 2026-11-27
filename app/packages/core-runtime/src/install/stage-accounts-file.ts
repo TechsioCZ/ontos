@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Schema } from 'effect';
 
 import { WorkloadKeySchema } from '../authorization/access-declaration.ts';
+import { coreSystemWorkloadKeys } from '../modules/core-system-workloads.ts';
 
 /** Environment variable naming the operator-provided stage accounts file (JSON, mode 600, outside the repo). */
 export const STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY = 'ONTOS_STAGE_ACCOUNTS_FILE';
@@ -52,7 +53,6 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'commerce.storefront-client',
   'core.identity-provider',
   'core.media.ingest',
-  'core.media.integrity',
   'payment.source-ingress',
   'payment.provider-notification-ingress',
   'payment.provider-reconciliation',
@@ -89,7 +89,10 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
 ]);
 const StageWorkloadKeySchema = WorkloadKeySchema.check(
   Schema.makeFilter((key) =>
-    STAGE_DECLARED_WORKLOAD_KEYS.has(key) ? undefined : 'names no workload a carrier declares',
+    // A core system key decodes so that parsing can refuse it by name below.
+    STAGE_DECLARED_WORKLOAD_KEYS.has(key) || coreSystemWorkloadKeys.has(key)
+      ? undefined
+      : 'names no workload a carrier declares',
   ),
 );
 
@@ -210,6 +213,12 @@ export const parseStageAccountsFile = Effect.fn('StageAccountsFile.parse')(funct
     return yield* invalid('Stage account roles must be unique');
   }
   const tenantWorkloads = file.tenants.flatMap(({ workloads }) => workloads ?? []);
+  // A stage entry binds an account principal; a core system workload is run only by an enrolled `system` principal.
+  if (tenantWorkloads.some(({ workloadKey }) => coreSystemWorkloadKeys.has(workloadKey))) {
+    return yield* invalid(
+      'A core system workload is never bound from this file: enroll it with core.identity.change-system-workload-enrollment',
+    );
+  }
   if (tenantWorkloads.some(({ principalId }) => !activePrincipalIdSet.has(principalId))) {
     return yield* invalid('Every registered workload needs a principal of its own tenant');
   }

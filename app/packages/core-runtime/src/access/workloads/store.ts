@@ -7,11 +7,13 @@ import type { PrincipalId, TenantId } from '../ids.ts';
 import type { AccessIntentError } from '../intent/errors.ts';
 
 /*
- * The write side of the registered workload identities (O73). Core is its only writer: install and
- * bootstrap register a tenant's system workloads, the stage and local bootstrap register the
- * operator-declared ones, and later a Core admin Action will manage them. Every call names the
- * trusted request scope it runs in (O66), so a command that names another tenant is refused before
- * SQL sees it. The drizzle implementation is `binding-store.ts`.
+ * The write side of the registered workload identities (O73). Core is its only writer: the stage and
+ * local bootstrap register the operator-declared workloads through this store, which refuses every
+ * Principal of kind `system`; such a Principal is bound only by
+ * `core.identity.change-system-workload-enrollment` (`system-workload-enrollment.ts`), which creates it
+ * with its whole declared worker identity and ends it. Every call names the trusted request scope it
+ * runs in (O66), so a command that names another tenant is refused before SQL sees it. The drizzle
+ * implementation is `binding-store.ts`.
  */
 
 export const WORKLOAD_BINDING_STATUSES = ['active', 'revoked'] as const;
@@ -61,7 +63,10 @@ export interface RevokeWorkloadBindingInput {
 
 /** The registry's write side, bound through `AccessWorkloadBindingStore`. */
 export interface AccessWorkloadBindingStoreService {
-  /** Registers active bindings; a binding that already exists is left exactly as it is. */
+  /**
+   * Registers active bindings; a binding that already exists is left exactly as it is. A binding of a Principal of
+   * kind `system` is refused (`access_intent_write_refused`): only its enrollment binds one.
+   */
   readonly registerBindings: (
     scope: OperationalScope,
     input: RegisterWorkloadBindingsInput,

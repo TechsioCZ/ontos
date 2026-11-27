@@ -1,47 +1,67 @@
+import { FormReact, FormRoot, SubmitButton, TextField, fromPayload, useAtomSubscribe } from '@app/core-runtime/ui/form';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
-import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Match, Option, Predicate, Schema } from 'effect';
+import { Effect, Match, Option, Schema, SchemaIssue } from 'effect';
 import type { Cause } from 'effect';
-import { useRef, useState } from 'react';
+import { AsyncResult } from 'effect/reactivity';
+import { useEffect, useRef, useState } from 'react';
 
-import { SignInPayloadSchema } from '../../../../shared/browser-api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { useHydrated } from '../../use-hydrated.ts';
 
-interface LoginValidation {
-  loginMissing: boolean;
-  passwordMissing: boolean;
-}
-
-const validLogin: LoginValidation = {
-  loginMissing: false,
-  passwordMissing: false,
-};
-
-const SignInFormSchema = Schema.fromFormData(
-  Schema.Struct({
-    email: SignInPayloadSchema.fields.email,
-    password: Schema.RedactedFromValue(SignInPayloadSchema.fields.password.value),
-  }).pipe(Schema.encodeKeys({ email: 'login' })),
-);
 const internalErrorMessageKey = 'shell.login.error.internal';
 const errorTitleKey = 'shell.login.error.title';
 
-const authenticationErrorMessageKey = (error: ShellAuthenticationClientError) =>
-  Match.value(error).pipe(
-    Match.tag('InvalidCredentialsProblem', () => 'shell.login.error.invalid' as const),
-    Match.tag('OntosIdentityForbiddenProblem', () => 'shell.login.error.forbidden' as const),
-    Match.tag('AuthenticationUnavailableProblem', () => 'shell.login.error.unavailable' as const),
-    Match.tag('AuthenticationInternalProblem', 'HttpClientError', 'SchemaError', () => internalErrorMessageKey),
-    Match.exhaustive,
-  );
+/** Why the Shell refused the credentials; each reason names its `shell.login.error.*` message. */
+class SignInRefused extends Schema.TaggedError<SignInRefused>()('SignInRefused', {
+  reason: Schema.Literals(['invalid', 'forbidden', 'unavailable', 'internal']),
+}) {}
+
+const refusal = (failure: ShellAuthenticationClientError) =>
+  new SignInRefused({
+    reason: Match.value(failure).pipe(
+      Match.tag('InvalidCredentialsProblem', () => 'invalid' as const),
+      Match.tag('OntosIdentityForbiddenProblem', () => 'forbidden' as const),
+      Match.tag('AuthenticationUnavailableProblem', () => 'unavailable' as const),
+      Match.tag('AuthenticationInternalProblem', 'HttpClientError', 'SchemaError', () => 'internal' as const),
+      Match.exhaustive,
+    ),
+  });
+
+/**
+ * The sign-in payload as the person types it: the login is trimmed, the password is redacted once
+ * decoded, and the request carries the page language.
+ */
+const loginForm = FormReact.make(
+  fromPayload(
+    Schema.Struct({
+      email: Schema.Trim.check(Schema.isMinLength(1, { message: 'shell.login.required.login' })),
+      locale: Schema.String,
+      password: Schema.RedactedFromValue(
+        Schema.String.check(Schema.isMinLength(1, { message: 'shell.login.required.password' })),
+      ),
+    }),
+  ),
+  {
+    fields: { email: TextField, locale: TextField, password: TextField },
+    onSubmit: (_submit, { decoded: { locale, ...credentials } }) =>
+      signIn(credentials, { locale }).pipe(Effect.mapError(refusal)),
+    runtime: browserAtomRuntime,
+  },
+);
+
+const LoginFieldSchema = Schema.Literals(['login', 'password']);
+type LoginField = typeof LoginFieldSchema.Type;
+/** The first field a failed validation names: the login before the password. */
+const firstMissingField = (error: Schema.SchemaError): LoginField =>
+  SchemaIssue.makeFormatterStandardSchemaV1()(error.issue).issues.some((issue) => issue.path?.[0] === 'email')
+    ? 'login'
+    : 'password';
 
 const LoginPage = () => {
   const { language, t } = useModernI18n();
@@ -50,144 +70,108 @@ const LoginPage = () => {
   const toaster = useToast();
   const loginRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
-  const [validation, setValidation] = useState<LoginValidation>(validLogin);
-  const [submitting, setSubmitting] = useState(false);
+  // A request, not a flag: every failed attempt focuses its field again once the form is enabled.
+  const [focusRequest, setFocusRequest] = useState<{ readonly field: LoginField } | null>(null);
+  const [navigating, setNavigating] = useState(false);
   const hydrated = useHydrated();
-  const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
-    Effect.sync(() => {
-      void error;
-      toaster.create({
-        description: t(internalErrorMessageKey),
-        title: t(errorTitleKey),
-        type: 'error',
-      });
-      loginRef.current?.focus();
-    });
-
-  const handleSubmit = (formData: FormData) => {
-    if (submitting) {
+  useEffect(() => {
+    if (focusRequest !== null) {
+      (focusRequest.field === 'login' ? loginRef : passwordRef).current?.focus();
+    }
+  }, [focusRequest]);
+  const reportFailure = (description: string, field: LoginField) => {
+    toaster.create({ description: t(description), title: t(errorTitleKey), type: 'error' });
+    setFocusRequest({ field });
+  };
+  const enterShell = () => {
+    setNavigating(true);
+    void browserRuntime.runPromise(
+      Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
+        Effect.andThen(Effect.tryPromise(() => navigate({ to: `/${language}/` }))),
+        Effect.timeout('10 seconds'),
+        Effect.matchEffect({
+          onFailure: (failure: Cause.TimeoutError | Cause.UnknownError) =>
+            Effect.sync(() => {
+              void failure;
+              reportFailure(internalErrorMessageKey, 'login');
+            }),
+          onSuccess: Effect.succeed,
+        }),
+        Effect.ensuring(Effect.sync(() => setNavigating(false))),
+      ),
+    );
+  };
+  useAtomSubscribe(loginForm.submit, (result) => {
+    if (result.waiting) {
       return;
     }
-
-    const login = formData.get('login');
-    const password = formData.get('password');
-    const loginValue = Predicate.isString(login) ? login : '';
-    const passwordValue = Predicate.isString(password) ? password : '';
-    const nextValidation = {
-      loginMissing: loginValue.trim().length === 0,
-      passwordMissing: passwordValue.length === 0,
-    };
-
-    setValidation(nextValidation);
-
-    if (nextValidation.loginMissing || nextValidation.passwordMissing) {
+    if (AsyncResult.isSuccess(result)) {
+      enterShell();
+      return;
+    }
+    const failure = AsyncResult.error(result);
+    if (Option.isNone(failure)) {
+      return;
+    }
+    if (Schema.isSchemaError(failure.value)) {
       toaster.create({
         description: t('shell.login.toast.description'),
         title: t('shell.login.toast.title'),
         type: 'error',
       });
-
-      if (nextValidation.loginMissing) {
-        loginRef.current?.focus();
-        return;
-      }
-
-      passwordRef.current?.focus();
+      setFocusRequest({ field: firstMissingField(failure.value) });
       return;
     }
-
-    formData.set('login', loginValue.trim());
-    const credentials = Schema.decodeOption(SignInFormSchema)(formData);
-    if (Option.isNone(credentials)) {
-      toaster.create({
-        description: t(internalErrorMessageKey),
-        title: t(errorTitleKey),
-        type: 'error',
-      });
-      return;
-    }
-
-    setSubmitting(true);
-    void browserRuntime.runPromise(
-      signIn(credentials.value, { locale: language }).pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.sync(() => {
-              toaster.create({
-                description: t(authenticationErrorMessageKey(error)),
-                title: t(errorTitleKey),
-                type: 'error',
-              });
-              loginRef.current?.focus();
-            }),
-          onSuccess: () =>
-            Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
-              Effect.andThen(Effect.tryPromise(() => navigate({ to: `/${language}/` }))),
-              Effect.timeout('10 seconds'),
-              Effect.matchEffect({
-                onFailure: handleNavigationFailure,
-                onSuccess: Effect.succeed,
-              }),
-            ),
-        }),
-        Effect.ensuring(Effect.sync(() => setSubmitting(false))),
-      ),
-    );
-  };
+    reportFailure(`shell.login.error.${failure.value.reason}`, 'login');
+  });
 
   return (
     <>
       <UltramodernRouteHead />
-      <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:px-4 shell:py-10 shell:text-(--color-page-fg) shell:md:px-20 shell:md:pt-[120px] shell:md:pb-10">
-        <section className="shell:flex shell:w-full shell:max-w-[360px] shell:flex-col">
-          <Link as={LocalizedLink} className="shell:self-center" to="/">
+      <main className="flex min-h-screen items-center justify-center bg-base px-200 py-450 text-fg-primary md:px-750 md:pt-950 md:pb-450">
+        <section className="flex w-full max-w-sm flex-col">
+          <Link as={LocalizedLink} className="self-center" to="/">
             {t('shell.login.back')}
           </Link>
-          <div className="shell:mt-6">
-            <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
-            <form
-              action={handleSubmit}
-              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+          <div className="mt-300">
+            <h1 className="text-2xl font-bold">{t('shell.login.title')}</h1>
+            <FormRoot
+              className="mt-200 flex flex-col gap-200"
               data-hydrated={hydrated || undefined}
-              noValidate
+              defaultValues={{ email: '', locale: language, password: '' }}
+              form={loginForm}
+              key={language}
+              translateMessage={(message) => t(message, { defaultValue: t(internalErrorMessageKey) })}
             >
-              <FormInput
-                aria-invalid={validation.loginMissing || undefined}
+              <loginForm.email
                 autoComplete="username"
-                helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
                 id="login"
                 label={t('shell.login.field.login')}
                 name="login"
                 ref={loginRef}
                 required
                 type="text"
-                validateStatus={validation.loginMissing ? 'error' : 'default'}
               />
-              <FormInput
-                aria-invalid={validation.passwordMissing || undefined}
+              <loginForm.password
                 autoComplete="current-password"
-                helpText={validation.passwordMissing ? t('shell.login.required.password') : undefined}
                 id="password"
                 label={t('shell.login.field.password')}
                 name="password"
                 ref={passwordRef}
                 required
                 type="password"
-                validateStatus={validation.passwordMissing ? 'error' : 'default'}
               />
-              <Button
+              <SubmitButton
+                appearance="solid"
                 block
-                disabled={submitting}
-                isLoading={submitting}
+                disabled={navigating}
                 loadingText={t('shell.login.pending')}
+                severity="primary"
                 size="md"
-                theme="solid"
-                type="submit"
-                variant="primary"
               >
                 {t('shell.login.submit')}
-              </Button>
-            </form>
+              </SubmitButton>
+            </FormRoot>
           </div>
         </section>
       </main>

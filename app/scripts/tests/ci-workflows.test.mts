@@ -1299,7 +1299,7 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
 
 const readArtifactBuildJobs = () => Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(readGateWorkflow()).jobs;
 
-it('builds, packs and uploads each Node build shard and does nothing else', () => {
+it('builds, checks, packs and uploads each Node build shard and does nothing else', () => {
   const { needs, permissions, steps, 'timeout-minutes': jobTimeout } = readArtifactBuildJobs()[NODE_ARTIFACT_BUILD_JOB];
   // A producer starts with the run and never waits for anything, so its runner frees as soon as it uploaded.
   expect(needs).toEqual([CI_PLAN_JOB]);
@@ -1310,6 +1310,7 @@ it('builds, packs and uploads each Node build shard and does nothing else', () =
     'Sample runner pressure until the job ends',
     INSTALL_APP_STEP,
     NODE_BUILD_STEP,
+    "Check that the shard's module browser bundles ship no CSS",
     "Pack the shard's build outputs",
     UPLOAD_STEP,
     'Print the runner pressure samples',
@@ -2342,6 +2343,14 @@ const integrationFiles = (directory: string, suffix: string): readonly string[] 
     .map((entry) => path.relative(fileURLToPath(APP_ROOT_URL), path.join(entry.parentPath, entry.name)));
 /** Whole-owner files excluded from their family's shards, which run alone as whole tasks. */
 const WHOLE_FILES = {
+  './apps/shell-super-app': integrationFiles('apps/shell-super-app/tests/integration', '.test.ts').filter((file) =>
+    path.basename(file).startsWith('core-media-e2e-'),
+  ),
+  './packages/core-runtime': [
+    'packages/core-runtime/tests/integration/core-media-s3-storage.test.ts',
+    'packages/core-runtime/tests/integration/core-media-recovery-s3.test.ts',
+    'packages/core-runtime/tests/integration/core-media-upload-edge.test.ts',
+  ],
   './verticals/party-registry': ['verticals/party-registry/tests/integration/party-identity-runtime.test.ts'],
   './verticals/pricing': ['verticals/pricing/tests/integration/market-revision-whole-current-pricing-postgres.test.ts'],
   './verticals/privacy': ['verticals/privacy/tests/integration/privacy-composition-drain.test.ts'],
@@ -2352,6 +2361,7 @@ const WHOLE_FILES = {
     'scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts',
     'scripts/integration/symmy-c14-pricing-routes-conformance.test.mts',
     'scripts/integration/scoped-owner-migrations.test.mts',
+    'scripts/integration/core-media-catalog-handoff.test.mts',
   ],
 } satisfies Readonly<Record<string, readonly string[]>>;
 /** Integration files a sharded family runs, minus the files its whole-owner tasks run alone. */
@@ -2372,7 +2382,7 @@ const NATIVE_TOPOLOGY_PROOFS = [
   'whole:preproposal-basis',
   'whole:preproposal-approval',
 ] as const;
-const WHOLE_PROOFS = [...NATIVE_TOPOLOGY_PROOFS, 'whole:migrations', 'whole:party-worker'];
+const WHOLE_PROOFS = [...NATIVE_TOPOLOGY_PROOFS, 'whole:core-media', 'whole:migrations', 'whole:party-worker'];
 /** Every owner row of the complete plan. */
 const integrationRows = () => {
   const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
@@ -2478,6 +2488,31 @@ it('names every package integration suite and keeps native proofs one per runner
     const native = (row.tasks ?? []).filter((task) => NATIVE_TOPOLOGY_PROOFS.some((proof) => proof === task));
     expect(native.length, row.name).toBeLessThanOrEqual(1);
   }
+});
+
+it('gives the one Core Media row its object store before the suites and keeps their evidence record', () => {
+  const { jobs } = Schema.decodeUnknownSync(IntegrationShardsWorkflowSchema)(readGateWorkflow());
+  const { steps } = jobs[OWNER_INTEGRATION_JOB];
+  const named = (name: string) => steps.findIndex((step) => step.name === name);
+  const start = named('Start the Core Media object store');
+  const tests = steps.findIndex(({ env }) => env?.INTEGRATION_TASKS !== undefined);
+  const upload = named('Upload the Core Media evidence record');
+  const selected = "matrix.suite == 'integration' && contains(matrix.tasks, 'whole:core-media')";
+  expect(start).toBeGreaterThan(named(INSTALL_APP_STEP));
+  expect(start < tests && tests < upload).toBe(true);
+  expect(steps[start]?.if).toBe(selected);
+  expect(steps[start]?.run).toBe('bash scripts/ci/start-core-media-object-store.sh');
+  expect(steps[tests]?.env?.CORE_MEDIA_EVIDENCE_DIR).toBe(`${RUNNER_TEMP_EXPRESSION}/core-media-evidence`);
+  // Kept when a case failed too: the record then says which one. A run that never reached the suites has none.
+  expect(steps[upload]?.if).toBe(
+    expression(`!cancelled() && steps.integration-suites.outcome != 'skipped' && ${selected}`),
+  );
+  expect(steps[upload]?.with).toEqual({
+    'if-no-files-found': 'error',
+    name: `core-media-evidence-${RUN_ATTEMPT_EXPRESSION}`,
+    path: `${RUNNER_TEMP_EXPRESSION}/core-media-evidence/core-media-evidence.json`,
+    'retention-days': 90,
+  });
 });
 
 it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {

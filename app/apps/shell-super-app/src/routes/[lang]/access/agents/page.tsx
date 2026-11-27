@@ -13,7 +13,7 @@ const AgentsPage = () => {
   const controls = useShellControls(shell.state === 'authenticated' ? shell : undefined);
   if (shell.state === 'reload_required' || controls.reloadRequired) {
     return (
-      <main className="shell:p-6">
+      <main className="p-300">
         <StatusText showIcon status="error">
           {t('shell.moduleTarget.reload_required')}
         </StatusText>
@@ -28,7 +28,7 @@ const AgentsPage = () => {
     );
   }
   return (
-    <main className="shell:p-6">
+    <main className="p-300">
       <StatusText showIcon status="error">
         {t(shell.state === 'anonymous' ? 'shell.accessAdmin.common.unauthenticated' : 'shell.dashboard.unavailable')}
       </StatusText>

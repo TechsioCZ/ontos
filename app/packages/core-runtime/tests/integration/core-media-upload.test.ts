@@ -24,7 +24,7 @@ import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/con
 import { SHARED_RUNTIME_IDENTITY } from '../../src/db/database-identities.ts';
 import { streamMediaObject } from '../../src/media/byte-stream.ts';
 import type { MediaByteHopAsset } from '../../src/media/byte-stream.ts';
-import { ObjectStorage, ObjectStorageTimeout } from '../../src/media/object-storage.ts';
+import { ObjectStorage, ObjectStorageTimeout, unconfiguredObjectStorage } from '../../src/media/object-storage.ts';
 import { deriveMediaStorageKey } from '../../src/media/storage-key.ts';
 import type { UploadAssetPayloadSchema } from '../../src/media/upload-contract.ts';
 import {
@@ -42,6 +42,7 @@ import { writeTestTenantScopes } from '../../src/testing/tenant-access.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeTestOperationOwner, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestPgClient } from '../support/database.ts';
+import { insertSystemWorkloadBinding } from '../support/system-workload-binding.ts';
 
 /*
  * The reserve, stream, confirm upload on real PostgreSQL through the real Action runtime, with the in-memory
@@ -276,22 +277,31 @@ const openHarness = Effect.fn('CoreMediaUploadTest.harness')(function* openHarne
     const bindingId = yield* nextUuid.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AccessWorkloadBindingIdSchema)));
     const incarnation = yield* nextUuid.pipe(Effect.flatMap(Schema.decodeUnknownEffect(AccessWorkloadBindingIdSchema)));
     const trusted = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(principalOf(world, actor));
-    yield* writeWorkloadBindings(
-      database,
-      { ...trusted, correlationId: 'media-upload-bind' },
-      {
-        bindings: [
+    // The writer refuses a system principal: its binding is stated directly, as a system enrollment leaves it.
+    yield* actor.kind === 'system'
+      ? insertSystemWorkloadBinding(admin, {
+          bindingId,
+          incarnation,
+          principalId: actor.principalId,
+          tenantId: world.tenantId,
+          workloadKey: WORKLOAD,
+        })
+      : writeWorkloadBindings(
+          database,
+          { ...trusted, correlationId: 'media-upload-bind' },
           {
-            bindingId,
-            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
-            incarnation,
-            principalId: PrincipalIdSchema.make(actor.principalId),
-            tenantId: TenantIdSchema.make(world.tenantId),
-            workloadKey: WORKLOAD,
+            bindings: [
+              {
+                bindingId,
+                createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(0)),
+                incarnation,
+                principalId: PrincipalIdSchema.make(actor.principalId),
+                tenantId: TenantIdSchema.make(world.tenantId),
+                workloadKey: WORKLOAD,
+              },
+            ],
           },
-        ],
-      },
-    );
+        );
   });
   return { admin, bind, countOf, database, rowCount, rowOf, runtimeFor, storage };
 });
@@ -430,6 +440,55 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })('core media upload on 
           ),
         );
         expect(Exit.isFailure(duplicate)).toBe(true);
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      }).pipe(Effect.scoped),
+  );
+
+  suite.effect(
+    'refuses a reservation on a host with no object store: no row, and the same key works once one exists',
+    () =>
+      Effect.gen(function* unconfigured() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reserve = () =>
+          harness.runtimeFor('human').runAction({
+            payload: reservationPayload(content),
+            principal: principalOf(world, world.human),
+            registration: uploadAssetAction,
+            transport: transportOf('unconfigured-store'),
+          });
+        const refused = yield* Effect.exit(
+          reserve().pipe(Effect.provideService(ObjectStorage, unconfiguredObjectStorage)),
+        );
+        expect(failureTagOf(refused)).toBe('MediaUnavailable');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(0);
+        const reserved = yield* reserve().pipe(Effect.provideService(ObjectStorage, harness.storage.service));
+        expect(reserved.processingStatus).toBe('uploaded');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(1);
+      }).pipe(Effect.scoped),
+  );
+
+  suite.effect(
+    'refuses a size the object store can never write, before any row exists, and takes the limit itself',
+    () =>
+      Effect.gen(function* tooLarge() {
+        const harness = yield* openHarness();
+        const world = yield* makeWorld(harness.admin, harness.database.executor);
+        const reserve = (key: string, maximumObjectBytes: number) =>
+          harness
+            .runtimeFor('human')
+            .runAction({
+              payload: reservationPayload(content),
+              principal: principalOf(world, world.human),
+              registration: uploadAssetAction,
+              transport: transportOf(key),
+            })
+            .pipe(Effect.provideService(ObjectStorage, { ...harness.storage.service, maximumObjectBytes }));
+        const refused = yield* Effect.exit(reserve('one-byte-over', content.byteLength - 1));
+        expect(failureTagOf(refused)).toBe('MediaTooLarge');
+        expect(yield* harness.rowCount(world.tenantId)).toBe(0);
+        const reserved = yield* reserve('exactly-at-the-limit', content.byteLength);
+        expect(reserved.processingStatus).toBe('uploaded');
         expect(yield* harness.rowCount(world.tenantId)).toBe(1);
       }).pipe(Effect.scoped),
   );

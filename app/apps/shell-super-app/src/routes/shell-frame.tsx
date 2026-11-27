@@ -1,3 +1,4 @@
+import { ChoiceField, FormBuilder, FormReact, FormRoot, useAtomSet, useAtomSubscribe } from '@app/core-runtime/ui/form';
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -5,14 +6,15 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import type { SelectItem } from '@techsio/ui-kit/molecules/select';
 import { Header } from '@techsio/ui-kit/organisms/header';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
+import type { Atom } from 'effect/reactivity';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/browser-api.ts';
+import { browserAtomRuntime } from '../runtime/browser-effect-runtime.ts';
 import { useHydrated } from './use-hydrated.ts';
 
 interface DashboardAccount {
@@ -87,20 +89,6 @@ interface DashboardLegalEntitySelectorProps {
   readonly onLegalEntityChange: (legalEntityId: string) => void;
 }
 
-interface DashboardSelectorProps {
-  readonly ariaLabel?: string;
-  readonly currentValue: string | undefined;
-  readonly disabled: boolean;
-  readonly items: SelectItem[];
-  readonly label: string;
-  readonly name: string;
-  readonly onChange: (value: string) => void;
-  readonly placeholder: string;
-  readonly status: 'default' | 'error' | 'warning';
-  readonly statusId: string;
-  readonly statusText: string | null;
-}
-
 interface DashboardSearchProps {
   readonly onSearch: (query: string) => void;
   readonly onValueChange: (value: string) => void;
@@ -156,55 +144,51 @@ const selectorStatusText = (
   return unavailable ? messages.unavailable : null;
 };
 
-const DashboardSelector = ({
-  ariaLabel,
-  currentValue,
-  disabled,
-  items,
-  label,
-  name,
-  onChange,
-  placeholder,
+/**
+ * A one-field switch form per session choice: picking another value submits it at once, and the
+ * Shell controls switch the session to it. The form shows the session's choice again whenever a
+ * switch starts or settles.
+ */
+const tenantSwitchForm = FormReact.make(FormBuilder.empty.addField('tenantId', Schema.String), {
+  fields: { tenantId: ChoiceField },
+  mode: { autoSubmit: true, validation: 'onChange' },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.tenantId),
+  runtime: browserAtomRuntime,
+});
+
+const legalEntitySwitchForm = FormReact.make(FormBuilder.empty.addField('legalEntityId', Schema.String), {
+  fields: { legalEntityId: ChoiceField },
+  mode: { autoSubmit: true, validation: 'onChange' },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.legalEntityId),
+  runtime: browserAtomRuntime,
+});
+
+/** Hands a submitted choice to the Shell controls, unless it is the session's current one. */
+const useSwitchOnSubmit = (
+  submit: Atom.Atom<AsyncResult.AsyncResult<string, unknown>>,
+  currentValue: string | undefined,
+  onChange: (value: string) => void,
+) =>
+  useAtomSubscribe(submit, (result) => {
+    if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== '' && result.value !== currentValue) {
+      onChange(result.value);
+    }
+  });
+
+const SelectorStatus = ({
+  id,
   status,
-  statusId,
-  statusText,
-}: DashboardSelectorProps) => (
-  <Select
-    disabled={disabled}
-    items={items}
-    name={name}
-    onValueChange={({ value }) => {
-      const [selected] = value;
-      if (value.length === 1 && selected !== undefined && selected !== currentValue) {
-        onChange(selected);
-      }
-    }}
-    validateStatus={status}
-    value={currentValue === undefined ? [] : [currentValue]}
-  >
-    <Select.Label>{label}</Select.Label>
-    <Select.Control>
-      <Select.Trigger aria-describedby={statusText === null ? undefined : statusId} aria-label={ariaLabel}>
-        <Select.ValueText placeholder={placeholder} />
-      </Select.Trigger>
-    </Select.Control>
-    <Select.Positioner>
-      <Select.Content>
-        {items.map((item) => (
-          <Select.Item item={item} key={item.value}>
-            <Select.ItemText />
-            <Select.ItemIndicator />
-          </Select.Item>
-        ))}
-      </Select.Content>
-    </Select.Positioner>
-    {statusText === null ? null : (
-      <Select.StatusText aria-live="polite" id={statusId} showIcon status={status}>
-        {statusText}
-      </Select.StatusText>
-    )}
-  </Select>
-);
+  text,
+}: {
+  readonly id: string;
+  readonly status: 'default' | 'error' | 'warning';
+  readonly text: string | null;
+}) =>
+  text === null ? null : (
+    <StatusText aria-live="polite" id={id} showIcon status={status}>
+      {text}
+    </StatusText>
+  );
 
 const DashboardTenantSelector = ({
   currentTenantId,
@@ -215,33 +199,43 @@ const DashboardTenantSelector = ({
   tenantSwitchPending,
 }: DashboardTenantSelectorProps) => {
   const { t } = useModernI18n();
-  const tenantItems = tenantChoices.map(({ name, tenantId }) => ({
-    displayValue: name,
-    label: name,
-    value: tenantId,
-  }));
+  const tenantItems = tenantChoices.map(({ name, tenantId }) => ({ label: name, value: tenantId }));
   const tenantUnavailable = tenantState === 'unavailable';
-  const accessibleLabel = t('shell.dashboard.tenant.accessibleLabel');
   const unavailableText = t('shell.dashboard.tenant.unavailable');
+  const statusId = 'tenant-switch-status';
+  const statusText = selectorStatusText(tenantSwitchPending, tenantSwitchFailed, tenantUnavailable, {
+    failed: t('shell.dashboard.tenant.failed'),
+    pending: t('shell.dashboard.tenant.pending'),
+    unavailable: unavailableText,
+  });
+  useSwitchOnSubmit(tenantSwitchForm.submit, currentTenantId, onTenantChange);
+  const showTenant = useAtomSet(tenantSwitchForm.setValues);
+  // The form stays mounted, so the sidebar keeps its layout and scroll position; once a switch
+  // settles, the select shows the session's tenant again.
+  useEffect(() => {
+    if (!tenantSwitchPending) {
+      showTenant({ tenantId: currentTenantId });
+    }
+  }, [currentTenantId, showTenant, tenantSwitchPending]);
 
   return (
-    <DashboardSelector
-      ariaLabel={accessibleLabel}
-      currentValue={currentTenantId}
-      disabled={tenantUnavailable || tenantSwitchPending || !tenantItems.some((item) => item.value !== currentTenantId)}
-      items={tenantItems}
-      label={accessibleLabel}
-      name="tenant"
-      onChange={onTenantChange}
-      placeholder={unavailableText}
-      status={selectorStatus(tenantSwitchFailed, tenantUnavailable)}
-      statusId="tenant-switch-status"
-      statusText={selectorStatusText(tenantSwitchPending, tenantSwitchFailed, tenantUnavailable, {
-        failed: t('shell.dashboard.tenant.failed'),
-        pending: t('shell.dashboard.tenant.pending'),
-        unavailable: unavailableText,
-      })}
-    />
+    <FormRoot
+      defaultValues={{ tenantId: currentTenantId }}
+      form={tenantSwitchForm}
+      translateMessage={(message) => t(message, { defaultValue: t('shell.dashboard.tenant.failed') })}
+    >
+      <tenantSwitchForm.tenantId
+        describedBy={statusText === null ? undefined : statusId}
+        disabled={
+          tenantUnavailable || tenantSwitchPending || !tenantItems.some((item) => item.value !== currentTenantId)
+        }
+        invalid={tenantSwitchFailed}
+        items={tenantItems}
+        label={t('shell.dashboard.tenant.accessibleLabel')}
+        placeholder={unavailableText}
+      />
+      <SelectorStatus id={statusId} status={selectorStatus(tenantSwitchFailed, tenantUnavailable)} text={statusText} />
+    </FormRoot>
   );
 };
 
@@ -255,29 +249,44 @@ const DashboardLegalEntitySelector = ({
 }: DashboardLegalEntitySelectorProps) => {
   const { t } = useModernI18n();
   const legalEntityItems = legalEntityChoices.map(({ legalEntityId, legalName }) => ({
-    displayValue: legalName,
     label: legalName,
     value: legalEntityId,
   }));
   const legalEntityUnavailable = legalEntityState === 'unavailable';
+  const statusId = 'legal-entity-switch-status';
+  const statusText = selectorStatusText(legalEntitySwitchPending, legalEntitySwitchFailed, legalEntityUnavailable, {
+    failed: t('shell.dashboard.legalEntity.failed'),
+    pending: t('shell.dashboard.legalEntity.pending'),
+    unavailable: t('shell.dashboard.legalEntity.unavailable'),
+  });
+  useSwitchOnSubmit(legalEntitySwitchForm.submit, currentLegalEntityId, onLegalEntityChange);
+  const showLegalEntity = useAtomSet(legalEntitySwitchForm.setValues);
+  useEffect(() => {
+    if (!legalEntitySwitchPending) {
+      showLegalEntity({ legalEntityId: currentLegalEntityId ?? '' });
+    }
+  }, [currentLegalEntityId, legalEntitySwitchPending, showLegalEntity]);
 
   return (
-    <DashboardSelector
-      currentValue={currentLegalEntityId}
-      disabled={legalEntityUnavailable || legalEntitySwitchPending}
-      items={legalEntityItems}
-      label={t('shell.dashboard.legalEntity.accessibleLabel')}
-      name="legalEntity"
-      onChange={onLegalEntityChange}
-      placeholder={t('shell.dashboard.legalEntity.placeholder')}
-      status={selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable)}
-      statusId="legal-entity-switch-status"
-      statusText={selectorStatusText(legalEntitySwitchPending, legalEntitySwitchFailed, legalEntityUnavailable, {
-        failed: t('shell.dashboard.legalEntity.failed'),
-        pending: t('shell.dashboard.legalEntity.pending'),
-        unavailable: t('shell.dashboard.legalEntity.unavailable'),
-      })}
-    />
+    <FormRoot
+      defaultValues={{ legalEntityId: currentLegalEntityId ?? '' }}
+      form={legalEntitySwitchForm}
+      translateMessage={(message) => t(message, { defaultValue: t('shell.dashboard.legalEntity.failed') })}
+    >
+      <legalEntitySwitchForm.legalEntityId
+        describedBy={statusText === null ? undefined : statusId}
+        disabled={legalEntityUnavailable || legalEntitySwitchPending}
+        invalid={legalEntitySwitchFailed}
+        items={legalEntityItems}
+        label={t('shell.dashboard.legalEntity.accessibleLabel')}
+        placeholder={t('shell.dashboard.legalEntity.placeholder')}
+      />
+      <SelectorStatus
+        id={statusId}
+        status={selectorStatus(legalEntitySwitchFailed, legalEntityUnavailable)}
+        text={statusText}
+      />
+    </FormRoot>
   );
 };
 
@@ -310,7 +319,7 @@ const DashboardModuleNavigationItem = ({ currentModuleId, module }: DashboardMod
   const { t } = useModernI18n();
 
   return (
-    <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
+    <li className="flex flex-wrap items-center gap-150">
       {module.enabled && module.href !== undefined ? (
         <Link
           aria-current={currentModuleId === module.moduleId ? 'page' : undefined}
@@ -323,12 +332,12 @@ const DashboardModuleNavigationItem = ({ currentModuleId, module }: DashboardMod
         <span>{module.label}</span>
       )}
       {module.state === 'read_only' ? (
-        <Badge size="sm" variant="warning">
+        <Badge severity="warning" size="sm">
           {t('shell.modules.state.readOnly')}
         </Badge>
       ) : null}
       {module.state === 'deprecated' ? (
-        <Badge size="sm" variant="warning">
+        <Badge severity="warning" size="sm">
           {t('shell.modules.state.deprecated')}
         </Badge>
       ) : null}
@@ -345,7 +354,7 @@ const DashboardDeploymentNavigationItem = ({ deployment }: DashboardDeploymentNa
   const { t } = useModernI18n();
 
   return (
-    <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2">
+    <li className="flex flex-wrap items-center gap-150">
       <span>{deployment.appId}</span>
       <StatusText showIcon size="sm" status="warning">
         {t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`)}
@@ -364,7 +373,7 @@ const DashboardNavigation = ({
 
   return (
     <nav aria-label={t('shell.dashboard.navigation.label')}>
-      <ul className="shell:flex shell:flex-col shell:gap-2">
+      <ul className="flex flex-col gap-150">
         <li>
           <Link
             aria-current={homeCurrent && currentModuleId === undefined ? 'page' : undefined}
@@ -395,10 +404,10 @@ const AccessAdministrationNavigation = ({
   const label = t('shell.accessAdmin.accessible.navigation');
 
   return (
-    <section aria-label={label} className="shell:flex shell:flex-col shell:gap-2">
+    <section aria-label={label} className="flex flex-col gap-150">
       <p>{t('shell.accessAdmin.navigation.label')}</p>
       <nav aria-label={label}>
-        <ul className="shell:flex shell:flex-col shell:gap-2">
+        <ul className="flex flex-col gap-150">
           {AccessAdministrationPageSchema.literals.map((page) => (
             <li key={page}>
               <Link aria-current={currentPage === page ? 'page' : undefined} as={LocalizedLink} to={`/access/${page}`}>
@@ -463,15 +472,15 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   }, [tenantSwitchFailed]);
 
   return (
-    <div className="shell:flex shell:min-h-screen shell:min-w-0 shell:flex-col shell:overflow-x-hidden shell:bg-(--color-page-bg) shell:text-(--color-page-fg) shell:md:flex-row">
+    <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-base text-fg-primary md:flex-row">
       {props.compositionRevision === undefined ? null : (
         <meta content={props.compositionRevision} name="ontos-composition-revision" />
       )}
       <aside
         aria-label={t('shell.dashboard.sidebar.label')}
-        className="shell:flex shell:max-h-[65vh] shell:w-full shell:shrink-0 shell:flex-col shell:gap-3 shell:overflow-y-auto shell:bg-(--color-surface) shell:p-4 shell:md:max-h-none shell:md:w-64 shell:md:gap-6 shell:md:overflow-visible"
+        className="flex max-h-screen w-full shrink-0 flex-col gap-150 overflow-y-auto bg-surface p-200 md:max-h-none md:w-3xs md:gap-300 md:overflow-visible"
       >
-        <div className="shell:flex shell:flex-col shell:gap-3 shell:md:gap-6">
+        <div className="flex flex-col gap-150 md:gap-300">
           <p>{t('shell.dashboard.brand')}</p>
           <DashboardTenantSelector
             currentTenantId={props.currentTenantId}
@@ -499,14 +508,14 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         </div>
         <AccessAdministrationNavigation currentPage={props.currentAccessPage} />
       </aside>
-      <main className="shell:flex shell:min-w-0 shell:flex-1 shell:flex-col">
+      <main className="flex min-w-0 flex-1 flex-col">
         <DashboardHeader
           identity={props.identity}
           logoutPending={props.logoutPending}
           onLogout={props.onLogout}
           title={props.title}
         />
-        <div className="shell:min-w-0 shell:flex-1 shell:px-2 shell:py-4">{props.children}</div>
+        <div className="min-w-0 flex-1 px-150 py-200">{props.children}</div>
       </main>
     </div>
   );

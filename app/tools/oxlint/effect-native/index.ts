@@ -21,6 +21,7 @@ import { rule as noGlobalTestReplacements } from './rules/no-global-test-replace
 import { rule as noHandBuiltHttpServerInTests } from './rules/no-hand-built-http-server-in-tests.ts';
 import { rule as noHandBuiltProblemDetails } from './rules/no-hand-built-problem-details.ts';
 import { rule as noHandParsedEnvironmentValue } from './rules/no-hand-parsed-environment-value.ts';
+import { rule as noHandRolledFormState } from './rules/no-hand-rolled-form-state.ts';
 import { rule as noHandRolledTaggedUnion } from './rules/no-hand-rolled-tagged-union.ts';
 import { rule as noImperativeLoopInEffectGen } from './rules/no-imperative-loop-in-effect-gen.ts';
 import { rule as noInstanceof } from './rules/no-instanceof.ts';
@@ -75,6 +76,12 @@ import { rule as requireConcurrencyOption } from './rules/require-concurrency-op
 import { rule as requireContextServiceForServiceInterface } from './rules/require-context-service-for-service-interface.ts';
 import { rule as requireObservabilityLayersAtRuntimeRoot } from './rules/require-observability-layers-at-runtime-root.ts';
 import { rule as requireTimeoutOnExternalEffect } from './rules/require-timeout-on-external-effect.ts';
+import { rule as uiKitClassInKitStylesheet } from './rules/ui-kit-class-in-kit-stylesheet.ts';
+import { rule as uiKitImportThroughSurface } from './rules/ui-kit-import-through-surface.ts';
+import { rule as uiKitNoColourLiteral } from './rules/ui-kit-no-colour-literal.ts';
+import { rule as uiKitNoInlineStyle } from './rules/ui-kit-no-inline-style.ts';
+import { rule as uiKitNoIntrinsicControl } from './rules/ui-kit-no-intrinsic-control.ts';
+import { rule as uiKitNoModuleStylesheet } from './rules/ui-kit-no-module-stylesheet.ts';
 
 /** Audit-derived diagnostic rules; application code is never autofixed. */
 const effectNativePlugin = eslintCompatPlugin({
@@ -102,6 +109,7 @@ const effectNativePlugin = eslintCompatPlugin({
     'no-hand-built-http-server-in-tests': noHandBuiltHttpServerInTests,
     'no-hand-built-problem-details': noHandBuiltProblemDetails,
     'no-hand-parsed-environment-value': noHandParsedEnvironmentValue,
+    'no-hand-rolled-form-state': noHandRolledFormState,
     'no-hand-rolled-tagged-union': noHandRolledTaggedUnion,
     'no-imperative-loop-in-effect-gen': noImperativeLoopInEffectGen,
     'no-interface-first-codec': noInterfaceFirstCodec,
@@ -155,6 +163,12 @@ const effectNativePlugin = eslintCompatPlugin({
     'require-context-service-for-service-interface': requireContextServiceForServiceInterface,
     'require-observability-layers-at-runtime-root': requireObservabilityLayersAtRuntimeRoot,
     'require-timeout-on-external-effect': requireTimeoutOnExternalEffect,
+    'ui-kit-class-in-kit-stylesheet': uiKitClassInKitStylesheet,
+    'ui-kit-import-through-surface': uiKitImportThroughSurface,
+    'ui-kit-no-colour-literal': uiKitNoColourLiteral,
+    'ui-kit-no-inline-style': uiKitNoInlineStyle,
+    'ui-kit-no-intrinsic-control': uiKitNoIntrinsicControl,
+    'ui-kit-no-module-stylesheet': uiKitNoModuleStylesheet,
   },
 });
 

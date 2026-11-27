@@ -15,12 +15,12 @@ const PrivacyRouteContent = () => {
 
   return (
     <section
-      className="privacy:rounded-2xl privacy:bg-white/90 privacy:p-5 privacy:shadow-xl privacy:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-250 shadow-xl"
       data-modern-boundary-id="verticalPrivacy"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="privacy:text-2xl privacy:font-black">{t('privacy.title')}</h2>
-      <p className="privacy:mt-2 privacy:text-stone-600">{t('privacy.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('privacy.title')}</h2>
+      <p className="mt-150 text-fg-secondary">{t('privacy.routeSurface')}</p>
     </section>
   );
 };

@@ -62,6 +62,20 @@ it('retargets every identity and child fixture to four distinct clusters and dat
   }
 });
 
+it('keeps a fault relay in front of the lane’s own engine when a suite names one', () => {
+  const current = Result.getOrThrow(
+    decode({ ...environment, ONTOS_CI_ENGINE_RELAY_PORT: '19011', ONTOS_CI_WORKER_SLOT: '2' }).pipe(
+      Result.map(integrationWorkerEnvironment),
+      Result.map(Option.getOrUndefined),
+    ),
+  );
+  expect(current?.SPICEDB_ENDPOINT).toBe('localhost:19011');
+  expect(current).toHaveProperty('D20_E2E_ENGINE_UPSTREAM', 'localhost:55052');
+  expect(
+    Result.isFailure(decode({ ...environment, ONTOS_CI_ENGINE_RELAY_PORT: 'relay:1', ONTOS_CI_WORKER_SLOT: '2' })),
+  ).toBe(true);
+});
+
 it('refuses a missing or unprovisioned slot instead of sharing the source cluster', () => {
   for (const worker of [undefined, '0', '5', 'invalid']) {
     expect(Result.isFailure(decode({ ...environment, ONTOS_CI_WORKER_SLOT: worker }))).toBe(true);
@@ -112,7 +126,7 @@ it('launches package and root suites with the assigned lane and propagates failu
     execFileSync('/bin/bash', [script, '--task', 'root:2/4'], { env: launchEnvironment });
     expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual([
       '2',
-      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts',
+      'exec -- pnpm exec rstest --project integration --pool.maxWorkers 1 --shard 2/4 --exclude scripts/integration/organization-source-customer-owner-conformance.test.mts --exclude scripts/integration/organization-source-customer-identity-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-owner-conformance.test.mts --exclude scripts/integration/symmy-c14-customer-roundtrip-conformance.test.mts --exclude scripts/integration/symmy-c14-pricing-routes-conformance.test.mts --exclude scripts/integration/scoped-owner-migrations.test.mts --exclude scripts/integration/core-media-catalog-handoff.test.mts',
     ]);
     execFileSync('/bin/bash', [script, '--task', './verticals/commerce-customer-context#2/4'], {
       env: launchEnvironment,
@@ -121,6 +135,20 @@ it('launches package and root suites with the assigned lane and propagates failu
       '2',
       'exec -- pnpm --filter ./verticals/commerce-customer-context run test:integration --pool.maxWorkers 1 --shard 2/4',
     ]);
+    // A shard has no object store, so the files whole:core-media runs against one are left out of it.
+    for (const [task, command] of [
+      [
+        './apps/shell-super-app#2/17',
+        'exec -- pnpm --filter ./apps/shell-super-app run test:integration --pool.maxWorkers 1 --shard 2/17 --exclude tests/integration/core-media-e2e-*.test.ts',
+      ],
+      [
+        './packages/core-runtime#2/4',
+        'exec -- pnpm --filter ./packages/core-runtime run test:integration --pool.maxWorkers 1 --shard 2/4 --exclude tests/integration/core-media-s3-storage.test.ts --exclude tests/integration/core-media-recovery-s3.test.ts --exclude tests/integration/core-media-upload-edge.test.ts',
+      ],
+    ] as const) {
+      execFileSync('/bin/bash', [script, '--task', task], { env: launchEnvironment });
+      expect(readFileSync(output, 'utf-8').trim().split('\n')).toEqual(['2', command]);
+    }
     execFileSync('/bin/bash', [script, '--task', './verticals/privacy#2/4'], {
       env: launchEnvironment,
     });
