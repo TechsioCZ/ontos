@@ -259,11 +259,6 @@
         "title": "Nová stránka"
       },
       "products": {
-        "sources": {
-          "label": "Zdroj produktů",
-          "own": "Sortiment",
-          "erp": "Z ERP"
-        },
         "actions": {
           "newProduct": "Nový produkt",
           "receipt": "Příjem zboží"

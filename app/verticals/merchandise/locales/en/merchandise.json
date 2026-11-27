@@ -259,11 +259,6 @@
         "title": "New Page"
       },
       "products": {
-        "sources": {
-          "label": "Product source",
-          "own": "Assortment",
-          "erp": "From ERP"
-        },
         "actions": {
           "newProduct": "New product",
           "receipt": "Goods receipt"
