@@ -3,6 +3,9 @@
  * Public HTTPS only. --mode plan freezes the old AKROS source before it is renamed.
  * --mode apply|verify requires the exact --fingerprint printed by plan and never rereads the source.
  * Files contain catalog/image data, not credentials. Keep the plan and native write checkpoints for recovery.
+ * Uploaded photos are copied by their bytes: the gallery, and each variant's photo (the gallery's copy, or its own one
+ * stored with Stage). The destination photo library is what the copied products show; a source photo only its library
+ * keeps has no API to store it (the sealed source of PLAYGROUND_SOURCE_FINGERPRINT predates the photo library).
  * Tenant provisioning, credentials, grants and the storefront service switch belong to the parent operator.
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
@@ -19,6 +22,7 @@ import {
 } from '../../verticals/commerce-market-catalog/shared/action-contracts.ts';
 import {
   ChangeProductImagesPayloadSchema,
+  ManageCatalogPayloadSchema,
   ManageMarketsPayloadSchema,
   ApplyCommandResultSchema,
 } from '../../verticals/merchandise/shared/actions/apply-command.ts';
@@ -42,6 +46,8 @@ import {
   copyMarketId,
   copyPlanFromSnapshot,
   copyScopeFromSnapshot,
+  copyUploadsOf,
+  copyVariantContent,
   productCopyFields,
   readCopyApplications,
   readCopyCatalog,
@@ -65,7 +71,8 @@ type CopyClient = Pick<SeedClient, 'call'>;
 const reason = 'Copy approved frozen AKROS catalog into its isolated playground';
 const ImagePayload = Schema.toEncoded(ChangeProductImagesPayloadSchema);
 const MarketPayload = Schema.toEncoded(ManageMarketsPayloadSchema);
-const Payload = Schema.Union([ImagePayload, MarketPayload]);
+const CatalogPayload = Schema.toEncoded(ManageCatalogPayloadSchema);
+const Payload = Schema.Union([ImagePayload, MarketPayload, CatalogPayload]);
 const Result = Schema.toEncoded(ApplyCommandResultSchema);
 const marketAudience = 'commerce-market-catalog';
 const registryAudience = 'storefront-registry';
@@ -105,10 +112,7 @@ const safeOrigin = (shellUrl: string) =>
 
 const content = (fields: Effect.Success<ReturnType<typeof productCopyFields>>) => {
   const { images: _gallery, imageSrc: _main, variants, ...rest } = fields;
-  return {
-    ...rest,
-    variants: variants?.map(({ priceHistory: _history, ...variant }) => variant),
-  };
+  return { ...rest, variants: variants?.map(copyVariantContent) };
 };
 
 /** Product/category/variant IDs are safe only because the merchandise owner keys include Tenant + Legal Entity. */
@@ -197,6 +201,16 @@ const writeCommand = (client: CopyClient, command: (typeof Payload.Type)['comman
         'merchandise',
         '/merchandise/actions/change-product-images',
         ImagePayload,
+        payload,
+        Result,
+        true,
+      );
+    }
+    if (Schema.is(CatalogPayload)(payload)) {
+      return yield* client.call(
+        'merchandise',
+        '/merchandise/actions/manage-catalog',
+        CatalogPayload,
         payload,
         Result,
         true,
@@ -389,8 +403,14 @@ const copyOffers = (client: CopyClient, snapshot: CopySnapshot) =>
     return yield* Effect.void;
   });
 
-const uploadCopyImage = (client: CopyClient, productId: string, media: CopySnapshot['media'][number]) =>
-  Effect.gen(function* uploadFrozenGalleryImage() {
+/** `Upload` puts the picture into the gallery; `Stage` only stores it for the product (a variant's own photo). */
+const uploadCopyImage = (
+  client: CopyClient,
+  productId: string,
+  media: CopySnapshot['media'][number],
+  tag: 'Stage' | 'Upload' = 'Upload',
+) =>
+  Effect.gen(function* uploadFrozenImage() {
     const filename = `${media.full.contentSha256}.${media.full.mimeType === 'image/jpeg' ? 'jpg' : media.full.mimeType.slice(6)}`;
     const image: Types.Mutable<
       (typeof ImagePayload.Type)['command']['change'] & {
@@ -403,10 +423,7 @@ const uploadCopyImage = (client: CopyClient, productId: string, media: CopySnaps
     }
     const result = yield* writeCommand(client, {
       _tag: 'ChangeProductImages',
-      change: {
-        _tag: 'Upload',
-        image: preparedImage,
-      },
+      change: { _tag: tag, image: preparedImage },
       id: productId,
     });
     if (result.image === undefined) {
@@ -417,8 +434,63 @@ const uploadCopyImage = (client: CopyClient, productId: string, media: CopySnaps
     return result.image;
   });
 
+/**
+ * Each variant shows the destination copy of its source upload: the gallery's copy, else its own one stored with
+ * `Stage`. A rerun finds a photo an interrupted run stored and set by its bytes; one only staged is stored again.
+ */
+const copyVariantPhotos = (
+  client: CopyClient,
+  snapshot: CopySnapshot,
+  source: CopyProduct,
+  copies: Map<string, string>,
+) =>
+  Effect.gen(function* copyFrozenVariantPhotos() {
+    const uploads = new Map(
+      (source.variants ?? []).flatMap(({ id, imageSrc }) =>
+        id !== undefined && imageSrc?.startsWith('media:') === true ? [[id, imageSrc] as const] : [],
+      ),
+    );
+    if (uploads.size === 0) {
+      return yield* Effect.void;
+    }
+    const [product] = (yield* readCopyRecords(client, { ordersLimit: 0, productId: source.id })).products;
+    if (product === undefined) {
+      return yield* new AkrosPlaygroundCopyError({
+        reason: 'A destination product disappeared during variant photo copy.',
+      });
+    }
+    const present = new Map<string, string>();
+    for (const reference of copyUploadsOf(product).filter((entry) => !(product.images ?? []).includes(entry))) {
+      const full = yield* readCopyMedia(client, product.id, reference, 'full');
+      const thumbnail = yield* readCopyMedia(client, product.id, reference, 'thumbnail');
+      present.set(`${full.contentSha256}:${thumbnail.contentSha256}`, reference);
+    }
+    for (const reference of new Set(uploads.values())) {
+      if (copies.has(reference)) {
+        continue;
+      }
+      const media = snapshot.media.find((entry) => entry.reference === reference);
+      if (media === undefined) {
+        return yield* new AkrosPlaygroundCopyError({ reason: 'A frozen variant photo is missing its bytes.' });
+      }
+      copies.set(
+        reference,
+        present.get(`${media.full.contentSha256}:${media.thumbnail.contentSha256}`) ??
+          (yield* uploadCopyImage(client, source.id, media, 'Stage')),
+      );
+    }
+    const variants = (product.variants ?? []).map((variant) => {
+      const reference = variant.id === undefined ? undefined : uploads.get(variant.id);
+      return reference === undefined ? variant : { ...variant, imageSrc: copies.get(reference) ?? '' };
+    });
+    if (variants.some((variant, index) => variant.imageSrc !== product.variants?.[index]?.imageSrc)) {
+      yield* writeCommand(client, { _tag: 'UpdateProduct', id: source.id, patch: { variants } });
+    }
+    return yield* Effect.void;
+  });
+
 /** Resolve uploaded images by bytes on every rerun, including a lost upload response. Never reuse foreign media IDs. */
-const copyGallery = (client: CopyClient, snapshot: CopySnapshot) =>
+export const copyGallery = (client: CopyClient, snapshot: CopySnapshot) =>
   Effect.gen(function* copyFrozenGalleryBytes() {
     for (const source of snapshot.products) {
       const detail = yield* readCopyRecords(client, { ordersLimit: 0, productId: source.id });
@@ -470,6 +542,9 @@ const copyGallery = (client: CopyClient, snapshot: CopySnapshot) =>
           id: source.id,
         });
       }
+      // `order` follows the source gallery: each source gallery photo's destination copy sits at its position.
+      const copies = new Map((source.images ?? []).map((reference, index) => [reference, order[index] ?? ''] as const));
+      yield* copyVariantPhotos(client, snapshot, source, copies);
     }
     return yield* Effect.void;
   });
@@ -482,13 +557,19 @@ const withoutHistory = (row: CopySnapshot['categories'][number] | undefined) => 
   return categoryContent;
 };
 
-const galleryBytes = (snapshot: CopySnapshot, product: CopyProduct) =>
-  (product.images ?? []).map((reference) => {
+/** The gallery and every variant's photo, an upload as its bytes: Core Media IDs differ between tenants. */
+const photoBytes = (snapshot: CopySnapshot, product: CopyProduct) => {
+  const bytesOf = (reference: string) => {
     const media = snapshot.media.find((entry) => entry.reference === reference);
     return media === undefined
       ? reference
       : { full: media.full.contentSha256, thumbnail: media.thumbnail.contentSha256 };
-  });
+  };
+  return {
+    gallery: (product.images ?? []).map(bytesOf),
+    variants: (product.variants ?? []).map(({ imageSrc }) => (imageSrc === undefined ? null : bytesOf(imageSrc))),
+  };
+};
 
 const offers = (rows: CopySnapshot['marketOffers'], remap: boolean) =>
   sortCopyValues(
@@ -571,12 +652,9 @@ const verifyCopy = (client: CopyClient, plan: CopyPlan, checkpointRoot?: string)
     }
     for (const source of plan.snapshot.products) {
       const actual = destination.products.find(({ id }) => id === source.id);
-      if (
-        actual === undefined ||
-        !sameCopyValue(galleryBytes(plan.snapshot, source), galleryBytes(destination, actual))
-      ) {
+      if (actual === undefined || !sameCopyValue(photoBytes(plan.snapshot, source), photoBytes(destination, actual))) {
         return yield* new AkrosPlaygroundCopyError({
-          reason: 'Destination image order or image bytes differ from the frozen source.',
+          reason: 'Destination gallery or variant photos differ from the frozen source.',
         });
       }
     }

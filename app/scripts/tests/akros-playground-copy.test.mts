@@ -1,4 +1,4 @@
-import { Effect, Exit, FileSystem, Schema } from 'effect';
+import { Effect, Exit, FileSystem, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/http';
 
@@ -18,6 +18,7 @@ import {
   copyMarketId,
   copyMediaDigest,
   copyPlanFromSnapshot,
+  copyUploadsOf,
   RecordsRequest,
   readCopyOffers,
   readCopyProducts,
@@ -25,7 +26,14 @@ import {
   sameCopyValue,
 } from '../demo/akros-playground-copy.mts';
 import { demoId } from '../demo/fixture-ids.mts';
-import { checkCopyBootstrap } from '../demo/seed-akros-playground.mts';
+import {
+  ChangeProductImagesPayloadSchema,
+  ManageCatalogPayloadSchema,
+} from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import { MediaRequestSchema } from '../../verticals/merchandise/shared/apis/media.ts';
+import { ProductRecordSchema } from '../../verticals/merchandise/shared/domain/merchandise-model.ts';
+import { photoLibraryAfter } from '../../verticals/merchandise/shared/domain/product-images.ts';
+import { checkCopyBootstrap, copyGallery } from '../demo/seed-akros-playground.mts';
 import { bootstrapFrozenCatalog } from '../demo/akros-playground-bootstrap.mts';
 import { DemoSeedError } from '../demo/seed-client.mts';
 
@@ -403,6 +411,118 @@ it.effect('prepares an actor-free bootstrap without carrying Core Media links ac
     expect(prepared.products[0]?.product.contentHistory).toBeUndefined();
     expect(prepared.products[0]?.product.priceHistory[0]?.changedBy).toBeUndefined();
     expect(prepared.homepageFeaturedProductIds).toEqual(['product-0']);
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
+const ImageWrite = Schema.toEncoded(ChangeProductImagesPayloadSchema);
+const CatalogWrite = Schema.toEncoded(ManageCatalogPayloadSchema);
+const MediaRead = Schema.toEncoded(MediaRequestSchema);
+const RecordProduct = Schema.toEncoded(ProductRecordSchema);
+const mediaBytes = (contentBase64: string) => ({
+  contentBase64,
+  contentSha256: copyMediaDigest(contentBase64),
+  mimeType: 'image/jpeg' as const,
+});
+const galleryUpload = 'media:source-gallery';
+const variantUpload = 'media:source-variant';
+const variantPhoto = 'dmFyaWFudA==';
+
+it.effect("copies each variant's uploaded photo by its bytes, and a rerun stores nothing again", () =>
+  Effect.gen(function* variantPhotoCopyTest() {
+    const outside = 'https://www.akros.cz/data/product/hak.jpg';
+    const source = yield* Schema.decodeUnknownEffect(CopySnapshotSchema)({
+      ...snapshotInput(),
+      media: [
+        { full: mediaBytes('Z2FsbGVyeQ=='), reference: galleryUpload, thumbnail: mediaBytes('Z2FsbGVyeQ==') },
+        { full: mediaBytes(variantPhoto), reference: variantUpload, thumbnail: mediaBytes(variantPhoto) },
+      ],
+      products: [
+        {
+          ...product(),
+          images: [galleryUpload, outside],
+          imageSrc: galleryUpload,
+          photoLibrary: [galleryUpload, variantUpload, outside],
+          variants: [
+            { attributes: 'A', id: 'v-gallery', imageSrc: galleryUpload, name: 'A' },
+            { attributes: 'B', id: 'v-own', imageSrc: variantUpload, name: 'B' },
+            { attributes: 'C', id: 'v-outside', imageSrc: outside, name: 'C' },
+          ],
+        },
+      ],
+    });
+    expect(copyUploadsOf(source.products[0] ?? product())).toEqual([galleryUpload, variantUpload]);
+    const [bootstrapped] = (yield* bootstrapCopyCatalog(source)).products;
+    // The bootstrap carries no foreign Core Media link, on the product or on a variant.
+    expect(bootstrapped?.product.images).toEqual([outside]);
+    expect(bootstrapped?.product.variants?.map(({ imageSrc }) => imageSrc)).toEqual(['', '', outside]);
+    // The destination keeps products as merchandise does: an upload gets a new ID, a write rebuilds the photo library.
+    let held = yield* Schema.decodeUnknownEffect(RecordProduct)({
+      ...bootstrapped?.product,
+      lowStock: false,
+      stockOnHand: 0,
+      stockValueMinor: 0,
+    });
+    const stored = new Map<string, string>();
+    const writes: string[] = [];
+    const save = (after: typeof held) => {
+      held = { ...after, photoLibrary: photoLibraryAfter(held, after) };
+      return { entityIds: [], revision: 42 };
+    };
+    const store = (contentBase64: string) => {
+      const image = `media:00000000-0000-4000-8000-${String(stored.size + 1).padStart(12, '0')}`;
+      stored.set(image, contentBase64);
+      return { entityIds: [], image, revision: 42 };
+    };
+    const client = {
+      call: <P extends Schema.Top, R extends Schema.Top>(
+        _audience: string,
+        path: string,
+        _payloadSchema: P,
+        payload: P['Type'],
+        resultSchema: R,
+      ) =>
+        Effect.gen(function* fakeDestination() {
+          if (path === '/reads/records') {
+            const { view } = yield* Schema.decodeUnknownEffect(RecordsRequest)(payload);
+            return response(view?.productId === undefined ? [] : [held], 1);
+          }
+          if (path === '/reads/media') {
+            const { image } = yield* Schema.decodeUnknownEffect(MediaRead)(payload);
+            return mediaBytes(stored.get(image) ?? '');
+          }
+          if (Schema.is(CatalogWrite)(payload)) {
+            writes.push('UpdateProduct');
+            return Match.value(payload.command).pipe(
+              Match.tag('UpdateProduct', ({ patch }) =>
+                save(patch.variants === undefined ? held : { ...held, variants: patch.variants }),
+              ),
+              Match.orElse(() => ({ entityIds: [], revision: 0 })),
+            );
+          }
+          const { change } = (yield* Schema.decodeUnknownEffect(ImageWrite)(payload)).command;
+          writes.push(change._tag);
+          return Match.value(change).pipe(
+            Match.tag('Reorder', ({ images }) => save({ ...held, images, imageSrc: images[0] ?? '' })),
+            Match.tag('Upload', ({ image }) => {
+              const result = store(image.full.contentBase64);
+              save({ ...held, images: [...(held.images ?? []), result.image] });
+              return result;
+            }),
+            Match.tag('Stage', ({ image }) => store(image.full.contentBase64)),
+            Match.orElse(() => ({ entityIds: [], revision: 0 })),
+          );
+        }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(resultSchema))),
+    };
+    yield* copyGallery(client, source);
+    const [galleryCopy, variantCopy] = [...stored.keys()];
+    expect(writes).toEqual(['Upload', 'Reorder', 'Stage', 'UpdateProduct']);
+    expect(held.images).toEqual([galleryCopy, outside]);
+    expect(held.variants?.map(({ imageSrc }) => imageSrc)).toEqual([galleryCopy, variantCopy, outside]);
+    expect(stored.get(variantCopy ?? '')).toBe(variantPhoto);
+    expect(held.photoLibrary).toEqual(expect.arrayContaining([galleryCopy, variantCopy]));
+    yield* copyGallery(client, source);
+    expect(writes).toHaveLength(4);
+    expect(stored.size).toBe(2);
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 

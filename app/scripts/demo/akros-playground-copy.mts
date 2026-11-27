@@ -24,6 +24,7 @@ import {
   RecordsResponseSchema,
 } from '../../verticals/merchandise/shared/apis/records.ts';
 import { MarketIdSchema, MarketSettingsSchema } from '../../verticals/merchandise/shared/domain/market-offers.ts';
+import { shownPhotosOf } from '../../verticals/merchandise/shared/domain/product-images.ts';
 import {
   CatalogCategorySchema,
   ProductMetadataSchema,
@@ -95,6 +96,14 @@ export const CopySnapshotSchema = Schema.Struct({
 });
 export type CopySnapshot = typeof CopySnapshotSchema.Type;
 export type CopyProduct = (typeof CopySnapshotSchema.Type)['products'][number];
+type CopyVariant = NonNullable<CopyProduct['variants']>[number];
+
+/** The uploads (Core Media links) a product shows, each once: its gallery, main image and every variant's photo. */
+export const copyUploadsOf = (product: Pick<CopyProduct, 'images' | 'imageSrc' | 'variants'>) =>
+  shownPhotosOf(product).filter((reference) => reference.startsWith('media:'));
+/** A variant's copyable content: no price history, no foreign Core Media link (its uploaded photo is copied by bytes). */
+export const copyVariantContent = ({ priceHistory: _history, ...variant }: CopyVariant) =>
+  variant.imageSrc?.startsWith('media:') === true ? { ...variant, imageSrc: '' } : variant;
 
 export const CopyPlanContentSchema = Schema.Struct({
   copyScope: Schema.Struct({
@@ -421,8 +430,8 @@ export const captureCopySnapshot = (
     const media: (typeof CopyMediaSchema.Type)[] = [];
     const seen = new Set<string>();
     for (const product of products) {
-      for (const reference of product.images ?? []) {
-        if (!reference.startsWith('media:') || seen.has(reference)) {
+      for (const reference of copyUploadsOf(product)) {
+        if (seen.has(reference)) {
           continue;
         }
         const fullRead = readCopyMedia(client, product.id, reference, 'full');
@@ -517,7 +526,7 @@ export const bootstrapCopyCatalog = (snapshot: CopySnapshot) =>
           taxClassificationCode: source.taxClassificationCode,
           unit: source.unit,
           updatedAt: snapshot.capturedAt,
-          variants: source.variants?.map(({ priceHistory: _history, ...variant }) => variant),
+          variants: source.variants?.map(copyVariantContent),
         };
         const product = yield* Schema.decodeUnknownEffect(Schema.toEncoded(ProductSchema))(
           Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)),
