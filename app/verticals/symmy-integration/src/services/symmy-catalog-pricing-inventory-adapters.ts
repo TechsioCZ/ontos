@@ -95,7 +95,7 @@ import { executePriceDefinitionWithAuthorization } from '@app/pricing-contracts/
 import { executeRevisePriceWithAuthorization } from '@app/pricing-contracts/revise-price/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
-import { Context, Crypto, Effect, Exit, Layer, Match, Option, Schema, Stream } from 'effect';
+import { Context, Crypto, Effect, Exit, Layer, Match, Option, Predicate, Schema, Stream } from 'effect';
 
 import {
   SymmyCatalogPricingInventoryReceiptSchema,
@@ -1015,17 +1015,11 @@ const productDependentIntent = Effect.fn('SymmyOwnerAdapters.productDependentInt
         if (!sameRef(current.product.productRef, productRef)) {
           return yield* symmyJobWorkerInvalid();
         }
+        const nextPayload = { ...payload, expectedRevision: current.product.revision, productRef };
+        // Catalog lets only the source that imported a Product retire it by an update.
+        const sourcePayload = payload.targetLifecycle === 'RETIRED' ? { ...nextPayload, sourceProduct } : nextPayload;
         return {
-          intent: {
-            _tag: 'CatalogUpdateProduct',
-            payload: {
-              ...payload,
-              expectedRevision: current.product.revision,
-              productRef,
-              // Catalog lets only the source that imported a Product retire it by an update.
-              ...(payload.targetLifecycle === 'RETIRED' ? { sourceProduct } : {}),
-            },
-          },
+          intent: { _tag: 'CatalogUpdateProduct', payload: sourcePayload },
           target: productRef,
         };
       }),
@@ -1386,7 +1380,7 @@ const captureCreatedProduct = Effect.fn('SymmyOwnerAdapters.captureCreatedProduc
   contract: AdapterContract,
   crypto: Crypto.Crypto,
   currentInvocationId: string,
-  recovering = false,
+  recovering: boolean,
 ) {
   const intent = yield* checkedIntent(input);
   return yield* Match.value(intent).pipe(
@@ -2094,6 +2088,7 @@ const executeNative = Effect.fn('SymmyOwnerAdapters.executeNative')(function* ex
             contract,
             crypto,
             currentInvocationId,
+            false,
           );
           if (Option.isNone(businessOriginalCreateId)) {
             return safeOutcome(input, 'unresolved');
@@ -3030,9 +3025,10 @@ const recoverCommandFailure = Effect.fn('SymmyOwnerAdapters.commandFailure')(fun
   return yield* symmyJobWorkerUnavailable(error);
 });
 
+const productDependencyStage = 'product-dependency';
 const targetValidationStage = 'target-validation';
 const preDispatchStage = Schema.Literals([
-  'product-dependency',
+  productDependencyStage,
   'group-dependency',
   'provisioning-validation',
   'intent-validation',
@@ -3066,8 +3062,8 @@ const readinessOfSettledProduct = Effect.fn('SymmyOwnerAdapters.readinessOfSettl
     input.effect.intent,
   ).pipe(Option.getOrUndefined);
   if (
-    intent?._tag !== 'CatalogProductDependentEffect' ||
-    intent.request._tag !== 'CatalogReadiness' ||
+    !Predicate.isTagged(intent, 'CatalogProductDependentEffect') ||
+    !Predicate.isTagged(intent.request, 'CatalogReadiness') ||
     !input.canExecuteNewEffects ||
     input.effect.ref.originalTarget !== undefined ||
     input.originalExecutorPrincipalId !== undefined ||
@@ -3099,12 +3095,12 @@ const makeAdapter = (contract: AdapterContract, crypto: Crypto.Crypto): SymmyEff
           }).pipe(Effect.ignoreCause),
         ),
       );
-    const settledReadiness = yield* observe('product-dependency', readinessOfSettledProduct(originalInput));
+    const settledReadiness = yield* observe(productDependencyStage, readinessOfSettledProduct(originalInput));
     if (Option.isSome(settledReadiness)) {
       return settledReadiness.value;
     }
     const productInput = yield* observe(
-      'product-dependency',
+      productDependencyStage,
       resolveProductDependency(originalInput, contract, crypto),
     );
     const input = yield* observe('group-dependency', resolveGroupDependency(productInput, contract, crypto));
