@@ -9,7 +9,7 @@ import type { TagsOf } from '../../../../tags/subject-tags.ts';
 import { AvailabilityBadge } from './product-eshop.tsx';
 import { useImageSource } from './product-image-source.ts';
 import { listPriceOf } from './product-list-price.ts';
-import { StorefrontStatusCell } from './storefront-status.tsx';
+import { StorefrontStatusCell, storefrontListNote } from './storefront-status.tsx';
 import { ErpCodeLine, SymmyImportedBadge } from './symmy-provenance.tsx';
 
 /** The product's main image as a small list thumbnail; nothing while it loads or when nothing can serve it. */
@@ -65,6 +65,7 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       const [image] = product.images ?? [];
       const variants = product.variantCount ?? 0;
       const variantsLabel = variants > 0 ? `${formatNumber(variants)} ${variantNoun(variants)}` : null;
+      const note = storefrontListNote(product);
       return (
         <span className="flex min-w-0 items-center gap-100">
           {image !== undefined && <ProductThumbnail image={image} productId={product.id} />}
@@ -73,9 +74,9 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
               <span className="truncate">{product.name}</span>
               <SymmyImportedBadge product={product} />
             </span>
-            {(variants > 0 || product.published === false) && (
+            {(variants > 0 || note !== null) && (
               <span className="truncate text-fg-secondary text-xs">
-                {[variantsLabel, product.published === false ? 'skryto v e-shopu' : null]
+                {[variantsLabel, note]
                   .filter((part) => part !== null)
                   .join(' · ')}
               </span>
@@ -92,9 +93,9 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
       product.storefrontVisibility === undefined ? '' : product.storefrontVisibility.published ? 'ano' : 'ne',
     cell: (info) => <StorefrontStatusCell product={info.row.original} />,
     enableSorting: false,
-    header: 'Na e-shopu',
+    header: 'E-shop',
     id: 'storefront',
-    meta: { type: 'string', width: 200 },
+    meta: { align: 'center', type: 'string', width: 64 },
   },
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
@@ -117,17 +118,17 @@ export const productColumns = (label: (path: string) => string, tagsOf: TagsOf):
   {
     accessorKey: 'stockOnHand',
     cell: (info) => (
-      <span className="flex items-center justify-end gap-100 tabular-nums">
-        {formatNumber(info.getValue<number>())}
+      <span className="flex items-center justify-end gap-100 whitespace-nowrap">
         {info.row.original.lowStock && (
           <Badge severity="warning" size="sm">
             {label('status.lowStock')}
           </Badge>
         )}
+        <span className="tabular-nums">{formatNumber(info.getValue<number>())}</span>
       </span>
     ),
     header: label('columns.onHand'),
-    meta: { align: 'end', type: 'number', width: 140 },
+    meta: { align: 'end', type: 'number', width: 180 },
   },
   {
     accessorFn: (product) => product.availability ?? 'UNKNOWN',

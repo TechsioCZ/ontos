@@ -409,6 +409,7 @@
           "categoryRetry": "Zkusit znovu",
           "categoryMore": "Zobrazeno {{shown}} z {{total}} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.",
           "lowStockOnly": "Jen pod minimem",
+          "symmyOnly": "Jen ze Symmy",
           "archived": "Archivované",
           "search": "Hledat podle názvu nebo SKU…"
         },

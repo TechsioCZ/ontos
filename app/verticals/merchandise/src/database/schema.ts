@@ -125,6 +125,10 @@ export const products = merchandiseSchema.table.withRLS(
     index('demo_merchandise_products_gross_missing')
       .on(table.tenantId, table.legalEntityId, table.id)
       .where(sql`${table.grossPriceMinor} is null`),
+    // The staff list's Symmy filter reads the products the Symmy import marked (importedVia lives in the document).
+    index('demo_merchandise_products_symmy_ordinal')
+      .on(table.tenantId, table.legalEntityId, table.ordinal)
+      .where(sql`${table.document}->>'importedVia' = 'symmy'`),
     check('demo_merchandise_product_document_object', sql`jsonb_typeof(${table.document}) = 'object'`),
     ...tenantLegalEntityRlsPolicies('demo_merchandise_product_scope', table.tenantId, table.legalEntityId),
   ],

@@ -4123,11 +4123,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const totals = staff
         ? yield* indicators(transaction, store).pipe(Effect.mapError(unavailable))
         : {
-            lowStockCount: page.products.filter((record) => record.lowStock).length,
-            openOrderValueMinor: 0,
-            orderCount: orderList.orders.length,
-            productCount: page.products.length,
-            stockValueMinor: 0,
+            indicators: {
+              lowStockCount: page.products.filter((record) => record.lowStock).length,
+              openOrderValueMinor: 0,
+              orderCount: orderList.orders.length,
+              productCount: page.products.length,
+              stockValueMinor: 0,
+            },
+            symmyProductCount: 0,
           };
       const storefrontOrigin = yield* storefrontOriginOf(legalEntityId);
       const staffResponse = {
@@ -4136,11 +4139,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         ...recordCapabilities(legalEntityId, storefront, grants, canWrite),
         canWrite,
-        indicators: totals,
+        indicators: totals.indicators,
         ...ledger,
         orders: [...orderList.orders],
         products: [...page.products],
         revision: head.revision,
+        symmyProductCount: totals.symmyProductCount,
         totalProducts: page.total,
       } satisfies RecordsResponse;
       const withSettings =

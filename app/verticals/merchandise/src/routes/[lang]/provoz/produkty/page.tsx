@@ -141,6 +141,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
   const [treeCategory, setTreeCategory] = useState<CategoryTrail | null>(null);
   const [labelCategory, setLabelCategory] = useState<string | null>(null);
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [symmyOnly, setSymmyOnly] = useState(false);
   const [archived, setArchived] = useState(false);
   const [sort, setSort] = useState<ProductSort | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
@@ -164,6 +165,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     offset: pagination.pageIndex * pagination.pageSize,
     search: settledSearch,
     sort,
+    symmyOnly,
     taggedIds,
   };
   const { reload, state, viewKey } = useProductPage(legalEntityId, query, context);
@@ -186,6 +188,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     labelCategory !== null,
     lowStockOnly,
     archived,
+    symmyOnly,
     tagFilter.tagId !== null,
   ].includes(true);
   const stale = state.status === 'ready' && state.query !== query;
@@ -210,6 +213,7 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     setTreeCategory(null);
     setLabelCategory(null);
     setLowStockOnly(false);
+    setSymmyOnly(false);
     setArchived(false);
     tagFilter.setTagId(null);
     firstPage();
@@ -327,6 +331,8 @@ const useProductListPage = ({ context, legalEntityId }: RecordsPageContentProps)
     tableStatus,
     tagFilter,
     toggleArchived,
+    setSymmyOnly,
+    symmyOnly,
     treeCategory,
   };
 };
@@ -376,13 +382,15 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
     tableStatus,
     tagFilter,
     toggleArchived,
+    setSymmyOnly,
+    symmyOnly,
     treeCategory,
   } = useProductListPage(props);
 
   return (
     <>
       <UltramodernRouteHead />
-      <div className="flex w-full min-w-0 flex-col gap-250">
+      <div className="flex h-[calc(var(--height-sidebar-viewport)_-_2*var(--spacing-250))] min-h-0 w-full min-w-0 flex-col gap-250">
         <PageHeader
           actions={
             canWrite ? (
@@ -479,16 +487,14 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
             />
           </div>
           {canWrite && (
-            <div className="w-48">
-              <TagFilter
-                kind="product"
-                onChange={(tagId) => {
-                  tagFilter.setTagId(tagId);
-                  firstPage();
-                }}
-                value={tagFilter.tagId}
-              />
-            </div>
+            <TagFilter
+              kind="product"
+              onChange={(tagId) => {
+                tagFilter.setTagId(tagId);
+                firstPage();
+              }}
+              value={tagFilter.tagId}
+            />
           )}
           <FormCheckbox
             checked={lowStockOnly}
@@ -501,6 +507,19 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
             }}
             size="sm"
           />
+          {(ready?.symmyProductCount ?? 0) > 0 && (
+            <FormCheckbox
+              checked={symmyOnly}
+              className="self-center"
+              label={k('filters.symmyOnly')}
+              name="symmyOnly"
+              onCheckedChange={(checked) => {
+                setSymmyOnly(checked);
+                firstPage();
+              }}
+              size="sm"
+            />
+          )}
           {canWrite && (
             <FormCheckbox
               checked={archived}

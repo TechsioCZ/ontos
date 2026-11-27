@@ -405,6 +405,7 @@
           "categoryRetry": "Try again",
           "categoryMore": "Showing {{shown}} of {{total}} categories. Narrow the search, e.g. by a parent category name.",
           "lowStockOnly": "Below minimum only",
+          "symmyOnly": "Only from Symmy",
           "archived": "Archived",
           "search": "Search by name or SKU…"
         },

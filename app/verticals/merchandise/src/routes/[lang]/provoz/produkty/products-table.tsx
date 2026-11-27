@@ -67,8 +67,10 @@ export const ProductsTable = ({
   const label = (path: string) => t(`merchandise.pages.products.${path}`);
   const ready = (table: TanstackTable<ProductRecord>) => onReady?.(table);
 
+  // The table fills the page column left under the header and filters and is its only scroll container (maxHeight 100%).
   return (
     <DataTable
+      className="min-h-0 flex-1"
       columns={productColumns(label, tagsOf)}
       data={status === 'ready' ? [...rows] : []}
       enablePagination
@@ -80,7 +82,7 @@ export const ProductsTable = ({
       loading={status === 'loading'}
       loadingRowCount={12}
       manualPagination
-      maxHeight="calc(100dvh - 15rem)"
+      maxHeight="100%"
       onPaginationChange={onPaginationChange}
       onReady={ready}
       onRowClick={(row) => onOpen(row.original.id)}

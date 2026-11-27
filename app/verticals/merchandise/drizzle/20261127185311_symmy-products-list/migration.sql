@@ -1,0 +1,1 @@
+CREATE INDEX "demo_merchandise_products_symmy_ordinal" ON "demo_merchandise"."products" ("tenant_id","legal_entity_id","ordinal") WHERE "document"->>'importedVia' = 'symmy';

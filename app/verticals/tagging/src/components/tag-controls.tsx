@@ -216,12 +216,13 @@ export interface TagFilterProps {
 
 /**
  * Single-tag filter for a list of subjects of one kind. Only tags that apply to `kind` are offered. Renders nothing
- * for a person who may not read tags here, so the filter row never shows a tag load error.
+ * for a person who may not read tags here, so the filter row never shows a tag load error, and nothing when no tag
+ * applies to `kind` yet: a filter with only "all tags" has nothing to choose.
  */
 export const TagFilter = ({ catalog, kind, label, onChange, value }: TagFilterProps) => {
   const own = useTagCatalog(kind, catalog === undefined);
   const resolved = catalog ?? own;
-  if (resolved.status === 'forbidden') {
+  if (resolved.status === 'forbidden' || (resolved.status === 'ready' && resolved.tags.length === 0)) {
     return null;
   }
   return (
