@@ -58,9 +58,7 @@ const ModulePage = () => {
       <BrandScope
         brand={extendBrand(brand, { key: 'acme-projects', tokens: { '--color-primary': 'var(--color-primary-900)' } })}
       >
-        <section aria-label="Scoped module screen">
-          <ThemeProbe testId="scoped" />
-        </section>
+        <ThemeProbe testId="scoped" />
       </BrandScope>
     </main>
   );
@@ -89,7 +87,7 @@ it.effect('lets a module inherit the tenant theme and scope a derived one to its
 
     // Inside BrandScope the subtree carries the derived brand; outside it nothing changes.
     expect(screen.getByTestId('scoped').textContent).toBe('acme-projects');
-    const scope = screen.getByRole('region', { name: 'Scoped module screen' }).closest<HTMLElement>('[data-theme]');
+    const scope = screen.getByTestId('scoped').closest<HTMLElement>('[data-theme]');
     expect(scope?.dataset['theme']).toBe('acme-projects');
     expect(screen.getByTestId('inherited').closest('[data-theme]')).toBe(document.documentElement);
     expect(document.documentElement.dataset['theme']).toBe('acme');
