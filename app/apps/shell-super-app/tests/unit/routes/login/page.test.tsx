@@ -2,7 +2,6 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
-import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Latch, Redacted, Schema } from 'effect';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
