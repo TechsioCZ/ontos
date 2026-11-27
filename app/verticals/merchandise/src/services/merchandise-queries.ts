@@ -93,6 +93,23 @@ const wordsOf = (text: string | undefined) =>
     .filter((word) => word !== '');
 const containsAll = (column: SQL | AnyPgColumn, words: readonly string[]) =>
   words.map((word) => like(column, `%${likeEscape(word)}%`));
+/**
+ * A query word as it matches its Czech word forms: a word of letters loses its common noun or adjective ending
+ * („pojistná“, „pojistné“, „pojistnou“ → „pojistn“; „šrouby“ → „sroub“), keeping at least three letters, and then
+ * matches inside the stored text. Codes, sizes and SKUs (anything with a digit or a sign) stay whole.
+ */
+const CZECH_ENDINGS = [
+  ...['ami', 'emi', 'imi', 'ymi', 'ech', 'ich', 'ych', 'ach', 'ovi', 'ove', 'eho', 'emu', 'imu'],
+  ...['ou', 'em', 'um', 'mi', 'a', 'e', 'i', 'o', 'u', 'y'],
+];
+const stemOf = (word: string) => {
+  if (!/^[a-z]+$/u.test(word)) {
+    return word;
+  }
+  const ending = CZECH_ENDINGS.find((candidate) => word.endsWith(candidate) && word.length - candidate.length >= 3);
+  return ending === undefined ? word : word.slice(0, -ending.length);
+};
+const stemsOf = (text: string | undefined) => wordsOf(text).map(stemOf);
 const textArray = (values: readonly string[]) =>
   values.length === 0
     ? sql`'{}'::text[]`
@@ -456,7 +473,7 @@ const staffProductFilters = (view: RecordsView, storefront: boolean, scope: Stor
   view.categoryId === undefined
     ? undefined
     : or(eq(products.categoryId, view.categoryId), sql`${products.categoryPathIds} @> ${textArray([view.categoryId])}`),
-  ...containsAll(products.searchText, wordsOf(view.search)),
+  ...containsAll(products.searchText, stemsOf(view.search)),
   view.active === undefined ? undefined : eq(products.active, view.active),
   view.category === undefined ? undefined : eq(products.category, view.category),
   view.lowStockOnly === true ? eq(products.lowStock, true) : undefined,
@@ -1063,7 +1080,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     sellableClassificationFilter(scope),
     Option.getOrUndefined(offer),
   ];
-  const filters = [...baseFilters, ...containsAll(products.searchText, words)];
+  const filters = [...baseFilters, ...containsAll(products.searchText, stemsOf(catalog.q))];
   const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
   const relevance =
     words.length === 0
@@ -1073,7 +1090,9 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
             when ${products.nameKey} = ${needle} or ${products.skuKey} = ${needle} then 0
             when ${products.nameKey} like ${`%${likeEscape(needle)}%`} or ${products.skuKey} like ${`%${likeEscape(needle)}%`} then 1
             when ${and(...containsAll(nameSku, words))} then 2
-            else 3 end`,
+            when ${and(...containsAll(products.searchText, words))} then 3
+            when ${and(...containsAll(nameSku, stemsOf(catalog.q)))} then 4
+            else 5 end`,
           desc(products.hasPhoto),
         ];
   const base = storefrontBaseOrder(catalog, featuredIds);
