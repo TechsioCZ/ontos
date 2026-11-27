@@ -571,7 +571,7 @@ describe('Symmy route bindings', () => {
     );
   });
 
-  it('derives the bindings of a Tenant-wide stock route and refuses one with a company, which Inventory publishes no import for', () => {
+  it('derives the bindings of a Tenant-wide stock route and admits one with a company, which Inventory imports optionally', () => {
     const syncAdmission = 'integration.symmy.admit-symmy-sync';
     const sourceWrite = 'commerce.inventory.source-write';
     const sourceRead = 'commerce.inventory.source-read';
@@ -629,13 +629,8 @@ describe('Symmy route bindings', () => {
     expect(workloadsOf(tenantWide.bindings, 'executor')).toEqual([sourceWrite, sourceRead]);
     // The route names no company, so neither identity needs a company registration for any binding.
     expect(tenantWide.bindings.filter(({ companyScoped }) => companyScoped)).toEqual([]);
-    expect(stock(true).refusals).toEqual([
-      {
-        code: 'company_scope_forbidden',
-        detail:
-          'commerce.inventory.import-source-assertion@1 is published without a company, which the synchronous admission of this route passes to it',
-      },
-    ]);
+    // import-source-assertion takes an optional company since 392ade5d25 (the staff ERP stock path runs with one).
+    expect(stock(true).refusals).toEqual([]);
   });
 
   it('refuses a company-scoped call on a route that passes no company to it', () => {
@@ -798,13 +793,14 @@ describe('Symmy route bindings', () => {
   });
   it('asks a registration only for the bindings whose calls run in the route company', () => {
     // The route context and the job poll run tenant-only and the admission in the company; the association read is
-    // published `forbidden`, so the Shell signs it tenant-only; a live call's gateway check needs only the binding;
+    // published `optional` since 1eb14733db, so the Shell signs it in the route company; a live call's gateway check
+    // needs only the binding;
     // Catalog's calls are published without a company.
     expect(scoped(derive([symmy, catalog, priceGroups]))).toEqual([
       `integration ${admit} | ${poll}: false`,
       `integration ${admit}: true`,
       `integration ${poll}: false`,
-      `integration ${groupRead}: false`,
+      `integration ${groupRead}: true`,
       `integration ${productImport}: false`,
       `integration ${nestedWrite}: false`,
       `integration ${productRead}: false`,

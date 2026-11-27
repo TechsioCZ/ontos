@@ -205,9 +205,8 @@ it.effect(
           workloads: ['commerce.inventory.source-read'],
         },
       ]);
-      expect(requiredOnly('inventoryStockBatch', contracts)).toEqual([
-        'company_scope_forbidden: commerce.inventory.import-source-assertion@1 is published without a company, which the synchronous admission of this route passes to it',
-      ]);
+      // import-source-assertion takes an optional company since 392ade5d25, so the company-scoped stock route is admissible.
+      expect(requiredOnly('inventoryStockBatch', contracts)).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   60_000,
 );
