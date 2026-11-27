@@ -12,11 +12,6 @@ import { TenantThemeInvalid } from './errors.ts';
  * and a host without the kit fails to start rather than on the first theme request.
  */
 
-const kitModules = Promise.all([
-  import('@techsio/ui-kit/theme/brand-validator'),
-  import('@techsio/ui-kit/theme/built-in-brands'),
-]);
-
 const invalid = (issues: readonly string[]) =>
   new TenantThemeInvalid({
     code: 'tenant_theme_invalid',
@@ -28,7 +23,14 @@ const decodeTheme = Schema.decodeEffect(TenantThemeDefinitionSchema);
 
 export const TenantThemeKitLive = Layer.effect(
   TenantThemeKit,
-  Effect.promise(Fn.constant(kitModules)).pipe(
+  Effect.suspend(() => {
+    // Loaded when the layer is built, not when this module is evaluated: a kit that fails to load fails the layer.
+    const kitModules = Promise.all([
+      import('@techsio/ui-kit/theme/brand-validator'),
+      import('@techsio/ui-kit/theme/built-in-brands'),
+    ]);
+    return Effect.promise(Fn.constant(kitModules));
+  }).pipe(
     // A load from the host's own node_modules; one that hangs stops the host's start instead of holding it.
     Effect.timeout('10 seconds'),
     Effect.orDie,
