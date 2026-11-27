@@ -12,7 +12,7 @@ import type { RowIntentProps } from '@app/admin-ui';
 import { definePageData, pageDataPending, pageDataScopeKey } from '@app/shared-contracts/page-data';
 import type { ModulePageContext, ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import type { TanstackTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, MutableRef, Option, Random, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, MutableRef, Option, Predicate, Random, Result, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
@@ -65,8 +65,17 @@ export type LoadOutcome =
   | { readonly ok: true; readonly response: RecordsResponse }
   | { readonly ok: false; readonly reason: FailureReason };
 
+/** A command that went through: the catalogue revision it left, and what it changed. */
+interface CommandCommitted {
+  readonly image?: string;
+  readonly ok: true;
+  readonly revision: number;
+  /** A product edit: the product's version after it (`productVersionOf`), which its next edit names. */
+  readonly version?: number;
+}
+
 export type CommandOutcome =
-  | { readonly image?: string; readonly ok: true; readonly revision: number }
+  | CommandCommitted
   | { readonly ok: false; readonly proposal?: ActionProposalAccepted; readonly reason: FailureReason };
 
 type RecordsFailure = Effect.Error<ReturnType<typeof executeRecords>>;
@@ -457,12 +466,31 @@ export const productCommandOutcome = (
         Schema.is(ActionProposalAcceptedSchema)(error)
           ? { ok: false, proposal: error, reason: 'approval-required' }
           : { ok: false, reason: commandReason(error) },
-      onSuccess: (result): CommandOutcome =>
-        result.image === undefined
-          ? { ok: true, revision: result.revision }
-          : { image: result.image, ok: true, revision: result.revision },
+      onSuccess: (result): CommandOutcome => {
+        const committed = { ok: true, revision: result.revision } satisfies CommandCommitted;
+        const withImage = result.image === undefined ? committed : { ...committed, image: result.image };
+        return result.updatedAt === undefined
+          ? withImage
+          : { ...withImage, version: DateTime.toEpochMillis(result.updatedAt) };
+      },
     }),
   );
+
+/** The version of a product its edits name (`expectedUpdatedAt`): its `updatedAt`, in epoch milliseconds. */
+export const productVersionOf = (product: Pick<ProductRecord, 'updatedAt'>): number =>
+  DateTime.toEpochMillis(product.updatedAt);
+
+/**
+ * `command` naming the product version its draft was based on: the server then refuses it only when that product
+ * changed since, never because another product, a stock movement or an order moved the company's catalogue
+ * revision. Other commands go as they are.
+ */
+export const versionedCommand = (command: ProductCommand, version: number): ProductCommand =>
+  Predicate.isTagged(command, 'UpdateProduct') ||
+  Predicate.isTagged(command, 'ChangePrice') ||
+  (Predicate.isTagged(command, 'ChangeProductImages') && Predicate.isTagged(command.change, 'Set'))
+    ? { ...command, expectedUpdatedAt: DateTime.makeUnsafe(version) }
+    : command;
 
 /** The movements of a product's ledger recorded before `before`, one table page, oldest first; no product rows. */
 export const loadOlderMovements = (

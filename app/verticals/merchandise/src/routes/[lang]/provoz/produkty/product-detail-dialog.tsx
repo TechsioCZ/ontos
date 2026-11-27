@@ -489,7 +489,7 @@ export const ProductDetailView = ({
   const variantDestination = resolveProductVariantDestination(product, variantId);
   // The page re-reads the product after each save; the editor stays mounted across that reload
   // (`useProductDetailDraft`).
-  const { draft, followStockCommit, record, reloadLatest } = useProductDetailDraft({ onReload, product, revision });
+  const { draft, record, reloadLatest } = useProductDetailDraft({ onReload, product, revision });
   // A half-filled stock movement is its own command with its own button; leaving would lose it all the same.
   const movementDirty = isMovementDraftDirty(movementDraft);
   const dirty = record.dirty || movementDirty;
@@ -604,7 +604,6 @@ export const ProductDetailView = ({
               canWrite={canWrite}
               onCommitted={onCommitted}
               onReload={onReload}
-              onStockCommitted={followStockCommit}
               product={product}
               revision={revision}
               variantDestination={variantDestination}
@@ -676,7 +675,6 @@ export const ProductDetailView = ({
                 onCommitted={onCommitted}
                 onDraftChange={updateMovementDraft}
                 onReload={onReload}
-                onStockCommitted={followStockCommit}
                 productId={product.id}
                 revision={revision}
                 stockOnHand={product.stockOnHand}

@@ -185,7 +185,6 @@ export const MovementForm = ({
   onCommitted,
   onDraftChange,
   onReload,
-  onStockCommitted,
   productId,
   revision,
   stockOnHand,
@@ -195,8 +194,6 @@ export const MovementForm = ({
   readonly onCommitted: (message: string) => void;
   readonly onDraftChange: (patch: Partial<MovementDraft>) => void;
   readonly onReload: () => void;
-  /** The movement replaced catalog revision `expectedRevision` with `revision`; it changed stock only. */
-  readonly onStockCommitted?: ((expectedRevision: number, revision: number) => void) | undefined;
   readonly productId: ProductRecord['id'];
   readonly revision: number;
   readonly stockOnHand: number;
@@ -257,7 +254,6 @@ export const MovementForm = ({
         return;
       }
       savedRevision.current = outcome.revision;
-      onStockCommitted?.(expected, outcome.revision);
       onDraftChange(EMPTY_MOVEMENT_DRAFT);
       setSubmitted(false);
       onCommitted(k('messages.movementRecorded'));

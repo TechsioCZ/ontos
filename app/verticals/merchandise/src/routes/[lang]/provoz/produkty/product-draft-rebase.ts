@@ -10,8 +10,8 @@ import type { DraftMerge } from './product-draft-merge.ts';
 const AUTOMATIC_REBASES = 3;
 
 /**
- * A save refused because the catalogue moved past the revision it expected: the version the draft was based on and
- * that revision. `save` came from a save and is saved again once rebased, unless it overlaps someone else's change;
+ * A save refused because the product changed since the version it named: the draft version it was based on and that
+ * product version (`productVersionOf`). `save` came from a save and is saved again once rebased, unless it overlaps someone else's change;
  * `keep` came from "Načíst aktuální verzi" and is only put back; `held` overlaps and waits for that button.
  */
 export interface Refusal<V> {
@@ -24,7 +24,7 @@ export interface Refusal<V> {
 export const refusedSave = <V>(base: V, from: number): Refusal<V> => ({ base, from, mode: 'save' });
 
 export interface DraftRebaseOptions<V> {
-  /** The version the draft is based on and the revision its save expects, for a conflict no save recorded. */
+  /** The version the draft is based on and the product version its save names, for a conflict no save recorded. */
   readonly current: () => Omit<Refusal<V>, 'mode'>;
   /** Puts the operator's draft over the newer server version; `base` is the version the draft was based on. */
   readonly merge: (base: V, mine: V, theirs: V) => DraftMerge<V>;
@@ -32,7 +32,7 @@ export interface DraftRebaseOptions<V> {
   readonly onReload: () => void;
   /** The refused save, recorded by the form's save (`refusedSave`); cleared once the draft is rebased. */
   readonly refusal: RefObject<Refusal<V> | undefined>;
-  /** The revision the page read the product at. */
+  /** The product version the page read (`productVersionOf`); a refused save waits for a newer one. */
   readonly revision: number;
   /** The Save button. */
   readonly save: () => void;

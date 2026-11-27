@@ -298,21 +298,43 @@ export const ApplyCreateCategoryCommandSchema = Schema.TaggedStruct('CreateCateg
 });
 
 const ApplyUpdateProductCommandSchema = Schema.TaggedStruct('UpdateProduct', {
+  /**
+   * The product's `updatedAt` the editor saw. When present the edit conflicts only if this product changed
+   * meanwhile, not when another write (another product, a stock movement, an order) moved the catalogue revision.
+   */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   id: ProductIdSchema,
   patch: ProductPatchSchema,
 });
 
 const ApplyChangeProductImagesCommandSchema = Schema.TaggedStruct('ChangeProductImages', {
   change: ProductImageChangeSchema,
+  /**
+   * The product's `updatedAt` the editor saw. When present the gallery change conflicts only if this product changed
+   * meanwhile, not when another write (another product, a stock movement, an order) moved the catalogue revision.
+   */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   id: ProductIdSchema,
 });
 
 const ApplyChangePriceCommandSchema = Schema.TaggedStruct('ChangePrice', {
+  /**
+   * The product's `updatedAt` the editor saw. When present the price change conflicts only if this product changed
+   * meanwhile, not when another write (another product, a stock movement, an order) moved the catalogue revision.
+   */
+  expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   id: ProductIdSchema,
   priceMinor: MinorAmountSchema,
   /** When set, reprices only this variant (net price) and appends to the variant price history. */
   variantId: Schema.optionalKey(VariantIdSchema),
 });
+
+/** A product edit naming the product version (`expectedUpdatedAt`) it was made against. */
+export const VersionedProductEditCommandSchema = Schema.Union([
+  Schema.Struct({ ...ApplyUpdateProductCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplyChangePriceCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+  Schema.Struct({ ...ApplyChangeProductImagesCommandSchema.fields, expectedUpdatedAt: Schema.DateTimeUtcFromString }),
+]);
 
 const ApplyBulkUpdateProductsCommandSchema = Schema.TaggedStruct('BulkUpdateProducts', {
   ids: Schema.Array(ProductIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(500)),
@@ -543,6 +565,8 @@ export const ApplyCommandResultSchema = Schema.Struct({
   marketRevision: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   revision: Schema.Int,
   storefrontOrder: Schema.optionalKey(StorefrontOrderResultSchema),
+  /** UpdateProduct, ChangePrice, ChangeProductImages: the product's `updatedAt` after it, which its next edit names. */
+  updatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
 });
 export type ApplyCommandResult = typeof ApplyCommandResultSchema.Type;
 export const MerchandiseErrorSchema = Schema.Union([

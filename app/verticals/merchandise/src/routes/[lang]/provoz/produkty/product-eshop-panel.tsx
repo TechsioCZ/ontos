@@ -17,6 +17,7 @@ import { ProductImageGallery } from './product-image-gallery.tsx';
 import type { StageImage } from './product-image-gallery.tsx';
 import type { GalleryDraftOptions } from './product-image-gallery-draft.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { productVersionOf } from './products-api.ts';
 
 export interface EshopPanelProps extends PanelProps {
   /** Turns a chosen file into the upload; the browser's image preparation by default. */
@@ -62,6 +63,7 @@ const useEshopPanel = ({ onCommitted, onReload, product, revision }: EshopPanelP
     revision,
     server: eshopDraftOf(product),
     value: form,
+    version: productVersionOf(product),
   });
   return { form, save, setForm, takenSlug };
 };

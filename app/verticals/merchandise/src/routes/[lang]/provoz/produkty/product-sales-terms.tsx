@@ -24,6 +24,7 @@ import {
 import type { TierDraft } from './product-sales-terms-draft.ts';
 import { fieldError } from './product-form-validation.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { productVersionOf } from './products-api.ts';
 import { DEFAULT_TAX_CLASSIFICATION, rateAt } from './product-tax-classification.ts';
 import type { CompanyVat } from './product-tax-classification.ts';
 
@@ -250,6 +251,7 @@ export const SalesTermsPanel = ({
     revision,
     server: salesTermsDraftOf(product),
     value: form,
+    version: productVersionOf(product),
   });
   const set = (next: Partial<SalesTermsDraft>) => setForm((current) => ({ ...current, ...next }));
   const variants = hasRealVariants(product);

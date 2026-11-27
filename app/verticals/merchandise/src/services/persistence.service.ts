@@ -33,6 +33,7 @@ import {
   MerchandiseRevisionConflict,
   MerchandiseScopeMismatch,
   VersionedEditOrderCommandSchema,
+  VersionedProductEditCommandSchema,
   MerchandiseCommandSchema,
   MerchandiseNotFound,
 } from '../../shared/actions/apply-command.ts';
@@ -2057,6 +2058,24 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
 /** An order edit that names the order version it was made against; see `EditOrder.expectedUpdatedAt`. */
 export const isOrderScopedEdit = Schema.is(VersionedEditOrderCommandSchema);
 
+/**
+ * A product edit that names the product version it was made against (`expectedUpdatedAt`): it conflicts only when that
+ * product changed since, whatever else moved the company's catalogue revision.
+ */
+const isVersionedProductEdit = Schema.is(VersionedProductEditCommandSchema);
+
+/** The edited product's `updatedAt` after UpdateProduct, ChangePrice or ChangeProductImages: what its next edit names. */
+const productVersionAfter = (state: MerchandiseState, command: MerchandiseCommand) => {
+  const id =
+    Predicate.isTagged(command, 'UpdateProduct') ||
+    Predicate.isTagged(command, 'ChangePrice') ||
+    Predicate.isTagged(command, 'ChangeProductImages')
+      ? command.id
+      : undefined;
+  const product = state.products.find((entry) => entry.id === id);
+  return product === undefined ? {} : { updatedAt: product.updatedAt };
+};
+
 /** Applies one command to the state. Pure: persistence decides when the result is saved. */
 export const evolveMerchandiseState = (
   state: MerchandiseState,
@@ -2776,10 +2795,11 @@ export const prepareMerchandiseCommand = Effect.fn('Merchandise.prepareCommandRe
 });
 
 // Storefront guests cannot know the revision; their command re-validates against the current rows.
-// An order edit carrying the order's own updatedAt conflicts only when that order changed.
+// An order edit carrying the order's own updatedAt conflicts only when that order changed; so does a product edit
+// carrying the product's own updatedAt (`isVersionedProductEdit`), which a stock movement or an order never changes.
 // A staff gallery change re-validates against the product's current gallery, so uploads never wait for a revision;
 // source API-key uploads require the exact locked catalog head. A `Set` saves a whole gallery draft and is refused
-// when the catalog changed since the draft was read.
+// when the product (naming its updatedAt) or else the catalog changed since the draft was read.
 // Market commands never touch catalog rows and guard their own market revision.
 /** The bootstrap playground: its import claims the head row and must find the company untouched. */
 const isPlaygroundCatalog = (store: StoreScope) =>
@@ -2787,6 +2807,7 @@ const isPlaygroundCatalog = (store: StoreScope) =>
 
 const ownRevisionGuard = (command: Exclude<MerchandiseCommand, AiCommand>): boolean =>
   isOrderScopedEdit(command) ||
+  isVersionedProductEdit(command) ||
   isMarketCommand(command) ||
   Predicate.isTagged(command, 'PlaceStorefrontOrder') ||
   Predicate.isTagged(command, 'SyncTaxRates') ||
@@ -2904,6 +2925,21 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         return yield* Effect.void;
       },
     );
+    const requireCurrentProductVersion = Effect.fn('Merchandise.requireCurrentProductVersion')(
+      function* requireCurrentProductVersion(working: WorkingSet, command: Exclude<MerchandiseCommand, AiCommand>) {
+        const current = isVersionedProductEdit(command)
+          ? working.state.products.find((product) => product.id === command.id)
+          : undefined;
+        if (
+          isVersionedProductEdit(command) &&
+          current !== undefined &&
+          DateTime.toEpochMillis(current.updatedAt) !== DateTime.toEpochMillis(command.expectedUpdatedAt)
+        ) {
+          return yield* revisionConflict('The product changed; refresh before another edit');
+        }
+        return yield* Effect.void;
+      },
+    );
     const applyOnce = Effect.fn('Merchandise.applyOnce')(function* applyOnce(
       command: Exclude<MerchandiseCommand, AiCommand>,
       expectedRevision: number,
@@ -2958,6 +2994,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         Effect.mapError(unavailable),
       );
       yield* requireCurrentOrderRevision(working, command);
+      yield* requireCurrentProductVersion(working, command);
       const now = yield* DateTime.now;
       const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
       if (Predicate.isTagged(command, 'ChangeProductImages')) {
@@ -2979,9 +3016,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         );
         const revision = yield* persist(working, gallery.state, now, tax, synced);
         const uploaded = images.find((image) => !(product.images ?? []).includes(image));
+        const version = productVersionAfter(gallery.state, command);
         return Predicate.isTagged(command.change, 'Upload') && uploaded !== undefined
-          ? { entityIds: [...gallery.entityIds], image: uploaded, revision }
-          : { entityIds: [...gallery.entityIds], revision };
+          ? { entityIds: [...gallery.entityIds], image: uploaded, revision, ...version }
+          : { entityIds: [...gallery.entityIds], revision, ...version };
       }
       const market =
         Predicate.isTagged(command, 'PlaceStorefrontOrder') && command.marketId !== undefined
@@ -2999,9 +3037,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         storefrontBrand === undefined ? marketInput : { ...marketInput, storefrontBrand };
       const change = yield* evolveMerchandiseState(working.state, command, commandInput);
       const revision = yield* persist(working, change.state, now, tax, synced);
+      const version = productVersionAfter(change.state, command);
       return change.storefrontOrder === undefined
-        ? { entityIds: [...change.entityIds], revision }
-        : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder };
+        ? { entityIds: [...change.entityIds], revision, ...version }
+        : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder, ...version };
     });
     /**
      * Typed AI proposals and actual order decisions enter through distinct registered Actions.

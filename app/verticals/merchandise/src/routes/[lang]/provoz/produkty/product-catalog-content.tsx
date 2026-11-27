@@ -12,6 +12,7 @@ import type { ProductPatch } from '../../../../../shared/actions/apply-command.t
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { productVersionOf } from './products-api.ts';
 import { ContentExtrasError, ContentExtrasSections } from './product-content-extras.tsx';
 import { addContentExtrasPatch, contentExtrasInvalid, contentExtrasOf } from './product-content-extras-draft.ts';
 import type { ContentExtras } from './product-content-extras-draft.ts';
@@ -135,6 +136,7 @@ export const CatalogContentPanel = ({
     revision,
     server: contentDraftOf(product, categoryTrails),
     value: form,
+    version: productVersionOf(product),
   });
 
   const parametersInvalid = parametersInvalidOf(parameters);

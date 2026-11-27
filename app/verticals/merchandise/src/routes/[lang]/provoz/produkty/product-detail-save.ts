@@ -1,4 +1,4 @@
-// Draft and save of the product detail form: what one save sends, and which revision it expects.
+// Draft and save of the product detail form: what one save sends, and which product version it names.
 import { useRecordDraft } from '@app/admin-ui';
 import type { DraftSaveEnd, DraftSaveOutcome, KeptDraft } from '@app/admin-ui';
 import { keepDraftOnReload, keptDraft, releaseGone } from '@app/shared-contracts';
@@ -11,6 +11,7 @@ import { committedResult, pendingProposalMessage } from '../../../../api/action-
 import { executeManageCatalog } from '../../../../api/manage-catalog-action-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { detailDraftInvalid, detailSaveOf, draftOf, sameDetailDraft } from './product-detail-draft.ts';
+import { productVersionOf } from './products-api.ts';
 import type { DetailDraft } from './product-detail-draft.ts';
 import { mergeDraft } from './product-draft-merge.ts';
 import { refusedSave, useDraftRebase } from './product-draft-rebase.ts';
@@ -22,15 +23,31 @@ const idempotencyKey = Effect.all({ now: DateTime.now, random: Random.nextInt },
   Effect.map(({ now, random }) => `merchandise:product:${DateTime.toEpochMillis(now)}:${random}`),
 );
 
-/** One merchandise command; the revision the server answered with is the one the next command must expect. */
+/**
+ * One merchandise command naming the product version `expectedVersion` (`productVersionOf`): the server refuses it
+ * only when this product changed since. It answers with the product's version after it, which the next command names.
+ * `revision` is the catalogue revision the page read, which the server does not check for such a command.
+ */
 const runProductCommand = (
   command: Extract<MerchandiseCommand, { readonly _tag: 'UpdateProduct' | 'ChangePrice' }>,
-  expectedRevision: number,
+  expectedVersion: number,
+  revision: number,
 ) =>
   idempotencyKey.pipe(
-    Effect.flatMap((key) => executeManageCatalog({ command, expectedRevision }, key, { idempotencyKey: key })),
+    Effect.flatMap((key) =>
+      executeManageCatalog(
+        {
+          command: { ...command, expectedUpdatedAt: DateTime.makeUnsafe(expectedVersion) },
+          expectedRevision: revision,
+        },
+        key,
+        { idempotencyKey: key },
+      ),
+    ),
     Effect.flatMap(committedResult),
-    Effect.map((result) => result.revision),
+    Effect.map((result) =>
+      result.updatedAt === undefined ? expectedVersion : DateTime.toEpochMillis(result.updatedAt),
+    ),
   );
 
 /**
@@ -53,25 +70,29 @@ const failureOutcome = (error: CommandFailure): Exclude<DraftSaveOutcome, 'saved
 interface DetailSaveInput {
   /** The version the server last confirmed for this draft; the save sends what differs from it. */
   readonly confirmed: DetailDraft;
-  readonly expectedRevision: number;
+  /** The product version the draft is based on. */
+  readonly expectedVersion: number;
   readonly productId: ProductRecord['id'];
+  /** The catalogue revision the page read. */
+  readonly revision: number;
   readonly value: DetailDraft;
 }
 
 /**
- * One save of the detail form: the changed basic fields first, then a changed price. The first command expects
- * the revision the draft is based on, the second the one the first left. A conflict keeps the draft and offers the
+ * One save of the detail form: the changed basic fields first, then a changed price. The first command names the
+ * product version the draft is based on, the second the one the first left. A conflict keeps the draft and offers the
  * version someone else saved.
  *
  * When the fields went through and the price did not, the server has the draft's fields with the confirmed price.
- * The save reports that version and its revision (`PartlySaved`): the next save then sends the price alone, and a
- * field typed back to its earlier value is sent as the change it now is, instead of comparing equal to a version the
- * server no longer has.
+ * The save reports that version and the product version it left (`PartlySaved`): the next save then sends the price
+ * alone, and a field typed back to its earlier value is sent as the change it now is, instead of comparing equal to a
+ * version the server no longer has.
  */
 const saveDetailEffect = ({
   confirmed,
-  expectedRevision,
+  expectedVersion,
   productId,
+  revision,
   value,
 }: DetailSaveInput): Effect.Effect<DraftSaveEnd<DetailDraft>> => {
   const { patch, priceChanged, priceMinor } = detailSaveOf(value, confirmed);
@@ -80,14 +101,14 @@ const saveDetailEffect = ({
     return Effect.succeed('saved');
   }
   const update: Effect.Effect<number, CommandFailure> = fieldsChanged
-    ? runProductCommand({ _tag: 'UpdateProduct', id: productId, patch }, expectedRevision)
-    : Effect.succeed(expectedRevision);
+    ? runProductCommand({ _tag: 'UpdateProduct', id: productId, patch }, expectedVersion, revision)
+    : Effect.succeed(expectedVersion);
   return update.pipe(
     Effect.matchEffect({
       onFailure: (error) => Effect.succeed<DraftSaveEnd<DetailDraft>>(failureOutcome(error)),
-      onSuccess: (revision) =>
+      onSuccess: (version) =>
         priceChanged
-          ? runProductCommand({ _tag: 'ChangePrice', id: productId, priceMinor }, revision).pipe(
+          ? runProductCommand({ _tag: 'ChangePrice', id: productId, priceMinor }, version, revision).pipe(
               Effect.match({
                 onFailure: (error): DraftSaveEnd<DetailDraft> => {
                   const outcome = failureOutcome(error);
@@ -95,55 +116,51 @@ const saveDetailEffect = ({
                     ? {
                         confirmed: { ...value, priceCzk: confirmed.priceCzk, priceText: confirmed.priceText },
                         outcome,
-                        revision,
+                        revision: version,
                       }
                     : outcome;
                 },
                 onSuccess: (next): DraftSaveEnd<DetailDraft> => next,
               }),
             )
-          : Effect.succeed<DraftSaveEnd<DetailDraft>>(revision),
+          : Effect.succeed<DraftSaveEnd<DetailDraft>>(version),
     }),
   );
 };
 
-/** A save someone else's change refused: the version it was based on and the revision it expected. */
+/** A save someone else's change refused: the draft version it was based on and the product version it named. */
 const refusalOf = (
   result: DraftSaveEnd<DetailDraft>,
   confirmed: DetailDraft,
-  expectedRevision: number,
+  expectedVersion: number,
 ): Refusal<DetailDraft> | undefined => {
   if (result === 'conflict') {
-    return refusedSave(confirmed, expectedRevision);
+    return refusedSave(confirmed, expectedVersion);
   }
-  // The fields went through and left `revision`; the price, sent against it, was refused.
+  // The fields went through and left product version `revision`; the price, naming it, was refused.
   if (typeof result === 'object' && result.outcome === 'conflict') {
     return refusedSave(result.confirmed, result.revision);
   }
   return undefined;
 };
 
-/** The revision a chain of this page's own stock commands left behind, starting from the one they replaced. */
-const afterStockCommits = (commits: ReadonlyMap<number, number>, revision: number): number => {
-  const next = commits.get(revision);
-  return next === undefined ? revision : afterStockCommits(commits, next);
-};
-
 interface ProductDetailDraftOptions {
   /** Re-reads the product: after a save someone else's change refused, and on "Načíst aktuální verzi". */
   readonly onReload: () => void;
   readonly product: ProductRecord;
-  /** The catalog revision `product` was read at. */
+  /** The catalogue revision `product` was read at, sent along with each command. */
   readonly revision: number;
 }
 
 /**
  * Draft and save of the product detail form. Nothing is sent until `record.save()`, the form's Save button. The
  * editor stays mounted while its product reloads: an untouched draft takes the reloaded product, a changed one stays
- * and keeps expecting the revision it was based on (`useRecordDraft`), so a change someone else made in the meantime
- * ends in a conflict instead of being overwritten. A refused save re-reads the product and puts the draft's own changes
- * over the version someone else saved (`useDraftRebase`): saved again at once when they overlap nothing that version
- * changed, otherwise kept behind the conflict message until "Načíst aktuální verzi".
+ * and keeps naming the product version it was based on (`useRecordDraft` over `productVersionOf`), so a change
+ * someone else made to this product in the meantime ends in a conflict instead of being overwritten; a stock movement,
+ * an order or an edit of another product leaves the version, and so the save, alone. A refused save re-reads the
+ * product and puts the draft's own changes over the version someone else saved (`useDraftRebase`): saved again at
+ * once when they overlap nothing that version changed, otherwise kept behind the conflict message until "Načíst
+ * aktuální verzi".
  *
  * `product` still shows the version before the form's own save until its reload lands, so a save sends what differs
  * from the version the server last confirmed, not from `product`.
@@ -152,7 +169,7 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
   // Real variants are read-only on the detail tab and always come from the latest product.
   // Deriving them preserves unsaved detail fields when the variants tab commits a change.
   const realVariants = (product.variants ?? []).filter(isRealVariant);
-  const stockCommits = useRef(new Map<number, number>());
+  const version = productVersionOf(product);
   const server = draftOf(product);
   // A reload that kept this form's draft: it comes back unsaved over this release's draft shape.
   const keepKey = `merchandise:product-detail:${product.id}`;
@@ -172,19 +189,19 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
     equals: sameDetailDraft,
     isValid: (value) => !detailDraftInvalid(value),
     kept,
-    revision,
+    revision: version,
     runtime: browserRuntime,
-    save: (value, expectedRevision, confirmed) => {
-      const expected = afterStockCommits(stockCommits.current, expectedRevision);
-      return saveDetailEffect({
+    save: (value, expectedVersion, confirmed) =>
+      saveDetailEffect({
         confirmed: { ...confirmed, realVariants },
-        expectedRevision: expected,
+        expectedVersion,
         productId: product.id,
+        revision,
         value: { ...value, realVariants },
       }).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            const refused = refusalOf(result, confirmed, expected);
+            const refused = refusalOf(result, confirmed, expectedVersion);
             if (refused !== undefined) {
               // Read the version someone else saved; the draft's own changes then go over it.
               refusal.current = refused;
@@ -192,19 +209,18 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
             }
           }),
         ),
-      );
-    },
+      ),
     server,
   });
   const { kept: keptNow } = record;
   useEffect(() => keepDraftOnReload(keepKey, keptNow), [keepKey, keptNow]);
   const reloadLatest = useDraftRebase({
-    current: () => ({ base: record.confirmed, from: record.kept()?.revision ?? revision }),
+    current: () => ({ base: record.confirmed, from: record.kept()?.revision ?? version }),
     // Real variants are not this form's: they always come from the latest product.
     merge: (base, mine, theirs) => mergeDraft({ ...base, realVariants }, { ...mine, realVariants }, theirs),
     onReload,
     refusal,
-    revision,
+    revision: version,
     save: record.save,
     server,
     stale: false,
@@ -215,17 +231,5 @@ export const useProductDetailDraft = ({ onReload, product, revision }: ProductDe
     },
     value: record.draft,
   });
-  /**
-   * A stock movement of this page went through: it replaced `expectedRevision` with `next` and changed no field of
-   * this form. A draft based on exactly the replaced revision is therefore based on `next` too, and its save does
-   * not have to wait for the reloaded product to avoid a conflict with the page's own movement. A draft based on an
-   * older revision is not moved. Commands that write fields this form also sends (variants, e-shop content) must not
-   * be reported here: until the reload lands the form would send its old copy over them.
-   */
-  const followStockCommit = (expectedRevision: number, next: number) => {
-    if (next > expectedRevision) {
-      stockCommits.current.set(expectedRevision, next);
-    }
-  };
-  return { draft: { ...record.draft, realVariants }, followStockCommit, record, reloadLatest };
+  return { draft: { ...record.draft, realVariants }, record, reloadLatest };
 };

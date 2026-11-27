@@ -1,8 +1,8 @@
 // @rstest-environment happy-dom
 // The pictures of the "E-shop a obrázky" tab are part of the tab's draft: an upload stores the file at once but the
 // picture joins the public gallery, and order, main picture and removals change, only with the tab's one Uložit. That
-// save sends the whole gallery against the catalog revision the draft was read at, so a save over someone else's
-// change is refused as a conflict. Real clients, translations and router run against in-process HTTP contracts.
+// save sends the whole gallery naming the product version the draft was read at, so a save over someone else's
+// change of the product is refused as a conflict. Real clients, translations and router run against in-process HTTP contracts.
 import { saveLabelsFor } from '@app/admin-ui';
 import { acted, buttons, text, unmountAll, waitUntil } from '@app/admin-ui/testing/module-ui';
 import type { MediaImageUpload } from '@app/core-runtime/media/image-contract';
@@ -14,7 +14,7 @@ import {
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Deferred, Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { act } from 'react';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
@@ -25,13 +25,10 @@ import {
   ChangeProductImagesActionApi,
   ChangeProductImagesActionConflictProblemSchema,
   ChangeProductImagesActionIneligibleProblemSchema,
-} from '../../shared/apis/change-product-images-action.ts';
-import type {
-  ChangeProductImagesActionProblem,
   ChangeProductImagesPayloadSchema,
 } from '../../shared/apis/change-product-images-action.ts';
-import { ManageCatalogActionApi } from '../../shared/apis/manage-catalog-action.ts';
-import type { ManageCatalogPayloadSchema } from '../../shared/apis/manage-catalog-action.ts';
+import type { ChangeProductImagesActionProblem } from '../../shared/apis/change-product-images-action.ts';
+import { ManageCatalogActionApi, ManageCatalogPayloadSchema } from '../../shared/apis/manage-catalog-action.ts';
 import { ProductRecordSchema } from '../../shared/domain/merchandise-model.ts';
 import { EshopPanel } from '../../src/routes/[lang]/provoz/produkty/product-eshop-panel.tsx';
 import type { StageImage } from '../../src/routes/[lang]/provoz/produkty/product-image-gallery.tsx';
@@ -78,9 +75,14 @@ const conflict = Schema.decodeSync(ChangeProductImagesActionConflictProblemSchem
   type: 'urn:test:conflict',
 });
 
-const galleryRequests: (typeof ChangeProductImagesPayloadSchema.Encoded)[] = [];
-const settingsRequests: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
-const saved = Schema.decodeSync(ApplyCommandResultSchema)({ entityIds: [], revision: 8 });
+const galleryRequests: (typeof ChangeProductImagesPayloadSchema.Type)[] = [];
+const settingsRequests: (typeof ManageCatalogPayloadSchema.Type)[] = [];
+/** A product write answers with the product's version after it. */
+const saved = Schema.decodeSync(ApplyCommandResultSchema)({
+  entityIds: [],
+  revision: 8,
+  updatedAt: '2026-10-20T09:00:01.000Z',
+});
 let galleryAnswer: Effect.Effect<typeof saved, ChangeProductImagesActionProblem> = Effect.succeed(saved);
 const OwnerGalleryApi = ChangeProductImagesActionApi.prefix('/merchandise-api');
 const OwnerSettingsApi = ManageCatalogActionApi.prefix('/merchandise-api');
@@ -90,10 +92,14 @@ const network = browserNetwork(
     OwnerGalleryApi,
     HttpApiBuilder.group(OwnerGalleryApi, 'changeProductImagesAction', (group) =>
       group.handle('execute', ({ payload }) =>
-        Effect.suspend(() => {
-          galleryRequests.push(payload);
-          return galleryAnswer;
-        }),
+        // Decoded through the command schema just as at real ingress.
+        Schema.decodeEffect(ChangeProductImagesPayloadSchema)(payload).pipe(
+          Effect.orDie,
+          Effect.flatMap((decoded) => {
+            galleryRequests.push(decoded);
+            return galleryAnswer;
+          }),
+        ),
       ),
     ).pipe(Layer.provide(changeProductImagesActionSchemaErrorLive)),
   ),
@@ -101,19 +107,23 @@ const network = browserNetwork(
     OwnerSettingsApi,
     HttpApiBuilder.group(OwnerSettingsApi, 'manageCatalogAction', (group) =>
       group.handle('execute', ({ payload }) =>
-        Effect.sync(() => {
-          settingsRequests.push(payload);
-          return saved;
-        }),
+        Schema.decodeEffect(ManageCatalogPayloadSchema)(payload).pipe(
+          Effect.orDie,
+          Effect.map((decoded) => {
+            settingsRequests.push(decoded);
+            return saved;
+          }),
+        ),
       ),
     ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
   ),
 );
 
+/** Each gallery save with the product version it named. */
 const gallerySaves = () =>
-  galleryRequests.map((payload) => ({
-    change: payload.command.change,
-    expectedRevision: payload.expectedRevision,
+  galleryRequests.map(({ command }) => ({
+    change: command.change,
+    named: command.expectedUpdatedAt === undefined ? undefined : DateTime.formatIso(command.expectedUpdatedAt),
   }));
 
 const committed: string[] = [];
@@ -205,7 +215,7 @@ beforeEach(() => {
 
 afterEach(unmountAll);
 
-it.live('reordering and removing change only the draft; Uložit sends the gallery once at its revision', () =>
+it.live('reordering and removing change only the draft; Uložit sends the gallery once, naming its version', () =>
   Effect.gen(function* reorderThenSave() {
     yield* pinTestDocument;
     yield* mount();
@@ -221,7 +231,9 @@ it.live('reordering and removing change only the draft; Uložit sends the galler
     yield* click(button(labels.save));
     yield* waitUntil(() => committed.length === 1);
     yield* networkIdle;
-    expect(gallerySaves()).toEqual([{ change: { _tag: 'Set', images: [second, first] }, expectedRevision: 7 }]);
+    expect(gallerySaves()).toEqual([
+      { change: { _tag: 'Set', images: [second, first] }, named: '2026-10-20T09:00:00.000Z' },
+    ]);
     // The settings did not change, so only the gallery was sent.
     expect(settingsRequests).toEqual([]);
   }).pipe(Effect.provide(network)),
@@ -250,7 +262,9 @@ it.live('an uploaded picture is stored at once but reaches the e-shop only with 
     yield* click(button(labels.save));
     yield* waitUntil(() => committed.length === 1);
     yield* networkIdle;
-    expect(gallerySaves()).toEqual([{ change: { _tag: 'Set', images: [first, second, staged] }, expectedRevision: 7 }]);
+    expect(gallerySaves()).toEqual([
+      { change: { _tag: 'Set', images: [first, second, staged] }, named: '2026-10-20T09:00:00.000Z' },
+    ]);
   }).pipe(Effect.provide(network)),
 );
 
@@ -308,9 +322,10 @@ it.live(
       yield* waitUntil(() => committed.length === 1);
       yield* networkIdle;
       expect(settingsSaves()).toHaveLength(1);
+      // Both name the version the settings left.
       expect(gallerySaves()).toEqual([
-        { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },
-        { change: { _tag: 'Set', images: [second] }, expectedRevision: 8 },
+        { change: { _tag: 'Set', images: [second] }, named: '2026-10-20T09:00:01.000Z' },
+        { change: { _tag: 'Set', images: [second] }, named: '2026-10-20T09:00:01.000Z' },
       ]);
     }).pipe(Effect.provide(network)),
 );

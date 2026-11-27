@@ -1,8 +1,8 @@
 // @rstest-environment happy-dom
 // Mounted product detail draft: the real `useProductDetailDraft` the editor uses, with the real draft
 // controller and save. The real catalog client calls an in-process HTTP register that refuses every command that
-// does not expect its current revision. The editor stays mounted while its product reloads, so `product` still
-// shows the version before a save until that reload lands.
+// does not name the product's current version, whatever the company's catalogue revision is. The editor stays mounted
+// while its product reloads, so `product` still shows the version before a save until that reload lands.
 import { acted, waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
   browserNetwork,
@@ -12,13 +12,14 @@ import {
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
-import { Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
 import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { manageCatalogActionSchemaErrorLive } from '../../api/manage-catalog-action-problems.ts';
-import type { ManageCatalogPayloadSchema, ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
+import { ManageCatalogPayloadSchema } from '../../shared/actions/manage-catalog.ts';
+import type { ManageCatalogResultSchema } from '../../shared/actions/manage-catalog.ts';
 import {
   ManageCatalogActionApi,
   ManageCatalogActionConflictProblemSchema,
@@ -29,10 +30,18 @@ import type { ProductRecord } from '../../shared/domain/merchandise-model.ts';
 import { useProductDetailDraft } from '../../src/routes/[lang]/provoz/produkty/product-detail-save.ts';
 import type { DetailDraft } from '../../src/routes/[lang]/provoz/produkty/product-detail-draft.ts';
 
+/** The product's `updatedAt` after `step` writes of it since the page first read it. */
+const FIRST_READ = Date.parse('2026-10-20T09:00:00.000Z');
+const versionAt = (step: number) => new Date(FIRST_READ + step * 1000).toISOString();
+const stepOf = (updatedAt: DateTime.Utc | undefined) =>
+  updatedAt === undefined ? undefined : (DateTime.toEpochMillis(updatedAt) - FIRST_READ) / 1000;
+
 const productOf = (fields: {
   readonly description?: string;
   readonly name?: string;
   readonly priceMinor?: number;
+  /** Writes of this product since the first read. */
+  readonly version?: number;
 }): ProductRecord =>
   Schema.decodeSync(ProductRecordSchema)({
     active: true,
@@ -50,7 +59,7 @@ const productOf = (fields: {
     stockOnHand: 12,
     stockValueMinor: 309_648,
     unit: 'ks',
-    updatedAt: '2026-10-20T09:00:00.000Z',
+    updatedAt: versionAt(fields.version ?? 0),
     variants: [],
     vatRate: 12,
   });
@@ -75,19 +84,26 @@ const unavailable = Schema.decodeSync(ManageCatalogActionUnavailableProblemSchem
 });
 
 /**
- * The catalog: one revision for the whole company, and a command must expect exactly the current one. While
- * `priceChangesFail` is set, a price change is refused without changing anything.
+ * The catalog: one revision for the whole company that every write moves, and the product's version that only a write
+ * of this product moves. A command must name exactly the product's current version. While `priceChangesFail` is set,
+ * a price change is refused without changing anything.
  */
-const register = { priceChangesFail: false, revision: 1 };
-const commands: (typeof ManageCatalogPayloadSchema.Encoded)[] = [];
+const register = { priceChangesFail: false, revision: 1, version: 0 };
+const commands: (typeof ManageCatalogPayloadSchema.Type)[] = [];
 let proposed: typeof ActionProposalAcceptedSchema.Type | null = null;
 
 /** Why the register refuses a command, or null when it takes it. */
-const refusalOf = (tag: string, expectedRevision: number): typeof conflict | typeof unavailable | null => {
-  if (tag === 'ChangePrice' && register.priceChangesFail) {
+const refusalOf = (
+  command: (typeof ManageCatalogPayloadSchema.Type)['command'],
+): typeof conflict | typeof unavailable | null => {
+  if (Predicate.isTagged(command, 'ChangePrice') && register.priceChangesFail) {
     return unavailable;
   }
-  return expectedRevision === register.revision ? null : conflict;
+  const named =
+    Predicate.isTagged(command, 'ChangePrice') || Predicate.isTagged(command, 'UpdateProduct')
+      ? stepOf(command.expectedUpdatedAt)
+      : undefined;
+  return named === register.version ? null : conflict;
 };
 
 const OwnerActionApi = ManageCatalogActionApi.prefix('/merchandise-api');
@@ -97,42 +113,52 @@ const network = browserNetwork(
     OwnerActionApi,
     HttpApiBuilder.group(OwnerActionApi, 'manageCatalogAction', (group) =>
       group.handle('execute', ({ payload }) =>
-        Effect.suspend(
-          (): Effect.Effect<
-            typeof ActionProposalAcceptedSchema.Type | typeof ManageCatalogResultSchema.Type,
-            typeof conflict | typeof unavailable
-          > => {
-            commands.push(payload);
-            if (proposed !== null) {
-              const receipt = proposed;
-              proposed = null;
-              return Effect.succeed(receipt);
-            }
-            const refusal = refusalOf(payload.command._tag, payload.expectedRevision);
-            if (refusal !== null) {
-              return Effect.fail(refusal);
-            }
-            register.revision += 1;
-            return Effect.succeed({ entityIds: [], revision: register.revision });
-          },
+        // Decoded through the command schema just as at real ingress.
+        Schema.decodeEffect(ManageCatalogPayloadSchema)(payload).pipe(
+          Effect.orDie,
+          Effect.flatMap(
+            (
+              decoded,
+            ): Effect.Effect<
+              typeof ActionProposalAcceptedSchema.Type | typeof ManageCatalogResultSchema.Type,
+              typeof conflict | typeof unavailable
+            > => {
+              commands.push(decoded);
+              if (proposed !== null) {
+                const receipt = proposed;
+                proposed = null;
+                return Effect.succeed(receipt);
+              }
+              const refusal = refusalOf(decoded.command);
+              if (refusal !== null) {
+                return Effect.fail(refusal);
+              }
+              register.revision += 1;
+              register.version += 1;
+              return Effect.succeed({
+                entityIds: [],
+                revision: register.revision,
+                updatedAt: DateTime.makeUnsafe(versionAt(register.version)),
+              });
+            },
+          ),
         ),
       ),
     ).pipe(Layer.provide(manageCatalogActionSchemaErrorLive)),
   ),
 );
 
-/** Every command the register received, with the revision it expected. */
+/** Every command the register received, with the product version it named (writes since the first read). */
 const sent = () =>
-  commands.map((payload) => {
-    const { command } = payload;
-    return Predicate.isTagged(command, 'ChangePrice')
-      ? { expectedRevision: payload.expectedRevision, priceMinor: command.priceMinor, tag: command._tag }
+  commands.map(({ command }) =>
+    Predicate.isTagged(command, 'ChangePrice')
+      ? { named: stepOf(command.expectedUpdatedAt), priceMinor: command.priceMinor, tag: command._tag }
       : {
-          expectedRevision: payload.expectedRevision,
+          named: Predicate.isTagged(command, 'UpdateProduct') ? stepOf(command.expectedUpdatedAt) : undefined,
           patch: Predicate.isTagged(command, 'UpdateProduct') ? command.patch : undefined,
           tag: command._tag,
-        };
-  });
+        },
+  );
 
 type ProductEdit = ReturnType<typeof useProductDetailDraft>;
 
@@ -202,6 +228,7 @@ beforeEach(() => {
   proposed = null;
   register.priceChangesFail = false;
   register.revision = 1;
+  register.version = 0;
   latest = null;
 });
 
@@ -225,13 +252,13 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ name: 'Etiopie' });
       yield* saveNow;
       expect(sent()).toEqual([
-        { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
-        { expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
+        { named: 0, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+        { named: 1, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
       ]);
       expect(edit().record.status).toBe('saved');
 
       // The reload lands with what the register now has, and the field keeps what the user chose.
-      yield* view.reload(productOf({}), 3);
+      yield* view.reload(productOf({ version: 2 }), 3);
       expect(edit().draft.name).toBe('Etiopie');
     }).pipe(Effect.provide(network)),
   );
@@ -245,37 +272,35 @@ describe('mounted product detail draft while its product reloads', () => {
 
       yield* type({ lowStock: 5, lowStockText: '5' });
       yield* saveNow;
-      expect(sent()[1]).toEqual({ expectedRevision: 2, patch: { lowStockThreshold: 5 }, tag: 'UpdateProduct' });
+      expect(sent()[1]).toEqual({ named: 1, patch: { lowStockThreshold: 5 }, tag: 'UpdateProduct' });
       expect(edit().record.status).toBe('saved');
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('an edit typed right after a stock movement of the page is saved, not refused as a conflict', () =>
-    Effect.gen(function* afterMovement() {
+  it.live('a save after stock movements, orders and edits of other products moved the catalogue is saved', () =>
+    Effect.gen(function* afterOtherWrites() {
       yield* pinTestDocument;
       yield* mount(productOf({}), 1);
-      // The movement form's command replaced revision 1 with 2; the product on the page is still the one read at 1.
+      // Other writes of the company took the catalogue from revision 1 to 9; none of them changed this product.
+      register.revision = 9;
+
+      yield* type({ name: 'Etiopie B' });
+      yield* saveNow;
+      expect(sent()).toEqual([{ named: 0, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
+      expect(edit().record.status).toBe('saved');
+    }).pipe(Effect.provide(network)),
+  );
+
+  it.live('a save over a change someone else made to this product is refused', () =>
+    Effect.gen(function* afterProductWrite() {
+      yield* pinTestDocument;
+      yield* mount(productOf({}), 1);
       register.revision = 2;
-      edit().followStockCommit(1, 2);
+      register.version = 1;
 
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
-      expect(sent()).toEqual([{ expectedRevision: 2, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
-      expect(edit().record.status).toBe('saved');
-    }).pipe(Effect.provide(network)),
-  );
-
-  it.live('a stock movement moves only a draft based on the revision that movement replaced', () =>
-    Effect.gen(function* otherRevision() {
-      yield* pinTestDocument;
-      yield* mount(productOf({}), 1);
-      // Someone else changed the catalog to revision 4 first; the movement replaced 4 with 5.
-      register.revision = 5;
-      edit().followStockCommit(4, 5);
-
-      yield* type({ name: 'Etiopie B' });
-      yield* saveNow;
-      expect(sent()).toEqual([{ expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
+      expect(sent()).toEqual([{ named: 0, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' }]);
       expect(edit().record.status).toBe('conflict');
     }).pipe(Effect.provide(network)),
   );
@@ -287,15 +312,15 @@ describe('mounted product detail draft while its product reloads', () => {
       register.priceChangesFail = true;
       yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
       yield* saveNow;
-      // The name went through and left revision 2; the price did not.
+      // The name went through and left version 1; the price did not.
       expect(sent()).toEqual([
-        { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
-        { expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' },
+        { named: 0, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+        { named: 1, priceMinor: 30_000, tag: 'ChangePrice' },
       ]);
       expect(edit().record.status).toBe('error');
 
       // The reload lands with what the register has: the new name, the old price. The draft stays as typed.
-      yield* view.reload(productOf({ name: 'Etiopie B' }), 2);
+      yield* view.reload(productOf({ name: 'Etiopie B', version: 1 }), 2);
       expect(edit().draft.name).toBe('Etiopie B');
       expect(edit().draft.priceCzk).toBe(300);
 
@@ -304,12 +329,12 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ name: 'Etiopie' });
       yield* saveNow;
       expect(sent().slice(2)).toEqual([
-        { expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
-        { expectedRevision: 3, priceMinor: 30_000, tag: 'ChangePrice' },
+        { named: 1, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' },
+        { named: 2, priceMinor: 30_000, tag: 'ChangePrice' },
       ]);
       expect(edit().record.status).toBe('saved');
 
-      yield* view.reload(productOf({ priceMinor: 30_000 }), 4);
+      yield* view.reload(productOf({ priceMinor: 30_000, version: 3 }), 4);
       expect(edit().draft.name).toBe('Etiopie');
       expect(edit().record.status).toBe('saved');
     }).pipe(Effect.provide(network)),
@@ -323,17 +348,17 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* type({ name: 'Etiopie B', priceCzk: 300, priceText: '300' });
       yield* saveNow;
       expect(edit().record.status).toBe('error');
-      yield* view.reload(productOf({ name: 'Etiopie B' }), 2);
+      yield* view.reload(productOf({ name: 'Etiopie B', version: 1 }), 2);
 
       // Back to exactly what the form opened with: the register still has the changed name.
       yield* type({ name: 'Etiopie', priceCzk: 258.04, priceText: '258,04' });
       yield* saveNow;
-      expect(sent().slice(2)).toEqual([{ expectedRevision: 2, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' }]);
+      expect(sent().slice(2)).toEqual([{ named: 1, patch: { name: 'Etiopie' }, tag: 'UpdateProduct' }]);
       expect(edit().record.status).toBe('saved');
     }).pipe(Effect.provide(network)),
   );
 
-  it.live('retrying a save whose price change failed sends only the price, after the revision the name left', () =>
+  it.live('retrying a save whose price change failed sends only the price, naming the version the name left', () =>
     Effect.gen(function* partialThenRetry() {
       yield* pinTestDocument;
       yield* mount(productOf({}), 1);
@@ -346,7 +371,7 @@ describe('mounted product detail draft while its product reloads', () => {
       register.priceChangesFail = false;
       yield* saveNow;
       yield* waitUntil(() => edit().record.status === 'saved');
-      expect(sent().slice(2)).toEqual([{ expectedRevision: 2, priceMinor: 30_000, tag: 'ChangePrice' }]);
+      expect(sent().slice(2)).toEqual([{ named: 1, priceMinor: 30_000, tag: 'ChangePrice' }]);
     }).pipe(Effect.provide(network)),
   );
 
@@ -357,7 +382,7 @@ describe('mounted product detail draft while its product reloads', () => {
       register.priceChangesFail = true;
       yield* type({ priceCzk: 300, priceText: '300' });
       yield* saveNow;
-      expect(sent()).toEqual([{ expectedRevision: 1, priceMinor: 30_000, tag: 'ChangePrice' }]);
+      expect(sent()).toEqual([{ named: 0, priceMinor: 30_000, tag: 'ChangePrice' }]);
       expect(edit().record.status).toBe('error');
 
       // Taking the price back leaves nothing to save.
@@ -398,17 +423,18 @@ describe('mounted product detail draft while its product reloads', () => {
     Effect.gen(function* rebaseAndSave() {
       yield* pinTestDocument;
       const view = yield* mount(productOf({}), 1);
-      // Another session saved the description: the register is at revision 2, this page still shows revision 1.
+      // Another session saved the description: the register has version 1, this page still shows version 0.
       register.revision = 2;
+      register.version = 1;
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
       expect(edit().record.status).toBe('conflict');
 
-      yield* view.reload(productOf({ description: 'Nový popis' }), 2);
+      yield* view.reload(productOf({ description: 'Nový popis', version: 1 }), 2);
       yield* waitUntil(() => edit().record.status === 'saved');
       expect(sent()).toEqual([
-        { expectedRevision: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
-        { expectedRevision: 2, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+        { named: 0, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
+        { named: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' },
       ]);
       expect(edit().draft.name).toBe('Etiopie B');
       expect(edit().draft.description).toBe('Nový popis');
@@ -420,9 +446,10 @@ describe('mounted product detail draft while its product reloads', () => {
       yield* pinTestDocument;
       const view = yield* mount(productOf({}), 1);
       register.revision = 2;
+      register.version = 1;
       yield* type({ name: 'Etiopie B' });
       yield* saveNow;
-      yield* view.reload(productOf({ description: 'Nový popis', name: 'Etiopie C' }), 2);
+      yield* view.reload(productOf({ description: 'Nový popis', name: 'Etiopie C', version: 1 }), 2);
       // Both changed the name: nothing is sent again by itself, and the typed name stays.
       expect(edit().record.status).toBe('conflict');
       expect(edit().draft.name).toBe('Etiopie B');
@@ -434,7 +461,7 @@ describe('mounted product detail draft while its product reloads', () => {
       expect(edit().draft.name).toBe('Etiopie B');
       expect(edit().draft.description).toBe('Nový popis');
       yield* saveNow;
-      expect(sent()[1]).toEqual({ expectedRevision: 2, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' });
+      expect(sent()[1]).toEqual({ named: 1, patch: { name: 'Etiopie B' }, tag: 'UpdateProduct' });
       expect(edit().record.status).toBe('saved');
     }).pipe(Effect.provide(network)),
   );

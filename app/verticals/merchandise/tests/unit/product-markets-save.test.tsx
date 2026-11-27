@@ -13,7 +13,7 @@ import {
   shellGatewayIssuer,
 } from '@app/shared-contracts/testing/http-double';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { DateTime, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, expect, it } from 'effect-rstest';
 import { manageMarketsActionSchemaErrorLive } from '../../api/manage-markets-action-problems.ts';
@@ -92,7 +92,7 @@ const mount = (revision: number) =>
         committed.push(message);
       }}
       onReload={constVoid}
-      product={{ id: productId }}
+      product={{ id: productId, updatedAt: DateTime.makeUnsafe('2026-10-20T09:00:00.000Z') }}
       revision={revision}
     />,
     { path: 'provoz/produkty', url: '/cs/provoz/produkty' },

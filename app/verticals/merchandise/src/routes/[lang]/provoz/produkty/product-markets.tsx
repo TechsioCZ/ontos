@@ -17,6 +17,7 @@ import {
 } from './product-market-view-model.ts';
 import type { MarketOfferDraft, MarketsLabels } from './product-market-view-model.ts';
 import { ProductTabSaveBar, useProductTabSave } from './product-tab-save.tsx';
+import { productVersionOf } from './products-api.ts';
 
 export interface MarketsPanelViewProps {
   /** Market managers only (records `canManageMarkets`); everybody else sees the switches disabled. */
@@ -81,7 +82,7 @@ export interface MarketsPanelProps {
   readonly markets: readonly ProductMarket[];
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
-  readonly product: Pick<ProductRecord, 'id'>;
+  readonly product: Pick<ProductRecord, 'id' | 'updatedAt'>;
   readonly revision: number;
 }
 
@@ -108,6 +109,7 @@ export const MarketsPanel = ({
     revision,
     server: marketOffersOf(markets),
     value: drafts,
+    version: productVersionOf(product),
   });
   const shown = markets.map((market) => ({
     ...market,

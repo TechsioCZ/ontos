@@ -21,7 +21,7 @@ import type {
 } from '../../../../../shared/domain/merchandise-model.ts';
 import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, QUANTITY_FORMAT, moneyInputText } from '../../../../form-number.ts';
-import { runCommand } from './products-api.ts';
+import { productVersionOf, runCommand } from './products-api.ts';
 import { fieldError } from './product-form-validation.ts';
 import { formatDelta } from './products-format.ts';
 import { useCommandFailure } from './product-form-labels.ts';
@@ -151,8 +151,6 @@ export interface PanelProps {
   readonly onArchived?: () => void;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
-  /** A variant stock movement replaced catalog revision `expectedRevision` with `revision`; it changed stock only. */
-  readonly onStockCommitted?: ((expectedRevision: number, revision: number) => void) | undefined;
   readonly product: ProductRecord;
   readonly revision: number;
   readonly storefrontOrigin?: string;
@@ -176,7 +174,7 @@ const variantMovementDelta = (reason: MovementReason, quantity: number) => {
 };
 
 /** Stock movement for one variant (ledger entry with variantId). */
-const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, product, revision }: PanelProps) => {
+const VariantStockForm = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
   const { t } = useModernI18n();
   const failure = useCommandFailure();
   const variants = product.variantRecords ?? [];
@@ -237,7 +235,6 @@ const VariantStockForm = ({ canWrite, onCommitted, onReload, onStockCommitted, p
           );
           return;
         }
-        onStockCommitted?.(revision, outcome.revision);
         clear();
         onCommitted(`Pohyb zapsán: ${variant.name} ${formatDelta(delta)} ks`);
       },
@@ -544,6 +541,7 @@ const useVariantsPanel = ({
     revision,
     server: variantDraftsOf(product),
     value: drafts,
+    version: productVersionOf(product),
   });
 
   const visibleDrafts = drafts.filter((draft) =>
@@ -954,7 +952,6 @@ export const VariantsPanel = (props: PanelProps & { readonly vat: CompanyVat }) 
           canWrite={canMoveStock}
           onCommitted={onCommitted}
           onReload={onReload}
-          onStockCommitted={props.onStockCommitted}
           product={product}
           revision={revision}
         />
