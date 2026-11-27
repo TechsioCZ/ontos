@@ -278,28 +278,35 @@ describe("product purchase feedback", () => {
       if (input === null) {
         throw new Error("Expected the quantity input");
       }
-      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      for (const [typed, committed] of [
-        ["7", "5"],
-        ["8", "10"],
-        ["999", "100"],
-      ] as const) {
-        yield* Effect.promise(() =>
-          act(async () => {
-            input.focus();
-            setValue?.call(input, typed);
-            input.dispatchEvent(new Event("input", { bubbles: true }));
-          }),
-        );
-        yield* Effect.promise(() =>
-          act(async () => {
-            input.blur();
-          }),
-        );
-        yield* idle;
-        expect(input.value).toBe(committed);
-        expect(container.textContent).not.toContain(d.shopping.invalidQuantity);
-        expect(purchaseButton().disabled).toBe(false);
+      const previousFocus = document.createElement("button");
+      document.body.append(previousFocus);
+      previousFocus.focus();
+      const valueDescriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+      try {
+        for (const [typed, committed] of [
+          ["7", "5"],
+          ["8", "10"],
+          ["999", "100"],
+        ] as const) {
+          yield* Effect.promise(() =>
+            act(async () => {
+              input.focus();
+              valueDescriptor?.set?.call(input, typed);
+              input.dispatchEvent(new Event("input", { bubbles: true }));
+            }),
+          );
+          yield* Effect.promise(() =>
+            act(async () => {
+              previousFocus.focus();
+            }),
+          );
+          yield* idle;
+          expect(input.value).toBe(committed);
+          expect(container.textContent).not.toContain(d.shopping.invalidQuantity);
+          expect(purchaseButton().disabled).toBe(false);
+        }
+      } finally {
+        previousFocus.remove();
       }
     }),
   );

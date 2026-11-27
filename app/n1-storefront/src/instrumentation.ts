@@ -7,7 +7,9 @@ import { markLandingAnswered } from "./ontos/readiness.ts";
 const WARM_EVERY_MS = 4 * 60_000;
 let warming = false;
 const warmLanding = () => {
-  if (warming) return;
+  if (warming) {
+    return;
+  }
   warming = true;
   const landing = `http://127.0.0.1:${process.env.PORT ?? "3000"}/cs`;
   const visit = async () => {
@@ -27,11 +29,19 @@ const warmLanding = () => {
   };
   // The server starts listening after register(): retry until the first visit is answered.
   const first = async (attempt: number) => {
-    if ((await visit()) || attempt >= 24) return;
-    setTimeout(() => void first(attempt + 1), 5_000).unref();
+    if ((await visit()) || attempt >= 24) {
+      return;
+    }
+    setTimeout(() => {
+      void first(attempt + 1);
+    }, 5000).unref();
   };
-  setTimeout(() => void first(0), 2_000).unref();
-  setInterval(() => void visit(), WARM_EVERY_MS).unref();
+  setTimeout(() => {
+    void first(0);
+  }, 2000).unref();
+  setInterval(() => {
+    void visit();
+  }, WARM_EVERY_MS).unref();
 };
 
 export const register = async () => {

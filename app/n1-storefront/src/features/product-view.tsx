@@ -4,6 +4,7 @@ import { Fragment, useSyncExternalStore } from "react";
 import NextImage from "next/image";
 import NextLink from "next/link";
 import { Gallery } from "@techsio/ui-kit/organisms/gallery";
+import { Image } from "@techsio/ui-kit/atoms/image";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Tabs } from "@techsio/ui-kit/molecules/tabs";
@@ -15,20 +16,20 @@ import type { Dictionary } from "@/i18n";
 import { getDictionary } from "@/i18n";
 import type { CatalogModel, ProductDetailModel } from "@/ontos/catalog-model";
 import { categoryTrail } from "@/ontos/catalog-navigation";
-import { priceProps } from "./price-props";
+import { priceProps, formatMarketAmount } from "./price-props";
 import { ProductPurchase } from "./product-purchase";
 import { ProductVariants } from "./product-variants";
 import { selectProductDetail } from "./product-selection";
 import { useDesktopProduct } from "./product-viewport";
 import { productShareHref, productShareOrigin } from "./product-share";
 import { FavoriteToggle } from "./favorite-toggle";
-import { formatMarketAmount } from "./price-props";
 import { ProductLabels } from "./product-labels";
 
+const QUANTITY_PLACEHOLDER = "{quantity}";
 const emptyCategories: CatalogModel["categories"] = [];
-const sizeGuideLabelPattern = /velikost|size/i;
+const sizeGuideLabelPattern = /velikost|size/iu;
 const sizeGuideImagePattern =
-  /(\.(png|jpe?g|webp|gif|svg|avif)(\?|#|$))|^\/(media|uploads|api\/media)\//i;
+  /(?:\.(?:png|jpe?g|webp|gif|svg|avif)(?:\?|#|$))|^\/(?:media|uploads|api\/media)\//iu;
 const galleryItems = (images: readonly string[], imageAlt: string) =>
   images.map((src, index) => ({
     alt: imageAlt,
@@ -58,7 +59,7 @@ const productStockLabel = (
   }).format(current.stockQuantity);
   return d.stockWithQuantity
     .replace("{status}", () => status)
-    .replace("{quantity}", () => quantity)
+    .replace(QUANTITY_PLACEHOLDER, () => quantity)
     .replace("{unit}", () => current.unit)
     .trim();
 };
@@ -101,6 +102,177 @@ const parametersWithProductCode = (
     : selected;
 };
 
+const ProductAvailability = ({
+  dictionary: d,
+  locale,
+  selection,
+}: {
+  dictionary: Dictionary;
+  locale: string;
+  selection: ReturnType<typeof selectProductDetail>;
+}) => (
+  <div className="order-3 md:order-2 md:mb-6">
+    <div className="n1-product-stock-desktop hidden md:block">
+      <AvailabilityStatus
+        label={productStockLabel(selection, d, locale)}
+        showIcon={false}
+        status={selection.selectionRequired ? "unknown" : selection.current.stock}
+      />
+    </div>
+    <div className="md:hidden">
+      <AvailabilityStatus
+        label={productStockLabel(selection, d, locale)}
+        status={selection.selectionRequired ? "unknown" : selection.current.stock}
+      />
+    </div>
+  </div>
+);
+
+const ProductPrices = ({
+  dictionary: d,
+  locale,
+  product,
+  selection,
+}: {
+  dictionary: Dictionary;
+  locale: string;
+  product: ProductDetailModel;
+  selection: ReturnType<typeof selectProductDetail>;
+}) => {
+  const { current, variant } = selection;
+  const quantityPrices = variant === undefined ? product.priceTiers : variant.priceTiers;
+  return (
+    <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
+      <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
+      {current.packageQuantity !== undefined && current.packageQuantity > 1 && (
+        <p className="mt-1 text-sm text-fg-secondary">
+          {d.packageQuantity
+            .replace(QUANTITY_PLACEHOLDER, () =>
+              formatQuantity(current.packageQuantity ?? 0, locale),
+            )
+            .replace("{unit}", () => current.unit ?? "")
+            .trim()}
+        </p>
+      )}
+      {quantityPrices.length > 0 && (
+        <div className="mt-2">
+          <p className="text-sm font-semibold">{d.quantityPrices}</p>
+          <ul className="text-sm">
+            {quantityPrices.map((tier) => (
+              <li key={tier.minimumQuantity}>
+                {d.quantityPriceFrom
+                  .replace(QUANTITY_PLACEHOLDER, () => formatQuantity(tier.minimumQuantity, locale))
+                  .replace("{unit}", () => current.unit ?? "")
+                  .replace("{price}", () =>
+                    formatMarketAmount(tier.priceMinor, locale, current.currency),
+                  )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ProductInformation = ({
+  desktop,
+  dictionary: d,
+  parameters,
+  product,
+  sizeGuides,
+}: {
+  desktop: boolean;
+  dictionary: Dictionary;
+  parameters: ProductDetailModel["parameters"];
+  product: ProductDetailModel;
+  sizeGuides: ProductDetailModel["documents"];
+}) => (
+  <div className="n1-product-information mt-8 md:mt-1">
+    <Tabs appearance="line" defaultValue="parameters" fitted={!desktop} size="md">
+      <div className="overflow-x-auto md:n1-product-tabs">
+        <Tabs.List>
+          <Tabs.Trigger value="parameters">{d.productParameters}</Tabs.Trigger>
+          <Tabs.Trigger value="sizes">{d.sizeGuide}</Tabs.Trigger>
+          <Tabs.Indicator />
+        </Tabs.List>
+      </div>
+      <div className="flex flex-col gap-3 py-8 empty:hidden md:py-3">
+        {product.paragraphs.map((paragraph) => (
+          <p className="whitespace-pre-line" key={paragraph}>
+            {paragraph}
+          </p>
+        ))}
+      </div>
+      <Tabs.Content value="parameters">
+        <div className="flex flex-col gap-2">
+          {parameters.length > 0 && (
+            <>
+              <h2 className="text-n1-product-section font-bold leading-7">{d.productParameters}</h2>
+              <div className="n1-product-parameters">
+                <Table appearance="striped" aria-label={d.productParameters} size="sm">
+                  <Table.Body>
+                    {parameters.map((parameter) => (
+                      <Table.Row key={JSON.stringify(parameter)}>
+                        <Table.ColumnHeader className="min-w-24 wrap-anywhere" scope="row">
+                          {parameter.label}
+                        </Table.ColumnHeader>
+                        <Table.Cell className="wrap-anywhere">
+                          {parameter.unit.length > 0
+                            ? `${parameter.value} ${parameter.unit}`
+                            : parameter.value}
+                        </Table.Cell>
+                      </Table.Row>
+                    ))}
+                  </Table.Body>
+                </Table>
+              </div>
+            </>
+          )}
+          {product.documents.length > 0 && (
+            <>
+              <h2 className="text-n1-product-section font-bold leading-7">{d.productDocuments}</h2>
+              <ul className="flex flex-col gap-1">
+                {product.documents.map((document) => (
+                  <li key={`${document.url}:${document.label}`}>
+                    <Link href={document.url} rel="noopener noreferrer" target="_blank">
+                      {document.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      </Tabs.Content>
+      <Tabs.Content value="sizes">
+        <div className="flex flex-col gap-6 p-4">
+          <h2 className="text-xl font-semibold leading-9">{d.sizeGuideTitle}</h2>
+          {sizeGuides.length === 0 ? (
+            <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
+          ) : (
+            sizeGuides.map((document) => (
+              <div className="flex flex-col gap-2" key={`${document.url}:${document.label}`}>
+                {sizeGuideImagePattern.test(document.url) && (
+                  <Image
+                    alt={document.label}
+                    className="h-auto max-w-full"
+                    size="custom"
+                    src={document.url}
+                  />
+                )}
+                <Link href={document.url} rel="noopener noreferrer" target="_blank">
+                  {document.label}
+                </Link>
+              </div>
+            ))
+          )}
+        </div>
+      </Tabs.Content>
+    </Tabs>
+  </div>
+);
+
 /** Actual owner selection adds an unverified draft; only an owner quote confirms prices. */
 export const ProductView = ({
   categories = emptyCategories,
@@ -127,7 +299,6 @@ export const ProductView = ({
     genericVariantSelected,
     images,
     parameters: selectedParameters,
-    selectionRequired,
     variant,
   } = selection;
   const parameters = [
@@ -135,7 +306,6 @@ export const ProductView = ({
     ...physicalParameters(product, variant, d, locale),
   ];
   const labels = [...new Set([...(product.labels ?? []), ...(variant?.labels ?? [])])];
-  const quantityPrices = variant === undefined ? product.priceTiers : variant.priceTiers;
   const sizeGuides = product.documents.filter((document) =>
     sizeGuideLabelPattern.test(document.label),
   );
@@ -239,21 +409,7 @@ export const ProductView = ({
               variants={product.variants}
             />
           )}
-          <div className="order-3 md:order-2 md:mb-6">
-            <div className="n1-product-stock-desktop hidden md:block">
-              <AvailabilityStatus
-                label={productStockLabel(selection, d, locale)}
-                showIcon={false}
-                status={selectionRequired ? "unknown" : current.stock}
-              />
-            </div>
-            <div className="md:hidden">
-              <AvailabilityStatus
-                label={productStockLabel(selection, d, locale)}
-                status={selectionRequired ? "unknown" : current.stock}
-              />
-            </div>
-          </div>
+          <ProductAvailability dictionary={d} locale={locale} selection={selection} />
           <div
             aria-hidden="true"
             className="order-3 hidden h-px bg-border-primary md:mb-3 md:block"
@@ -276,34 +432,7 @@ export const ProductView = ({
               </Link>
             </div>
           </div>
-          <div className="order-4 md:order-5 md:mb-n1-product-price-quantity">
-            <PriceBlock {...priceProps(current, d, locale, current.priceExcludingVatMinor)} />
-            {current.packageQuantity !== undefined && current.packageQuantity > 1 && (
-              <p className="mt-1 text-sm text-fg-secondary">
-                {d.packageQuantity
-                  .replace("{quantity}", () => formatQuantity(current.packageQuantity ?? 0, locale))
-                  .replace("{unit}", () => current.unit ?? "")
-                  .trim()}
-              </p>
-            )}
-            {quantityPrices.length > 0 && (
-              <div className="mt-2">
-                <p className="text-sm font-semibold">{d.quantityPrices}</p>
-                <ul className="text-sm">
-                  {quantityPrices.map((tier) => (
-                    <li key={tier.minimumQuantity}>
-                      {d.quantityPriceFrom
-                        .replace("{quantity}", () => formatQuantity(tier.minimumQuantity, locale))
-                        .replace("{unit}", () => current.unit ?? "")
-                        .replace("{price}", () =>
-                          formatMarketAmount(tier.priceMinor, locale, current.currency),
-                        )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
+          <ProductPrices dictionary={d} locale={locale} product={product} selection={selection} />
           <div className="order-5 md:hidden">
             <Link as={NextLink} href={`/${locale}/doprava`}>
               {d.shippingOptions}
@@ -357,89 +486,13 @@ export const ProductView = ({
           </div>
         </div>
       </div>
-      <div className="n1-product-information mt-8 md:mt-1">
-        <Tabs appearance="line" defaultValue="parameters" fitted={!desktop} size="md">
-          <div className="overflow-x-auto md:n1-product-tabs">
-            <Tabs.List>
-              <Tabs.Trigger value="parameters">{d.productParameters}</Tabs.Trigger>
-              <Tabs.Trigger value="sizes">{d.sizeGuide}</Tabs.Trigger>
-              <Tabs.Indicator />
-            </Tabs.List>
-          </div>
-          <div className="flex flex-col gap-3 py-8 empty:hidden md:py-3">
-            {product.paragraphs.map((paragraph) => (
-              <p className="whitespace-pre-line" key={paragraph}>
-                {paragraph}
-              </p>
-            ))}
-          </div>
-          <Tabs.Content value="parameters">
-            <div className="flex flex-col gap-2">
-              {parameters.length > 0 && (
-                <>
-                  <h2 className="text-n1-product-section font-bold leading-7">
-                    {d.productParameters}
-                  </h2>
-                  <div className="n1-product-parameters">
-                    <Table appearance="striped" aria-label={d.productParameters} size="sm">
-                      <Table.Body>
-                        {parameters.map((parameter) => (
-                          <Table.Row key={JSON.stringify(parameter)}>
-                            <Table.ColumnHeader className="min-w-24 wrap-anywhere" scope="row">
-                              {parameter.label}
-                            </Table.ColumnHeader>
-                            <Table.Cell className="wrap-anywhere">
-                              {parameter.unit.length > 0
-                                ? `${parameter.value} ${parameter.unit}`
-                                : parameter.value}
-                            </Table.Cell>
-                          </Table.Row>
-                        ))}
-                      </Table.Body>
-                    </Table>
-                  </div>
-                </>
-              )}
-              {product.documents.length > 0 && (
-                <>
-                  <h2 className="text-n1-product-section font-bold leading-7">
-                    {d.productDocuments}
-                  </h2>
-                  <ul className="flex flex-col gap-1">
-                    {product.documents.map((document) => (
-                      <li key={`${document.url}:${document.label}`}>
-                        <Link href={document.url} rel="noopener noreferrer" target="_blank">
-                          {document.label}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-          </Tabs.Content>
-          <Tabs.Content value="sizes">
-            <div className="flex flex-col gap-6 p-4">
-              <h2 className="text-xl font-semibold leading-9">{d.sizeGuideTitle}</h2>
-              {sizeGuides.length === 0 ? (
-                <p className="text-md leading-6">{d.sizeGuideUnavailable}</p>
-              ) : (
-                sizeGuides.map((document) => (
-                  <div className="flex flex-col gap-2" key={`${document.url}:${document.label}`}>
-                    {sizeGuideImagePattern.test(document.url) && (
-                      // biome-ignore lint/performance/noImgElement: staff-attached size charts come from any host
-                      <img alt={document.label} className="h-auto max-w-full" src={document.url} />
-                    )}
-                    <Link href={document.url} rel="noopener noreferrer" target="_blank">
-                      {document.label}
-                    </Link>
-                  </div>
-                ))
-              )}
-            </div>
-          </Tabs.Content>
-        </Tabs>
-      </div>
+      <ProductInformation
+        desktop={desktop}
+        dictionary={d}
+        parameters={parameters}
+        product={product}
+        sizeGuides={sizeGuides}
+      />
     </article>
   );
 };
