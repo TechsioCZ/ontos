@@ -133,6 +133,8 @@ export const ProductVariantSchema = Schema.Struct({
   priceMinor: Schema.optionalKey(MinorAmountSchema),
   sku: Schema.optionalKey(TextSchema(64)),
   unit: Schema.optionalKey(Schema.String),
+  /** Server-owned: the main Catalog variant a Symmy import maps here. A value a client sends is ignored. */
+  catalogVariantId: Schema.optionalKey(Schema.String),
 });
 export type ProductVariant = typeof ProductVariantSchema.Type;
 
@@ -291,6 +293,17 @@ export const ProductSchema = Schema.Struct({
    * give a variant an earlier photo again. Never part of a patch; storefront reads drop it.
    */
   photoLibrary: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(PRODUCT_PHOTO_LIBRARY_LIMIT))),
+  /**
+   * Server-owned provenance of a product the ERP connector Symmy imported ("Importováno přes Symmy"). Outside
+   * ProductMetadataSchema, so no product command can set, change or erase it; only UpsertSourceProduct writes it.
+   */
+  importedVia: Schema.optionalKey(Schema.Literal('symmy')),
+  /** The Symmy product code (also the product's SKU). */
+  erpCode: Schema.optionalKey(Schema.String),
+  /** The main Catalog product this row mirrors. */
+  catalogProductId: Schema.optionalKey(Schema.String),
+  /** The main Catalog variant of a product imported with exactly one variant (no merchandise variants). */
+  catalogVariantId: Schema.optionalKey(Schema.String),
   ...ProductMetadataSchema.fields,
   active: Schema.Boolean,
   category: TextSchema(120),

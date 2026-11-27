@@ -1,13 +1,9 @@
 import "server-only";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
-import { readErpProduct } from "@/ontos/erp-catalogue-server";
-import { getErpOffer } from "@/ontos/erp-config";
 
-const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu;
-
-/** The same reads the pages make (shared, 15 s): does this product, category or ERP product exist and sell? */
+/** The same reads the pages make (shared, 15 s): does this product or category exist and sell? */
 const exists = async (path: string): Promise<boolean> => {
-  const [, kind, raw] = /^\/(produkt|kategorie|novinky-z-erp)\/([^/]+)\/?$/u.exec(path) ?? [];
+  const [, kind, raw] = /^\/(produkt|kategorie)\/([^/]+)\/?$/u.exec(path) ?? [];
   if (kind === undefined || raw === undefined) return true;
   const id = decodeURIComponent(raw);
   if (kind === "produkt")
@@ -16,8 +12,7 @@ const exists = async (path: string): Promise<boolean> => {
         id,
       ) !== undefined
     );
-  if (kind === "kategorie") return (await getCatalog(id)).getCategoryBySlug(id) !== undefined;
-  return getErpOffer() !== undefined && UUID.test(id) && (await readErpProduct(id)) !== undefined;
+  return (await getCatalog(id)).getCategoryBySlug(id) !== undefined;
 };
 
 /** Proxy → here before a document render: 404 lets the proxy answer the not-found page with its real status. */

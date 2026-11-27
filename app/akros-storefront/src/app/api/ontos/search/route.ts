@@ -12,42 +12,11 @@ import {
   type RemoteSearchResponse,
 } from "@/ontos/search-suggestions";
 import { readSearchVariantMatches } from "@/ontos/search-variants";
-import { searchErpProductsWithin } from "@/ontos/erp-catalogue-server";
-import { erpCopy, erpStockSummary, type ErpProduct } from "@/lib/erp-catalogue";
-import type { Dictionary } from "@/i18n";
-
-/** One ERP product as a header suggestion: it opens its „Novinky z ERP“ page. */
-const erpSuggestion = (
-  product: ErpProduct,
-  t: Dictionary,
-): RemoteSearchResponse["items"][number] => {
-  const [only] = product.variants;
-  const price = product.variants.length === 1 ? only?.price : undefined;
-  return {
-    productId: product.id,
-    slug: product.id,
-    name: product.name,
-    imageSrc: product.imageSrc,
-    currency: (price?.kind === "price"
-      ? price.currencyCode
-      : "CZK") as RemoteSearchResponse["items"][number]["currency"],
-    priceMinor: price?.kind === "price" ? Math.round(Number(price.amount) * 100) : 0,
-    priceExcludesVat: true,
-    priceIsFrom: product.variants.length > 1,
-    ...(product.variants.length === 1 && price?.kind !== "price"
-      ? { priceUnavailableReason: erpCopy.priceOnRequest }
-      : {}),
-    hasVariants: product.variants.length > 1,
-    ...(only?.sku && product.variants.length === 1 ? { variantSku: only.sku } : {}),
-    path: `/novinky-z-erp/${encodeURIComponent(product.id)}`,
-    ...erpStockSummary(product, t),
-  };
-};
 
 /**
- * A header search answers within this long. A part not read by then (a new term's shop catalogue page, the tree or the
- * ERP snapshot while the owners are slow) is left out and the answer says so (`partial`): the header shows it, asks
- * again, and the shared read that goes on in the background answers that ask.
+ * A header search answers within this long. A part not read by then (a new term's shop catalogue page or the tree
+ * while the owners are slow) is left out and the answer says so (`partial`): the header shows it, asks again, and the
+ * shared read that goes on in the background answers that ask.
  */
 const SEARCH_WAIT_MS = 600;
 
@@ -86,23 +55,21 @@ export async function POST(request: Request) {
       return Response.json({ items: [], total: 0, categories: [] } satisfies RemoteSearchResponse, {
         headers: noStore,
       });
-    // The shop catalogue, its tree and the ERP catalogue (one shared snapshot) are read side by side, never after
-    // each other, and none holds the answer longer than SEARCH_WAIT_MS.
-    const [page, tree, erp] = await Promise.all([
+    // The shop catalogue and its tree are read side by side, never after each other, and neither holds the answer
+    // longer than SEARCH_WAIT_MS.
+    const [page, tree] = await Promise.all([
       answeredWithin(
         readProducts({ q: term, page: 1, pageSize: 6 }, "card", false, { operation: lifetime }),
         SEARCH_WAIT_MS,
       ),
       answeredWithin(getCategoryTree("", { operation: lifetime }), SEARCH_WAIT_MS),
-      searchErpProductsWithin(term, 4, lifetime, SEARCH_WAIT_MS),
     ]);
     // Every card carries validated owner attribution plus at most one market-priced presentation offer.
     const products = placeholdersLast(page?.products ?? []);
     const matches = await readSearchVariantMatches(products, term);
-    const items = [
-      ...erp.products.map((product) => erpSuggestion(product, t)),
-      ...products.map((product) => toRemoteSuggestion(product, term, t, matches.get(product.id))),
-    ];
+    const items = products.map((product) =>
+      toRemoteSuggestion(product, term, t, matches.get(product.id)),
+    );
     // The request's navigation tree is matched here so the browser never needs it.
     const model =
       tree === undefined
@@ -115,9 +82,9 @@ export async function POST(request: Request) {
     return Response.json(
       {
         items,
-        total: (page?.total ?? 0) + erp.count,
+        total: page?.total ?? 0,
         categories,
-        ...(page === undefined || tree === undefined || erp.partial ? { partial: true } : {}),
+        ...(page === undefined || tree === undefined ? { partial: true } : {}),
       } satisfies RemoteSearchResponse,
       {
         headers: noStore,

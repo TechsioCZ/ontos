@@ -110,8 +110,11 @@ const toVariantRecord = (
   const stockOnHand = normalizeQuantity(stock.variants.get(variant.id) ?? 0);
   const active = product.active && variant.active !== false;
   const grossPriceMinor = shownGrossOf(variant, variant.priceMinor, rate);
+  // The Symmy mapping stays on product.variants; a variant record (strictly decoded by every read) has no such key.
+  const { catalogVariantId: _catalogVariant, ...fields } = variant;
+  void _catalogVariant;
   const record: VariantRecord = {
-    ...variant,
+    ...fields,
     active: variant.active !== false,
     attributes: variant.attributes,
     availability: availabilityOf({
