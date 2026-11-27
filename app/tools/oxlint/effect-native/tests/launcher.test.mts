@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import nodePath from 'node:path';
@@ -5,7 +6,7 @@ import nodePath from 'node:path';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { runOxlint } from './oxlint.mts';
+import { appRoot, runOxlint } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
 it('Oxlint launches through the effect-tsgo JavaScript entry point on Node without a platform shim', () => {
@@ -52,5 +53,32 @@ appendFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv) + '\\n');
         process.env.NODE_OPTIONS = previousNodeOptions;
       }
     }
+  });
+});
+
+it('the Rust project checker fails on an Effect warning and accepts the corrected source', () => {
+  withTemporaryWorkspace((directory) => {
+    const project = nodePath.join(directory, 'tsconfig.json');
+    const input = nodePath.join(directory, 'probe.ts');
+    const base = nodePath.join(appRoot, 'tsconfig.base.json');
+    writeFileSync(project, JSON.stringify({ extends: base, files: ['probe.ts'] }));
+    const cli = nodePath.join(appRoot, 'node_modules/@modern-js/ultramodern-create/bin/run.js');
+    const check = () =>
+      spawnSync(process.execPath, [cli, 'ultramodern', 'typecheck', '--project', project], {
+        cwd: appRoot,
+        encoding: 'utf-8',
+      });
+    writeFileSync(
+      input,
+      "// @effect-diagnostics floatingEffect:warning -- Deliberately warn to prove the production exit policy.\nimport { Effect } from 'effect';\nexport const task = () => { Effect.succeed(123); return 123; };\n",
+    );
+    const invalid = check();
+    expect(invalid.error).toBeUndefined();
+    expect(invalid.stdout + invalid.stderr).toContain('warning TS377001');
+    expect(invalid.status).toBe(2);
+    writeFileSync(input, "import { Effect } from 'effect';\nexport const task = () => Effect.succeed(123);\n");
+    const valid = check();
+    expect(valid.error).toBeUndefined();
+    expect(valid.status, valid.stdout + valid.stderr).toBe(0);
   });
 });
