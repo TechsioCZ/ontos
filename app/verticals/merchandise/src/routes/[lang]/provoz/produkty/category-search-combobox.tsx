@@ -1,6 +1,6 @@
 // Storefront tree category combobox over the server search: each pause in typing reads one bounded page of
 // matching categories with their path labels, so no page loads the whole tree (thousands of nodes for AKROS).
-import { Combobox } from '@app/admin-ui/form-controls';
+import { Combobox, Label } from '@app/admin-ui/form-controls';
 import { comboboxTranslations } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
@@ -136,9 +136,9 @@ export const CategorySearchCombobox = ({
   return (
     <>
       {hiddenLabel ? (
-        <label className="sr-only" htmlFor={`${id}-input`}>
+        <Label className="sr-only" htmlFor={`${id}-input`}>
           {label}
-        </label>
+        </Label>
       ) : null}
       {/* Not clearable: ui-kit names the clear control "Clear value" in English; the „all“ option clears instead. */}
       <Combobox
