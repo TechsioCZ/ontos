@@ -311,7 +311,18 @@ describe("persisted storefront inquiries", () => {
         },
       },
     };
-    expect(catalogReads).toEqual([ownerQuery, ownerQuery]);
+    // The shared read checks the catalogue revision first; the inquiry's own read is fresh and checks none.
+    const revisionQuery = {
+      view: {
+        storefront: true,
+        storefrontCatalog: {
+          storefrontAppId: "akros-storefront",
+          mode: "categories",
+          includeCategories: false,
+        },
+      },
+    };
+    expect(catalogReads).toEqual([revisionQuery, ownerQuery, ownerQuery]);
     expect(actionCalls[0]?.[2]).toEqual({
       title: "Dotaz na produkt: Dostupnost materiálu",
       description:

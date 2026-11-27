@@ -285,8 +285,12 @@ export const readErpProduct = cache(
   },
 );
 
-/** Search reads are equal for every shopper: shared for 15 s and served stale while one refresh runs. */
-const ERP_SEARCH_TTL_MS = 15_000;
+/**
+ * Search reads are equal for every shopper: concurrent searches share one read for a second, never an older answer.
+ * Catalog and Pricing have no revision to check, so a product state or price saved in the ERP editor is searchable
+ * on the next visit, as on „Novinky z ERP“.
+ */
+const ERP_SEARCH_TTL_MS = 1_000;
 type ErpPageItem = CatalogProductPage["items"][number];
 
 /** Every product Catalog answers the storefront (up to the detail scan bound), shared across shoppers. */
@@ -303,7 +307,7 @@ const erpIndex = (locale: string, caller: Operation) =>
       }
       return items;
     },
-    { stale: true, caller },
+    { caller },
   );
 
 /**
@@ -328,7 +332,7 @@ export const searchErpProducts = async (
     `erp-search:${locale}:${limit}:${items.map((item) => item.productRef.resourceId).join(",")}`,
     ERP_SEARCH_TTL_MS,
     (detached) => withOffers(offer, { count: items.length, items }, detached, true),
-    { stale: true, caller: operation },
+    { caller: operation },
   );
   return { count: matched.length, products };
 };
