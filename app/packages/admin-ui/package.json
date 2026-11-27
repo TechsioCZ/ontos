@@ -18,6 +18,7 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@lucas-barake/effect-form": "1.1.1",
     "effect": "4.0.7"
   },
   "peerDependencies": {
