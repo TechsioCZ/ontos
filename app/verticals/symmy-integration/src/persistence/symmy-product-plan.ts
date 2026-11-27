@@ -501,12 +501,9 @@ const hintBranches = (kinds: readonly (SymmyProductHintKind | 'PriceHint' | 'Sto
   kinds.map((kind) => ({ branchKey: kind, kind }));
 
 const readinessIneligibleFor = (row: SymmyProductRow, policy: Enrollment['catalogReadiness']) =>
-  row.lifecycle === 'ACTIVE' &&
-  policy !== undefined &&
-  (row.variants.length !== 1 || hintIneligible(row));
+  row.lifecycle === 'ACTIVE' && policy !== undefined && hintIneligible(row);
 
-/** A hint the readiness policy cannot answer keeps the product's prices back too. Several variants do not: Catalog
- * keeps such a product DRAFT, but its variants are priced, so the shop copy creates the row and staff publish it. */
+/** A hint the readiness policy cannot answer keeps the product and its prices back. */
 const hintIneligible = (row: SymmyProductRow) =>
   row.unsupported.includes('AttributeHint') || row.unsupported.includes('ClassificationHint');
 
@@ -586,7 +583,16 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const readinessIneligible = readinessIneligibleFor(row, enrollment.catalogReadiness);
   const updates = !readinessIneligible && (row.lifecycle === 'ACTIVE' || row.lifecycle === 'RETIRED');
   const ready = row.lifecycle === 'ACTIVE' && !readinessIneligible ? enrollment.catalogReadiness : undefined;
-  const readinessSteps = ['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const;
+  // The axis-free policy confirms the initial Variant, activates the Product and decides it needs no Product Type.
+  // Catalog holds one ACTIVE Variant per axis combination (variant-persistence.ts duplicate_combination), so a product
+  // with several Variants is activated with its initial one: the further Variants stay WORK_IN_PROGRESS until a Product
+  // Type governs the axis that tells them apart, and no untyped decision claims that none is needed. Every Variant
+  // exists before the Product leaves revision 1, because a Variant is created at that revision.
+  const readinessSteps =
+    variants.length === 1
+      ? (['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT', 'UNTYPED'] as const)
+      : (['AXES', 'CONFIRM', 'NAME', 'ACTIVATE', 'UNIT'] as const);
+  const readinessLast = `readiness-${readinessSteps[readinessSteps.length - 1]?.toLowerCase() ?? ''}`;
   const readinessEffects =
     ready === undefined
       ? []
@@ -594,6 +600,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
           dependsOn: [
             parent,
             ...(position === 0 ? productTexts.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey })) : []),
+            ...(position === 0 ? variantItems.flatMap(({ created }) => created) : []),
             ...readinessSteps.slice(0, position).map((previous) => ({
               effectKey: `readiness-${previous.toLowerCase()}`,
               itemKey: productItemKey,
@@ -636,9 +643,9 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
     ...categoryEffects.map(({ effectKey }) => ({ effectKey, itemKey: productItemKey })),
     ...variantItems.flatMap(({ created }, position) => (position === variantPosition ? created : [])),
     ...(ready === undefined && updates ? [{ effectKey: productUpdateKey, itemKey: productItemKey }] : []),
-    ...(ready === undefined ? [] : [{ effectKey: 'readiness-untyped', itemKey: productItemKey }]),
+    ...(ready === undefined ? [] : [{ effectKey: readinessLast, itemKey: productItemKey }]),
   ];
-  const priceItems = (readinessIneligible && hintIneligible(row) ? Option.none<PriceContext>() : prices).pipe(
+  const priceItems = (readinessIneligible ? Option.none<PriceContext>() : prices).pipe(
     Option.match({
       onNone: () => Effect.succeed([]),
       onSome: (context) =>
@@ -670,10 +677,7 @@ const buildProduct = Effect.fn('SymmyProductPlan.product')(function* buildProduc
   const planned = yield* priceItems;
   const written = planned.length - planned.filter(Option.isNone).length;
   const unsupported = [
-    ...new Set([
-      ...row.unsupported,
-      ...(readinessIneligible && variants.length > 1 ? ['ClassificationHint' as const] : []),
-    ]),
+    ...new Set(row.unsupported),
     ...(written < variants.reduce((total, { row: variantRow }) => total + variantRow.prices.length, 0)
       ? ['PriceHint' as const]
       : []),

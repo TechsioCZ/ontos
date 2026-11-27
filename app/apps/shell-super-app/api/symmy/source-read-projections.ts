@@ -202,6 +202,7 @@ export const projectSymmySourceProducts = Effect.fn('SymmyReadProjection.product
         id: qualifySymmyReadId(scope, 'VARIANT', variant.source.recordId),
         source_record_id: variant.source.recordId,
         variantId: variant.variantId,
+        ...(variant.localizedNames === undefined ? {} : { localizedNames: variant.localizedNames }),
       })),
     })),
     projection: 'products',

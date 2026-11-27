@@ -73,6 +73,21 @@ export interface SymmyVariantFigures {
 }
 
 /**
+ * The shop name of one of several Variants: its Czech source name. A Variant is always shown under its product, so a
+ * name that repeats the product's name ("Vrut … A2 4 x 40") keeps only what tells the Variant apart ("4 x 40"). The SKU
+ * stays the Variant's code beside it. A product with one Variant is the Variant itself and sends no Variant name.
+ */
+export const symmyVariantName = (productName: string, sourceName: string | undefined): string | undefined => {
+  const full = sourceName?.trim() ?? '';
+  const rest =
+    productName !== '' && full.startsWith(productName)
+      ? full.slice(productName.length).replace(/^[\s,;:–-]+/u, '')
+      : full;
+  const name = (rest === '' ? full : rest).slice(0, 100).trim();
+  return name === '' ? undefined : name;
+};
+
+/**
  * The UpsertSourceProduct command of one Catalog product, or undefined when it has no source-correlated Variant.
  * A Variant without a known price sends none: the upsert keeps the stored price (and a never-priced row unpublished).
  */
@@ -89,7 +104,11 @@ export const symmyUpsertSourceProductCommand = (
     }
     const catalogVariantId = variant.variantId;
     const { priceNetMinor, stockOnHand } = figures.get(catalogVariantId) ?? {};
-    const fields = { catalogVariantId, sku };
+    const variantName =
+      item.variantSources.length > 1
+        ? symmyVariantName(name, variant.localizedNames?.find(({ locale }) => /^cs(?:-|$)/iu.test(locale))?.name)
+        : undefined;
+    const fields = variantName === undefined ? { catalogVariantId, sku } : { catalogVariantId, sku, name: variantName };
     const priced = priceNetMinor === undefined ? fields : { ...fields, priceNetMinor };
     return [stockOnHand === undefined ? priced : { ...priced, stockOnHand }];
   });
