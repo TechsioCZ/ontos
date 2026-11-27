@@ -15,12 +15,12 @@ const AssortmentRouteContent = () => {
 
   return (
     <section
-      className="assortment:rounded-2xl assortment:bg-white/90 assortment:p-5 assortment:shadow-xl assortment:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-250 shadow-xl"
       data-modern-boundary-id="verticalAssortment"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="assortment:text-2xl assortment:font-black">{t('assortment.title')}</h2>
-      <p className="assortment:mt-2 assortment:text-stone-600">{t('assortment.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('assortment.title')}</h2>
+      <p className="mt-150 text-fg-secondary">{t('assortment.routeSurface')}</p>
     </section>
   );
 };

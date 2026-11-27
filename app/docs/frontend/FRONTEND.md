@@ -68,7 +68,9 @@ Before creating UI:
 6. Do not recreate or restyle existing primitives.
 7. Do not hardcode values when a kit token or property exists.
 
-Never write plain CSS. Use the installed version of Tailwind CSS.
+Modules ship no CSS. The Shell loads the kit's precompiled stylesheet (`@techsio/ui-kit/styles.css`) once, and it styles every module, including modules built outside this repository and loaded at runtime. Style with kit components and their props first, and otherwise with the class names that stylesheet defines: the kit's token utilities and layout vocabulary (`text-fg-secondary`, `gap-150`, `md:grid-cols-2`). No stylesheet, Tailwind build or theme of a module's own, no inline `style`, no colour literal or Tailwind palette class, no intrinsic control the kit provides, no UI library past `@techsio/ui-kit`.
+
+Lint enforces this (see [UI kit rules](../../tools/oxlint/effect-native/README.md#ui-kit-rules)), and the Node build shards fail a module whose browser bundle carries CSS. Where a screen needs something the kit lacks, add it to the kit in `new-engine/libs/ui`; never work around a rule in OntOS.
 
 Keep domain-specific presentation inside its feature.
 

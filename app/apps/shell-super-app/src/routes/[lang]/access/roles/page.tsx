@@ -95,14 +95,14 @@ const ReadyRoles = ({ model }: { readonly model: Extract<RolePageModel, { readon
     );
   };
   return (
-    <div className="shell:grid shell:gap-6">
+    <div className="grid gap-300">
       <p>{t('shell.accessAdmin.role.description')}</p>
       <CreateRoleFeature
         catalog={model.catalog}
         onCreated={acceptRole}
         writesAvailable={model.catalog.createAvailable}
       />
-      <nav aria-label={t('shell.accessAdmin.accessible.roleList')} className="shell:flex shell:flex-wrap shell:gap-2">
+      <nav aria-label={t('shell.accessAdmin.accessible.roleList')} className="flex flex-wrap gap-150">
         {roles.items.map((role) => (
           <Button
             aria-pressed={selected?.id === role.id}
@@ -160,8 +160,8 @@ const RolePage = () => {
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state !== 'authenticated' || model.state === 'reload_required' || controls.reloadRequired) {
     return (
-      <main className="shell:mx-auto shell:grid shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
-        <h1 className="shell:text-title-lg">{t('shell.accessAdmin.role.title')}</h1>
+      <main className="mx-auto grid max-w-5xl gap-300 px-200 py-400">
+        <h1 className="text-2xl">{t('shell.accessAdmin.role.title')}</h1>
         <StatusText aria-live="polite" status="error">
           {t(
             model.state === 'reload_required' || controls.reloadRequired
@@ -182,7 +182,7 @@ const RolePage = () => {
       {model.state === 'ready' ? (
         <ReadyRoles key={model.catalog.catalogSnapshotId} model={model} />
       ) : (
-        <div className="shell:grid shell:gap-4">
+        <div className="grid gap-200">
           <StatusText aria-live="polite" status="error">
             {t(`shell.accessAdmin.common.${model.state === 'invalid' ? 'failed' : model.state}`)}
           </StatusText>

@@ -35,7 +35,7 @@ const DelegationEditor = ({
   return (
     <form
       aria-label={t(`${prefix}.delegationCreate`)}
-      className="shell:grid shell:gap-4"
+      className="grid gap-200"
       onSubmit={(event) => {
         event.preventDefault();
         if (
@@ -73,7 +73,7 @@ const DelegationEditor = ({
         });
       }}
     >
-      <h3 className="shell:text-title-md">{t(`${prefix}.delegation`)}</h3>
+      <h3 className="text-xl">{t(`${prefix}.delegation`)}</h3>
       <p>{t(`${prefix}.delegationHelp`)}</p>
       <p>{t(`${prefix}.delegationCeiling`)}</p>
       <PeopleChoiceField
@@ -175,7 +175,7 @@ const ScopeEditor = ({
   const role = scope.roles.find((item) => item.id === roleId);
   const team = scope.teams.find((item) => item.id === teamId);
   return (
-    <div className="shell:grid shell:gap-6">
+    <div className="grid gap-300">
       <PeopleChoiceField
         disabled={busy}
         items={scope.people}
@@ -185,7 +185,7 @@ const ScopeEditor = ({
       />
       <form
         aria-label={t(`${prefix}.assignRole`)}
-        className="shell:grid shell:gap-4"
+        className="grid gap-200"
         onSubmit={(event) => {
           event.preventDefault();
           if (busy || !writes.assign || person === undefined || role === undefined) {
@@ -198,7 +198,7 @@ const ScopeEditor = ({
           });
         }}
       >
-        <h3 className="shell:text-title-md">{t(`${prefix}.assignRole`)}</h3>
+        <h3 className="text-xl">{t(`${prefix}.assignRole`)}</h3>
         <PeopleChoiceField
           disabled={busy || !writes.assign}
           items={scope.roles}
@@ -220,8 +220,8 @@ const ScopeEditor = ({
           {t(`${prefix}.assignRole`)}
         </Button>
       </form>
-      <div className="shell:grid shell:gap-4">
-        <h3 className="shell:text-title-md">{t(`${prefix}.teams`)}</h3>
+      <div className="grid gap-200">
+        <h3 className="text-xl">{t(`${prefix}.teams`)}</h3>
         <PeopleChoiceField
           disabled={busy || !writes.team}
           items={scope.teams}
@@ -263,7 +263,7 @@ export const PeopleEditor = ({
   const [scopeId, setScopeId] = useState('');
   const scope = model.scopes.find((item) => item.id === scopeId);
   return (
-    <section className="shell:grid shell:gap-4">
+    <section className="grid gap-200">
       <PeopleChoiceField
         disabled={busy}
         items={model.scopes}

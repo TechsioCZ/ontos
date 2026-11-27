@@ -138,16 +138,16 @@ const LoginPage = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:px-4 shell:py-10 shell:text-(--color-page-fg) shell:md:px-20 shell:md:pt-[120px] shell:md:pb-10">
-        <section className="shell:flex shell:w-full shell:max-w-[360px] shell:flex-col">
-          <Link as={LocalizedLink} className="shell:self-center" to="/">
+      <main className="flex min-h-screen items-center justify-center bg-base px-200 py-450 text-fg-primary md:px-750 md:pt-950 md:pb-450">
+        <section className="flex w-full max-w-sm flex-col">
+          <Link as={LocalizedLink} className="self-center" to="/">
             {t('shell.login.back')}
           </Link>
-          <div className="shell:mt-6">
-            <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
+          <div className="mt-300">
+            <h1 className="text-2xl font-bold">{t('shell.login.title')}</h1>
             <form
               action={handleSubmit}
-              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+              className="mt-200 flex flex-col gap-200"
               data-hydrated={hydrated || undefined}
               noValidate
             >

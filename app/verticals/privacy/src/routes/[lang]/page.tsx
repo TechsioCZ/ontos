@@ -7,13 +7,13 @@ const PrivacyHome = () => {
   const { language, supportedLanguages, t } = useModernI18n();
 
   return (
-    <main className="privacy:min-h-screen privacy:bg-um-canvas privacy:px-4 privacy:py-6 privacy:text-um-foreground privacy:sm:px-8">
+    <main className="min-h-screen bg-base px-200 py-300 text-fg-primary sm:px-400">
       <UltramodernRouteHead />
-      <nav aria-label={t('privacy.language.switcher')} className="privacy:flex privacy:gap-3">
+      <nav aria-label={t('privacy.language.switcher')} className="flex gap-150">
         {supportedLanguages.map((code) => (
           <Link
             aria-current={language === code ? 'page' : undefined}
-            className="privacy:rounded-full privacy:border privacy:border-stone-900/15 privacy:bg-white privacy:px-4 privacy:py-2 privacy:text-sm privacy:font-bold privacy:text-stone-950 privacy:no-underline"
+            className="rounded-full border border-border-primary bg-surface px-200 py-150 text-sm font-bold text-fg-primary no-underline"
             key={code}
             params={{ lang: code }}
             to="/$lang/"
@@ -22,11 +22,11 @@ const PrivacyHome = () => {
           </Link>
         ))}
       </nav>
-      <h1 className="privacy:mt-10 privacy:text-5xl privacy:font-black">{t('privacy.title')}</h1>
-      <p className="privacy:mt-3 privacy:text-lg privacy:text-stone-600" data-modern-mf-role="vertical">
+      <h1 className="mt-450 text-4xl font-bold">{t('privacy.title')}</h1>
+      <p className="mt-150 text-lg text-fg-secondary" data-modern-mf-role="vertical">
         {t('privacy.role')}
       </p>
-      <p className="privacy:sr-only" data-build-marker={ultramodernUiMarker.build} data-testid="ultramodern-ui-marker">
+      <p className="sr-only" data-build-marker={ultramodernUiMarker.build} data-testid="ultramodern-ui-marker">
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
     </main>

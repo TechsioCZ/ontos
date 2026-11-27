@@ -15,12 +15,12 @@ const InventoryWidgetContent = () => {
 
   return (
     <section
-      className="inventory:rounded-2xl inventory:bg-white/90 inventory:p-5 inventory:shadow-xl inventory:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-250 shadow-xl"
       data-modern-boundary-id="verticalInventory"
       data-modern-mf-expose="./Widget"
     >
-      <h2 className="inventory:text-2xl inventory:font-black">{t('inventory.title')}</h2>
-      <p className="inventory:mt-2 inventory:text-stone-600">{t('inventory.widgetBody')}</p>
+      <h2 className="text-2xl font-bold">{t('inventory.title')}</h2>
+      <p className="mt-150 text-fg-secondary">{t('inventory.widgetBody')}</p>
     </section>
   );
 };

@@ -1,6 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
@@ -53,7 +54,7 @@ const CellSummary = ({ cells }: { readonly cells: readonly RoleCellView[] }) => 
   return cells.length === 0 ? (
     <p>{t('shell.accessAdmin.common.none')}</p>
   ) : (
-    <ul className="shell:grid shell:gap-2">
+    <ul className="grid gap-150">
       {cells.map((cell) => (
         <li key={roleCellSlot(cell)}>
           <code>{cell.capabilityKey}</code> {t(`shell.accessAdmin.mode.${cell.mode}`)}{' '}
@@ -90,7 +91,7 @@ const RoleAmountEditor = ({
   const editableHelp = invalid ? 'shell.accessAdmin.role.invalidAmount' : 'shell.accessAdmin.role.amountMinorHelp';
   const helpKey = existing ? 'shell.accessAdmin.role.existingAmountHelp' : editableHelp;
   return (
-    <div className="shell:grid shell:gap-2 shell:md:grid-cols-2">
+    <div className="grid gap-150 md:grid-cols-2">
       <FormInput
         disabled={disabled}
         helpText={t(helpKey)}
@@ -144,8 +145,8 @@ const RoleCapabilityCells = ({
   const { t } = useModernI18n();
   const selectors = entry.selectors.length === 0 ? ['all' as const] : entry.selectors;
   return (
-    <fieldset className="shell:grid shell:gap-3" disabled={disabled}>
-      <legend className="shell:text-title-sm">
+    <fieldset className="grid gap-150" disabled={disabled}>
+      <legend className="text-lg">
         <code>{entry.key}</code>
       </legend>
       <p>{t(`shell.accessAdmin.risk.${entry.risk}`)}</p>
@@ -167,7 +168,7 @@ const RoleCapabilityCells = ({
               targetRecordKeys(candidate).length > 0,
           );
           return (
-            <div className="shell:grid shell:gap-2" key={slot}>
+            <div className="grid gap-150" key={slot}>
               <FormCheckbox
                 checked={current !== undefined}
                 disabled={disabled || (selector === 'all' && hasTargets)}
@@ -215,10 +216,10 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
   );
   const statusKey = props.status === 'invalid' ? 'role.invalidEdit' : `common.${props.status}`;
   return (
-    <section aria-label={props.role.name} className="shell:grid shell:gap-6">
-      <h2 className="shell:text-title-lg">{props.role.name}</h2>
+    <section aria-label={props.role.name} className="grid gap-300">
+      <h2 className="text-2xl">{props.role.name}</h2>
       <p>{t('shell.accessAdmin.role.description')}</p>
-      <dl className="shell:grid shell:gap-2">
+      <dl className="grid gap-150">
         <div>
           <dt>{t('shell.accessAdmin.role.sourceRoleRevision')}</dt>
           <dd>
@@ -252,7 +253,7 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
       <Button disabled={busy} onClick={props.onRefresh} severity="secondary" type="button">
         {t('shell.accessAdmin.common.refresh')}
       </Button>
-      <fieldset className="shell:grid shell:gap-2" disabled={blocked}>
+      <fieldset className="grid gap-150" disabled={blocked}>
         <legend>{t('shell.accessAdmin.role.template')}</legend>
         <p>{t('shell.accessAdmin.role.fullAccessHelp')}</p>
         {props.templates.length === 0 ? (
@@ -271,7 +272,7 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
           ))
         )}
       </fieldset>
-      <div className="shell:overflow-x-auto">
+      <div className="overflow-x-auto">
         <Table>
           <Table.Caption>{t('shell.accessAdmin.role.level')}</Table.Caption>
           <Table.Header>
@@ -322,7 +323,7 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
         <RoleCapabilityCells disabled={blocked} entry={entry} key={entry.key} props={props} />
       ))}
       {unsupported.length === 0 ? null : (
-        <fieldset className="shell:grid shell:gap-2" disabled={blocked}>
+        <fieldset className="grid gap-150" disabled={blocked}>
           <legend>{t('shell.accessAdmin.role.unsupportedCells')}</legend>
           {unsupported.map((cell) => (
             <FormCheckbox
@@ -339,10 +340,17 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
           ))}
         </fieldset>
       )}
-      <details>
-        <summary>{t('shell.accessAdmin.role.cell')}</summary>
-        <CellSummary cells={props.cells} />
-      </details>
+      <Accordion collapsible>
+        <Accordion.Item value="cells">
+          <Accordion.Header>
+            <Accordion.Title>{t('shell.accessAdmin.role.cell')}</Accordion.Title>
+            <Accordion.Indicator />
+          </Accordion.Header>
+          <Accordion.Content>
+            <CellSummary cells={props.cells} />
+          </Accordion.Content>
+        </Accordion.Item>
+      </Accordion>
       <Button
         disabled={blocked || props.status === 'invalid'}
         isLoading={props.status === 'loading'}
@@ -352,8 +360,8 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
         {t(previewLabelKey)}
       </Button>
       {props.preview === null ? null : (
-        <section aria-label={t(previewLabelKey)} aria-live="polite" className="shell:grid shell:gap-4">
-          <h3 className="shell:text-title-md">{t(previewLabelKey)}</h3>
+        <section aria-label={t(previewLabelKey)} aria-live="polite" className="grid gap-200">
+          <h3 className="text-xl">{t(previewLabelKey)}</h3>
           <p>
             {t('shell.accessAdmin.role.affectedPeople')}: {props.preview.affectedHumanCount}
           </p>
@@ -365,7 +373,7 @@ export const RoleEditorView = (props: RoleEditorViewProps) => {
               </li>
             ))}
           </ul>
-          <div className="shell:grid shell:gap-4 shell:md:grid-cols-2">
+          <div className="grid gap-200 md:grid-cols-2">
             <section aria-label={t('shell.accessAdmin.common.beforeState')}>
               <h4>{t('shell.accessAdmin.common.beforeState')}</h4>
               <CellSummary cells={props.role.cells} />

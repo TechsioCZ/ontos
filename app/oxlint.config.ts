@@ -222,6 +222,7 @@ const uiSurfaceBypass = [
 
 // Module UI is built from the kit only; see tools/oxlint/effect-native/README.md#ui-kit-rules.
 const uiKitRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
+  'effect-native/ui-kit-class-in-kit-stylesheet': ['error', { stylesheet: `${uiSurface}/styles.css` }],
   'effect-native/ui-kit-import-through-surface': ['error', { bypass: uiSurfaceBypass, surface: uiSurface }],
   'effect-native/ui-kit-no-colour-literal': 'error',
   'effect-native/ui-kit-no-inline-style': 'error',
