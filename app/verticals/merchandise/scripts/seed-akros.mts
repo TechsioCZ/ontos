@@ -11,6 +11,7 @@ import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts
 import { buildSroubshopEncoded } from './akros-catalog.mts';
 import { mergeSeed, restoreCatalog } from './akros-merge.ts';
 import { refreshAkrosOrderPresentation } from './order-presentation.ts';
+import { keepLinkedPhotos, linkedPhotosOf } from '../src/services/akros-demo-reset.ts';
 
 class AkrosSeedInputError extends Schema.TaggedError<AkrosSeedInputError>()('AkrosSeedInputError', {
   reason: Schema.String,
@@ -54,6 +55,13 @@ const repairStoredPresentation = Effect.fn('Merchandise.repairAkrosPresentation'
   );
 });
 
+/**
+ * The seed a reset or restore writes keeps the photos uploaded to Core Media (the gallery, a variant's own photo, the
+ * photo library) as the in-app reset does: only merchandise rows are replaced, the uploads stay linked to the product.
+ */
+const seedKeepingPhotos = (seed: MerchandiseState, stored: MerchandiseState | undefined) =>
+  stored === undefined ? seed : keepLinkedPhotos(seed, linkedPhotosOf(stored.products, stored.categories ?? []));
+
 const writeState = Effect.fn('Merchandise.writeAkrosState')(function* writeAkrosState(
   reset: boolean,
   restore: boolean,
@@ -66,23 +74,23 @@ const writeState = Effect.fn('Merchandise.writeAkrosState')(function* writeAkros
   }
   const seed = yield* buildAkrosState();
   yield* logSeed(seed);
-  const stored = reset ? undefined : yield* readCompanySnapshot(akrosScope);
+  const stored = yield* readCompanySnapshot(akrosScope);
   if (repairPresentation) {
     if (stored === undefined) {
       return yield* Effect.fail(new AkrosSeedInputError({ reason: 'AKROS merchandise must already exist' }));
     }
     return yield* repairStoredPresentation(stored.state);
   }
-  if (stored === undefined) {
+  if (stored === undefined || reset) {
     const started = yield* Clock.currentTimeMillis;
-    yield* writeCompanySnapshot(akrosScope, seed);
+    yield* writeCompanySnapshot(akrosScope, seedKeepingPhotos(seed, stored?.state));
     const elapsed = (yield* Clock.currentTimeMillis) - started;
     return yield* Console.log(
       `AKROS merchandise (AKROS) ${reset ? 'reset' : 'created'} in ${elapsed} ms: ${seed.products.length} products, ${seed.movements.length} movements, ${seed.orders.length} orders`,
     );
   }
   const current = stored.state;
-  const merged = restore ? restoreCatalog(current, seed) : mergeSeed(current, seed);
+  const merged = restore ? restoreCatalog(current, seedKeepingPhotos(seed, current)) : mergeSeed(current, seed);
   const encodedCurrent = yield* Schema.encodeEffect(MerchandiseStateSchema)(current);
   const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(merged);
   if (!restore && equivalentState(encoded, encodedCurrent)) {
