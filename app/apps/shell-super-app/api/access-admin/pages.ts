@@ -18,17 +18,16 @@ import { routeMeta as rolesRouteMeta } from '../../src/routes/[lang]/access/role
 import { routeMeta as whyRouteMeta } from '../../src/routes/[lang]/access/why/route.meta.ts';
 import { accessApprovalsDeclarations } from './approvals.ts';
 import { accessChangesDeclarations } from './changes.ts';
-import { accessPeopleDeclarations } from './people.ts';
-import { accessRolesDeclarations } from './roles.ts';
 import { AccessAdminSession, accessAdminUnavailableProblem } from './session.ts';
 
 /*
  * Which access administration pages the navigation offers a person (O88). Each page carries its own admin
  * declaration with the surface marker (`admitsAdminSurface`); the gate decides it in the tenant context, exactly
  * as it admits the page: an owner, a live company access administrator, a delegation or a role cell. A page the
- * gate refuses is not offered, so a person never sees a link to a page that only says "no access". The page alone is
- * not enough: a page whose first read the gate refuses still only says "no access" (a company access administrator
- * opens Novinky and Ke schválení, yet their tenant lists are refused), so that read is asked beside it.
+ * gate refuses is not offered, so a person never sees a link to a page that only says "no access". Novinky and Ke
+ * schválení admit their list read in the same tenant context with its own declaration, which a company access
+ * administrator does not pass, so that read is asked beside the page. Role and Lidé admit their reads through the
+ * company reach of the person instead (role-read-scope.ts, people.ts), so their page declaration alone decides.
  */
 
 const page = (
@@ -45,10 +44,10 @@ const page = (
   page: key,
 });
 
-/** The pages in navigation order, each with its own route declaration and the read the page opens with. */
+/** The pages in navigation order, each with its own route declaration and the tenant read it opens with. */
 const accessPages = [
-  page('roles', rolesRouteMeta, accessRolesDeclarations.list),
-  page('people', peopleRouteMeta, accessPeopleDeclarations.list),
+  page('roles', rolesRouteMeta),
+  page('people', peopleRouteMeta),
   page('changes', changesRouteMeta, accessChangesDeclarations.list),
   page('approvals', approvalsRouteMeta, accessApprovalsDeclarations.list),
   page('why', whyRouteMeta),
