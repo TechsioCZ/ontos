@@ -35,7 +35,15 @@ export const rule = defineRule({
   meta: {
     type: 'problem',
     docs: { description: 'Use the kit component instead of an intrinsic interactive or form element.' },
-    schema: [{ type: 'object', properties: { includePaths: { type: 'array', items: { type: 'string' } } } }],
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          excludePaths: { type: 'array', items: { type: 'string' } },
+          includePaths: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    ],
     messages: {
       intrinsic: '<{{element}}> bypasses the kit: use its {{component}}.',
     },

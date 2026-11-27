@@ -307,6 +307,30 @@
     "count": 1,
     "file": "apps/demo/src/browser-import.ts"
   },
+  "ui-kit-class-in-kit-stylesheet": {
+    "count": 7,
+    "file": "verticals/crm/src/routes/off-system-classes.tsx"
+  },
+  "ui-kit-import-through-surface": {
+    "count": 7,
+    "file": "verticals/crm/src/routes/clients/page.tsx"
+  },
+  "ui-kit-no-colour-literal": {
+    "count": 8,
+    "file": "verticals/catalog/src/components/palette.tsx"
+  },
+  "ui-kit-no-inline-style": {
+    "count": 3,
+    "file": "verticals/crm/src/routes/inline-style.tsx"
+  },
+  "ui-kit-no-intrinsic-control": {
+    "count": 9,
+    "file": "verticals/catalog/src/components/raw-controls.tsx"
+  },
+  "ui-kit-no-module-stylesheet": {
+    "count": 4,
+    "file": "verticals/catalog/src/routes/layout.tsx"
+  },
   "ui-kit-required-label": {
     "count": 5,
     "file": "verticals/probe/src/direct-required.tsx"

@@ -83,7 +83,8 @@ const encode = (bitmap: ImageBitmap, edge: number) =>
     if (context === null) {
       return yield* Effect.fail(UNREADABLE);
     }
-    context.fillStyle = '#ffffff';
+    // The white baked into an uploaded image's transparent pixels: image data, not a UI colour.
+    context.fillStyle = 'white';
     context.fillRect(0, 0, width, height);
     context.drawImage(bitmap, 0, 0, width, height);
     const webp = yield* fromPromise(() => canvas.convertToBlob({ quality: 0.86, type: 'image/webp' }));

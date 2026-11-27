@@ -1,4 +1,6 @@
 import { nativeScriptTestGlob } from './tools/oxlint/effect-native/shared/native-script-test-filenames.ts';
+import { createRequire } from 'node:module';
+
 import { defineConfig } from 'oxlint';
 import core from 'ultracite/oxlint/core';
 import { jsPluginSettings, selectJsPlugins } from 'ultracite/oxlint/js-plugins';
@@ -215,6 +217,58 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
   'effect-native/require-timeout-on-external-effect': 'error',
   // Required admin fields read the required text in the page language; see packages/admin-ui/src/form-controls.tsx.
   'effect-native/ui-kit-required-label': 'error',
+} as const;
+
+// The one UI import surface of OntOS UI source. When the CoreSDK re-exports the kit, this becomes the CoreSDK UI
+// entry and '@techsio/ui-kit' moves to the bypass list; nothing else changes. See docs/frontend/FRONTEND.md.
+const uiSurface = '@techsio/ui-kit';
+// The one stylesheet the Shell loads for every module; a module's classes must be rules in it.
+const uiSurfaceStylesheet = createRequire(new URL('apps/shell-super-app/package.json', import.meta.url)).resolve(
+  `${uiSurface}/styles.css`,
+);
+const uiSurfaceBypass = [
+  '@ark-ui/*',
+  '@base-ui-components/*',
+  '@chakra-ui/*',
+  '@dnd-kit/*',
+  '@emotion/*',
+  '@headlessui/*',
+  '@heroicons/*',
+  '@iconify/*',
+  '@mantine/*',
+  '@mui/*',
+  '@radix-ui/*',
+  '@react-aria/*',
+  '@tanstack/react-table',
+  '@tanstack/react-virtual',
+  '@vidstack/react',
+  '@zag-js/*',
+  'antd',
+  'better-themes',
+  'class-variance-authority',
+  'classnames',
+  'clsx',
+  'framer-motion',
+  'lucide-react',
+  'motion',
+  'react-aria',
+  'react-aria-components',
+  'react-icons',
+  'styled-components',
+  'tailwind-merge',
+  'tailwind-variants',
+  'tw-animate-css',
+];
+
+// Module UI is built from the kit only; see tools/oxlint/effect-native/README.md#ui-kit-rules.
+const uiKitRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']> = {
+  'effect-native/ui-kit-class-in-kit-stylesheet': ['error', { stylesheet: uiSurfaceStylesheet }],
+  'effect-native/ui-kit-import-through-surface': ['error', { bypass: uiSurfaceBypass, surface: uiSurface }],
+  // E-mail HTML is rendered on the server and read in mail clients, where the kit stylesheet cannot load.
+  'effect-native/ui-kit-no-colour-literal': ['error', { excludePaths: ['packages/email-delivery/**'] }],
+  'effect-native/ui-kit-no-inline-style': 'error',
+  'effect-native/ui-kit-no-intrinsic-control': 'error',
+  'effect-native/ui-kit-no-module-stylesheet': 'error',
 } as const;
 
 export default defineConfig({
@@ -1620,6 +1674,7 @@ export default defineConfig({
     ...antiSlopRules,
     ...antiSlopEffectRules,
     ...effectNativeRules,
+    ...uiKitRules,
   },
   settings: jsPluginSettings,
 });
