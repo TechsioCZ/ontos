@@ -161,6 +161,22 @@ const catalogRevision = (options: OperationOptions) =>
       : undefined,
   );
 
+type CatalogResult = Awaited<ReturnType<typeof readCatalog>>;
+// Every listing answer of one revision repeats the same category tree (about 1,800 nodes): shared answers keep one copy.
+let heldTree: { categories: readonly unknown[]; json: string } | undefined;
+const shareTree = (result: CatalogResult): CatalogResult => {
+  if (result.state !== "ready" || result.catalog.categories.length === 0) return result;
+  const json = JSON.stringify(result.catalog.categories);
+  if (heldTree?.json !== json) heldTree = { categories: result.catalog.categories, json };
+  return {
+    ...result,
+    catalog: {
+      ...result.catalog,
+      categories: heldTree.categories as typeof result.catalog.categories,
+    },
+  };
+};
+
 /** One render (or API request) reads each query once; across requests, equal reads share one owner answer. */
 export const getCatalog = cache(
   async (locale: string, queryKey: string, options: OperationOptions = {}) => {
@@ -169,7 +185,7 @@ export const getCatalog = cache(
     return await sharedRead(
       `catalog:${locale}:${queryKey}`,
       CATALOG_TTL_MS,
-      async (operation) => await readCatalog(locale, queryKey, { operation }),
+      async (operation) => shareTree(await readCatalog(locale, queryKey, { operation })),
       {
         caller: options,
         generation: revision,
