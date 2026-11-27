@@ -454,6 +454,7 @@ Follow [Commerce Application Boundaries](./COMMERCE_APPLICATIONS.md). Storefront
 ### Module Federation and CSS
 
 - React, Modern runtime, and provider-context packages such as i18n must be exact strict singletons on both Shell and remotes.
+- `@techsio/ui-kit` is a strict singleton the Shell provides: the Shell shares every subpath the kit exports and loads the kit's precompiled `styles.css` once; a remote consumes the kit with no fallback (`import: false` through `createSharedRuntimeConfig`) and renders inside the Shell's provider tree. Application Composition rejects a remote that shares the kit at another version or with its own fallback, and `scripts/check-remote-ui-kit.mts` fails a remote build whose JavaScript carries kit code.
 - Promoted compositions pin immutable `mf-manifest.json` references and permit browser execution only. Routine upgrades wait for a new browser document; they never force-replace a loaded remote.
 - Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in a MicroVertical-owned isolated process, not the Shell/Core Node.js process.
 - Every app owns a CSS prefix/namespace. A Shell or MicroVertical build must not scan, erase, or collide with another delivery unit's utility classes.

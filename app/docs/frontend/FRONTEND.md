@@ -72,6 +72,8 @@ Modules ship no CSS. The Shell loads the kit's precompiled stylesheet (`@techsio
 
 Lint enforces this (see [UI kit rules](../../tools/oxlint/effect-native/README.md#ui-kit-rules)), and the Node build shards fail a module whose browser bundle carries CSS. Where a screen needs something the kit lacks, add it to the kit in `new-engine/libs/ui`; never work around a rule in OntOS.
 
+The Shell also provides the kit's JavaScript: every kit subpath is a Module Federation singleton the Shell provides, and a module consumes it with no copy of its own (`createSharedRuntimeConfig` in `module-federation.shared.ts`), so every module renders with the Shell's one kit, its providers and its toast region.
+
 Keep domain-specific presentation inside its feature.
 
 ## Internationalization

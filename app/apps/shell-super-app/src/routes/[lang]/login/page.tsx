@@ -2,7 +2,7 @@ import { FormReact, FormRoot, SubmitButton, TextField, fromPayload, useAtomSubsc
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Link } from '@techsio/ui-kit/atoms/link';
-import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema, SchemaIssue } from 'effect';
 import type { Cause } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
@@ -175,7 +175,6 @@ const LoginPage = () => {
           </div>
         </section>
       </main>
-      <Toaster />
     </>
   );
 };

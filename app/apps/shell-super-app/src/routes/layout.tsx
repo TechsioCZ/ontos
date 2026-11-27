@@ -6,6 +6,7 @@ import '@techsio/ui-kit/styles.css';
 import '@techsio/ui-kit/theme.css';
 
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
+import { ShellProviders } from './shell-providers.tsx';
 
 /**
  * The ui-kit draws its components only inside a brand theme; the Shell and every module page run in Business.
@@ -19,7 +20,9 @@ const Layout = () => {
     <div data-app-id="shell-super-app" data-build-marker={ultramodernUiMarker.build}>
       <Helmet htmlAttributes={{ className: 'light', 'data-theme': 'business' }} />
       <UiMessagesProvider messages={uiMessages}>
-        <Outlet />
+        <ShellProviders>
+          <Outlet />
+        </ShellProviders>
       </UiMessagesProvider>
     </div>
   );
