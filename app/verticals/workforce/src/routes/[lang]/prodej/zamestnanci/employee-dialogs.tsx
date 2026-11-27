@@ -3,42 +3,58 @@ import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   useDraftSave,
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+import type { RecordDraft, SaveOutcome } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SwitchField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, Switch } from '@app/admin-ui/form-controls';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { Url } from 'effect/http';
-import { useState } from 'react';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
 import { EmployeeIdSchema } from '../../../../../shared/apis/records.ts';
 import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
+  DepartmentTextSchema,
+  EmailTextSchema,
+  FullNameTextSchema,
+  PhoneTextSchema,
   bulkCommand,
   createCommand,
-  draftErrors,
   draftFromEmployee,
+  draftOfValues,
   emptyDraft,
   employeeRoles,
-  errorFieldKey,
   employeeSaveResult,
-  isDepartmentName,
+  isSendableDraft,
   listedFieldsOf,
   newEmployeeId,
   roleFromValue,
   sameDraft,
   updateCommand,
+  valuesOfDraft,
 } from './employee-model.ts';
-import type { CommitOutcome, DraftField, EditCommitResult, EmployeeDraft } from './employee-model.ts';
+import type { CommitOutcome, EditCommitResult, EmployeeDraft, EmployeeValues } from './employee-model.ts';
 
 const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
 
@@ -320,18 +336,14 @@ const commitErrorKey = (outcome: CommitOutcome): string => {
   return `${key}.errors.save`;
 };
 
-/** `displayValue` feeds the hidden native option, which otherwise shows the raw role code to assistive tech and innerText. */
 const roleItemsOf = (translate: (key: string) => string) =>
-  employeeRoles.map((role) => {
-    const label = translate(`${key}.roles.${role}`);
-    return { displayValue: label, label, value: role };
-  });
+  employeeRoles.map((role) => ({ label: translate(`${key}.roles.${role}`), value: role }));
 
 /**
- * Select labels inherit the surrounding font size; FormInput and Combobox labels use the `md` label token. Every
- * Select on this page takes these props, in the forms and in the filter bar, so all labels match.
+ * Select labels inherit the surrounding font size; text field labels use the `md` label token. Every select on this
+ * page takes its label through this, in the forms and in the filter bar, so all labels match.
  */
-export const selectLabelProps = { className: 'text-label-md' };
+export const selectLabel = (text: string): ReactNode => <span className="text-label-md">{text}</span>;
 
 const closeWhenDismissed =
   (onClose: () => void) =>
@@ -341,143 +353,247 @@ const closeWhenDismissed =
     }
   };
 
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier panel left, so a panel reads the values only after `onReady`.
+ */
+export const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
+/**
+ * One Employee as the create, edit and read-only panels show it; only one of them is open at a time. The panel's
+ * Uložit sends the draft, so the form itself sends nothing: Enter asks the panel to save. `takenEmail` is the e-mail
+ * the server refused as used by another Employee; it is never shown as a control, only as the e-mail field's message.
+ */
+const employeeForm = FormReact.make(
+  FormBuilder.empty
+    .addField('active', Schema.Boolean)
+    .addField('department', DepartmentTextSchema)
+    .addField('email', EmailTextSchema)
+    .addField('fullName', FullNameTextSchema)
+    .addField('phone', PhoneTextSchema)
+    .addField('principalId', Schema.String)
+    .addField('role', Schema.String)
+    .addField('takenEmail', Schema.String)
+    .refine(({ email, takenEmail }) =>
+      takenEmail !== '' && email.trim() === takenEmail
+        ? { issue: `${key}.errors.emailTaken`, path: ['email'] }
+        : undefined,
+    ),
+  {
+    fields: {
+      active: SwitchField,
+      department: TextField,
+      email: TextField,
+      fullName: TextField,
+      phone: TextField,
+      principalId: ChoiceField,
+      role: ChoiceField,
+      takenEmail: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+const textOf = (value: Atom.Atom<Option.Option<string>>) => value.pipe(Atom.map(Option.getOrElse(() => '')));
+const fullNameField = employeeForm.getFieldAtoms(employeeForm.fields.fullName);
+const takenEmailField = employeeForm.getFieldAtoms(employeeForm.fields.takenEmail);
+/** The picked account and the typed e-mail as plain values, which change only when the person changes them. */
+const chosenPrincipalId = textOf(employeeForm.getFieldAtoms(employeeForm.fields.principalId).value);
+const typedEmail = textOf(employeeForm.getFieldAtoms(employeeForm.fields.email).value);
+const takenEmail = textOf(takenEmailField.value);
+/** The typed e-mail with the refused one, read together so a change of either sees the other as it is now. */
+const emailRefusal = Atom.readable((get) => ({ email: get(typedEmail), taken: get(takenEmail) }));
+/** A save or Enter was tried: from then on the create panel names every field it holds back. */
+const saveTried = Atom.readable((get) => get(employeeForm.submitCount) + get(employeeForm.validationCount) > 0);
+
+type PrincipalChoice = RecordsResponse['availablePrincipals'][number];
+
+/** The accounts the panel offers: the company's people, and the account the Employee is linked to when it is not one. */
+const principalChoicesOf = (
+  availablePrincipals: RecordsResponse['availablePrincipals'],
+  employee: Employee | null,
+): readonly PrincipalChoice[] =>
+  employee?.principalRef !== undefined &&
+  !availablePrincipals.some(({ principalRef }) => principalRef.principalId === employee.principalRef?.principalId)
+    ? [...availablePrincipals, { displayName: employee.fullName, principalRef: employee.principalRef }]
+    : availablePrincipals;
+
+const principalRefsOf = (choices: readonly PrincipalChoice[]) => choices.map(({ principalRef }) => principalRef);
+
+/**
+ * The e-mail the server refused as taken shows on the e-mail field until the e-mail changes. `refuse` marks the sent
+ * e-mail as taken, or clears the mark with `""`.
+ */
+const useTakenEmail = () => {
+  const setTaken = useAtomSet(takenEmailField.setValue);
+  const validate = useAtomSet(employeeForm.validate);
+  // Read while subscribed, so the subscription sees every change.
+  useAtomValue(emailRefusal);
+  useAtomSubscribe(
+    emailRefusal,
+    ({ email, taken }) => {
+      if (taken !== '' && email.trim() !== taken) {
+        setTaken('');
+        validate();
+      }
+    },
+    { immediate: false },
+  );
+  return (email: string) => {
+    setTaken(email.trim());
+    validate();
+  };
+};
+
+/** While editing, every field the draft holds back is named from the moment the form opens. */
+const NamesEveryProblem = () => {
+  const validate = useAtomSet(employeeForm.validate);
+  useEffect(() => {
+    validate();
+  }, [validate]);
+  return null;
+};
+
+/** Enter in the employee form is Uložit. */
+const useEnterSaves = (save: () => void) => {
+  // Read while subscribed, so the subscription sees every submit.
+  useAtomValue(employeeForm.submitCount);
+  useAtomSubscribe(
+    employeeForm.submitCount,
+    (count) => {
+      if (count > 0) {
+        save();
+      }
+    },
+    { immediate: false },
+  );
+};
+
 interface EmployeeFieldsProps {
-  readonly availablePrincipals: RecordsResponse['availablePrincipals'];
-  readonly disabled: boolean;
-  readonly draft: EmployeeDraft;
-  /** Set when the server reports that another Employee already uses the typed e-mail. */
-  readonly emailTaken: boolean;
-  readonly employee: Employee | null;
-  readonly onChange: (patch: Partial<EmployeeDraft>) => void;
-  /** Inline field errors are shown (after the first create attempt; always while editing). */
-  readonly showErrors: boolean;
+  readonly choices: readonly PrincipalChoice[];
+  /** People who can be picked; picking one fills an empty name with theirs. */
+  readonly people: RecordsResponse['availablePrincipals'];
+  /** The create panel requires an account and names it once a save was tried. */
+  readonly principalRequired: boolean;
+  /** The link to manage people is offered while the fields can change. */
+  readonly showManagePeople: boolean;
 }
 
-/** The fields of one Employee, shared by the create dialog and the autosaving edit panel. */
-const EmployeeFields = ({
-  availablePrincipals,
-  disabled,
-  draft,
-  emailTaken,
-  employee,
-  onChange,
-  showErrors,
-}: EmployeeFieldsProps) => {
+/** The fields of one Employee, shared by the create, edit and read-only panels. */
+const EmployeeFields = ({ choices, people, principalRequired, showManagePeople }: EmployeeFieldsProps) => {
   const { language, t } = useModernI18n();
-  const errors = draftErrors(draft);
-  const fieldStatus = (field: DraftField) =>
-    showErrors && errors.includes(field)
-      ? { helpText: t(`${key}.errors.${errorFieldKey(draft, field)}`), validateStatus: 'error' as const }
-      : {};
-  const emailStatus = emailTaken
-    ? { helpText: t(`${key}.errors.emailTaken`), validateStatus: 'error' as const }
-    : fieldStatus('email');
-  const roleItems = roleItemsOf(t);
-  const principalOptions =
-    employee?.principalRef !== undefined &&
-    !availablePrincipals.some(({ principalRef }) => principalRef.principalId === employee.principalRef?.principalId)
-      ? [...availablePrincipals, { displayName: employee.fullName, principalRef: employee.principalRef }]
-      : availablePrincipals;
+  const requiredLabel = requiredLabelFor(language);
+  const principalId = useAtomValue(chosenPrincipalId);
+  const tried = useAtomValue(saveTried);
+  const setFullName = useAtomSet(fullNameField.setValue);
+  useAtomSubscribe(
+    chosenPrincipalId,
+    (picked) => {
+      const person = people.find(({ principalRef }) => principalRef.principalId === picked);
+      if (person !== undefined) {
+        setFullName((current: string) => (current.trim() === '' ? person.displayName : current));
+      }
+    },
+    { immediate: false },
+  );
   return (
     <>
-      <SelectTemplate
-        disabled={disabled}
-        items={principalOptions.map(({ displayName, principalRef }) => ({
-          displayValue: displayName,
+      <employeeForm.principalId
+        items={choices.map(({ displayName, principalRef }) => ({
           label: displayName,
           value: principalRef.principalId,
         }))}
-        label={t(`${key}.form.principal`)}
-        labelProps={selectLabelProps}
-        name="principalId"
-        onValueChange={({ value }) => {
-          const person = availablePrincipals.find(({ principalRef }) => principalRef.principalId === value[0]);
-          if (person !== undefined) {
-            onChange({
-              fullName: draft.fullName.trim() === '' ? person.displayName : draft.fullName,
-              principalRef: person.principalRef,
-            });
-          }
-        }}
+        label={selectLabel(t(`${key}.form.principal`))}
         placeholder={t(selectPlaceholder)}
-        value={draft.principalRef === undefined ? [] : [draft.principalRef.principalId]}
       />
-      {showErrors && employee === null && draft.principalRef === undefined && (
+      {principalRequired && tried && principalId === '' && (
         <StatusText role="alert" status="error">
           {t(`${key}.errors.principal`)}
         </StatusText>
       )}
       <p className="text-sm text-fg-secondary">{t(`${key}.form.principalHelp`)}</p>
-      {disabled ? null : (
+      {showManagePeople ? (
         <a className="text-sm underline" href={`/${language}/sprava/lide-a-role`}>
           {t(`${key}.form.managePeople`)}
         </a>
-      )}
-      <FormInput
+      ) : null}
+      <employeeForm.fullName
         autoComplete="off"
-        disabled={disabled}
         id="employee-full-name"
         label={t(`${key}.form.fullName`)}
         name="fullName"
-        onChange={(event) => onChange({ fullName: event.target.value })}
         required
-        value={draft.fullName}
-        {...fieldStatus('fullName')}
+        requiredLabel={requiredLabel}
       />
-      <FormInput
+      <employeeForm.email
         autoComplete="email"
-        disabled={disabled}
         id="employee-email"
         label={t(`${key}.form.email`)}
         name="email"
-        onChange={(event) => onChange({ email: event.target.value })}
         required
+        requiredLabel={requiredLabel}
         type="email"
-        value={draft.email}
-        {...emailStatus}
       />
-      <FormInput
+      <employeeForm.phone
         autoComplete="tel"
-        disabled={disabled}
         id="employee-phone"
         label={t(`${key}.form.phone`)}
         name="phone"
-        onChange={(event) => onChange({ phone: event.target.value })}
         type="tel"
-        value={draft.phone}
-        {...fieldStatus('phone')}
       />
-      <SelectTemplate
-        disabled={disabled}
-        items={roleItems}
-        label={t(`${key}.form.role`)}
-        labelProps={selectLabelProps}
-        name="role"
-        onValueChange={(details) => {
-          const next = roleFromValue(details.value[0]);
-          if (next !== null) {
-            onChange({ role: next });
-          }
-        }}
+      <employeeForm.role
+        items={roleItemsOf(t)}
+        label={selectLabel(t(`${key}.form.role`))}
         placeholder={t(selectPlaceholder)}
-        value={[draft.role]}
       />
-      <FormInput
+      <employeeForm.department
         autoComplete="off"
-        disabled={disabled}
         id="employee-department"
         label={t(`${key}.form.department`)}
         name="department"
-        onChange={(event) => onChange({ department: event.target.value })}
         required
-        value={draft.department}
-        {...fieldStatus('department')}
+        requiredLabel={requiredLabel}
       />
-      <Switch checked={draft.active} disabled={disabled} onCheckedChange={(checked) => onChange({ active: checked })}>
-        {t(`${key}.form.active`)}
-      </Switch>
+      <employeeForm.active>{t(`${key}.form.active`)}</employeeForm.active>
     </>
   );
+};
+
+/**
+ * The form's values are the record's draft: typing changes the draft, and a draft that moves without typing (a newer
+ * server version, Zahodit změny, Načíst aktuální verzi) moves the form.
+ */
+const useRecordValues = (
+  record: RecordDraft<EmployeeDraft>,
+  principals: ReturnType<typeof principalRefsOf>,
+  opened: EmployeeDraft,
+) => {
+  const values = useAtomValue(employeeForm.values);
+  const setValues = useAtomSet(employeeForm.setValues);
+  const { draft, setDraft } = record;
+  useAtomSubscribe(
+    employeeForm.values,
+    (next) => {
+      if (Option.isSome(next)) {
+        setDraft(draftOfValues(next.value, principals, opened));
+      }
+    },
+    { immediate: false },
+  );
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    if (Option.exists(values, (shown) => !sameDraft(draftOfValues(shown, principals, opened), draft))) {
+      setValues(valuesOfDraft(draft));
+    }
+  }, [draft, opened, principals, setValues, values]);
 };
 
 /**
@@ -499,11 +615,13 @@ const EmployeeEditPanel = ({
   readonly revision: number;
 }) => {
   const { language, t } = useModernI18n();
-  const [emailTaken, setEmailTaken] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+  const refuseEmail = useTakenEmail();
+  const choices = principalChoicesOf(availablePrincipals, employee);
+  const server = draftFromEmployee(employee);
   const record = useRecordDraft<EmployeeDraft, never>({
     equals: sameDraft,
-    isValid: (value) => draftErrors(value).length === 0,
+    isValid: isSendableDraft,
     revision,
     runtime: browserRuntime,
     save: (value, expectedRevision) =>
@@ -513,14 +631,15 @@ const EmployeeEditPanel = ({
       }).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            setEmailTaken(result === 'duplicateEmail');
+            refuseEmail(result === 'duplicateEmail' ? value.email : '');
             setServerError(result === 'forbidden' ? t(commitErrorKey(result)) : null);
           }),
         ),
         Effect.map(employeeSaveResult),
       ),
-    server: draftFromEmployee(employee),
+    server,
   });
+  useRecordValues(record, principalRefsOf(choices), server);
   // Browser Back and links ask the same question as Zavřít and the panel's own close button.
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
@@ -530,6 +649,7 @@ const EmployeeEditPanel = ({
   };
   const handleSave = record.save;
   const handleReloadLatest = record.reloadLatest;
+  useEnterSaves(handleSave);
   return (
     <>
       <DocumentTitle title={employee.fullName} />
@@ -554,35 +674,21 @@ const EmployeeEditPanel = ({
         size="md"
         title={t(`${key}.form.editTitle`)}
       >
-        <form
+        <FormRoot
           className="flex flex-col gap-200 py-200"
+          defaultValues={valuesOfDraft(record.draft)}
+          form={employeeForm}
           id={employeeFormId}
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            handleSave();
-          }}
+          translateMessage={t}
         >
+          <NamesEveryProblem />
           {serverError !== null && (
             <StatusText showIcon status="error">
               {serverError}
             </StatusText>
           )}
-          <EmployeeFields
-            availablePrincipals={availablePrincipals}
-            disabled={false}
-            draft={record.draft}
-            emailTaken={emailTaken}
-            employee={employee}
-            onChange={(patch) => {
-              if (patch.email !== undefined) {
-                setEmailTaken(false);
-              }
-              record.setDraft((current) => ({ ...current, ...patch }));
-            }}
-            showErrors
-          />
-        </form>
+          <EmployeeFields choices={choices} people={availablePrincipals} principalRequired={false} showManagePeople />
+        </FormRoot>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -590,7 +696,7 @@ const EmployeeEditPanel = ({
 };
 
 const noopChange = () => {
-  // A read-only detail never changes its draft.
+  // Nothing to reload: the draft has no newer server version.
 };
 
 /** A created Employee closes the create panel. A conflict has no draft to reload there, so it reads as a failed save. */
@@ -601,6 +707,9 @@ const createSaveOutcome = (result: EditCommitResult): SaveOutcome => {
   }
   return saved === 'conflict' ? 'failed' : saved;
 };
+
+/** The empty create form. */
+const emptyValues: EmployeeValues = valuesOfDraft(emptyDraft);
 
 /**
  * Create a new Employee in a right-hand panel. Typing changes only the draft; Save sends it once and closes the panel
@@ -618,20 +727,27 @@ const EmployeeCreateDialog = ({
   readonly revision: number;
 }) => {
   const { language, t } = useModernI18n();
-  const [draft, setDraft] = useState<EmployeeDraft>(emptyDraft);
+  const [ready, setReady] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [emailTaken, setEmailTaken] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
+  const refuseEmail = useTakenEmail();
+  const validate = useAtomSet(employeeForm.validate);
+  const setValues = useAtomSet(employeeForm.setValues);
+  const choices = principalChoicesOf(availablePrincipals, null);
+  const principals = principalRefsOf(choices);
+  const draft = Option.match(
+    Option.filter(useAtomValue(employeeForm.values), () => ready),
+    { onNone: () => emptyDraft, onSome: (shown) => draftOfValues(shown, principals, emptyDraft) },
+  );
   const create = useDraftSave<EmployeeDraft, never>({
     equals: sameDraft,
-    isValid: (value) => draftErrors(value).length === 0 && value.principalRef !== undefined,
+    isValid: (value) => isSendableDraft(value) && value.principalRef !== undefined,
     runtime: browserRuntime,
     save: (value) =>
       newEmployeeId.pipe(
         Effect.flatMap((id) => commitEdit(createCommand(id, value), revision, { ids: [], patch: {} })),
         Effect.tap((result) =>
           Effect.sync(() => {
-            setEmailTaken(result === 'duplicateEmail');
+            refuseEmail(result === 'duplicateEmail' ? value.email : '');
             setServerError(result === 'forbidden' ? t(commitErrorKey(result)) : null);
           }),
         ),
@@ -641,12 +757,14 @@ const EmployeeCreateDialog = ({
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => create.dirty, withResolver: true });
   const discard = () => {
-    setDraft(create.confirmed);
+    setValues(valuesOfDraft(create.confirmed));
   };
   const guard = useUnsavedChangesGuard({ draft: create, navigation: blocker, onDiscard: discard });
   const labels = saveLabelsFor(language);
+  const saving = create.status === 'saving';
   const handleSave = () => {
-    setSubmitted(true);
+    // From the first try on, every field the draft holds back is named.
+    validate();
     create.save();
     create.afterSave((status) => {
       if (status === 'saved') {
@@ -654,6 +772,7 @@ const EmployeeCreateDialog = ({
       }
     });
   };
+  useEnterSaves(handleSave);
 
   return (
     <>
@@ -679,36 +798,23 @@ const EmployeeCreateDialog = ({
         size="md"
         title={t(`${key}.form.createTitle`)}
       >
-        <form
+        {/* Required-field and format messages stay inline in Czech; the browser bubble would show in English. */}
+        <FormRoot
+          blocked={saving}
           className="flex flex-col gap-200 py-200"
+          defaultValues={emptyValues}
+          form={employeeForm}
           id={employeeFormId}
-          // Required-field and format messages stay inline in Czech; the browser bubble would show in English.
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            handleSave();
-          }}
+          translateMessage={t}
         >
+          <FormReady onReady={setReady} />
           {serverError !== null && (
             <StatusText showIcon status="error">
               {serverError}
             </StatusText>
           )}
-          <EmployeeFields
-            availablePrincipals={availablePrincipals}
-            disabled={create.status === 'saving'}
-            draft={draft}
-            emailTaken={emailTaken}
-            employee={null}
-            onChange={(patch) => {
-              if (patch.email !== undefined) {
-                setEmailTaken(false);
-              }
-              setDraft((current) => ({ ...current, ...patch }));
-            }}
-            showErrors={submitted}
-          />
-        </form>
+          <EmployeeFields choices={choices} people={availablePrincipals} principalRequired showManagePeople={!saving} />
+        </FormRoot>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -716,8 +822,8 @@ const EmployeeCreateDialog = ({
 };
 
 /**
- * One Employee opened from a copied search URL for a reader without write: the same fields, disabled, with no draft
- * controller, form submit, mutation action or draft. Closing it only dismisses the panel.
+ * One Employee opened from a copied search URL for a reader without write: the same fields, locked, with no draft
+ * controller, save or mutation action. Closing it only dismisses the panel.
  */
 const EmployeeReadOnlyPanel = ({
   availablePrincipals,
@@ -729,6 +835,15 @@ const EmployeeReadOnlyPanel = ({
   readonly onClose: () => void;
 }) => {
   const { t } = useModernI18n();
+  const setValues = useAtomSet(employeeForm.setValues);
+  const shown = useRef(employee);
+  // A fresher read of the same Employee shows at once.
+  useEffect(() => {
+    if (shown.current !== employee) {
+      shown.current = employee;
+      setValues(valuesOfDraft(draftFromEmployee(employee)));
+    }
+  }, [employee, setValues]);
   return (
     <SidePanel
       actions={
@@ -749,15 +864,20 @@ const EmployeeReadOnlyPanel = ({
     >
       <div className="flex flex-col gap-200 py-200" data-employee-detail>
         <DocumentTitle title={employee.fullName} />
-        <EmployeeFields
-          availablePrincipals={availablePrincipals}
-          disabled
-          draft={draftFromEmployee(employee)}
-          emailTaken={false}
-          employee={employee}
-          onChange={noopChange}
-          showErrors={false}
-        />
+        <FormRoot
+          blocked
+          className="flex flex-col gap-200"
+          defaultValues={valuesOfDraft(draftFromEmployee(employee))}
+          form={employeeForm}
+          translateMessage={t}
+        >
+          <EmployeeFields
+            choices={principalChoicesOf(availablePrincipals, employee)}
+            people={availablePrincipals}
+            principalRequired={false}
+            showManagePeople={false}
+          />
+        </FormRoot>
       </div>
     </SidePanel>
   );
@@ -859,6 +979,16 @@ const useBulkSave = <V,>({
   return { guard, handleSave, labels: saveLabelsFor(language), record, serverError };
 };
 
+/** The department every selected Employee gets. A typed value that is not a department shows its message at once. */
+const bulkDepartmentForm = FormReact.make(FormBuilder.empty.addField('department', DepartmentTextSchema), {
+  fields: { department: TextField },
+  mode: { validation: 'onChange' },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+const isDepartmentText = Schema.is(DepartmentTextSchema);
+
 /** Bulk department change: one text field applied to every selected Employee. */
 export const BulkDepartmentDialog = ({
   commit,
@@ -871,18 +1001,21 @@ export const BulkDepartmentDialog = ({
   readonly onClose: () => void;
   readonly onSaved: () => void;
 }) => {
-  const { t } = useModernI18n();
-  const [department, setDepartment] = useState('');
+  const { language, t } = useModernI18n();
+  const [ready, setReady] = useState(false);
+  const department = Option.match(
+    Option.filter(useAtomValue(bulkDepartmentForm.values), () => ready),
+    { onNone: () => '', onSome: (values) => values.department },
+  );
   const bulk = useBulkSave({
     commit,
     ids,
     initial: '',
-    isValid: (value) => isDepartmentName(value.trim()),
+    isValid: isDepartmentText,
     onSaved,
     patchOf: (value) => ({ department: value.trim() }),
     value: department,
   });
-  const invalid = bulk.record.status === 'invalid';
 
   return (
     <SidePanel
@@ -912,24 +1045,36 @@ export const BulkDepartmentDialog = ({
       title={t(`${key}.bulk.departmentTitle`)}
     >
       {/* Enter never applies the change: only Uložit does. */}
-      <form className="flex flex-col gap-200 py-200" noValidate onSubmit={(event) => event.preventDefault()}>
-        <FormInput
+      <FormRoot
+        className="flex flex-col gap-200 py-200"
+        defaultValues={{ department: '' }}
+        form={bulkDepartmentForm}
+        translateMessage={t}
+      >
+        <FormReady onReady={setReady} />
+        <bulkDepartmentForm.department
           autoComplete="off"
           id="bulk-department"
           label={t(`${key}.form.department`)}
           name="department"
-          onChange={(event) => setDepartment(event.target.value)}
           required
-          value={department}
-          {...(invalid ? { helpText: t(`${key}.errors.department`), validateStatus: 'error' as const } : {})}
+          requiredLabel={requiredLabelFor(language)}
         />
-      </form>
+      </FormRoot>
     </SidePanel>
   );
 };
 
+/** The role every selected Employee gets. */
+const bulkRoleForm = FormReact.make(FormBuilder.empty.addField('role', Schema.String), {
+  fields: { role: ChoiceField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
 /** The role the bulk role dialog suggests when it opens. */
 const openingRole: EmployeeRole = 'SALES_REP';
+const bulkRoleFormId = 'bulk-role';
 
 /** Bulk role change: one role applied to every selected Employee. */
 export const BulkRoleDialog = ({
@@ -944,8 +1089,11 @@ export const BulkRoleDialog = ({
   readonly onSaved: () => void;
 }) => {
   const { t } = useModernI18n();
-  const [role, setRole] = useState<EmployeeRole | null>(openingRole);
-  const roleItems = roleItemsOf(t);
+  const [ready, setReady] = useState(false);
+  const role = Option.match(
+    Option.filter(useAtomValue(bulkRoleForm.values), () => ready),
+    { onNone: () => openingRole, onSome: (values) => roleFromValue(values.role) },
+  );
   const bulk = useBulkSave<EmployeeRole | null>({
     commit,
     ids,
@@ -978,31 +1126,31 @@ export const BulkRoleDialog = ({
       }
       description={t(`${key}.bulk.description`, { total: ids.length })}
       guard={bulk.guard}
-      // The first field takes focus. A Select trigger has the DOM id `select:<id>:trigger`.
-      initialFocusEl={() => globalThis.document.querySelector<HTMLElement>('[id="select:bulk-role:trigger"]')}
+      // The first field takes focus: the trigger of the role select.
+      initialFocusEl={() =>
+        globalThis.document.querySelector<HTMLElement>(`#${bulkRoleFormId} [data-scope="select"][data-part="trigger"]`)
+      }
       onOpenChange={closeWhenDismissed(onClose)}
       open
       resizeLabel={t(RESIZE_LABEL_KEY)}
       size="md"
       title={t(`${key}.bulk.roleTitle`)}
     >
-      <div className="flex flex-col gap-200 py-200">
-        <SelectTemplate
-          id="bulk-role"
-          items={roleItems}
-          label={t(`${key}.form.role`)}
-          labelProps={selectLabelProps}
-          name="bulkRole"
-          onValueChange={(details) => {
-            const next = roleFromValue(details.value[0]);
-            if (next !== null) {
-              setRole(next);
-            }
-          }}
+      {/* Enter never applies the change: only Uložit does. */}
+      <FormRoot
+        className="flex flex-col gap-200 py-200"
+        defaultValues={{ role: openingRole }}
+        form={bulkRoleForm}
+        id={bulkRoleFormId}
+        translateMessage={t}
+      >
+        <FormReady onReady={setReady} />
+        <bulkRoleForm.role
+          items={roleItemsOf(t)}
+          label={selectLabel(t(`${key}.form.role`))}
           placeholder={t(selectPlaceholder)}
-          value={role === null ? [] : [role]}
         />
-      </div>
+      </FormRoot>
     </SidePanel>
   );
 };

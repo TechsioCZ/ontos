@@ -24,6 +24,14 @@ export {
   TextField,
 } from './kit-fields.ts';
 export type { FieldChoice } from './kit-fields.ts';
+export { ComboboxField, MultiComboboxField, SwitchField } from './kit-fields-combobox.ts';
+export { ChoiceLensField } from './kit-fields-choice-lens.ts';
+export { DatePickerField } from './kit-fields-date-picker.ts';
+export { CheckedTextField } from './kit-fields-checked-text.ts';
+export { ClearableChoiceField } from './kit-fields-clearable-select.ts';
+export { makeCheckboxGroupField } from './kit-fields-checkbox-group.ts';
+export { SelectTemplateField } from './kit-fields-select-template.ts';
+export { SuggestedTextAreaField, SuggestedTextField } from './kit-fields-suggested.ts';
 export { EntryTextField, MemberCheckboxField, makeMemberCheckboxField } from './kit-fields-set.ts';
 export { type FieldNotice, NoticedTextField } from './noticed-text-field.ts';
 export { CheckboxSettingField } from './checkbox-setting-field.ts';

@@ -7,10 +7,12 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { Effect, Match, Random, Record as EffectRecord } from 'effect';
+import { CheckboxField, FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
+import { Effect, Match, Option, Random, Record as EffectRecord, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { executeRecords as executeProperty } from '../../../../api/records-client';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/property-portfolio.json';
 import enResource from '../../../../../locales/en/property-portfolio.json';
@@ -517,37 +519,42 @@ const OverviewAgenda = ({
   </section>
 );
 
+/** The search over the agendas: every change of the text or the box searches again, nothing is submitted. */
+const overviewSearchForm = FormReact.make(
+  FormBuilder.empty.addField('includeClosed', Schema.Boolean).addField('query', Schema.String),
+  {
+    fields: { includeClosed: CheckboxField, query: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const emptyOverviewSearch: typeof overviewSearchForm.schema.Encoded = { includeClosed: false, query: '' };
+const overviewSearch = overviewSearchForm.values.pipe(Atom.map(Option.getOrElse(() => emptyOverviewSearch)));
+
 const OverviewSearch = ({
   hits,
-  includeClosed,
   query,
-  setIncludeClosed,
-  setQuery,
 }: {
   readonly hits: ReturnType<typeof searchRentalOverview>;
-  readonly includeClosed: boolean;
   readonly query: string;
-  readonly setIncludeClosed: (value: boolean) => void;
-  readonly setQuery: (query: string) => void;
 }) => {
   const { t } = useModernI18n();
   return (
     <section className="sp-panel">
       <h2>Najít v nemovitostech</h2>
-      <label className="sp-stack">
-        <span className="sp-muted">Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol</span>
-        <input
-          className="sp-search"
-          onChange={(event) => setQuery(event.target.value)}
+      <FormRoot
+        className="sp-search"
+        defaultValues={emptyOverviewSearch}
+        form={overviewSearchForm}
+        translateMessage={(message) => t(message)}
+      >
+        <overviewSearchForm.query
+          label="Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol"
           placeholder={t('property-portfolio.overview.searchPlaceholder')}
           type="search"
-          value={query}
         />
-      </label>
-      <label className="sp-muted">
-        <input checked={includeClosed} onChange={(event) => setIncludeClosed(event.target.checked)} type="checkbox" />{' '}
-        Zahrnout ukončené a archivované
-      </label>
+        <overviewSearchForm.includeClosed label="Zahrnout ukončené a archivované" />
+      </FormRoot>
       {hits.map((hit) => (
         <a className="sp-attention" href={hit.href} key={hit.id}>
           <strong>
@@ -593,8 +600,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   }, [legalEntityId]);
   const sources: OverviewSources | undefined = snapshot.state === 'ready' ? snapshot.value : undefined;
   const loading = snapshot.state === 'pending' || snapshot.refreshing;
-  const [query, setQuery] = useState('');
-  const [includeClosed, setIncludeClosed] = useState(false);
+  const { includeClosed, query } = useAtomValue(overviewSearch);
   const [selection, setSelection] = useState('');
   const today = pragueToday();
   const portfolio = overviewPortfolio(sources, today);
@@ -627,6 +633,8 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   return (
     <>
       <UltramodernRouteHead />
+      {/* The search keeps what was typed while its panel is briefly gone, such as during a reload of the agendas. */}
+      <overviewSearchForm.KeepAlive />
       <section aria-busy={loading} aria-labelledby="overview-heading" className="sp-overview">
         <header className="sp-heading">
           <div className="sp-stack">
@@ -676,13 +684,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
               </aside>
             </div>
             <OverviewAgenda agenda={agenda} agendaLabel={agendaLabel} href={href} lang={lang} />
-            <OverviewSearch
-              hits={hits}
-              includeClosed={includeClosed}
-              query={query}
-              setIncludeClosed={setIncludeClosed}
-              setQuery={setQuery}
-            />
+            <OverviewSearch hits={hits} query={query} />
             <footer aria-label={t('property-portfolio.overview.sourceAvailability')} className="sp-sources">
               {EffectRecord.keys(sourceLabels).map((key) => (
                 <span className="sp-muted" key={key}>

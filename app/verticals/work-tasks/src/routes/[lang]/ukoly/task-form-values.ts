@@ -3,9 +3,15 @@ import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-prop
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { Option, Schema } from 'effect';
+import { CreateTaskCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import { ApplyCommandActionConflictProblemSchema } from '../../../../shared/apis/apply-command-action.ts';
 import { principalKey } from '../../../../shared/assignment.ts';
-import { ContextRefSchema, ProjectIdSchema } from '../../../../shared/apis/records.ts';
+import {
+  ContextRefSchema,
+  PlannedHoursSchema,
+  ProjectIdSchema,
+  TaskPrioritySchema,
+} from '../../../../shared/apis/records.ts';
 import type { ContextRef, Task } from '../../../../shared/apis/records.ts';
 
 export type TaskDueDate = NonNullable<Task['dueDate']>;
@@ -23,15 +29,17 @@ export interface TaskFormSubmission {
   readonly title: string;
 }
 
+/** What the task panel's controls show: ids as typed or chosen, '' for none. */
 export interface FormValues {
   readonly assigneeId: string;
   readonly contextRefs: readonly ContextRef[];
   readonly description: string;
-  readonly dueDate: TaskDueDate | undefined;
+  /** The due date as the picker shows it; '' is no due date. */
+  readonly dueDate: TaskDueDate;
   readonly opportunityId: string;
   readonly partyId: string;
   readonly plannedHours: string;
-  readonly priority: Task['priority'];
+  readonly priority: string;
   readonly projectId: string;
   readonly title: string;
 }
@@ -43,18 +51,35 @@ export interface Decoded {
   readonly partyId: Task['partyId'];
 }
 
-export const initialValues = (task?: Task): FormValues => ({
-  assigneeId: task?.ownerPrincipalRef === undefined ? '' : principalKey(task.ownerPrincipalRef),
-  contextRefs: task?.contextRefs ?? [],
-  description: task?.description ?? '',
-  dueDate: task?.dueDate,
-  opportunityId: task?.opportunityId ?? '',
-  partyId: task?.partyId ?? '',
-  plannedHours: task?.plannedHours === undefined ? '' : String(task.plannedHours),
-  priority: task?.priority ?? 'NORMAL',
-  projectId: task?.projectId ?? '',
-  title: task?.title ?? '',
-});
+/** What a new task's panel opens with. */
+const newTaskValues: FormValues = {
+  assigneeId: '',
+  contextRefs: [],
+  description: '',
+  dueDate: '',
+  opportunityId: '',
+  partyId: '',
+  plannedHours: '',
+  priority: 'NORMAL',
+  projectId: '',
+  title: '',
+};
+
+export const initialValues = (task?: Task): FormValues =>
+  task === undefined
+    ? newTaskValues
+    : {
+        assigneeId: task.ownerPrincipalRef === undefined ? '' : principalKey(task.ownerPrincipalRef),
+        contextRefs: task.contextRefs,
+        description: task.description ?? '',
+        dueDate: task.dueDate ?? '',
+        opportunityId: task.opportunityId ?? '',
+        partyId: task.partyId ?? '',
+        plannedHours: task.plannedHours === undefined ? '' : String(task.plannedHours),
+        priority: task.priority,
+        projectId: task.projectId ?? '',
+        title: task.title,
+      };
 
 const contextRefsEqual = Schema.toEquivalence(Schema.Array(ContextRefSchema));
 
@@ -100,27 +125,34 @@ export const decodeProjectSelection = (value: string): Option.Option<Task['proje
     Option.map((selection) => selection.projectId),
   );
 
-export const taskFormSubmission = (values: FormValues, decoded: Decoded): Option.Option<TaskFormSubmission> => {
-  if (
-    values.plannedHours !== '' &&
-    (!Number.isFinite(Number(values.plannedHours)) ||
-      Number(values.plannedHours) < 0 ||
-      Number(values.plannedHours) > 10_000)
-  ) {
-    return Option.none();
-  }
-  return decodeProjectSelection(values.projectId).pipe(
-    Option.map((projectId) => ({
+/** The CreateTask payload's own title: trimmed, 1 to 200 characters. */
+export const TaskTitleSchema = CreateTaskCommandSchema.fields.title;
+
+const PlannedHoursSelectionSchema = Schema.Struct({ plannedHours: Schema.optionalKey(PlannedHoursSchema) });
+/** Some(undefined) leaves the planned hours empty. None rejects what the payload's hours do not accept. */
+const decodePlannedHours = (value: string): Option.Option<number | undefined> =>
+  Schema.decodeUnknownOption(PlannedHoursSelectionSchema)(value === '' ? {} : { plannedHours: Number(value) }).pipe(
+    Option.map((selection) => selection.plannedHours),
+  );
+
+/** What the form sends for a draft, decoded by the payload's own schemas; None while one of them refuses it. */
+export const taskFormSubmission = (values: FormValues, decoded: Decoded): Option.Option<TaskFormSubmission> =>
+  Option.all({
+    plannedHours: decodePlannedHours(values.plannedHours),
+    priority: Schema.decodeUnknownOption(TaskPrioritySchema)(values.priority),
+    projectId: decodeProjectSelection(values.projectId),
+    title: Schema.decodeUnknownOption(TaskTitleSchema)(values.title),
+  }).pipe(
+    Option.map(({ plannedHours, priority, projectId, title }) => ({
       contextRefs: values.contextRefs,
       description: values.description.trim(),
       dueDate: decoded.dueDate,
       opportunityId: decoded.opportunityId,
       ownerPrincipalRef: decoded.ownerPrincipalRef,
       partyId: decoded.partyId,
-      plannedHours: values.plannedHours === '' ? undefined : Number(values.plannedHours),
-      priority: values.priority,
+      plannedHours,
+      priority,
       projectId,
-      title: values.title.trim(),
+      title,
     })),
   );
-};

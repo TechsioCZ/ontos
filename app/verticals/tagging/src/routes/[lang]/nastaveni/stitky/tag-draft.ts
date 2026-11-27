@@ -1,9 +1,10 @@
 // The tag editor's form values: what the create dialog sends once and the edit panel sends on Save.
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { pendingProposalMessage } from '../../../../tags/action-result.ts';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
+import { ApplyCommandPayloadSchema } from '../../../../../shared/actions/apply-command.ts';
 import type { TaggingCommand } from '../../../../../shared/actions/apply-command.ts';
-import { subjectKindValues } from '../../../../../shared/apis/records.ts';
+import { SubjectKindSchema, subjectKindValues } from '../../../../../shared/apis/records.ts';
 import type { RecordsResponse, SubjectKind, Tag, TagColor, TagId } from '../../../../../shared/apis/records.ts';
 
 export interface TagDraft {
@@ -12,8 +13,6 @@ export interface TagDraft {
   readonly kinds: readonly SubjectKind[];
   readonly name: string;
 }
-
-export const nameMaxLength = 60;
 
 /** The kinds in the canonical order. */
 const canonicalKinds = (kinds: readonly SubjectKind[]) => {
@@ -36,20 +35,6 @@ export const sameTagDraft = (left: TagDraft, right: TagDraft): boolean =>
   left.description.trim() === right.description.trim() &&
   canonicalKinds(left.kinds).join(',') === canonicalKinds(right.kinds).join(',');
 
-export const TagNameProblemSchema = Schema.Literals(['required', 'tooLong']);
-export type TagNameProblem = typeof TagNameProblemSchema.Type;
-
-export const tagNameProblem = (draft: TagDraft): TagNameProblem | null => {
-  const name = draft.name.trim();
-  if (name === '') {
-    return 'required';
-  }
-  return name.length > nameMaxLength ? 'tooLong' : null;
-};
-
-/** A tag needs a name of at most 60 characters and at least one kind; anything else is never sent. */
-export const validTagDraft = (draft: TagDraft): boolean => tagNameProblem(draft) === null && draft.kinds.length > 0;
-
 /** The stored fields of a draft. */
 export const tagFieldsOf = (draft: TagDraft) => ({
   color: draft.color,
@@ -60,6 +45,31 @@ export const tagFieldsOf = (draft: TagDraft) => ({
 });
 
 export const createTagCommand = (draft: TagDraft): TaggingCommand => ({ _tag: 'CreateTag', ...tagFieldsOf(draft) });
+
+const CreateTagCommandSchema = ApplyCommandPayloadSchema.fields.command;
+const acceptedName = (name: string) =>
+  Option.isSome(Schema.decodeUnknownOption(CreateTagCommandSchema.fields.name)(name));
+const acceptedKinds = (kinds: readonly SubjectKind[]) =>
+  Option.isSome(Schema.decodeUnknownOption(CreateTagCommandSchema.fields.subjectKinds)(kinds));
+
+/**
+ * The name field: the create payload's rule (1 to 60 characters once trimmed), with the message the person reads.
+ */
+export const TagNameFieldSchema = Schema.String.check(
+  Schema.makeFilter(
+    (name: string) =>
+      acceptedName(name) || (name.trim() === '' ? 'tagging.tags.form.nameRequired' : 'tagging.tags.form.nameTooLong'),
+  ),
+);
+
+/** The kinds field: the create payload's rule (at least one kind), with the message the person reads. */
+export const TagKindsFieldSchema = Schema.Array(SubjectKindSchema).check(
+  Schema.makeFilter((kinds: readonly SubjectKind[]) => acceptedKinds(kinds) || 'tagging.tags.form.kindsRequired'),
+);
+
+/** A tag the payload accepts (a name of at most 60 characters, at least one kind); anything else is never sent. */
+export const validTagDraft = (draft: TagDraft): boolean =>
+  Option.isSome(Schema.decodeUnknownOption(CreateTagCommandSchema)(createTagCommand(draft)));
 
 export const updateTagCommand = (id: TagId, draft: TagDraft): TaggingCommand => ({
   _tag: 'UpdateTag',

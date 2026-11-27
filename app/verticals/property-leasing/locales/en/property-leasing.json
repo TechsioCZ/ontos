@@ -228,6 +228,7 @@
     "registration": {
       "title": "Guest registration form",
       "fullName": "Full name",
+      "fullNameRequired": "Enter the full name of the person staying.",
       "birthDate": "Date of birth",
       "nationality": "Nationality",
       "identityDocument": "Identity document number",
