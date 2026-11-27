@@ -596,6 +596,9 @@ const RecordsPageContent = (props: RecordsPageContentProps) => {
               onReload={reload}
               open={dialog === 'price'}
               revision={revision}
+              symmyProducts={products.filter(
+                (product) => product.importedVia === 'symmy' && selectedIds.includes(product.id),
+              )}
               variantProducts={products.filter(
                 (product) => (product.variantCount ?? 0) > 0 && selectedIds.includes(product.id),
               )}

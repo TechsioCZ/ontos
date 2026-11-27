@@ -254,8 +254,8 @@ export const MovementForm = ({
     } satisfies MerchandiseCommand;
     const movement = variant === undefined ? stockMovement : { ...stockMovement, variantId: variant.id };
     const expected = Math.max(revision, savedRevision.current);
-    const record = () =>
-      runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
+    const record = (at: number, corrected?: number) =>
+      runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, at, (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
           setServerError(failure(outcome.reason, onReload, outcome.proposal));
@@ -264,26 +264,52 @@ export const MovementForm = ({
         savedRevision.current = outcome.revision;
         onDraftChange(EMPTY_MOVEMENT_DRAFT);
         setSubmitted(false);
-        onCommitted(k('messages.movementRecorded'));
+        const recorded = k('messages.movementRecorded');
+        onCommitted(corrected === undefined ? recorded : `${recorded} Stav byl srovnán se skladem v ERP: ${corrected}.`);
       });
     const target = symmyTarget?.(variant?.id);
     if (target === undefined) {
-      record();
+      record(expected);
       return;
     }
-    // A Symmy product: the new on-hand goes to Inventory first; when that fails, nothing is recorded here.
+    // A Symmy product: the movement is applied to Inventory's CURRENT on-hand first (never to this row's figure, which
+    // can lag behind the ERP); when that fails, nothing is recorded here. When the row differed from the ERP before the
+    // movement, one correction brings it to the ERP figure first, so after the save both hold the same on-hand.
+    const syncThenRecord = (before: number, after: number) => {
+      const correction = normalizeQuantity(before - available);
+      if (correction === 0) {
+        record(expected);
+        return;
+      }
+      const sync = { _tag: 'RecordStockMovement', delta: correction, note: 'Srovnání se stavem skladu v ERP', productId, reason: 'ADJUSTMENT' } satisfies MerchandiseCommand;
+      runCommand(variant === undefined ? sync : { ...sync, variantId: variant.id }, expected, (outcome) => {
+        if (!outcome.ok) {
+          setBusy(false);
+          setServerError(failure(outcome.reason, onReload, outcome.proposal));
+          return;
+        }
+        savedRevision.current = outcome.revision;
+        record(outcome.revision, after);
+      });
+    };
     void browserRuntime.runPromise(
       writeThroughSymmyVariant({
         ...target,
         reason: trimmed === '' ? 'Úprava v Produkty' : trimmed,
-        stockOnHand: String(normalizeQuantity(available + movement.delta)),
+        stockDelta: movement.delta,
       }).pipe(
         Effect.match({
           onFailure: (message) => {
             setBusy(false);
             setServerError(message);
           },
-          onSuccess: record,
+          onSuccess: ({ stock }) => {
+            if (stock === undefined) {
+              record(expected);
+              return;
+            }
+            syncThenRecord(stock.before, stock.after);
+          },
         }),
       ),
     );

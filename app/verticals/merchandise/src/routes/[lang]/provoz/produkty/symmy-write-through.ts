@@ -15,8 +15,13 @@ export interface SymmyWriteThroughInput {
   readonly catalogVariantId: string;
   /** The new base price without VAT as a decimal text (e.g. `7.33`); omitted when unchanged. */
   readonly priceNet?: string;
-  /** The new absolute on-hand as a decimal text (e.g. `37`); omitted when unchanged. */
+  /** The new absolute on-hand as a decimal text (e.g. `37`); omitted when unchanged. Exclusive with stockDelta. */
   readonly stockOnHand?: string;
+  /**
+   * A stock movement: the signed change applied to Inventory's CURRENT on-hand of the variant (never to the merchandise
+   * figure, which can lag behind the ERP). Exclusive with stockOnHand.
+   */
+  readonly stockDelta?: number;
   /** The staff member's reason, kept in the owners' audit. */
   readonly reason: string;
 }
@@ -367,11 +372,21 @@ const StockImportSchema = Schema.Struct({
   items: Schema.optionalKey(Schema.Array(Schema.Struct({ status: Schema.String }))),
 });
 
-/** Sets the on-hand of the variant's one Inventory Position, the way the former ERP editor did. */
+/** Inventory's on-hand of the variant before and after a stock write; after is what the merchandise row must hold. */
+export interface SymmyStockResult {
+  readonly before: number;
+  readonly after: number;
+}
+
+/**
+ * Sets the on-hand of the variant's one Inventory Position, the way the former ERP editor did: an absolute target, or a
+ * signed delta applied to Inventory's current on-hand (a movement), so the ERP balance is never replaced by an older
+ * merchandise figure.
+ */
 const writeStock = Effect.fn('SymmyWriteThrough.writeStock')(function* stock(
   offer: Offer,
   refs: Refs,
-  target: string,
+  change: { readonly absolute: string } | { readonly delta: number },
   reason: string,
 ) {
   const page = yield* call('Čtení skladu', 'inventory', '/reads/catalog-variant-on-hand-page', {
@@ -388,8 +403,19 @@ const writeStock = Effect.fn('SymmyWriteThrough.writeStock')(function* stock(
   ) {
     return yield* Effect.fail(`Varianta nemá skladovou pozici (${answer?.outcome ?? 'bez odpovědi'})`);
   }
-  if (answer.outcome === 'ON_HAND' && answer.total !== undefined && canonical(answer.total.amount) === target) {
-    return;
+  const known = answer.outcome === 'ON_HAND' && answer.total !== undefined ? Number(answer.total.amount) : undefined;
+  if ('delta' in change && (known === undefined || !Number.isFinite(known))) {
+    return yield* Effect.fail('Stav skladu v ERP není známý, pohyb nelze zapsat.');
+  }
+  const before = known ?? 0;
+  const targetNumber = 'delta' in change ? Math.round((before + change.delta) * 1000) / 1000 : Number(change.absolute);
+  if (targetNumber < 0) {
+    return yield* Effect.fail(`Na skladě v ERP je jen ${before}, pohyb by stav snížil pod nulu.`);
+  }
+  const target = canonical(String(targetNumber)) ?? '0';
+  const result: SymmyStockResult = { after: targetNumber, before };
+  if (known !== undefined && canonical(String(known)) === target) {
+    return result;
   }
   const why = reason.slice(0, 300).trim();
   if (page.backend.kind === 'external_business_system') {
@@ -445,13 +471,13 @@ const writeStock = Effect.fn('SymmyWriteThrough.writeStock')(function* stock(
     if (outcome === undefined || outcome.status !== 'ACCEPTED') {
       return yield* Effect.fail(`Sklad nepřijal nový stav (${outcome?.status ?? 'bez odpovědi'})`);
     }
-    return;
+    return result;
   }
-  // An OntOS-held position: a receipt or an issue of the difference.
+  // An OntOS-held position: a receipt or an issue of the difference (a movement's own delta).
   const current = Number(position.onHand.quantity?.amount ?? '0');
-  const delta = Number(target) - current;
+  const delta = 'delta' in change ? change.delta : Number(target) - current;
   if (delta === 0) {
-    return;
+    return result;
   }
   const amount = canonical(String(Math.abs(Math.round(delta * 1000) / 1000))) ?? '0';
   const [effectId, key] = yield* Effect.all([uuid, uuid]);
@@ -473,30 +499,46 @@ const writeStock = Effect.fn('SymmyWriteThrough.writeStock')(function* stock(
   if (done.proposalId !== undefined) {
     return yield* Effect.fail(`${label} čeká na schválení`);
   }
+  return result;
 });
+
+/** What a write-through answers: Inventory's figures when it wrote stock. */
+export interface SymmyWriteThroughResult {
+  readonly stock?: SymmyStockResult;
+}
+const noStock: SymmyWriteThroughResult = {};
 
 /**
  * Writes a staff price and/or stock change of one Symmy-imported variant to Pricing and Inventory. Fails with a Czech
  * sentence for the editor when any owner refuses or cannot be reached; the caller then must not save the merchandise
- * row nor report success.
+ * row nor report success. A stock write answers Inventory's on-hand before and after it; the caller brings the
+ * merchandise row to `after`. A price write never defines a price: a variant without one in Pricing fails.
  */
 export const writeThroughSymmyVariant = Effect.fn('SymmyWriteThrough.variant')(function* writeThrough(
   input: SymmyWriteThroughInput,
 ) {
   const price = input.priceNet === undefined ? undefined : canonical(input.priceNet);
   const stock = input.stockOnHand === undefined ? undefined : canonical(input.stockOnHand);
-  if (price === null || stock === null) {
+  const { stockDelta } = input;
+  if (price === null || stock === null || (stockDelta !== undefined && !Number.isFinite(stockDelta))) {
     return yield* Effect.fail('Cena i sklad musí být nezáporná čísla.');
   }
-  if (price === undefined && stock === undefined) {
-    return;
+  if (stock !== undefined && stockDelta !== undefined) {
+    return yield* Effect.fail('Sklad lze zapsat jen jako nový stav, nebo jako pohyb.');
+  }
+  const change =
+    stock !== undefined ? { absolute: stock } : stockDelta !== undefined ? { delta: stockDelta } : undefined;
+  if (price === undefined && change === undefined) {
+    return noStock;
   }
   const reason = input.reason.trim() === '' ? 'Úprava ceny a skladu v Produktech' : input.reason.trim();
   const [offer, refs] = yield* Effect.all([readOffer, findCatalogRefs(input)], { concurrency: 2 });
   if (price !== undefined) {
     yield* writePrice(offer, refs, price, reason);
   }
-  if (stock !== undefined) {
-    yield* writeStock(offer, refs, stock, reason);
+  if (change === undefined) {
+    return noStock;
   }
+  const written: SymmyWriteThroughResult = { stock: yield* writeStock(offer, refs, change, reason) };
+  return written;
 });
