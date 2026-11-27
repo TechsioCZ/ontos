@@ -492,8 +492,9 @@ already has changes nothing.
 - \`ACTIVE\`: a new product is prepared for sale and activated, and the shops sell it once it has a price. The job shows
   the preparation as the \`readiness-*\` parts. For a product that is already active nothing changes: those parts read
   \`accepted_no_change\`, and the price, texts and stock are written as usual.
-- \`RETIRED\`: the product is retired. OntOS archives it and removes it from the shops. Sending \`RETIRED\` again
-  changes nothing (\`accepted_no_change\`).
+- \`RETIRED\`: the product is retired. A shop product OntOS created from your import is archived and leaves the
+  shops. A shop product that only shares the item number (SKU) with it stays on sale but no longer follows your price
+  and stock. Sending \`RETIRED\` again changes nothing (\`accepted_no_change\`).
 - \`ACTIVE\` does not bring back a retired product. Its \`readiness-activate\` part reads \`conflict\`, and the parts
   that wait for it, the price among them, read \`unsupported\` (\`missing_context\`). Staff restore a retired product
   in OntOS. After that, send it again.
