@@ -370,7 +370,7 @@ describe("OntOS catalog server reads", () => {
       await expect(read()).rejects.toMatchObject({ code: "owner_unavailable" });
     },
   );
-  it("checks the revision once a second and reads no catalogue again while it is unchanged", async () => {
+  it("checks the revision at most every 1.5 s and reads no catalogue again while it is unchanged", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const view = () =>
       inRequest(() => server.getCatalogPage({ categorySlug: "srouby", pageSize: 24 }));

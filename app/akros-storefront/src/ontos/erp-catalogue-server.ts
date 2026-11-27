@@ -27,7 +27,7 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { getErpOffer, type ErpOffer } from "./erp-config";
 import { createOperation, OntosError, readRecords } from "./gateway";
 import type { Operation, OperationOptions } from "./gateway";
-import { sharedRead } from "./shared-read";
+import { freshRead } from "./fresh-read";
 
 /** The owners answer at most 100 variants per stock or price read. */
 const VARIANT_PAGE = 100;
@@ -286,37 +286,37 @@ export const readErpProduct = cache(
 );
 
 /**
- * Search reads are equal for every shopper: concurrent searches share one read for a second. Catalog and Pricing have
- * no revision to check, so after that second a search waits for a new read, at most ERP_SEARCH_WAIT_MS for each of the
- * index and the priced answer: a product state or price saved in the ERP editor is searchable on the next visit, as on
- * „Novinky z ERP“, when the owners answer in time, and on the visit after that when they do not. A search never waits
- * on slow owners for longer, and never loses its ERP products to them.
+ * Search answers come from one snapshot of every ERP product Catalog answers the storefront (up to the detail scan
+ * bound), priced as a guest with its stock, that every shopper shares. Catalog and Pricing have no revision to check,
+ * so a search takes a snapshot whose reads started at most ERP_SNAPSHOT_TIMING.maxAgeMs ago: a product state or price
+ * saved in the ERP editor is in every search that long after the save. While shoppers search, the snapshot is read
+ * again in the background, so a search does not wait for the owners.
  */
-const ERP_SEARCH_TTL_MS = 1_000;
-const ERP_SEARCH_WAIT_MS = 250;
+const ERP_SNAPSHOT_TIMING = { maxAgeMs: 1_800, intervalMs: 500, keepAliveMs: 10 * 60_000 };
 type ErpPageItem = CatalogProductPage["items"][number];
+interface ErpSnapshot {
+  readonly items: readonly ErpPageItem[];
+  readonly products: ReadonlyMap<string, ErpProduct>;
+}
 
-/** Every product Catalog answers the storefront (up to the detail scan bound), shared across shoppers. */
-const erpIndex = (locale: string, caller: Operation) =>
-  sharedRead(
-    `erp-index:${locale}`,
-    ERP_SEARCH_TTL_MS,
-    async (operation): Promise<ErpPageItem[]> => {
+const erpSnapshot = (offer: ErpOffer, locale: string, caller: Operation) =>
+  freshRead(
+    `erp-snapshot:${locale}`,
+    ERP_SNAPSHOT_TIMING,
+    async (operation): Promise<ErpSnapshot> => {
       const items: ErpPageItem[] = [];
       for (let index = 0; index < DETAIL_PAGES; index += 1) {
         const page = await readCatalogPage(locale, index * DETAIL_PAGE, DETAIL_PAGE, operation);
-        items.push(...page.items);
+        items.push(...page.items.filter(isErpProductShown));
         if ((index + 1) * DETAIL_PAGE >= page.count) break;
       }
-      return items;
+      const products = await withOffers(offer, { count: items.length, items }, operation, true);
+      return { items, products: new Map(products.map((product) => [product.id, product])) };
     },
-    { caller, waitMs: ERP_SEARCH_WAIT_MS },
+    caller,
   );
 
-/**
- * The ERP products a search query finds (the same products „Novinky z ERP“ shows), priced as a guest. Both the
- * product index and each query's priced answer are shared reads, so a repeated query costs no owner call.
- */
+/** The ERP products a search query finds (the same products „Novinky z ERP“ shows), priced as a guest. */
 export const searchErpProducts = async (
   query: string,
   limit: number,
@@ -326,18 +326,15 @@ export const searchErpProducts = async (
   const term = query.trim();
   if (offer === undefined || term === "") return { count: 0, products: [] };
   const { locale } = await getActiveMarket(marketReadsFor(operation));
-  const matched = (await erpIndex(locale, operation)).filter(
-    (item) => isErpProductShown(item) && erpItemMatches(item, term),
-  );
-  if (matched.length === 0) return { count: 0, products: [] };
-  const items = matched.slice(0, limit);
-  const products = await sharedRead(
-    `erp-search:${locale}:${limit}:${items.map((item) => item.productRef.resourceId).join(",")}`,
-    ERP_SEARCH_TTL_MS,
-    (detached) => withOffers(offer, { count: items.length, items }, detached, true),
-    { caller: operation, waitMs: ERP_SEARCH_WAIT_MS },
-  );
-  return { count: matched.length, products };
+  const snapshot = await erpSnapshot(offer, locale, operation);
+  const matched = snapshot.items.filter((item) => erpItemMatches(item, term));
+  return {
+    count: matched.length,
+    products: matched.slice(0, limit).flatMap((item) => {
+      const product = snapshot.products.get(item.productRef.resourceId);
+      return product === undefined ? [] : [product];
+    }),
+  };
 };
 
 /** The ERP search answer, or none when it is not ready within `ms` (search never waits on the ERP read). */

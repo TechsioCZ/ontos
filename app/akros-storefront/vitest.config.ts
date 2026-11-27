@@ -35,6 +35,6 @@ export default defineConfig({
   test: {
     environment: "happy-dom",
     maxWorkers: 1,
-    setupFiles: ["./tests/setup-match-media.ts"],
+    setupFiles: ["./tests/setup-match-media.ts", "./tests/setup-fresh-reads.ts"],
   },
 });

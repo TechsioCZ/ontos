@@ -9,7 +9,8 @@ import { getActiveMarket, marketReadsFor } from "./active-market";
 import { createCatalog } from "./catalog-model";
 import { getConfig } from "./config";
 import { readRecords } from "./gateway";
-import { MAX_STALE_MS, sharedRead } from "./shared-read";
+import { freshRead } from "./fresh-read";
+import { sharedRead } from "./shared-read";
 import {
   projectCategories,
   projectProducts,
@@ -113,13 +114,11 @@ const marketIdOf = async (operation: Operation) =>
   (await getActiveMarket(marketReadsFor(operation))).marketId;
 
 // Merchandise advances the company's catalogue revision with every write (product, category, listing policy, stock).
-// Shared answers belong to the revision they were read at, so the first visit after an admin save waits for a read of
-// the new state instead of being served the previous one. The check is one head read, shared per process for a second.
-// A head read slower than REVISION_WAIT_MS does not hold the visit: it keeps the revision checked last, as during an
-// outage, and the head read, which goes on, decides the visits after it.
-const REVISION_TTL_MS = 1_000;
-const REVISION_WAIT_MS = 300;
-let lastRevision: { revision: number; at: number } | undefined;
+// Shared answers belong to the revision they were read at, so a visit never gets an answer of an older revision than
+// the one its check found. The check is one head read the process shares: a visit takes a revision whose read started
+// at most REVISION_TIMING.maxAgeMs ago, so an admin save shows on every visit 1.5 s after it, and while visitors come
+// the head read repeats in the background, so a warm visit does not wait for it.
+const REVISION_TIMING = { maxAgeMs: 1_500, intervalMs: 500, keepAliveMs: 10 * 60_000 };
 
 const loadRevision = async (operation: Operation): Promise<number> => {
   // Without a market id merchandise reads only the company's head: no market, product or category rows.
@@ -128,27 +127,14 @@ const loadRevision = async (operation: Operation): Promise<number> => {
     { mode: "categories", includeCategories: false },
     operation,
   );
-  lastRevision = {
-    revision: typeof body.revision === "number" ? body.revision : 0,
-    at: Date.now(),
-  };
-  return lastRevision.revision;
+  return typeof body.revision === "number" ? body.revision : 0;
 };
 // One revision per operation, so every shared answer of one render belongs to the same revision.
 const revisions = new WeakMap<Operation, Promise<number>>();
 const catalogRevision = (operation: Operation): Promise<number> => {
   const held = revisions.get(operation);
   if (held !== undefined) return held;
-  const revision = sharedRead("catalog:revision", REVISION_TTL_MS, loadRevision, {
-    caller: operation,
-    waitMs: REVISION_WAIT_MS,
-  }).catch((error: unknown) => {
-    operation.check();
-    // While merchandise is unavailable shoppers keep the catalogue they had, as long as any shared answer is served.
-    if (lastRevision !== undefined && Date.now() - lastRevision.at < MAX_STALE_MS)
-      return lastRevision.revision;
-    throw error;
-  });
+  const revision = freshRead("catalog:revision", REVISION_TIMING, loadRevision, operation);
   revisions.set(operation, revision);
   return revision;
 };

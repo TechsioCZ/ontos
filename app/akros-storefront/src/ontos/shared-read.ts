@@ -12,8 +12,6 @@ interface Entry {
   value: Promise<unknown>;
   done: boolean;
   refreshing: boolean;
-  /** With `waitMs`, while this entry's load is pending: the settled answer of the same generation it replaces. */
-  previous?: Entry;
 }
 const entries = new Map<string, Entry>();
 // Full product records are large and the heap is about 281 MB: keep the newest entries only.
@@ -37,7 +35,7 @@ const detached = <A>(load: (operation: Operation) => Promise<A>): Promise<A> => 
 };
 
 /** The caller stops waiting when its own operation ends; the shared read itself goes on for other waiters. */
-const joined = <A>(value: Promise<A>, caller: Operation | undefined): Promise<A> =>
+export const joined = <A>(value: Promise<A>, caller: Operation | undefined): Promise<A> =>
   caller === undefined
     ? value
     : new Promise<A>((resolve, reject) => {
@@ -62,26 +60,8 @@ const joined = <A>(value: Promise<A>, caller: Operation | undefined): Promise<A>
         );
       });
 
-/** The load's answer when it settles within `ms`; otherwise, or when it fails, the answer it replaces. */
-const within = <A>(value: Promise<A>, previous: Promise<A>, ms: number): Promise<A> =>
-  new Promise<A>((resolve) => {
-    const timer = setTimeout(() => resolve(previous), ms);
-    value.then(
-      (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      },
-      () => {
-        clearTimeout(timer);
-        resolve(previous);
-      },
-    );
-  });
-
 /**
  * `ttlMs` fresh; with `stale`, an older settled value keeps being served while one background refresh replaces it.
- * With `waitMs`, a reader waits at most that long for a newer read: then it gets the answer that read replaces (at most
- * 10 minutes old), and the newer read, which goes on, answers the readers after it.
  * A value read at another `generation` (the owner's revision) is never served: the read waits for its own load.
  */
 export function sharedRead<A>(
@@ -92,10 +72,9 @@ export function sharedRead<A>(
     stale = false,
     caller,
     generation,
-    waitMs,
-  }: { stale?: boolean; caller?: Operation; generation?: number; waitMs?: number } = {},
+  }: { stale?: boolean; caller?: Operation; generation?: number } = {},
 ): Promise<A> {
-  return joined(read(key, ttlMs, load, stale, generation, waitMs), caller);
+  return joined(read(key, ttlMs, load, stale, generation), caller);
 }
 
 function read<A>(
@@ -104,7 +83,6 @@ function read<A>(
   load: (operation: Operation) => Promise<A>,
   stale: boolean,
   generation: number | undefined,
-  waitMs: number | undefined,
 ): Promise<A> {
   const found = entries.get(key);
   const held = found?.generation === generation ? found : undefined;
@@ -113,9 +91,7 @@ function read<A>(
     entries.set(key, held);
   }
   if (held !== undefined && (Date.now() - held.at < ttlMs || !held.done))
-    return held.previous === undefined || waitMs === undefined
-      ? (held.value as Promise<A>)
-      : within(held.value as Promise<A>, held.previous.value as Promise<A>, waitMs);
+    return held.value as Promise<A>;
   if (held !== undefined && stale && Date.now() - held.at < MAX_STALE_MS) {
     if (!held.refreshing) {
       held.refreshing = true;
@@ -139,32 +115,15 @@ function read<A>(
     return held.value as Promise<A>;
   }
   const value = detached(load);
-  const previous =
-    waitMs !== undefined && held?.done === true && Date.now() - held.at < MAX_STALE_MS
-      ? held
-      : undefined;
-  const entry: Entry = {
-    at: Date.now(),
-    generation,
-    value,
-    done: false,
-    refreshing: false,
-    previous,
-  };
+  const entry: Entry = { at: Date.now(), generation, value, done: false, refreshing: false };
   put(key, entry);
   value.then(
     () => {
       entry.done = true;
-      entry.previous = undefined;
     },
     () => {
-      if (entries.get(key) !== entry) return;
-      // The replaced answer stays for waiting readers; the next read after it tries a new load.
-      if (previous === undefined) entries.delete(key);
-      else put(key, previous);
+      if (entries.get(key) === entry) entries.delete(key);
     },
   );
-  return previous === undefined || waitMs === undefined
-    ? value
-    : within(value, previous.value as Promise<A>, waitMs);
+  return value;
 }
