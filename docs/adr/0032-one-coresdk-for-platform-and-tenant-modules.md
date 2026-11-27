@@ -149,6 +149,12 @@ under Open points.
       through groups of Modules, for example "every Business Module at its stable version" or "every
       Business Module that depends on a named Module at its beta version". OntOS offers presets, and
       an operator can also define a Release Channel completely on their own.
+    - Each Release Channel has a setting that says whether it moves to a newer qualifying version on
+      its own or waits until an operator applies it. In the presets, the production channel waits
+      and the beta and latest channels follow on their own. Whichever setting a channel has, Core
+      first runs the compatibility check of this decision; a version that fails it is not moved into
+      the channel, and the operator is warned. A version that needs a further migration always fails
+      that check and goes live the other way, by replacing every older version.
     - An operator with permission can select a Release Channel or a single Module version for
       themselves, for testing. Core issues a signed preview that expires and is bound to that
       person, and it applies to browser and server code alike.
@@ -177,9 +183,26 @@ under Open points.
     - A switch can move a Module's server code as well as its browser code.
     - An open browser document is not simply left on the version it loaded until its next reload,
       because that could lead to serious problems after a breaking change. The person is shown that
-      a new version exists, and OntOS supports replacing the running version inside the open
-      document while keeping what the person has entered, such as the contents of forms. How that
-      replacement works is an open point.
+      a new version exists, and OntOS replaces the running version inside the open document:
+      - A compatible version is offered. The document keeps working, and the new version applies
+        when the person accepts it. If they have not accepted it, it applies on its own the next
+        time they navigate to another page, as long as no form holds unsaved input.
+      - When the new version needs a database migration that the loaded version does not, the
+        replacement is mandatory rather than offered, because the old code cannot talk to the
+        migrated server. The person is warned first, what they have entered is saved, the running
+        version is replaced, and what they entered is restored.
+      - What a person has entered in a form is kept because it lives in the form model of the
+        CoreSDK, outside the Module's components. Every Module form uses that form model, and a lint
+        rule enforces it. State that a component keeps only for itself, such as a scroll position or
+        an open menu, is not kept.
+      - When a form differs between the two versions, the fields that still exist are restored and
+        the person is told which ones were dropped.
+      - A new CoreSDK version cannot be taken in place, because the shared foundations of decision
+        14 cannot be exchanged inside a live document. The document reloads itself and restores what
+        was entered in the same way. Passwords and similar fields are excluded from what is stored
+        for that reload.
+      - A document moves from one complete selection of versions to another and never runs a mix of
+        the two.
 16. **A Tenant Module never blocks a CoreSDK upgrade.** Every Platform Module builds and passes on a
     new CoreSDK version before an Environment moves to it. A Tenant Module that still fails after
     the automatic codemod does not hold the Environment back. Its Tenant receives a highly visible
@@ -227,10 +250,10 @@ under Open points.
 
 ### The shape of a Module Definition
 
-Decisions 24 to 26 come from the third council. The Product Owner accepted decision 24 and adopted
-decision 25 because all three council delegates recommended it. Decision 26 and the amendments
-listed under decision 24 were also recommended by all three delegates and are recorded on that
-basis, without a separate decision by the Product Owner.
+Decisions 24 to 26 come from the third council. The Product Owner accepted decision 24, adopted
+decision 25 because all three council delegates recommended it, and decided in decision 26 that the
+build generates the list. The amendments listed under decision 24 were recommended by all three
+delegates and are recorded on that basis, without a separate decision by the Product Owner.
 
 24. **A declaration is a named class in its own file, and its handler is in a separate file.**
     Everything a Module declares is one named class in its own file. The class holds data only: its
@@ -263,21 +286,19 @@ basis, without a separate decision by the Product Owner.
     references. The settings, outside dependencies, and handlers of a provider never leave it; the
     council showed that publishing the declaration classes would expose them. Public error types and
     schemas therefore live in files that import nothing private.
-26. **An explicit, checked list binds handlers to declarations.** A missing, duplicated, or orphaned
-    handler fails the build. A file name never decides which handler runs. Whether the build
-    generates that list or Codesmith appends a line to an authored one is an open point: the Product
-    Owner asked for the pros and cons of both.
+26. **An explicit, checked list binds handlers to declarations, and the build generates it.** The
+    build generates that list from the Module Definition and the handlers. A file name never decides
+    which handler runs. A missing, duplicated, or orphaned handler fails the build. The list is a
+    build output like the registration in decision 4, so a Module keeps one authored list, its
+    Module Definition. The alternative, a second authored list to which Codesmith appends a line,
+    was rejected. The accepted cost is that type checking needs the generated list, so a fresh
+    checkout shows type errors until it has been generated once; the development and check commands
+    generate it.
 
 ## Open points
 
 These are not decided yet. They are listed so that no reader takes the decisions above as complete.
 
-- Whether the build generates the list of decision 26 or Codesmith appends to an authored one.
-- How a running version is replaced inside an open document (decision 15): how what the person has
-  entered is carried over, what else is kept, and when the replacement is required rather than
-  offered.
-- Whether a Release Channel defined through groups moves to a newer qualifying version on its own or
-  only when an operator applies it.
 - How A/B tests and gradual rollout are modelled (decision 15).
 - When the Commerce Portal realm moves onto a Module Audience.
 - Whether inference from one Module Definition stays fast and readable at the size of the largest
@@ -361,10 +382,12 @@ compared before the council chose.
     Module. Attaching a Release Channel to a Tenant or to a group of people, and letting a Tenant
     select the versions of its own Tenant Modules, still contradicts them.
   - ADR-0020 pins one browser document to one composition revision, lets a routine upgrade take
-    effect only on a full reload or a new document, and rejects runtime hot-swap because it can
-    silently change the code serving an active document. Decision 15 changes that: the person is
-    shown that a new version exists, and the running version can be replaced inside the open
-    document.
+    effect only on a full reload or a new document, never uses Module Federation forced replacement,
+    and rejects runtime hot-swap because it can silently change the code serving an active document.
+    Decision 15 replaces that rule. The person is shown that a new version exists, and the running
+    version is replaced inside the open document: when the person accepts it, at their next
+    navigation for a compatible version, and always for a version that needs a further migration.
+    Decision 15 keeps one part of ADR-0020's intent: a document never runs a mix of two selections.
   - Decision 8 changes ADR-0017 and ADR-0014, under which Commerce owns its portal realm. Linking a
     member to a Party leaves the Party Registry as the owner of shared identity
     ([ADR-0015](0015-party-registry-owns-shared-identity.md)).
