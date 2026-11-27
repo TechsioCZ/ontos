@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import {
   dialogCloseLabel,
@@ -17,8 +17,8 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { DateTime } from 'effect';
+import { FormBuilder, FormReact, FormRoot, SelectField } from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import type { BudgetLine, Invoice } from '../../../../shared/apis/records.ts';
 import {
@@ -33,6 +33,7 @@ import { monthLabel } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { editBudgetDraft, newBudgetDraft } from './budget-draft.ts';
 import type { BudgetDraft } from './budget-draft.ts';
+import { useFormDraft } from './finance-form-draft.tsx';
 import { objectSummary } from './object-fields.tsx';
 import { BudgetEditor, OpeningBalanceEditor } from './planning-forms.tsx';
 import { PlanItemsSection } from './plan-items-section.tsx';
@@ -107,18 +108,29 @@ const PlanActualBars = ({
   );
 };
 
+/** The month and the object or cost center the budget comparison shows: they filter at once, nothing is sent. */
+const budgetFilterForm = FormReact.make(
+  FormBuilder.empty.addField('month', Schema.String).addField('object', Schema.String),
+  {
+    fields: { month: SelectField, object: SelectField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
 const usePlanningPanel = (vm: FinanceViewModel) => {
   const state = vm.snapshot?.state;
   const businessDate = vm.referenceDate === '' ? '2026-10-20' : vm.referenceDate;
   const currentMonth = monthOf(businessDate);
   const opening = state?.cashFlowOpening;
   const months = state === undefined ? [] : cashFlowForecast(state, businessDate);
-  const [budgetMonth, setBudgetMonth] = useState(currentMonth);
+  const openedFilters: typeof budgetFilterForm.schema.Encoded = { month: currentMonth, object: 'ALL' };
+  const filters = { ...useFormDraft(budgetFilterForm, openedFilters), opened: openedFilters };
+  const { month: budgetMonth, object: objectFilter } = filters.draft;
   const [draft, setDraft] = useState<BudgetDraft>();
   const [deleteTarget, setDeleteTarget] = useState<BudgetLine>();
   const [openingOpen, setOpeningOpen] = useState(false);
   const invoices = state?.invoices ?? [];
-  const [objectFilter, setObjectFilter] = useState('ALL');
   const budgets = (state?.budgets ?? []).filter(
     (budget) =>
       budget.period === budgetMonth &&
@@ -175,18 +187,16 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     currentMonth,
     deleteTarget,
     draft,
+    filters,
     flowData,
     invoices,
     last,
     months,
-    objectFilter,
     objectFilterItems,
     opening,
     openingOpen,
-    setBudgetMonth,
     setDeleteTarget,
     setDraft,
-    setObjectFilter,
     setOpeningOpen,
     state,
     totals,
@@ -355,59 +365,37 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
 
 const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
   const { t } = useModernI18n();
-  const {
-    budgetMonth,
-    budgetMonths,
-    budgetRows,
-    invoices,
-    objectFilter,
-    objectFilterItems,
-    setBudgetMonth,
-    setDeleteTarget,
-    setDraft,
-    setObjectFilter,
-    vm,
-  } = model;
+  const { budgetMonth, budgetMonths, budgetRows, filters, invoices, objectFilterItems, setDeleteTarget, setDraft, vm } =
+    model;
   return (
     <SectionCard
       actions={
         <>
-          <div className="w-56">
-            <SelectTemplate
-              aria-label={t('finance-billing.financeUi.planning.budgetObject')}
-              items={objectFilterItems.map((entry) => ({
-                displayValue: entry.label,
-                label: entry.label,
-                value: entry.value,
-              }))}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (next !== undefined) {
-                  setObjectFilter(next);
-                }
-              }}
-              size="sm"
-              value={[objectFilter]}
-            />
-          </div>
-          <div className="w-44">
-            <SelectTemplate
-              aria-label={t('finance-billing.financeUi.planning.budgetMonth')}
-              items={budgetMonths.map((month) => ({
-                displayValue: monthLabel(month),
-                label: monthLabel(month),
-                value: month,
-              }))}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (next !== undefined) {
-                  setBudgetMonth(next);
-                }
-              }}
-              size="sm"
-              value={[budgetMonth]}
-            />
-          </div>
+          <FormRoot className="contents" defaultValues={filters.opened} form={budgetFilterForm} translateMessage={t}>
+            {filters.ready}
+            <div className="w-56">
+              <budgetFilterForm.object
+                aria-label={t('finance-billing.financeUi.planning.budgetObject')}
+                items={objectFilterItems.map((entry) => ({
+                  displayValue: entry.label,
+                  label: entry.label,
+                  value: entry.value,
+                }))}
+                size="sm"
+              />
+            </div>
+            <div className="w-44">
+              <budgetFilterForm.month
+                aria-label={t('finance-billing.financeUi.planning.budgetMonth')}
+                items={budgetMonths.map((month) => ({
+                  displayValue: monthLabel(month),
+                  label: monthLabel(month),
+                  value: month,
+                }))}
+                size="sm"
+              />
+            </div>
+          </FormRoot>
           {vm.canWrite && (
             <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} severity="primary" size="sm">
               Přidat položku

@@ -1,8 +1,11 @@
+import { SelectField } from '@app/core-runtime/ui/form';
+import type { FormReact } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Match } from 'effect';
-import { czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
+import { Match, Schema } from 'effect';
+import { createElement } from 'react';
+import { CzVatClassificationCodeSchema, czVatClassificationCodes } from '@app/shared-contracts/cz-vat-classifications';
+import { LineVatTreatmentSchema } from '../../../../shared/apis/records.ts';
 import type { InvoiceLine, LineVatTreatment } from '../../../../shared/apis/records.ts';
 import {
   allowedTreatments,
@@ -13,8 +16,16 @@ import {
   treatmentLabelKey,
 } from '../../../../shared/domain/line-vat.ts';
 import type { InvoiceDirection, LineVatChoice } from '../../../../shared/domain/line-vat.ts';
+import { fieldPart } from './field-lens.ts';
 import { formLabelProps } from './invoice-view.ts';
 import type { VatChoicesState } from './use-vat-choices.ts';
+
+/** A line's or item's VAT choice as a form field holds it. */
+export const LineVatChoiceSchema = Schema.Union([
+  Schema.Struct({ code: CzVatClassificationCodeSchema, kind: Schema.Literal('classification') }),
+  Schema.Struct({ kind: Schema.Literal('treatment'), treatment: LineVatTreatmentSchema }),
+  Schema.Struct({ kind: Schema.Literal('stored'), rate: Schema.Number }),
+]);
 
 const STORED_VALUE = 'stored';
 
@@ -27,13 +38,11 @@ const choiceValue = (choice: LineVatChoice): string =>
     }),
   );
 
-interface VatChoiceSelectProps {
-  readonly choice: LineVatChoice;
+interface VatChoiceProps {
   readonly direction: InvoiceDirection;
   /** Shown under the select when the chosen VAT cannot be stored (the line's or the form's own check). */
   readonly invalid?: boolean;
   readonly name: string;
-  readonly onChange: (next: LineVatChoice) => void;
   readonly vat: VatChoicesState;
 }
 
@@ -42,7 +51,9 @@ interface VatChoiceSelectProps {
  * issue date, and the explicit treatments (exempt, reverse charge, not a VAT payer) the direction and the company's
  * regime allow. An older stored rate stays visible as it is but is never offered for something new.
  */
-export const VatChoiceSelect = ({ choice, direction, invalid = false, name, onChange, vat }: VatChoiceSelectProps) => {
+export const VatChoiceField: FormReact.FieldComponent<LineVatChoice, VatChoiceProps> = ({ field, props }) => {
+  const { direction, invalid = false, name, vat } = props;
+  const choice = field.value;
   const { t } = useModernI18n();
   const choices = vat.state === 'ready' ? vat.choices : undefined;
   const regime = choices?.regime;
@@ -79,26 +90,26 @@ export const VatChoiceSelect = ({ choice, direction, invalid = false, name, onCh
   ];
   return (
     <div className="flex min-w-0 flex-col gap-50">
-      <SelectTemplate
-        items={items}
-        label={t('finance-billing.vat.picker')}
-        labelProps={formLabelProps}
-        name={name}
-        onValueChange={({ value }) => {
-          const [picked] = value;
+      {createElement(SelectField, {
+        field: fieldPart(field, 'choice', choiceValue(choice), (picked) => {
           const code = czVatClassificationCodes.find((entry) => picked === `classification:${entry}`);
           if (code !== undefined) {
-            onChange({ code, kind: 'classification' });
+            field.onChange({ code, kind: 'classification' });
             return;
           }
           const treatment = shownTreatments.find((entry) => picked === `treatment:${entry}`);
           if (treatment !== undefined) {
-            onChange({ kind: 'treatment', treatment });
+            field.onChange({ kind: 'treatment', treatment });
           }
-        }}
-        placeholder={t('finance-billing.selectPlaceholder')}
-        value={[choiceValue(choice)]}
-      />
+        }),
+        props: {
+          items,
+          label: t('finance-billing.vat.picker'),
+          labelProps: formLabelProps,
+          name,
+          placeholder: t('finance-billing.selectPlaceholder'),
+        },
+      })}
       {vat.state === 'unavailable' && (
         <StatusText showIcon size="sm" status="warning">
           {t('finance-billing.vat.ratesUnavailable')}

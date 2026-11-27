@@ -16,6 +16,7 @@ import {
   FormRoot,
   useAtomSet,
   useAtomSubscribe,
+  useAtomValue,
 } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
@@ -212,6 +213,9 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
   const savable = { ...record, save: handleSave };
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: savable, navigation: blocker, onDiscard: handleDiscard });
+  // Reading the picked kind and lease links them to the form's state, so the subscriptions below hear every pick.
+  useAtomValue(chosenKind);
+  useAtomValue(chosenLease);
   // The person picked another kind: the page reads what that kind needs.
   useAtomSubscribe(
     chosenKind,
