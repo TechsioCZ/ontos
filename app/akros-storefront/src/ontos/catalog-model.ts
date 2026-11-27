@@ -9,14 +9,50 @@ import type {
 import { getProductStockStatus } from "@/lib/product-stock";
 import { assertCategoryForest } from "@app/merchandise/domain/category-forest";
 
+// `localeCompare(other, "cs")` builds this collator for every comparison; sorting 2,000+ categories did that 20,000 times.
+const czech = new Intl.Collator("cs");
+const byPositionAndName = (left: CatalogCategory, right: CatalogCategory) =>
+  left.position - right.position || czech.compare(left.name, right.name);
+
+interface CategoryIndex {
+  byId: Map<string, CatalogCategory>;
+  bySlug: Map<string, CatalogCategory>;
+  /** Every category by position, then Czech name. */
+  sorted: CatalogCategory[];
+  /** Each parent's children (`null`: the roots), in the same order. */
+  children: Map<string | null, CatalogCategory[]>;
+}
+// The navigation tree is one array shared by every visit while it is cached (catalog-server.ts): validate, index and
+// sort it once per array instead of on every catalogue model of every render.
+const categoryIndexes = new WeakMap<readonly CatalogCategory[], CategoryIndex>();
+const indexCategories = (categories: readonly CatalogCategory[]): CategoryIndex => {
+  const held = categoryIndexes.get(categories);
+  if (held !== undefined) return held;
+  assertCategoryForest(categories, "projection");
+  const sorted = [...categories].sort(byPositionAndName);
+  const children = new Map<string | null, CatalogCategory[]>();
+  for (const category of sorted) {
+    const siblings = children.get(category.parentId);
+    if (siblings === undefined) children.set(category.parentId, [category]);
+    else siblings.push(category);
+  }
+  const index: CategoryIndex = {
+    byId: new Map(categories.map((category) => [category.id, category] as const)),
+    bySlug: new Map(categories.map((category) => [category.slug, category] as const)),
+    sorted,
+    children,
+  };
+  categoryIndexes.set(categories, index);
+  return index;
+};
+
 export function createCatalog(catalogData: CatalogData, categoryData: CategoryData) {
-  assertCategoryForest(categoryData.categories, "projection");
-  const categoriesById = new Map(
-    categoryData.categories.map((category) => [category.id, category] as const),
-  );
-  const categoriesBySlug = new Map(
-    categoryData.categories.map((category) => [category.slug, category] as const),
-  );
+  const {
+    byId: categoriesById,
+    bySlug: categoriesBySlug,
+    sorted: sortedCategories,
+    children: childCategories,
+  } = indexCategories(categoryData.categories);
   const productsById = new Map(
     catalogData.products.map((product) => [product.id, product] as const),
   );
@@ -83,19 +119,11 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
     stock: summarizeProductStock(product),
   });
 
-  const getCategories = (): CatalogCategory[] =>
-    [...categoryData.categories].sort(
-      (left, right) => left.position - right.position || left.name.localeCompare(right.name, "cs"),
-    );
+  const getCategories = (): CatalogCategory[] => [...sortedCategories];
 
-  const getChildCategories = (parentId: string): CatalogCategory[] =>
-    // Sort only the siblings, not all 2,000+ categories at every level of the active trail.
-    categoryData.categories
-      .filter((category) => category.parentId === parentId)
-      .sort(
-        (left, right) =>
-          left.position - right.position || left.name.localeCompare(right.name, "cs"),
-      );
+  const getChildCategories = (parentId: string): CatalogCategory[] => [
+    ...(childCategories.get(parentId) ?? []),
+  ];
 
   const getSidebarCategories = (activeSlug?: string): CatalogCategory[] => {
     const categories: CatalogCategory[] = [];
@@ -106,9 +134,9 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       categories.push(category);
     };
 
-    for (const root of getCategories().filter((category) => category.parentId === null)) {
+    for (const root of childCategories.get(null) ?? []) {
       appendCategory(root);
-      for (const child of getChildCategories(root.id)) appendCategory(child);
+      for (const child of childCategories.get(root.id) ?? []) appendCategory(child);
     }
 
     const activeCategory = activeSlug ? getCategoryBySlug(activeSlug) : undefined;
@@ -117,7 +145,7 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
       if (activeTrail[0] && includedIds.has(activeTrail[0].id)) {
         for (const category of activeTrail.slice(1)) {
           appendCategory(category);
-          for (const child of getChildCategories(category.id)) appendCategory(child);
+          for (const child of childCategories.get(category.id) ?? []) appendCategory(child);
         }
       }
     }
@@ -174,7 +202,7 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
         (left, right) =>
           (left.featuredPosition ?? Number.MAX_SAFE_INTEGER) -
             (right.featuredPosition ?? Number.MAX_SAFE_INTEGER) ||
-          left.name.localeCompare(right.name, "cs"),
+          czech.compare(left.name, right.name),
       );
 
   // Listing reads carry no variant records, so promotions are the owner's product-level action/sale flags.
