@@ -506,7 +506,7 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: partyRegistrySourceRead,
   },
-  // Native proof: symmy-c14-contact-lifecycle-conformance.test.mts (CI execution pending).
+  // Native proof: symmy-c14-contact-lifecycle-conformance.test.mts.
   {
     audience: partyRegistry,
     declarationKey: 'party.registry.contact-point.update',
