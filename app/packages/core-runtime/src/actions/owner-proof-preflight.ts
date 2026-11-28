@@ -1,11 +1,15 @@
 // oxlint-disable-next-line max-classes-per-file -- The two Context.Service tags define one proof-gated Core boundary and its read-only transaction capability; expires: 2027-09-10.
 import { Context, Effect, Exit, Layer } from 'effect';
+import { sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import type { TrustedPrincipalContext } from './context.ts';
 import { ActionPermissionCheckError, ActionTransactionError } from './errors.ts';
 import { CoreDatabase } from '../db/client.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { OperationContextUnavailable } from '../operations/errors.ts';
+import type { ReadServiceFactory } from '../reads/definition.ts';
 
 /**
  * A proof-gated authorization result is deliberately separate from the normal SpiceDB
@@ -54,6 +58,17 @@ export interface ActionAuthorizationPreflightTransaction {
 }
 
 export interface ActionAuthorizationPreflightDatabaseService {
+  /** Core installs trusted scope before constructing services; the reader receives only owner-local services. */
+  readonly read: <Services, Value, Failure, Requirements = never>(
+    scope: OperationalScope,
+    serviceFactory: ReadServiceFactory<Services, Requirements>,
+    read: (services: Services) => Effect.Effect<Value, Failure, Requirements>,
+    compositionRevision?: string,
+  ) => Effect.Effect<
+    Value,
+    Failure | OperationContextUnavailable | ActionTransactionError | EffectDrizzleQueryError,
+    Requirements
+  >;
   readonly transaction: <Value, Failure>(
     body: (transaction: ActionAuthorizationPreflightTransaction) => Effect.Effect<Value, Failure>,
   ) => Effect.Effect<Value, Failure | ActionTransactionError | EffectDrizzleQueryError>;
@@ -83,6 +98,22 @@ const makeActionAuthorizationPreflightDatabase = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The Layer has already yielded the Core-owned database and closes this read-only capability over that service; expires: 2027-09-10.
   database: (typeof CoreDatabase)['Service'],
 ): ActionAuthorizationPreflightDatabaseService => ({
+  read: (scope, serviceFactory, read, compositionRevision) => {
+    const program = Effect.fn('ActionAuthorizationPreflightDatabase.read')(function* readScopedOwnerServices(
+      transaction: CoreTransaction,
+    ) {
+      yield* transaction.execute(sql`set transaction read only`, 'objects');
+      const scopedTransaction = yield* installOperationalScope(transaction, scope);
+      const services = yield* serviceFactory(scopedTransaction, scope, compositionRevision);
+      return yield* read(services);
+    });
+    return database.executor
+      .transaction((transaction) => program(transaction).pipe(Effect.exit))
+      .pipe(
+        Effect.mapError(transactionFailure),
+        Effect.flatMap((exit) => (Exit.isSuccess(exit) ? Effect.succeed(exit.value) : Effect.failCause(exit.cause))),
+      );
+  },
   transaction: (body) =>
     database.executor
       .transaction((transaction) => Effect.exit(body({ execute: transaction.execute.bind(transaction) })))

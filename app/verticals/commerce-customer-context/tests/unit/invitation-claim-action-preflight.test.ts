@@ -64,6 +64,7 @@ const eligible = {
 };
 
 const noReadDatabase: ActionAuthorizationPreflightDatabaseService = {
+  read: () => Effect.die('Unexpected scoped preflight read'),
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: This success stub's generic transaction value is discarded by the preflight; no caller observes the placeholder.
   transaction: <Value, Failure>(): Effect.Effect<Value, Failure> => Effect.succeed(undefined as Value),
 };
@@ -74,6 +75,7 @@ const failedDatabase = new ActionPermissionCheckError({
 });
 
 const unavailableDatabase: ActionAuthorizationPreflightDatabaseService = {
+  read: () => Effect.die('Unexpected scoped preflight read'),
   transaction: <Value, Failure>(): Effect.Effect<Value, Failure | ActionPermissionCheckError> =>
     // @ts-expect-error -- This deliberately invalid database double injects a permission-check failure to verify fail-closed preflight mapping.
     Effect.fail(failedDatabase),

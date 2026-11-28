@@ -1288,17 +1288,63 @@ const authorizeNewJob = Effect.fn('SymmyJobStore.authorizeNewJob')(function* aut
   return yield* beforeInsert(plan);
 });
 
+const resolveJobAdmissionRoute = Effect.fn('SymmyJobStore.resolveAdmissionRoute')(function* resolveAdmissionRoute(
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  input: SymmyJobAdmissionRequest,
+  idempotencyDigest: string,
+  lock: boolean,
+  mustProve: boolean,
+) {
+  const activeRoute = and(
+    eq(symmyJobRoutes.active, true),
+    eq(symmyJobRoutes.tenantId, scope.tenantId),
+    eq(symmyJobRoutes.principalId, scope.principalId),
+    scope.legalEntityId === undefined
+      ? isNull(symmyJobRoutes.legalEntityId)
+      : eq(symmyJobRoutes.legalEntityId, scope.legalEntityId),
+    eq(symmyJobRoutes.routeKey, input.routeKey),
+    input.code === undefined ? isNull(symmyJobRoutes.routeCode) : eq(symmyJobRoutes.routeCode, input.code),
+  );
+
+  const routes = yield* transaction
+    .select()
+    .from(symmyJobRoutes)
+    .where(activeRoute)
+    .limit(2)
+    .pipe(Effect.mapError(unavailable));
+  const [route] = routes;
+  if (routes.length !== 1 || route === undefined) {
+    return yield* routeDenied();
+  }
+  if (lock) {
+    yield* lockRoute(transaction, route);
+  }
+  const template = yield* decodeRouteTemplate(route);
+  if (
+    (mustProve ||
+      Schema.is(SymmyPolicyFixtureRouteKeySchema)(input.routeKey) ||
+      readVerifiedGatewayRouteScope(scope) !== undefined) &&
+    !exactRouteProofMatches(route, scope, template, idempotencyDigest)
+  ) {
+    return yield* routeDenied();
+  }
+  return { route, template };
+});
+
 interface SymmyJobStore {
   readonly admit: <R = never>(
     input: SymmyJobAdmissionRequest,
     admissionInvocationId?: string,
     beforeInsert?: BeforeJobInsert<R>,
   ) => Effect.Effect<SymmyJobAdmissionReceipt, SymmyJobStoreError, R>;
+
   readonly admitSync: (
     input: AdmitSymmySyncPayload,
     admissionId: string,
   ) => Effect.Effect<SymmySyncAdmissionReceipt, SymmyJobStoreError>;
   readonly poll: (jobId: string) => Effect.Effect<Option.Option<SymmyJobPollResult>, SymmyJobStoreError>;
+  readonly prepareIntake: (input: SymmyJobAdmissionRequest) => Effect.Effect<SymmyPinnedJobPlan, SymmyJobStoreError>;
   readonly readSyncAdmission: (admissionId: string) => Effect.Effect<SymmySyncAdmissionReceipt, SymmyJobStoreError>;
   readonly routeContext: (input: {
     readonly code?: string;
@@ -1326,37 +1372,14 @@ export const symmyJobStoreFactory = (
       const [idempotencyDigest, intentDigest] = yield* Effect.all([hash(input.idempotencyKey), hash(callerIntent)], {
         concurrency: 2,
       });
-      const activeRoute = and(
-        eq(symmyJobRoutes.active, true),
-        eq(symmyJobRoutes.tenantId, scope.tenantId),
-        eq(symmyJobRoutes.principalId, scope.principalId),
-        scope.legalEntityId === undefined
-          ? isNull(symmyJobRoutes.legalEntityId)
-          : eq(symmyJobRoutes.legalEntityId, scope.legalEntityId),
-        eq(symmyJobRoutes.routeKey, input.routeKey),
-        input.code === undefined ? isNull(symmyJobRoutes.routeCode) : eq(symmyJobRoutes.routeCode, input.code),
+      const { route, template } = yield* resolveJobAdmissionRoute(
+        transaction,
+        scope,
+        input,
+        idempotencyDigest,
+        true,
+        admissionInvocationId !== undefined,
       );
-
-      const routes = yield* transaction
-        .select()
-        .from(symmyJobRoutes)
-        .where(activeRoute)
-        .limit(2)
-        .pipe(Effect.mapError(unavailable));
-      const [route] = routes;
-      if (routes.length !== 1 || route === undefined) {
-        return yield* routeDenied();
-      }
-      yield* lockRoute(transaction, route);
-      const template = yield* decodeRouteTemplate(route);
-      if (
-        (admissionInvocationId !== undefined ||
-          Schema.is(SymmyPolicyFixtureRouteKeySchema)(input.routeKey) ||
-          readVerifiedGatewayRouteScope(scope) !== undefined) &&
-        !exactRouteProofMatches(route, scope, template, idempotencyDigest)
-      ) {
-        return yield* routeDenied();
-      }
       const readAcceptedJob = transaction
         .select({
           ...receiptColumns,
@@ -1646,6 +1669,22 @@ export const symmyJobStoreFactory = (
         Effect.map(Option.some),
         Effect.mapError(unavailable),
       );
+    }),
+    prepareIntake: Effect.fn('SymmyJobStore.prepareIntake')(function* prepareIntake(input) {
+      if (
+        input.routeKey !== 'customersBatch' ||
+        transaction.scope.tenantId !== scope.tenantId ||
+        transaction.scope.legalEntityId !== scope.legalEntityId
+      ) {
+        return yield* routeDenied();
+      }
+      const digest = yield* hash(input.idempotencyKey);
+      const { route, template } = yield* resolveJobAdmissionRoute(transaction, scope, input, digest, false, true);
+      if (!permitsNewAdmission(route, scope, input.fixtureId ?? 'INTERNAL_C14')) {
+        return yield* routeDenied();
+      }
+      const plan = yield* prepareAdmissionPlan({ scope, transaction }, route, input, template);
+      return plan ?? (yield* routeDenied());
     }),
     readSyncAdmission: Effect.fn('SymmyJobStore.readSyncAdmission')(function* readSyncAdmission(admissionId: string) {
       if (transaction.scope.tenantId !== scope.tenantId || transaction.scope.legalEntityId !== scope.legalEntityId) {

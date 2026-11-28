@@ -1064,17 +1064,33 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         lastName: `Fixture${index}`,
       }));
       const pageKey = 'INTERNAL_C14_FULL_PAGE';
-      const pageJob = yield* submitFor(pageKey, customersBody(...pageCustomers));
+      const pageJobs = yield* Effect.forEach(
+        [0, 16, 32, 48],
+        (offset) => {
+          const customers = pageCustomers.slice(offset, offset + 16);
+          return submitFor(`${pageKey}:${offset}`, customersBody(...customers)).pipe(
+            Effect.map((job) => ({ ...job, expected: customers.length * 2 })),
+          );
+        },
+        { concurrency: 1 },
+      );
       const pageWorker = yield* startProductWorker(workerArtifact, {
         ...environment,
         ONTOS_C14_WORKER_CLAIM_OWNER: pageKey,
         ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
       });
       yield* observeUntil(
-        admin<{ settled: number; total: number }>`select count(*)::integer as total,
-          count(*) filter(where state='settled')::integer as settled from symmy_integration.job_effects
-          where job_id=${pageJob.jobId}`,
-        (rows) => rows[0]?.total === 98 && rows[0].settled === 98,
+        Effect.forEach(
+          pageJobs,
+          ({ expected, jobId }) =>
+            admin<{ settled: number; total: number }>`select count(*)::integer as total,
+            count(*) filter(where state='settled')::integer as settled from symmy_integration.job_effects
+            where job_id=${jobId}`.pipe(
+              Effect.map((rows) => rows[0]?.total === expected && rows[0].settled === expected),
+            ),
+          { concurrency: 1 },
+        ),
+        (done) => done.every(Boolean),
         2400,
       ).pipe(
         Effect.tapError(() =>

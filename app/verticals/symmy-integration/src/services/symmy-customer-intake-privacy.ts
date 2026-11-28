@@ -19,7 +19,7 @@ import {
 } from '@app/privacy/api/admit-source-processing-subject-action';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
-import { Array as EffectArray, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Context, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } from 'effect';
 
 import type { SymmyPinnedEffect, SymmyPinnedJobPlan } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyPartyCommerceIntentSchema } from '../../shared/domain/symmy-party-commerce-intents.ts';
@@ -481,44 +481,103 @@ export const projectSymmyCustomerIntakeRequests = (scope: OperationalScope, plan
  * Admits each customer under the route's standing authorization and checks every exact use before C14 writes any new
  * personal input. Native owners still recheck at dispatch.
  */
+/** A preparation belongs to this exact Core invocation; it never supplies a reusable Privacy allowance. */
+export interface SymmyCustomerIntakePreparation {
+  readonly actionInvocationId: string;
+  readonly intakeHash: string;
+  readonly scope: OperationalScope;
+}
+export const customerIntakePreparationMatches = (
+  prepared: SymmyCustomerIntakePreparation,
+  current: {
+    readonly actionInvocationId: string;
+    readonly intake: Effect.Success<ReturnType<typeof projectSymmyCustomerIntake>>;
+    readonly scope: OperationalScope;
+  },
+) =>
+  prepared.actionInvocationId === current.actionInvocationId &&
+  prepared.scope.tenantId === current.scope.tenantId &&
+  prepared.scope.principalId === current.scope.principalId &&
+  prepared.scope.authMethod === current.scope.authMethod &&
+  prepared.scope.authContextRef === current.scope.authContextRef &&
+  prepared.scope.legalEntityId === current.scope.legalEntityId &&
+  prepared.intakeHash === computeCanonicalValueHash(current.intake);
+
+export class SymmyPreparedCustomerIntake extends Context.Service<
+  SymmyPreparedCustomerIntake,
+  {
+    readonly verify: (input: {
+      readonly actionInvocationId: string;
+      readonly intake: Effect.Success<ReturnType<typeof projectSymmyCustomerIntake>>;
+      readonly scope: OperationalScope;
+    }) => Effect.Effect<void, SymmyJobStoreError>;
+  }
+>()('@app/symmy-integration/services/symmy-customer-intake-privacy/SymmyPreparedCustomerIntake') {}
+
+const customerIntakePrivacyCalls = Effect.fn('SymmyCustomerIntakePrivacy.calls')(function* calls(
+  scope: OperationalScope,
+): Effect.fn.Return<SymmyCustomerIntakePrivacyCalls, SymmyJobStoreError, Crypto.Crypto> {
+  if (scope.authMethod !== 'api_key' || scope.legalEntityId === undefined) {
+    return yield* unavailable();
+  }
+  yield* requireModuleOperation(customerIntakePrivacyRequirement).pipe(Effect.mapError(unavailable));
+  const crypto = yield* Crypto.Crypto;
+  return {
+    admit: (payload, idempotencyKey) => admitSubject(scope, payload, idempotencyKey, crypto),
+    check: Effect.fn('SymmyCustomerIntakePrivacy.check')(function* check(request) {
+      const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
+      const gateway = yield* acquireDelegatedGatewayContext(
+        {
+          audience: 'privacy',
+          legalEntityScope: 'subject',
+          requestCorrelation,
+          subject: { _tag: 'Assertion', scope },
+        },
+        crypto,
+      ).pipe(Effect.mapError(unavailable));
+      const outcome = yield* executeSourceProcessingEligibilityWithAuthorization(
+        request,
+        gateway.authorization,
+        requestCorrelation,
+        { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
+      ).pipe(Effect.mapError(unavailable));
+      if (outcome.outcome === 'DENIED') {
+        return yield* outcome.reason === 'AUTHORITY_NOT_CURRENT' ? unavailable() : denied();
+      }
+      return yield* Effect.void;
+    }),
+  };
+});
+
+/** Runs only in Core's post-permission, pre-transaction permit phase: nested Privacy Actions must not wait on the
+ * Symmy write's tenant lock. Every proposed child binding is still committed only after all governing checks pass. */
+export const prepareSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakePrivacy.prepare')(function* prepare(
+  scope: OperationalScope,
+  plan: SymmyPinnedJobPlan,
+) {
+  const intake = yield* projectSymmyCustomerIntake(scope, plan);
+  if (intake.requests.length > 0) {
+    if (intake.admissions.length > 0) {
+      yield* requireModuleOperation(customerIntakeAdmissionRequirement).pipe(Effect.mapError(unavailable));
+    }
+    yield* settleSymmyCustomerIntake(intake, yield* customerIntakePrivacyCalls(scope));
+  }
+  return intake;
+});
+
+/** Rechecks Current Privacy inside Symmy's normal serialized write, but performs no nested write there. */
 export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakePrivacy.require')(
-  function* requirePrivacy(scope: OperationalScope, plan: SymmyPinnedJobPlan) {
+  function* requirePrivacy(scope: OperationalScope, plan: SymmyPinnedJobPlan, actionInvocationId: string) {
     const intake = yield* projectSymmyCustomerIntake(scope, plan);
     if (intake.requests.length === 0) {
       return yield* Effect.void;
     }
-    if (scope.authMethod !== 'api_key' || scope.legalEntityId === undefined) {
+    const prepared = yield* Effect.serviceOption(SymmyPreparedCustomerIntake);
+    if (Option.isNone(prepared)) {
       return yield* unavailable();
     }
-    yield* requireModuleOperation(customerIntakePrivacyRequirement).pipe(Effect.mapError(unavailable));
-    if (intake.admissions.length > 0) {
-      yield* requireModuleOperation(customerIntakeAdmissionRequirement).pipe(Effect.mapError(unavailable));
-    }
-    const crypto = yield* Crypto.Crypto;
-    return yield* settleSymmyCustomerIntake(intake, {
-      admit: (payload, idempotencyKey) => admitSubject(scope, payload, idempotencyKey, crypto),
-      check: Effect.fn('SymmyCustomerIntakePrivacy.check')(function* check(request) {
-        const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(unavailable));
-        const gateway = yield* acquireDelegatedGatewayContext(
-          {
-            audience: 'privacy',
-            legalEntityScope: 'subject',
-            requestCorrelation,
-            subject: { _tag: 'Assertion', scope },
-          },
-          crypto,
-        ).pipe(Effect.mapError(unavailable));
-        const outcome = yield* executeSourceProcessingEligibilityWithAuthorization(
-          request,
-          gateway.authorization,
-          requestCorrelation,
-          { baseUrl: gateway.apiBaseUrl, compositionRevision: gateway.compositionRevision },
-        ).pipe(Effect.mapError(unavailable));
-        if (outcome.outcome === 'DENIED') {
-          return yield* outcome.reason === 'AUTHORITY_NOT_CURRENT' ? unavailable() : denied();
-        }
-        return yield* Effect.void;
-      }),
-    });
+    yield* prepared.value.verify({ actionInvocationId, intake, scope });
+    const privacy = yield* customerIntakePrivacyCalls(scope);
+    return yield* Effect.forEach(intake.requests, privacy.check, { concurrency: 1, discard: true });
   },
 );

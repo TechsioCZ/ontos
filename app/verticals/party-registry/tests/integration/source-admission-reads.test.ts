@@ -182,13 +182,10 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 }),
               ).toEqual({ outcome: 'NOT_ADMISSIBLE' });
               expect(
-                Result.isFailure(
-                  yield* readSourcePersonAdmission(transaction, scope, request).pipe(
-                    Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('DENIED') }),
-                    Effect.result,
-                  ),
+                yield* readSourcePersonAdmission(transaction, scope, request).pipe(
+                  Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('DENIED') }),
                 ),
-              ).toBe(true);
+              ).toEqual({ outcome: 'NOT_ADMISSIBLE' });
               const contactPointOf = (partyId: string, email: string, acceptedByActionInvocationId: string) =>
                 transaction
                   .insert(partyContactPoints)

@@ -19,6 +19,7 @@ import type { ESTree } from '@oxlint/plugins';
 import { asNode, keyName as staticKeyName, unwrapBinding, unwrapType as unwrapSharedType } from '../shared/ast.ts';
 import { resolveVariable } from '../shared/bindings.ts';
 import { booleanOption as boolean, compile, stringList } from '../shared/options.ts';
+import { scopePath } from '../shared/paths.ts';
 import { isSourceRuleInScope } from '../shared/source-rule-scope.ts';
 
 type AnyNode = ESTree.Node;
@@ -307,6 +308,44 @@ export const rule = defineRule({
       return /^(?:root\.)?Effect(?:\.Effect)?$/u.test(importedPath(typeName) ?? '');
     };
 
+    /** Core's scoped-read contract constructs owner services; it does not pass a product collaborator. */
+    const isCoreScopedReadFactoryParameter = (node: AnyNode, param: AnyNode, annotation: AnyNode | null): boolean => {
+      if (
+        scopePath(context.filename) !== 'packages/core-runtime/src/actions/owner-proof-preflight.ts' ||
+        node.type !== 'TSFunctionType' ||
+        node.params[1] !== param ||
+        !returnsEffect(node.returnType) ||
+        annotation === null
+      )
+        return false;
+      let property = node.parent;
+      if (property?.type === 'TSTypeAnnotation') property = property.parent;
+      if (
+        property?.type !== 'TSPropertySignature' ||
+        keyName(property.key, property.computed) !== 'read' ||
+        property.parent?.type !== 'TSInterfaceBody'
+      )
+        return false;
+      const contract = property.parent.parent;
+      if (
+        contract?.type !== 'TSInterfaceDeclaration' ||
+        contract.id.name !== 'ActionAuthorizationPreflightDatabaseService' ||
+        !taggedContracts.has(contract)
+      )
+        return false;
+      const type = unwrapType(annotation);
+      if (type.type !== 'TSTypeReference' || type.typeName.type !== 'Identifier') return false;
+      const definitions = variableFor(type.typeName, type.typeName.name)?.defs ?? [];
+      const [definition] = definitions;
+      return (
+        definitions.length === 1 &&
+        definition?.type === 'ImportBinding' &&
+        definition.node.type === 'ImportSpecifier' &&
+        definition.parent?.source?.value === '../reads/definition.ts' &&
+        (definition.node.imported.name ?? definition.node.imported.value) === 'ReadServiceFactory'
+      );
+    };
+
     /** Members are *all* `() => Effect.Effect<…>`: B4's symbol-slotted operation record. */
     const isServiceRecord = (node: AnyNode): boolean => {
       const members = membersOf(node);
@@ -559,7 +598,12 @@ export const rule = defineRule({
           (param as { typeAnnotation?: AnyNode | null }).typeAnnotation ??
           null;
         const verdict = classify(annotation, 0);
-        if (verdict === null || isRootLayerInput(binding, verdict)) continue;
+        if (
+          verdict === null ||
+          isRootLayerInput(binding, verdict) ||
+          isCoreScopedReadFactoryParameter(node, param, annotation)
+        )
+          continue;
         context.report({
           data: {
             member: verdict.member ?? '',

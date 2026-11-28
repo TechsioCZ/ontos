@@ -56,7 +56,9 @@ const handleAdmitSymmyJob = Effect.fn('SymmyJobAdmission.handle')(function* admi
     return yield* new AdmitSymmyJobRejected(rejected.route_denied);
   }
   const admitted = yield* context.services
-    .admit(payload, context.actionInvocationId, (plan) => requireSymmyCustomerIntakePrivacy(context.scope, plan))
+    .admit(payload, context.actionInvocationId, (plan) =>
+      requireSymmyCustomerIntakePrivacy(context.scope, plan, context.actionInvocationId),
+    )
     .pipe(
       // The caller gets the public problem only; the service log names the store's refusal, never the payload.
       Effect.tapError(({ code }) => Effect.logWarning({ boundary: 'symmy-job-admission', code })),

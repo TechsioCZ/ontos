@@ -1,8 +1,30 @@
+import type {
+  ActionAuthorizationPreflightInput,
+  ActionAuthorizationPreflightService,
+  ActionRuntimeService,
+  DatabaseConfig,
+} from '@app/core-runtime';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { AdmitSymmyJobPayloadSchema } from '../shared/domain/symmy-job-admission.ts';
+import { admitSymmyJobAction } from '../src/actions/admit-symmy-job.action.ts';
+import { symmyJobOperationFactory } from '../src/auth/symmy-job-operation-factory.ts';
+import { SymmyJobStoreError } from '../src/persistence/symmy-job-store.ts';
+import {
+  prepareSymmyCustomerIntakePrivacy,
+  SymmyPreparedCustomerIntake,
+  customerIntakePreparationMatches,
+} from '../src/services/symmy-customer-intake-privacy.ts';
+import type { SymmyCustomerIntakePreparation } from '../src/services/symmy-customer-intake-privacy.ts';
 import { ModuleCallRouteLive } from '@app/shared-contracts/server/sdk-module-call-route';
 import { SymmyCatalogPricingInventoryAdaptersLive } from '../src/services/symmy-catalog-pricing-inventory-adapters.ts';
 import { SymmyPolicyFixtureAdaptersLive } from '../src/services/symmy-policy-fixture-adapters.ts';
 import { SymmyPartyCommerceAdaptersLive } from '../src/services/symmy-party-commerce-adapters.ts';
 import {
+  ActionAuthorizationPreflight,
+  ActionAuthorizationPreflightDatabase,
+  ActionPermissionCheckError,
+  ActionRuntime,
+  makeActionAuthorizationPreflightPermit,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -28,7 +50,21 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { PgClient } from '@effect/sql-pg';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Layer, Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
+import type { Crypto } from 'effect';
+import {
+  Context,
+  Effect,
+  Layer,
+  Layer as GovernedReadLayer,
+  Logger,
+  Option,
+  Redacted,
+  Ref,
+  References,
+  Result,
+  Schema,
+  Tracer,
+} from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -103,7 +139,7 @@ const governedReadRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, sym
     ),
   ),
 );
-const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration).pipe(
+const governedActionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration).pipe(
   GovernedReadLayer.provide(
     GovernedReadLayer.mergeAll(
       governedReadRuntimeDependenciesLive,
@@ -113,6 +149,135 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit,
       ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provideMerge(CorePersistenceLive)),
       governedActiveApplicationCompositionLive,
     ),
+  ),
+);
+
+type IntakePreparationState = Ref.Ref<Result.Result<SymmyCustomerIntakePreparation, SymmyJobStoreError>>;
+const intakeUnavailable = (cause?: unknown) => {
+  const error = new SymmyJobStoreError({ code: 'unavailable' });
+  return cause === undefined ? error : Object.defineProperty(error, 'cause', { value: Redacted.make(cause) });
+};
+const intakeDenied = () => new SymmyJobStoreError({ code: 'route_denied' });
+const prepareCustomerIntake = Effect.fn('SymmyCustomerIntake.prepareInvocation')(function* prepareCustomerIntake(
+  source: ActionAuthorizationPreflightInput,
+) {
+  const database = yield* ActionAuthorizationPreflightDatabase;
+  const payload = yield* Schema.decodeUnknownEffect(AdmitSymmyJobPayloadSchema)(source.payload).pipe(
+    Effect.mapError(intakeUnavailable),
+  );
+  const plan = yield* database
+    .read(
+      source.scope,
+      symmyJobOperationFactory,
+      Effect.fnUntraced(function* prepareOwner(services) {
+        const kind = yield* services.readPrincipalKind().pipe(Effect.mapError(intakeUnavailable));
+        if (Option.getOrUndefined(kind) !== 'integration') {
+          return yield* intakeDenied();
+        }
+        return yield* services.prepareIntake(payload);
+      }),
+    )
+    .pipe(Effect.mapError((cause) => (Schema.is(SymmyJobStoreError)(cause) ? cause : intakeUnavailable(cause))));
+  const intake = yield* prepareSymmyCustomerIntakePrivacy(source.scope, plan);
+  return {
+    actionInvocationId: source.actionInvocationId,
+    intakeHash: computeCanonicalValueHash(intake),
+    scope: source.scope,
+  };
+});
+
+const customerIntakePreflight = Effect.fn('SymmyCustomerIntake.preflight')(function* buildIntakePreflight(
+  state: IntakePreparationState,
+) {
+  const dependencies = yield* Effect.context<ActionAuthorizationPreflightDatabase | Crypto.Crypto>();
+  const preflight: ActionAuthorizationPreflightService = {
+    prepare: (source) => {
+      const permit = makeActionAuthorizationPreflightPermit({
+        actionInvocationId: source.actionInvocationId,
+        actionKey: source.actionKey,
+        principalId: source.principal.principalId,
+      });
+      const consume = permit.consume.pipe(
+        Effect.andThen(
+          prepareCustomerIntake(source).pipe(
+            Effect.provideContext(dependencies),
+            Effect.result,
+            Effect.flatMap((result) => Ref.set(state, result)),
+          ),
+        ),
+      );
+      return Effect.succeed({ outcome: 'allowed' as const, permit: { ...permit, consume } });
+    },
+  };
+  return preflight;
+});
+const preparedCustomerIntake = (state: IntakePreparationState) =>
+  SymmyPreparedCustomerIntake.of({
+    verify: (current) =>
+      Ref.get(state).pipe(
+        Effect.flatMap((result) => {
+          if (Result.isFailure(result)) {
+            return Effect.fail(result.failure);
+          }
+          return customerIntakePreparationMatches(result.success, current) ? Effect.void : Effect.fail(intakeDenied());
+        }),
+      ),
+  });
+
+// Consume Core's existing invocation-bound permit after permission/composition admission but before the tenant write
+// transaction. Parent and Privacy Actions must never contend for the same tenant mutex while awaiting each other.
+const customerIntakeActionRuntime = Layer.effect(
+  ActionRuntime,
+  Effect.gen(function* customerIntakeActionRuntime() {
+    const baseContext = yield* Layer.build(governedActionRuntimeCoreLive);
+    const base = Context.get(baseContext, ActionRuntime);
+    const dependencies = yield* Effect.context<DatabaseConfig | Crypto.Crypto>();
+    const preparationDependencies = yield* Effect.context<ActionAuthorizationPreflightDatabase | Crypto.Crypto>();
+    const runPrepared: ActionRuntimeService['runAction'] = (input) =>
+      Effect.scoped(
+        Effect.gen(function* preparedRun() {
+          const state = yield* Ref.make<Result.Result<SymmyCustomerIntakePreparation, SymmyJobStoreError>>(
+            Result.fail(intakeUnavailable()),
+          );
+          const preflight = yield* customerIntakePreflight(state).pipe(Effect.provideContext(preparationDependencies));
+          const context = yield* Layer.build(
+            governedActionRuntimeCoreLive.pipe(Layer.provide(Layer.succeed(ActionAuthorizationPreflight, preflight))),
+          ).pipe(
+            Effect.provideContext(dependencies),
+            Effect.mapError((cause) =>
+              Object.defineProperty(
+                new ActionPermissionCheckError({
+                  code: 'action_permission_check_failed',
+                  reason: 'The intake preparation runtime could not be built',
+                }),
+                'cause',
+                { value: cause },
+              ),
+            ),
+          );
+          return yield* Context.get(context, ActionRuntime)
+            .runAction(input)
+            .pipe(Effect.provideService(SymmyPreparedCustomerIntake, preparedCustomerIntake(state)));
+        }),
+      );
+    const runtime: ActionRuntimeService = {
+      resolveActionCommit: base.resolveActionCommit,
+      runAction: (input) => {
+        const payload = Schema.decodeUnknownOption(AdmitSymmyJobPayloadSchema)(input.payload);
+        return Object.is(input.registration, admitSymmyJobAction) &&
+          Option.isSome(payload) &&
+          payload.value.routeKey === 'customersBatch'
+          ? runPrepared(input)
+          : base.runAction(input);
+      },
+    };
+    return runtime;
+  }),
+);
+const governedActionRuntimeLive = customerIntakeActionRuntime.pipe(
+  GovernedReadLayer.provide(nodeCryptoLayer),
+  GovernedReadLayer.provide(
+    ActionAuthorizationPreflightDatabaseLive.pipe(GovernedReadLayer.provide(CorePersistenceLive)),
   ),
 );
 
