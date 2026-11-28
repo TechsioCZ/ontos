@@ -54,15 +54,25 @@ const confirmFlags = [
  * The real roots already carry the generated entries of the Core Media Actions. A fixture starts from their empty
  * insertion slots, so every test judges a fresh generation against the real surrounding code.
  */
-const withoutCoreActionEntries = (source: string): string =>
-  source
-    // The canonical Core runtime import names these two Actions after a generation; a fresh one does not.
+const withoutCoreActionEntries = (source: string): string => {
+  const lines = source
     .replace('\n  renameDisplayFilenameAction,', '')
     .replace('\n  uploadAssetAction,', '')
-    .replaceAll(
-      /(?<start>\/\/ @ontos-codesmith-core-action-[a-z-]+:start)[\s\S]*?(?<end>\n\s*\/\/ @ontos-codesmith-core-action-[a-z-]+:end)/gu,
-      '$<start>$<end>',
-    );
+    .split('\n');
+  let inside = false;
+  return lines
+    .filter((line) => {
+      if (/\/\/ @ontos-codesmith-core-action-[a-z-]+:end/u.test(line)) {
+        inside = false;
+      }
+      const retain = !inside;
+      if (/\/\/ @ontos-codesmith-core-action-[a-z-]+:start/u.test(line)) {
+        inside = true;
+      }
+      return retain;
+    })
+    .join('\n');
+};
 
 const fixture = <A, E, R>(runFixture: (root: string) => Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
@@ -207,8 +217,8 @@ it.effect(
             'u',
           ),
         );
-        expect(server).toMatch(/^\s+coreActionUploadAssetHandlersLive,$/mu);
-        expect(server).not.toMatch(/^\s+coreActionUploadAssetGroupLive,$/mu);
+        expect(server).toMatch(/^[\t ]+coreActionUploadAssetHandlersLive,$/mu);
+        expect(server).not.toMatch(/^[\t ]+coreActionUploadAssetGroupLive,$/mu);
       }),
     ),
 );

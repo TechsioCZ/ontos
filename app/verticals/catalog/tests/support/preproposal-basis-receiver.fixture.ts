@@ -84,7 +84,7 @@ type ProducerStep = (typeof producerSteps)[number];
 const assertion = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32_768));
 const producerInputSchema = Schema.Struct({
   baseUrl: Schema.String.check(
-    Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):[1-9][0-9]{0,4}\/catalog-api$/u),
+    Schema.isPattern(/^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):[1-9]\d{0,4}\/catalog-api$/u),
   ),
   compositionRevision: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   credentials: Schema.Struct({
@@ -192,7 +192,7 @@ const serve = Effect.scoped(
           }
           const text = `span-failure ${span.name}\n${inspect(exit.cause, { depth: 7, maxStringLength: 400 })}`
             .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, '[REDACTED]')
-            .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+            .replaceAll(/(?<scheme>\b\w+:\/\/)[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
             .slice(0, 6144);
           observedBytes += text.length;
           process.stderr.write(`${text}\n`);

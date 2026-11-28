@@ -85,15 +85,13 @@ const pending = (input: {
   readonly reason: string;
   readonly result: typeof MarketLifecycleResultSchema.Type;
   readonly sourceActionInvocationId: string;
-}) => {
-  const failure = new MarketRetirementSettlementPending({
+}) =>
+  new MarketRetirementSettlementPending({
     code: 'market_retirement_settlement_unavailable',
     committedResult: input.result,
     reason: input.reason,
     sourceActionInvocationId: input.sourceActionInvocationId,
   });
-  return failure;
-};
 const finalizeCommitted = Effect.fn('MarketRetirement.finalizeCommitted')(function* finalizeCommitted(
   input: SettlementInput,
   receipt: CommittedReceipt,

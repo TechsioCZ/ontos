@@ -1,4 +1,4 @@
-import { defineScopedRoutine } from '@app/core-runtime';
+import { defineScopedRoutine, findPostgresFailure } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { and, eq } from 'drizzle-orm';
@@ -81,10 +81,11 @@ const lockClosedBoundaryScope = defineScopedRoutine({
 });
 const db = <Value, FailureError>(effect: Effect.Effect<Value, FailureError>) =>
   effect.pipe(
-    Effect.mapError((failure) => {
-      void failure;
-      return unavailable();
-    }),
+    Effect.mapError((failure) =>
+      Object.defineProperty(unavailable(), 'cause', {
+        value: Option.map(findPostgresFailure(failure), ({ code }) => code),
+      }),
+    ),
   );
 const subjectKey = (input: CreateClosedAssortmentBoundaryPayload) =>
   input.subject.kind === 'COUNTERPARTY'

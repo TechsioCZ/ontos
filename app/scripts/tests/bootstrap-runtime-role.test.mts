@@ -77,29 +77,31 @@ const migrationTableGrants = new Map<string, ReadonlySet<string>>();
 const migrationRoutineGrants = new Set<string>();
 const migrationRoutineRevokes = new Set<string>();
 for (const migration of newPricingMigrations) {
-  const tableGrantPattern =
-    /GRANT\s+(?<privileges>[A-Z, ]+)\s+ON\s+TABLE\s+(?<tables>[\s\S]*?)\s+TO\s+"?ontos_runtime"?\s*;/giu;
-  let tableGrant = tableGrantPattern.exec(migration);
-  while (tableGrant !== null) {
-    const privileges = new Set(
-      requiredCapture(tableGrant, 'privileges')
-        .split(',')
-        .map((value) => value.trim().toLowerCase()),
+  for (const fragment of migration.matchAll(/\b(?:grant|revoke)\b[^;]*/giu)) {
+    const statement = `${fragment[0].trim().replaceAll(/\s+/gu, ' ')};`;
+    const tableGrant = /^GRANT (?<privileges>[a-z, ]+) ON TABLE (?<tables>[^;]+) TO "?ontos_runtime"? ?;$/iu.exec(
+      statement,
     );
-    for (const qualifiedName of requiredCapture(tableGrant, 'tables').split(',')) {
-      const table = qualifiedName
-        .trim()
-        .replaceAll('"', '')
-        .replace(/^pricing\./u, '');
-      migrationTableGrants.set(table, privileges);
+    if (tableGrant !== null) {
+      const privileges = new Set(
+        requiredCapture(tableGrant, 'privileges')
+          .split(',')
+          .map((value) => value.trim().toLowerCase()),
+      );
+      for (const qualifiedName of requiredCapture(tableGrant, 'tables').split(',')) {
+        const table = qualifiedName
+          .trim()
+          .replaceAll('"', '')
+          .replace(/^pricing\./u, '');
+        migrationTableGrants.set(table, privileges);
+      }
+      continue;
     }
-    tableGrant = tableGrantPattern.exec(migration);
-  }
-  const routineGrantPattern =
-    /(?<operation>GRANT|REVOKE)\s+(?:ALL|EXECUTE)\s+ON\s+FUNCTION\s+(?<signature>[\s\S]*?)\s+(?:TO|FROM)\s+(?<roles>[^;]+)\s*;/giu;
-  let routineGrant = routineGrantPattern.exec(migration);
-  while (routineGrant !== null) {
-    if (requiredCapture(routineGrant, 'roles').toLowerCase().includes('ontos_runtime')) {
+    const routineGrant =
+      /^(?<operation>GRANT|REVOKE) (?:ALL|EXECUTE) ON FUNCTION (?<signature>[^)]+\)) (?:TO|FROM) (?<roles>[^;]+);$/iu.exec(
+        statement,
+      );
+    if (routineGrant !== null && requiredCapture(routineGrant, 'roles').toLowerCase().includes('ontos_runtime')) {
       const signature = normalizedRoutine(requiredCapture(routineGrant, 'signature'));
       if (requiredCapture(routineGrant, 'operation').toUpperCase() === 'GRANT') {
         migrationRoutineGrants.add(signature);
@@ -109,7 +111,6 @@ for (const migration of newPricingMigrations) {
         migrationRoutineRevokes.add(signature);
       }
     }
-    routineGrant = routineGrantPattern.exec(migration);
   }
 }
 

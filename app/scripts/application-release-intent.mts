@@ -131,14 +131,14 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
   const selected = new Set<string>();
   const desiredIds = new Set(intent.modules.map(({ appId }) => appId));
   const changedPlacements = new Set(
-    baseline?.composition.modules
-      .filter(
-        (module) =>
-          target !== undefined &&
-          desiredIds.has(module.deployment.appId) &&
-          module.backend.transport !== (target === 'cloudflare' ? 'cloudflare-worker' : 'node-http'),
-      )
-      .map(({ deployment }) => deployment.appId),
+    baseline?.composition.modules.flatMap((module) => {
+      const { deployment } = module;
+      return target !== undefined &&
+        desiredIds.has(module.deployment.appId) &&
+        module.backend.transport !== (target === 'cloudflare' ? 'cloudflare-worker' : 'node-http')
+        ? [deployment.appId]
+        : [];
+    }),
   );
   const complete: ApplicationReleaseDeploymentUnit[] = [];
   const fresh: ApplicationReleaseDeploymentUnit[] = [];
@@ -161,7 +161,7 @@ export const selectApplicationReleaseUnits = Effect.fn('ApplicationReleaseIntent
   const selection: ApplicationReleaseSelection = {
     complete,
     fresh,
-    removed: priorIds.filter((appId) => !selected.has(appId)).map((appId) => ({ appId })),
+    removed: priorIds.flatMap((appId) => (selected.has(appId) ? [] : [{ appId }])),
     retained,
     shell: {
       mode:
@@ -218,14 +218,18 @@ export const applicationReleaseSelectCommand = Command.make(
           message: 'topology and execution placement must contain unique known deployments',
         });
       }
-      const available = topologyUnits
-        .filter((unit) => placement.units.includes(unit.id))
-        .map((unit) => ({
-          id: unit.id,
-          packageName: unit.package,
-          path: unit.path,
-          workerName: unit.cloudflare.workerName,
-        }));
+      const available = topologyUnits.flatMap((unit) =>
+        placement.units.includes(unit.id)
+          ? [
+              {
+                id: unit.id,
+                packageName: unit.package,
+                path: unit.path,
+                workerName: unit.cloudflare.workerName,
+              },
+            ]
+          : [],
+      );
       const impacted = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Array(

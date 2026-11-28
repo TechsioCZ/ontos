@@ -46,8 +46,8 @@ export const explicitEntries: readonly ExplicitManifestEntry[] = DATABASE_ROLE_G
   entry.kind === 'explicit' ? [{ grants: entry.grants, identity: entry.identity }] : [],
 );
 
-export const legacySharedEntries: readonly LegacySharedManifestEntry[] = DATABASE_ROLE_GRANT_MANIFEST.flatMap(
-  (entry) => (entry.kind === 'legacy_shared' ? [entry] : []),
+export const legacySharedEntries: readonly LegacySharedManifestEntry[] = DATABASE_ROLE_GRANT_MANIFEST.flatMap((entry) =>
+  entry.kind === 'legacy_shared' ? [entry] : [],
 );
 
 /** Every schema the manifest assigns or withholds; explicit roles lose all access here before their grants apply. */
@@ -441,9 +441,9 @@ export const grantTrustAuthority = (
       { concurrency: 1, discard: true },
     );
     if (yield* exists(client, tableExistsQuery, 'trust.gateway_audience_roles')) {
-      const audienceRoles = identities
-        .filter(({ scopeAuthority }) => scopeAuthority === 'gateway_grant')
-        .flatMap(({ gatewayScopeAudiences, role }) => gatewayScopeAudiences.map((audience) => ({ audience, role })));
+      const audienceRoles = identities.flatMap(({ gatewayScopeAudiences, role, scopeAuthority }) =>
+        scopeAuthority === 'gateway_grant' ? gatewayScopeAudiences.map((audience) => ({ audience, role })) : [],
+      );
       yield* Effect.forEach(
         audienceRoles,
         ({ audience, role }) =>

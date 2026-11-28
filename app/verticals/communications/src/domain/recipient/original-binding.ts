@@ -106,7 +106,11 @@ export const ProtectedEndpointSchema = Schema.Struct({
 export type ProtectedEndpoint = typeof ProtectedEndpointSchema.Type;
 
 /** A mask that still reads as a whole e-mail style address: it hides nothing. */
-const WHOLE_ADDRESS = /^[^\s@*\u2022]+@[^\s@*\u2022]+\.[^\s@*\u2022]+$/u;
+const looksLikeWholeAddress = (value: string) => {
+  const parts = /^[^\s@*\u2022]+@(?<domain>[^\s@*\u2022]+)$/u.exec(value);
+  const domain = parts?.groups?.['domain'];
+  return domain !== undefined && domain.slice(1, -1).includes('.');
+};
 
 /**
  * A mask is storable only if it hides the endpoint: it must not equal or contain the protected value and must not
@@ -115,5 +119,5 @@ const WHOLE_ADDRESS = /^[^\s@*\u2022]+@[^\s@*\u2022]+\.[^\s@*\u2022]+$/u;
 export const endpointMaskIsSafe = ({ mask, value }: Pick<ProtectedEndpoint, 'mask' | 'value'>) => {
   const shown = mask.trim().toLowerCase();
   const secret = Redacted.value(value).trim().toLowerCase();
-  return !WHOLE_ADDRESS.test(shown) && (secret.length === 0 || !shown.includes(secret));
+  return !looksLikeWholeAddress(shown) && (secret.length === 0 || !shown.includes(secret));
 };

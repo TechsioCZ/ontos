@@ -25,19 +25,15 @@ const PrivacyRouteContent = () => {
   );
 };
 
-const PrivacyRoute = (props: Record<string, never>): JSX.Element => {
-  void props;
-
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="privacy"
-      fallbackLanguage="en"
-      resources={federatedI18nResources}
-      supportedLanguages={federatedI18nLanguages}
-    >
-      <PrivacyRouteContent />
-    </FederatedI18nBoundary>
-  );
-};
+const PrivacyRoute = (): JSX.Element => (
+  <FederatedI18nBoundary
+    defaultNamespace="privacy"
+    fallbackLanguage="en"
+    resources={federatedI18nResources}
+    supportedLanguages={federatedI18nLanguages}
+  >
+    <PrivacyRouteContent />
+  </FederatedI18nBoundary>
+);
 
 export default PrivacyRoute;

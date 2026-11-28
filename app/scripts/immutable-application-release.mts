@@ -652,9 +652,9 @@ const validateReceiptPartition = Effect.fn('ImmutableApplicationRelease.receiptP
     return yield* fail('retained Shell publication requires the captured approved baseline');
   }
   const removed =
-    input.approvedBaseline?.composition.modules
-      .filter(({ deployment }) => !slots.has(deployment.appId))
-      .map(({ deployment }) => deployment.appId) ?? [];
+    input.approvedBaseline?.composition.modules.flatMap(({ deployment }) =>
+      slots.has(deployment.appId) ? [] : [deployment.appId],
+    ) ?? [];
   if (
     !sameReleaseIds(
       removed,

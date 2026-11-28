@@ -380,7 +380,6 @@ describe('issue #786 material source-evidence acceptance', () => {
       const nonSelection = guestDiscountNonSelectionFor(commercialTotal);
       const { priceGroupAssignment: _priceGroupAssignment, ...guestExternalOwnerEvidence } =
         request.externalOwnerEvidence;
-      void _priceGroupAssignment;
 
       const selectedLineAndNonselectedWhole = {
         ...request,

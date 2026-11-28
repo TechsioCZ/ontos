@@ -191,8 +191,7 @@ export const withAmountCeilings = (
     if (!(slot in amounts || slot in currencies) || value === 'invalid') {
       return cell;
     }
-    const { amountCeiling: previous, ...base } = cell;
-    void previous;
+    const { amountCeiling: _previous, ...base } = cell;
     return value === undefined ? base : { ...base, amountCeiling: value };
   });
 

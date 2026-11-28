@@ -189,7 +189,7 @@ if (process.argv.includes('--describe-preproposal-basis')) {
         Effect.sync(() =>
           process.stderr.write(
             `owner-producer-cause: ${inspect(cause, { depth: 8, maxStringLength: 500 })
-              .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+              .replaceAll(/(?<scheme>\b\w+:\/\/)[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
               .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, '[REDACTED]')
               .replaceAll(/(?<field>Bearer\s+)\S+/gu, '$<field>[REDACTED]')
               .slice(0, 6144)}\n`,

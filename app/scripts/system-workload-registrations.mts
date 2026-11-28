@@ -221,12 +221,13 @@ export const coreSystemWorkloadRegistrationIssues = (input: {
     const read = registeredSystemWorkloadKeys(file);
     return [
       ...read.issues.map((issue) => `core ${issue}`),
-      ...read.keys
-        .filter((key) => !declared.has(key))
-        .map(
-          (key) =>
-            `core ${file.path} registers system workload ${key}, which Core does not declare in core-system-workloads.ts`,
-        ),
+      ...read.keys.flatMap((key) =>
+        declared.has(key)
+          ? []
+          : [
+              `core ${file.path} registers system workload ${key}, which Core does not declare in core-system-workloads.ts`,
+            ],
+      ),
     ];
   });
 };

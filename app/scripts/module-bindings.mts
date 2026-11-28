@@ -187,12 +187,9 @@ const signatureDeclarations = (node: Node): readonly ScopedDeclaration[] => {
     node.type === 'TSFunctionType' ||
     node.type === 'TSMethodSignature'
   ) {
-    return node.params
-      .flatMap((parameter) => patternIdentifiers(parameter))
-      .map((identifier) => ({
-        identifier,
-        namespaces: VALUE,
-      }));
+    return node.params.flatMap((parameter) =>
+      patternIdentifiers(parameter).map((identifier) => ({ identifier, namespaces: VALUE })),
+    );
   }
   if (node.type === 'TSIndexSignature') {
     return node.parameters.map((identifier) => ({ identifier, namespaces: VALUE }));
@@ -1813,19 +1810,20 @@ export const moduleExports = (graph: ModuleGraph, file: string): ModuleExports =
           }
         }
         if (statement.type === 'ExportAllDeclaration' && statement.exported === null) {
-          const target = graph.target(current, statement.source.value);
+          const specifier = statement.source.value;
+          const target = graph.target(current, specifier);
           if (target === undefined) {
             opaque.push({
               file: current,
               kind: 'unresolved',
-              reason: `names ${statement.source.value}, which is no file of the workspace`,
+              reason: `names ${specifier}, which is no file of the workspace`,
               trail: here,
             });
           } else if (graph.parsed(target) === undefined) {
             opaque.push({
               kind: 'foreign',
               name: '*',
-              specifier: statement.source.value,
+              specifier,
               star: true,
               target,
               trail: here,

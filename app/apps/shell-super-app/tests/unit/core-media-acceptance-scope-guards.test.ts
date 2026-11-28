@@ -26,7 +26,7 @@ const CODE_FILE = /\.(?:ts|tsx|mts)$/u;
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^[\t ]*\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const pathOf = Effect.fn('CoreMediaScopeGuards.path')(function* pathOf(relative: string) {
@@ -264,7 +264,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })('core media scope gu
         const columns = new Set<string>();
         for (const file of migrations) {
           // A commented-out statement is not a table.
-          const sql = (yield* readText(file)).replaceAll(/^\s*--.*$/gmu, '');
+          const sql = (yield* readText(file)).replaceAll(/^[\t ]*--.*$/gmu, '');
           for (const match of sql.matchAll(/create table (?:if not exists )?"?(?:core"?\.)?"?(?<table>\w+)"?/giu)) {
             created.add(match.groups?.['table'] ?? '');
           }

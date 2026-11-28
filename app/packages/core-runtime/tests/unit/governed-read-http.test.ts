@@ -425,7 +425,7 @@ it.effect('passes only payload, trusted principal, registration, and correlation
       problems,
       registration,
     });
-    const assertDecodedPayloadInput = () =>
+    const _assertDecodedPayloadInput = () =>
       handler({
         payload: {
           // @ts-expect-error The HTTP framework must pass the schema-decoded payload shape.
@@ -433,7 +433,6 @@ it.effect('passes only payload, trusted principal, registration, and correlation
         },
         request: { headers: Headers.empty },
       });
-    void assertDecodedPayloadInput;
     const result = yield* handler({
       payload,
       request: {
@@ -665,7 +664,7 @@ it.effect('maps only schema-declared owner failures to concrete public Problems'
       });
     }
 
-    const compileOnlyInvalidMapper = () =>
+    const _compileOnlyInvalidMapper = () =>
       makeGovernedReadHttpHandler({
         authenticatePrincipal: () => Effect.succeed(principal),
         // @ts-expect-error Domain mappers must return a declared public Problem Details value.
@@ -673,7 +672,6 @@ it.effect('maps only schema-declared owner failures to concrete public Problems'
         problems,
         registration: domainRegistration,
       });
-    void compileOnlyInvalidMapper;
 
     const leakingHandler = makeGovernedReadHttpHandler({
       authenticatePrincipal: () => Effect.succeed(principal),

@@ -240,16 +240,14 @@ class ErrorResponseProof {
     }
     const fields = new Map<string, Value>();
     for (const property of node.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.computed ||
-        property.method ||
-        property.kind !== 'init' ||
-        (property.key.type !== 'Identifier' && property.key.type !== 'Literal')
-      ) {
+      if (property.type !== 'Property' || property.computed || property.method || property.kind !== 'init') {
         return BAD;
       }
-      const key = property.key.type === 'Identifier' ? property.key.name : property.key.value;
+      const nodeKey = property.key;
+      if (nodeKey.type !== 'Identifier' && nodeKey.type !== 'Literal') {
+        return BAD;
+      }
+      const key = nodeKey.type === 'Identifier' ? nodeKey.name : nodeKey.value;
       if (!Schema.is(Schema.String)(key) || fields.has(key)) {
         return BAD;
       }

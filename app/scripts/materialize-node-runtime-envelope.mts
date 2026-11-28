@@ -126,7 +126,7 @@ const bindingOf = (declaration: VariableDeclarator, path: Path.Path): BootstrapB
     return undefined;
   }
   const [argument] = call.arguments;
-  if (argument.type !== 'Literal' || !Schema.is(Schema.String)(argument.value) || !path.isAbsolute(argument.value)) {
+  if (argument?.type !== 'Literal' || !Schema.is(Schema.String)(argument.value) || !path.isAbsolute(argument.value)) {
     return undefined;
   }
   return {
@@ -326,9 +326,9 @@ const validateOriginal = (target: Target, revision: string) =>
     }
     return {
       ...target,
-      declaredPublicAssets: raw.artifacts
-        .filter((artifact) => artifact.runtime === 'public-asset')
-        .map((artifact) => artifact.logicalPath),
+      declaredPublicAssets: raw.artifacts.flatMap((artifact) =>
+        artifact.runtime === 'public-asset' ? [artifact.logicalPath] : [],
+      ),
     };
   });
 const sealTarget = (target: VerifiedTarget, runtime: string, revision: string) =>

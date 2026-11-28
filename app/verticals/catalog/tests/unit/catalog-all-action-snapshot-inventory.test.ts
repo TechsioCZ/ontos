@@ -16,13 +16,13 @@ const identityAt = (text: string, functionName: string) => {
   expect(start, `${functionName} must be wired`).toBeGreaterThanOrEqual(0);
   const tail = text.slice(start);
   const match =
-    /actionInvocationId(?:\s*:\s*invocationId)?,\s*actionKey(?:\s*:\s*(?<key>[^,}]+))?,\s*schemaVersion:\s*(?<version>\d+)/u.exec(
+    /actionInvocationId(?:\s*:\s*invocationId)?,\s*actionKey(?:\s*:(?<key>[^,}]+))?,\s*schemaVersion:\s*(?<version>\d+)/u.exec(
       tail,
     );
   expect(match, `${functionName} must use an explicit snapshot identity`).not.toBeNull();
   return {
-    actionKeyExpression: match?.groups?.key?.trim() ?? 'actionKey',
-    schemaVersion: Number(match?.groups?.version),
+    actionKeyExpression: match?.groups?.['key']?.trim() ?? 'actionKey',
+    schemaVersion: Number(match?.groups?.['version']),
   };
 };
 
@@ -71,12 +71,12 @@ describe('all published Catalog Action snapshot/recovery tuples', () => {
           return expression.slice(1, -1);
         }
         const declaration = new RegExp(`const ${expression} = '(?<key>[^']+)'`, 'u').exec(actionSource);
-        return declaration?.groups?.key;
+        return declaration?.groups?.['key'];
       };
       expect(resolveKey(capture.actionKeyExpression)).toBe(actionKey);
       expect(capture.schemaVersion).toBe(expectedSchemaVersion);
-      const declaredResultSchema = /resultSchema:\s*(?<schema>[A-Za-z][A-Za-z0-9]*Schema)/u.exec(actionSource)?.groups
-        ?.schema;
+      const declaredResultSchema = /resultSchema:\s*(?<schema>[A-Za-z][A-Za-z0-9]*Schema)/u.exec(actionSource)
+        ?.groups?.['schema'];
       expect(declaredResultSchema).toBeDefined();
       expect(actionSource).toContain(declaredResultSchema);
       if (recovery) {

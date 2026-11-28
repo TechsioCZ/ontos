@@ -82,10 +82,10 @@ export interface NativeMigrationTarget {
 const NativeMigrationTargetSchema = Schema.Struct({
   database: Schema.NonEmptyString,
   databaseKind: Schema.Literals(['primary', 'portal-auth']),
-  databaseOid: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u)).pipe(Schema.brand('MigrationDatabaseOid')),
+  databaseOid: Schema.String.check(Schema.isPattern(/^[1-9]\d*$/u)).pipe(Schema.brand('MigrationDatabaseOid')),
   host: Schema.NonEmptyString,
   port: Schema.Int.check(Schema.isBetween({ maximum: 65_535, minimum: 1 })),
-  systemIdentifier: Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/u)).pipe(
+  systemIdentifier: Schema.String.check(Schema.isPattern(/^[1-9]\d*$/u)).pipe(
     Schema.brand('MigrationSystemIdentifier'),
   ),
   user: Schema.NonEmptyString,
@@ -104,8 +104,9 @@ export const assertSameApplicationMigrationTargets = Effect.fn('ApplicationMigra
     ) {
       return yield* invalid('Native migration database bindings are invalid, duplicated or incomplete');
     }
+    const byKind = new Map(observed.map((database) => [database.databaseKind, database]));
     for (const target of expected) {
-      const current = observed.find((candidate) => candidate.databaseKind === target.databaseKind);
+      const current = byKind.get(target.databaseKind);
       if (
         current === undefined ||
         current.database !== target.database ||
@@ -318,11 +319,12 @@ export const assertNativeMigrationBounds = Effect.fn('ApplicationMigrationRuntim
     plan: ApplicationMigrationPlan,
     streams: readonly ApplicationMigrationStream[],
   ) {
+    const byOwner = new Map(streams.map((stream) => [stream.ownerId, stream]));
     for (const owner of plan.owners) {
       if (owner.pendingMigrations.length === 0) {
         continue;
       }
-      const stream = streams.find((candidate) => candidate.ownerId === owner.ownerId);
+      const stream = byOwner.get(owner.ownerId);
       if (stream === undefined) {
         return yield* invalid('The selected native migration owner is absent from source inventory');
       }

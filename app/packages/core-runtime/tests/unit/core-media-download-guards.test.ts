@@ -22,7 +22,7 @@ const readRelative = Effect.fn('CoreMediaDownloadGuards.read')(function* readRel
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^[\t ]*\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 /** Every key of a (nested) Schema struct, so a locator hidden in a sub-object is seen too. */

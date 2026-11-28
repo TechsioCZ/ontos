@@ -55,10 +55,10 @@ export const resolvePublishedContractModuleId = (input: {
   readonly manifestSource: string;
 }): string => {
   const moduleIds = [...input.manifestSource.matchAll(/^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/gmu)].map(
-    (match) => match.groups?.moduleId,
+    (match) => match.groups?.['moduleId'],
   );
   const appIds = [...input.manifestSource.matchAll(/^\/\/ @ontos-deployment-app-id (?<appId>[^\s]+)$/gmu)].map(
-    (match) => match.groups?.appId,
+    (match) => match.groups?.['appId'],
   );
   const [moduleId] = moduleIds;
   assertCondition(
@@ -91,22 +91,18 @@ export const assertPublishedOutboxContractSource = (input: {
 
 export const publishedOutboxContractExports = (packageJson: PublishedOutboxPackage): readonly string[] =>
   sortLexically(
-    Object.entries(packageJson.exports ?? {})
-      .filter(([exportKey, target]) => {
-        const match = outboxExportPattern.exec(exportKey);
-        return match !== null && target === `./shared/outbox/${match.groups?.slug ?? ''}.ts`;
-      })
-      .map(([exportKey]) => exportKey),
+    Object.entries(packageJson.exports ?? {}).flatMap(([exportKey, target]) => {
+      const match = outboxExportPattern.exec(exportKey);
+      return match !== null && target === `./shared/outbox/${match.groups?.['slug'] ?? ''}.ts` ? [exportKey] : [];
+    }),
   );
 
 export const publishedResourceRefContractExports = (packageJson: PublishedOutboxPackage): readonly string[] =>
   sortLexically(
-    Object.entries(packageJson.exports ?? {})
-      .filter(([exportKey, target]) => {
-        const match = resourceExportPattern.exec(exportKey);
-        return match !== null && target === `./shared/resources/${match.groups?.slug ?? ''}.ts`;
-      })
-      .map(([exportKey]) => exportKey),
+    Object.entries(packageJson.exports ?? {}).flatMap(([exportKey, target]) => {
+      const match = resourceExportPattern.exec(exportKey);
+      return match !== null && target === `./shared/resources/${match.groups?.['slug'] ?? ''}.ts` ? [exportKey] : [];
+    }),
   );
 
 const publishedEffectClientContractExports = (packageJson: PublishedOutboxPackage): readonly string[] => {
@@ -121,12 +117,12 @@ const publishedEffectClientContractExports = (packageJson: PublishedOutboxPackag
 
 const importedModuleSpecifiers = (source: string): readonly string[] =>
   [
-    ...source.matchAll(/\b(?:import|export)\s+(?:type\s+)?[^;'"`]+?\s+from\s*['"](?<specifier>[^'"]+)['"]/gu),
+    ...source.matchAll(/\b(?:import|export)\s+[^;'"`\s][^;'"`]*?\bfrom\s*['"](?<specifier>[^'"]+)['"]/gu),
     ...source.matchAll(/\bimport\s*['"](?<specifier>[^'"]+)['"]/gu),
     ...source.matchAll(/\bimport\s*\(\s*['"](?<specifier>[^'"]+)['"]/gu),
     ...source.matchAll(/\brequire\s*\(\s*['"](?<specifier>[^'"]+)['"]/gu),
   ]
-    .map((match) => match.groups?.specifier)
+    .map((match) => match.groups?.['specifier'])
     .filter((specifier): specifier is string => specifier !== undefined);
 
 const hasResourceRefDeclarations = (input: {
@@ -193,7 +189,7 @@ export const isGeneratedEffectClientLeaf = (input: {
     return true;
   }
   const actionMatch = /^\.\/(?<slug>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)-action-client\.ts$/u.exec(input.localClient);
-  const slug = actionMatch?.groups?.slug;
+  const slug = actionMatch?.groups?.['slug'];
   return (
     slug !== undefined &&
     input.source.startsWith(
@@ -279,7 +275,7 @@ interface PublishedContractUsageInput {
 }
 
 const resourceExportSlug = (exportKey: string): string | undefined =>
-  resourceExportPattern.exec(exportKey)?.groups?.slug;
+  resourceExportPattern.exec(exportKey)?.groups?.['slug'];
 
 const assertResourceRefUsage = (
   input: PublishedContractUsageInput,
@@ -287,9 +283,10 @@ const assertResourceRefUsage = (
   resourceExports: readonly string[],
 ): void => {
   const moduleId = input.dependencyPackageJson.modernjs?.ontosModule?.moduleId;
+  const used = new Set(dependencySpecifiers);
   for (const resourceExport of resourceExports) {
     const specifier = `${input.dependencyPackageName}${resourceExport.slice(1)}`;
-    if (!dependencySpecifiers.includes(specifier)) {
+    if (!used.has(specifier)) {
       continue;
     }
     const target = input.dependencyPackageJson.exports?.[resourceExport];

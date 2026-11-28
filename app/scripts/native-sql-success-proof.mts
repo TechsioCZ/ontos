@@ -36,7 +36,7 @@ const tokens = (source: string): readonly string[] | undefined => {
   if (source.length > 8192) {
     return undefined;
   }
-  const token = /'(?:[^'\\]|'')*'|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|::|[(),.]/uy;
+  const token = /'(?:[^'\\]|'')*'|[A-Za-z_]\w*|\d+|::|[(),.]/uy;
   const result: string[] = [];
   let cursor = 0;
   while (cursor < source.length) {
@@ -95,7 +95,7 @@ class ClosedSelectParser {
     if (value === undefined) {
       return false;
     }
-    if (value.startsWith("'") || /^[0-9]+$/u.test(value) || ['true', 'false', 'null'].includes(value)) {
+    if (value.startsWith("'") || /^\d+$/u.test(value) || ['true', 'false', 'null'].includes(value)) {
       this.cursor += 1;
     } else if (!this.callOrName(depth)) {
       return false;
@@ -156,7 +156,7 @@ export const parseClosedNativeSelectProjection = (source: string): readonly stri
 };
 
 export interface NativeSqlSourceReference {
-  readonly captures?: ReadonlyMap<Span, NativeSqlSourceReference>;
+  readonly captures?: ReadonlyMap<Span, NativeSqlSourceReference> | undefined;
   readonly expression: Expression;
   readonly file: string;
 }
@@ -176,7 +176,7 @@ export type NativeSqlImportEdge =
   | { readonly kind: 'native-drizzle' | 'native-drizzle-effect' | 'native-pg-root' | 'native-effect' }
   | { readonly file: string; readonly kind: 'module' };
 export interface NativeSqlCallableReference {
-  readonly captures?: ReadonlyMap<Span, NativeSqlSourceReference>;
+  readonly captures?: ReadonlyMap<Span, NativeSqlSourceReference> | undefined;
   readonly file: string;
   readonly implementation: ArrowFunctionExpression | FunctionNode;
 }
@@ -195,7 +195,7 @@ export interface NativeSqlTransactionDescriptor {
   readonly database: NativeSqlDatabaseDescriptor;
   readonly parameter: {
     readonly binding: Span;
-    readonly captures?: ReadonlyMap<Span, NativeSqlSourceReference>;
+    readonly captures?: ReadonlyMap<Span, NativeSqlSourceReference> | undefined;
     readonly file: string;
   };
   readonly transaction: NativeSqlSourceReference;
@@ -241,14 +241,11 @@ const bindingAt = (
   const module = environment.modules.find((candidate) => candidate.file === file);
   let found: NativeSqlProofModule['bindings'][number] | undefined;
   for (const binding of module?.bindings ?? []) {
-    if (
-      binding.name !== identifier.name ||
-      binding.scope.start > identifier.start ||
-      binding.scope.end < identifier.end
-    ) {
+    const { end, start } = binding.scope;
+    if (binding.name !== identifier.name || start > identifier.start || end < identifier.end) {
       continue;
     }
-    if (found === undefined || binding.scope.end - binding.scope.start < found.scope.end - found.scope.start) {
+    if (found === undefined || end - start < found.scope.end - found.scope.start) {
       found = binding;
     } else if (binding.scope.start === found.scope.start && binding.scope.end === found.scope.end) {
       return undefined;
@@ -601,17 +598,18 @@ const objectKeys = (
       }
       continue;
     }
+    const { key } = property;
     if (
       property.computed ||
       property.kind !== 'init' ||
       property.method ||
-      property.key.type !== 'Identifier' ||
-      !allowed.has(property.key.name) ||
-      keys.has(property.key.name)
+      key.type !== 'Identifier' ||
+      !allowed.has(key.name) ||
+      keys.has(key.name)
     ) {
       return undefined;
     }
-    keys.add(property.key.name);
+    keys.add(key.name);
   }
   return keys;
 };
@@ -696,13 +694,17 @@ const nativeCallCaptures = (
     return undefined;
   }
   const captures = new Map(fn.captures);
+  const bindings = new Map(
+    environment.modules
+      .find((candidate) => candidate.file === fn.file)
+      ?.bindings.map((binding) => [binding.node, binding]),
+  );
   for (const [index, parameter] of fn.implementation.params.entries()) {
     const argument = call.arguments[index];
     if (parameter.type !== 'Identifier' || argument === undefined || argument.type === 'SpreadElement') {
       return undefined;
     }
-    const module = environment.modules.find((candidate) => candidate.file === fn.file);
-    const binding = module?.bindings.find((candidate) => candidate.node === parameter);
+    const binding = bindings.get(parameter);
     if (binding === undefined) {
       return undefined;
     }

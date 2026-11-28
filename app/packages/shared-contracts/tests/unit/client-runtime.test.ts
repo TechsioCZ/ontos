@@ -49,19 +49,16 @@ type RepresentativeReadEffect = ReturnType<typeof readRepresentative>;
 type RepresentativeReadSuccess = Effect.Success<RepresentativeReadEffect>;
 type RepresentativeReadError = Effect.Error<RepresentativeReadEffect>;
 
-const preserveRepresentativeReadType = (client: RepresentativeClient): RepresentativeReadEffect =>
+export const preserveRepresentativeReadType = (client: RepresentativeClient): RepresentativeReadEffect =>
   readRepresentative(client);
-const preserveRepresentativeSuccessType = (success: RepresentativeReadSuccess): Readonly<{ value: string }> => success;
-const preserveRepresentativeErrorType = (error: RepresentativeReadError) => {
+export const preserveRepresentativeSuccessType = (success: RepresentativeReadSuccess): Readonly<{ value: string }> =>
+  success;
+export const preserveRepresentativeErrorType = (error: RepresentativeReadError) => {
   if (Schema.is(RepresentativeConflictSchema)(error)) {
     return error.status satisfies 409;
   }
   return error;
 };
-
-void preserveRepresentativeReadType;
-void preserveRepresentativeSuccessType;
-void preserveRepresentativeErrorType;
 
 it.effect('constructs fresh typed clients lazily as Effect values', () =>
   Effect.gen(function* testScenario1() {

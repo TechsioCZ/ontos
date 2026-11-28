@@ -74,15 +74,14 @@ const CORE_WORKER_SPECIFIERS = new Set(['@app/core-runtime', '@app/core-runtime/
  */
 export const coreRuntimeValueReExports = (filename, source) =>
   parseSync(filename, source).module.staticExports.flatMap((statement) =>
-    statement.entries
-      .filter(
-        (entry) =>
-          !entry.isType &&
-          entry.importName.name !== null &&
-          entry.moduleRequest !== null &&
-          CORE_WORKER_SPECIFIERS.has(entry.moduleRequest.value),
-      )
-      .map((entry) => entry.importName.name ?? ''),
+    statement.entries.flatMap((entry) =>
+      !entry.isType &&
+      entry.importName.name !== null &&
+      entry.moduleRequest !== null &&
+      CORE_WORKER_SPECIFIERS.has(entry.moduleRequest.value)
+        ? [entry.importName.name ?? '']
+        : [],
+    ),
   );
 
 /**
@@ -93,7 +92,7 @@ export const coreRuntimeValueReExports = (filename, source) =>
 export const focusedEntrypointValueExports = (source) =>
   new Set(
     parseSync(CORE_WORKER_ENTRYPOINT, source).module.staticExports.flatMap((statement) =>
-      statement.entries.filter((entry) => !entry.isType).map((entry) => entry.exportName.name ?? ''),
+      statement.entries.flatMap((entry) => (entry.isType ? [] : [entry.exportName.name ?? ''])),
     ),
   );
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
@@ -169,9 +168,7 @@ const compileOwnerBuildIdentityEffect = (markerPath, marker, path, compiledMarke
         ),
     });
     compiledMarkers.add(markerPath);
-    /** @type {import('esbuild').OnLoadResult} */
-    const loaded = { contents: result.code, loader: 'js', resolveDir: path.dirname(markerPath) };
-    return loaded;
+    return { contents: result.code, loader: 'js', resolveDir: path.dirname(markerPath) };
   });
 
 /**
@@ -189,7 +186,7 @@ const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
   setup(builder) {
     builder.onLoad(
       { filter: esbuildFilter(/[/\\]shared[/\\]ultramodern-build\.ts$/u) },
-      /** @returns {PromiseLike<import('esbuild').OnLoadResult> | null} Loaded owner source when selected. */
+      /** @returns {Promise<import('esbuild').OnLoadResult> | null} Loaded owner source when selected. */
       (args) => {
         const marker = markers.get(args.path);
         return marker === undefined
@@ -407,8 +404,9 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     });
     /** @type {Map<string, { identity: Schema.Schema.Type<typeof OwnerBuildIdentitySchema>, source: string }>} */
     const markers = new Map();
+    const byId = new Map(topology.verticals.map((vertical) => [vertical.id, vertical]));
     for (const owner of delivery.owners) {
-      const vertical = topology.verticals.find((candidate) => candidate.id === owner.ownerId);
+      const vertical = byId.get(owner.ownerId);
       const declared = vertical?.deliveryUnit;
       const declaredMarkerPath = path.resolve(workspaceRoot, owner.path, 'shared/ultramodern-build.ts');
       if (!(yield* fs.exists(declaredMarkerPath))) {
@@ -503,9 +501,9 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
           })
         ),
     });
-    const missingMarkers = [...markers.entries()]
-      .filter(([markerPath]) => !compiledMarkers.has(markerPath))
-      .map(([, marker]) => marker.identity.appId);
+    const missingMarkers = [...markers.entries()].flatMap(([markerPath, marker]) =>
+      compiledMarkers.has(markerPath) ? [] : [marker.identity.appId],
+    );
     if (missingMarkers.length > 0) {
       return yield* Effect.fail(
         failure(`The Outbox Worker does not import its owner build identity: ${missingMarkers.join(', ')}`),
@@ -525,9 +523,9 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
       coreReExports.length === 0
         ? new Set()
         : focusedEntrypointValueExports(yield* fs.readFileString(path.join(workspaceRoot, CORE_WORKER_ENTRYPOINT)));
-    const missingReExports = coreReExports
-      .filter(({ name }) => !entrypointExports.has(name))
-      .map(({ input, name }) => `${input} re-exports ${name}`);
+    const missingReExports = coreReExports.flatMap(({ input, name }) =>
+      entrypointExports.has(name) ? [] : [`${input} re-exports ${name}`],
+    );
     if (missingReExports.length > 0) {
       return yield* Effect.fail(
         failure(`The Outbox Worker Core entrypoint does not export: ${missingReExports.join('; ')}`),

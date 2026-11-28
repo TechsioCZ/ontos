@@ -126,16 +126,19 @@ export const discoverLocalTopologyOwners = Effect.fn('CloudflareLocalTopology.di
         .pipe(Effect.map(({ type }) => (type === 'Directory' ? Option.some(name) : Option.none()))),
     { concurrency: 1 },
   );
-  return yield* Schema.decodeEffect(Schema.Array(LocalTopologyOwnerSchema))(
-    names
-      .flatMap(Option.toArray)
-      .filter((appId) => intent.modules.some((module) => module.appId === appId))
-      .map((appId, index) => ({
+  const installed = new Set(intent.modules.map((module) => module.appId));
+  const owners = [];
+  for (const name of names) {
+    if (Option.isSome(name) && installed.has(name.value)) {
+      const appId = name.value;
+      owners.push({
         appId,
-        baseUrl: `https://localhost:${8791 + index}/`,
+        baseUrl: `https://localhost:${8791 + owners.length}/`,
         outputDirectory: path.join(verticalsDirectory, appId, '.output'),
-      })),
-  );
+      });
+    }
+  }
+  return yield* Schema.decodeEffect(Schema.Array(LocalTopologyOwnerSchema))(owners);
 });
 
 const LocalWorkerdProofFixtureSchema = Schema.Struct({

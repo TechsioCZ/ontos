@@ -523,19 +523,14 @@ const ddlObjects = (snapshot: DatabaseTrustBoundarySnapshot): string[] => {
   const { memberships, routines, runtimeRole, schemas, sequences, tables, types } = snapshot;
   return [
     ...(snapshot.databasePrivileges.create ? [snapshot.database] : []),
-    ...schemas.filter(({ create }) => create).map(({ schema }) => schema),
-    ...tables.filter(({ owner }) => owner === runtimeRole).map(({ schema, table }) => `${schema}.${table}`),
-    ...sequences.filter(({ owner }) => owner === runtimeRole).map(({ schema, sequence }) => `${schema}.${sequence}`),
-    ...routines.filter(({ owner }) => owner === runtimeRole).map(({ signature }) => signature),
-    ...types.filter(({ owner }) => owner === runtimeRole).map(({ schema, type }) => `${schema}.${type}`),
-    ...memberships
-      .filter(({ canInheritRole }) => canInheritRole)
-      .flatMap(({ ownedRelations, ownedRoutines, ownedSchemas, ownedTypes }) => [
-        ...ownedRelations,
-        ...ownedRoutines,
-        ...ownedSchemas,
-        ...ownedTypes,
-      ]),
+    ...schemas.flatMap(({ create, schema }) => (create ? [schema] : [])),
+    ...tables.flatMap(({ owner, schema, table }) => (owner === runtimeRole ? [`${schema}.${table}`] : [])),
+    ...sequences.flatMap(({ owner, schema, sequence }) => (owner === runtimeRole ? [`${schema}.${sequence}`] : [])),
+    ...routines.flatMap(({ owner, signature }) => (owner === runtimeRole ? [signature] : [])),
+    ...types.flatMap(({ owner, schema, type }) => (owner === runtimeRole ? [`${schema}.${type}`] : [])),
+    ...memberships.flatMap(({ canInheritRole, ownedRelations, ownedRoutines, ownedSchemas, ownedTypes }) =>
+      canInheritRole ? [...ownedRelations, ...ownedRoutines, ...ownedSchemas, ...ownedTypes] : [],
+    ),
   ];
 };
 
@@ -676,53 +671,46 @@ const manifestDifferences = (
         candidate.privilege === privilege,
     );
 
-  const extraSchemas = snapshot.schemas
-    .filter(({ schema, usage }) => usage && schema !== 'public' && !grants.schemas.includes(schema))
-    .map(({ schema }) => schema);
-  const extraTables = snapshot.tables
-    .filter((table) => {
-      const grant = declaredTables.get(`${table.schema}.${table.table}`);
-      const { maintain, references, trigger, truncate } = table.privileges;
-      return (
-        maintain ||
-        references ||
-        trigger ||
-        truncate ||
-        TABLE_GRANT_PRIVILEGES.some(
-          (privilege) =>
-            table.tableGrants[privilege] &&
-            (grant?.privileges.includes(privilege) !== true || columnGrantFor(grant, privilege) !== undefined),
-        )
-      );
-    })
-    .map(({ schema, table }) => `${schema}.${table}`);
-  const extraColumns = snapshot.columnPrivileges
-    .filter(({ column, privilege, schema, table }) => {
-      const grant = declaredTables.get(`${schema}.${table}`);
-      const declared = TABLE_GRANT_PRIVILEGES.find((candidate) => candidate === privilege);
-      return (
-        declared === undefined ||
-        grant?.privileges.includes(declared) !== true ||
-        columnGrantFor(grant, declared)?.includes(column) !== true
-      );
-    })
-    .map(({ column, schema, table }) => `${schema}.${table}(${column})`);
-  const extraSequences = snapshot.sequences
-    .filter(({ privileges, schema, sequence }) => {
-      const declared = declaredSequences.get(`${schema}.${sequence}`)?.privileges ?? [];
-      return (
-        privileges.update ||
-        (privileges.usage && !declared.includes('usage')) ||
-        (privileges.select && !declared.includes('select'))
-      );
-    })
-    .map(({ schema, sequence }) => `${schema}.${sequence}`);
-  const extraRoutines = snapshot.routines
-    .filter(
-      ({ executable, owner, securityDefiner, signature }) =>
-        executable && securityDefiner && owner !== snapshot.runtimeRole && !declaredRoutines.has(signature),
-    )
-    .map(({ signature }) => signature);
+  const extraSchemas = snapshot.schemas.flatMap(({ schema, usage }) =>
+    usage && schema !== 'public' && !grants.schemas.includes(schema) ? [schema] : [],
+  );
+  const extraTables = snapshot.tables.flatMap((table) => {
+    const grant = declaredTables.get(`${table.schema}.${table.table}`);
+    const { maintain, references, trigger, truncate } = table.privileges;
+    return maintain ||
+      references ||
+      trigger ||
+      truncate ||
+      TABLE_GRANT_PRIVILEGES.some(
+        (privilege) =>
+          table.tableGrants[privilege] &&
+          (grant?.privileges.includes(privilege) !== true || columnGrantFor(grant, privilege) !== undefined),
+      )
+      ? [tableName(table)]
+      : [];
+  });
+  const extraColumns = snapshot.columnPrivileges.flatMap(({ column, privilege, schema, table }) => {
+    const grant = declaredTables.get(`${schema}.${table}`);
+    const declared = TABLE_GRANT_PRIVILEGES.find((candidate) => candidate === privilege);
+    return declared === undefined ||
+      grant?.privileges.includes(declared) !== true ||
+      columnGrantFor(grant, declared)?.includes(column) !== true
+      ? [`${schema}.${table}(${column})`]
+      : [];
+  });
+  const extraSequences = snapshot.sequences.flatMap(({ privileges, schema, sequence }) => {
+    const declared = declaredSequences.get(`${schema}.${sequence}`)?.privileges ?? [];
+    return privileges.update ||
+      (privileges.usage && !declared.includes('usage')) ||
+      (privileges.select && !declared.includes('select'))
+      ? [`${schema}.${sequence}`]
+      : [];
+  });
+  const extraRoutines = snapshot.routines.flatMap(({ executable, owner, securityDefiner, signature }) =>
+    executable && securityDefiner && owner !== snapshot.runtimeRole && !declaredRoutines.has(signature)
+      ? [signature]
+      : [],
+  );
 
   const missingSchemas = grants.schemas.filter(
     (schema) => !snapshot.schemas.some((candidate) => candidate.schema === schema && candidate.usage),
@@ -737,17 +725,17 @@ const manifestDifferences = (
       if (columns === undefined) {
         return table.tableGrants[privilege] ? [] : [grant.table];
       }
-      return columns
-        .filter((column) => !hasColumnPrivilege(grant.table, column, privilege))
-        .map((column) => `${grant.table}(${column})`);
+      return columns.flatMap((column) =>
+        hasColumnPrivilege(grant.table, column, privilege) ? [] : [`${grant.table}(${column})`],
+      );
     });
   });
-  const missingSequences = grants.sequences
-    .filter((grant) => {
-      const sequence = snapshot.sequences.find(({ schema, sequence: name }) => `${schema}.${name}` === grant.sequence);
-      return sequence === undefined || grant.privileges.some((privilege) => !sequence.privileges[privilege]);
-    })
-    .map(({ sequence }) => sequence);
+  const missingSequences = grants.sequences.flatMap((grant) => {
+    const sequence = snapshot.sequences.find(({ schema, sequence: name }) => `${schema}.${name}` === grant.sequence);
+    return sequence === undefined || grant.privileges.some((privilege) => !sequence.privileges[privilege])
+      ? [grant.sequence]
+      : [];
+  });
   const missingRoutines = [...declaredRoutines].filter(
     (signature) => !snapshot.routines.some((routine) => routine.signature === signature && routine.executable),
   );
@@ -769,13 +757,13 @@ const EMPTY_GRANTS: DatabaseRoleGrants = Object.freeze({
 const roleSettingObjects = (snapshot: DatabaseTrustBoundarySnapshot, expected: readonly string[]): string[] => {
   const expectedSettings = new Set(expected);
   const allDatabases = new Set(
-    snapshot.roleSettings.filter(({ scope }) => scope === 'all_databases').map(({ setting }) => setting),
+    snapshot.roleSettings.flatMap(({ scope, setting }) => (scope === 'all_databases' ? [setting] : [])),
   );
   return [
-    ...snapshot.roleSettings
-      .filter(({ scope, setting }) => scope === 'current_database' || !expectedSettings.has(setting))
-      .map(({ scope, setting }) => `${scope}:${setting}`),
-    ...expected.filter((setting) => !allDatabases.has(setting)).map((setting) => `all_databases:${setting}`),
+    ...snapshot.roleSettings.flatMap(({ scope, setting }) =>
+      scope === 'current_database' || !expectedSettings.has(setting) ? [`${scope}:${setting}`] : [],
+    ),
+    ...expected.flatMap((setting) => (allDatabases.has(setting) ? [] : [`all_databases:${setting}`])),
   ];
 };
 
@@ -794,35 +782,34 @@ const manifestGrants = (entry: DatabaseTrustManifestEntry | undefined): Database
 const revokedSchemaObjects = (snapshot: DatabaseTrustBoundarySnapshot, schemas: readonly string[]): string[] => {
   const revoked = new Set(schemas);
   return [
-    ...snapshot.schemas
-      .filter(({ create, schema, usage }) => revoked.has(schema) && (usage || create))
-      .map(({ schema }) => schema),
-    ...snapshot.tables
-      .filter((table) => revoked.has(table.schema) && Object.values(table.privileges).some(Boolean))
-      .map(tableName),
-    ...snapshot.columnPrivileges
-      .filter(({ schema }) => revoked.has(schema))
-      .map(({ column, schema, table }) => `${schema}.${table}(${column})`),
-    ...snapshot.sequences
-      .filter(({ privileges, schema }) => revoked.has(schema) && Object.values(privileges).some(Boolean))
-      .map(({ schema, sequence }) => `${schema}.${sequence}`),
-    ...snapshot.routines
-      .filter(({ executable, schema }) => revoked.has(schema) && executable)
-      .map(({ signature }) => signature),
-    ...snapshot.defaultPrivileges
-      .filter(
-        ({ objectType, schema }) =>
-          (schema === null || revoked.has(schema)) && ['table', 'sequence'].includes(objectType),
-      )
-      .map(
-        ({ objectType, owner, privilege, schema }) => `default:${owner}:${objectType}:${schema ?? '*'}:${privilege}`,
-      ),
+    ...snapshot.schemas.flatMap(({ create, schema, usage }) =>
+      revoked.has(schema) && (usage || create) ? [schema] : [],
+    ),
+    ...snapshot.tables.flatMap((table) =>
+      revoked.has(table.schema) && Object.values(table.privileges).some(Boolean) ? [tableName(table)] : [],
+    ),
+    ...snapshot.columnPrivileges.flatMap(({ column, schema, table }) =>
+      revoked.has(schema) ? [`${schema}.${table}(${column})`] : [],
+    ),
+    ...snapshot.sequences.flatMap(({ privileges, schema, sequence }) =>
+      revoked.has(schema) && Object.values(privileges).some(Boolean) ? [`${schema}.${sequence}`] : [],
+    ),
+    ...snapshot.routines.flatMap(({ executable, schema, signature }) =>
+      revoked.has(schema) && executable ? [signature] : [],
+    ),
+    ...snapshot.defaultPrivileges.flatMap(({ objectType, owner, privilege, schema }) =>
+      (schema === null || revoked.has(schema)) && ['table', 'sequence'].includes(objectType)
+        ? [`default:${owner}:${objectType}:${schema ?? '*'}:${privilege}`]
+        : [],
+    ),
   ];
 };
 
 const forgeObjectsFor = (snapshot: DatabaseTrustBoundarySnapshot, scopeAuthority: DatabaseScopeAuthority): string[] => {
   const { trustedContext } = snapshot;
-  const sessionPolicyTables = snapshot.policies.filter(({ readsSessionSetting }) => readsSessionSetting).map(tableName);
+  const sessionPolicyTables = snapshot.policies.flatMap((policy) =>
+    policy.readsSessionSetting ? [tableName(policy)] : [],
+  );
   if (scopeAuthority === 'gateway_grant') {
     const accessorForgeable =
       trustedContext.trustedScope.forgedSealAccepted || trustedContext.trustedScope.sessionSettingAccepted;
@@ -985,9 +972,9 @@ const buildIdentityFindings = (
   addFinding(findings, entry?.kind === 'legacy_shared' && dmlSchemas.size > 1, {
     code: 'runtime_role_has_cross_schema_dml',
     evidence: 'One runtime role has DML privileges in more than one audited application schema.',
-    objects: dmlTables
-      .filter(({ schema }) => entry?.kind !== 'legacy_shared' || !entry.revokedSchemas.includes(schema))
-      .map(tableName),
+    objects: dmlTables.flatMap((table) =>
+      entry?.kind === 'legacy_shared' && entry.revokedSchemas.includes(table.schema) ? [] : [tableName(table)],
+    ),
     severity: 'high',
   });
   addFinding(findings, snapshot.databasePrivileges.temporary, {
@@ -1006,12 +993,11 @@ const buildIdentityFindings = (
   const extraPrivileges = [
     ...differences.extra,
     ...(entry?.kind === 'explicit'
-      ? snapshot.defaultPrivileges
-          .filter(({ objectType }) => objectType === 'table' || objectType === 'sequence')
-          .map(
-            ({ objectType, owner, privilege, schema }) =>
-              `default:${owner}:${objectType}:${schema ?? '*'}:${privilege}`,
-          )
+      ? snapshot.defaultPrivileges.flatMap(({ objectType, owner, privilege, schema }) =>
+          objectType === 'table' || objectType === 'sequence'
+            ? [`default:${owner}:${objectType}:${schema ?? '*'}:${privilege}`]
+            : [],
+        )
       : []),
   ];
   addFinding(findings, extraPrivileges.length > 0, {
@@ -1074,24 +1060,22 @@ const buildGlobalFindings = (
     input.global.trustRoutines.map((routine) => [canonicalRoutineSignature(routine.signature), routine]),
   );
   const expectedSignatures = new Set(trustRoutines.map(({ signature }) => canonicalRoutineSignature(signature)));
-  const unhardenedRoutines = trustRoutines
-    .filter((expected) => {
-      const actual = actualRoutines.get(canonicalRoutineSignature(expected.signature));
-      return (
-        actual === undefined ||
-        actual.securityDefiner !== expected.securityDefiner ||
-        actual.config.length !== TRUSTED_ROUTINE_CONFIG.length ||
-        actual.config.some((setting, index) => setting !== TRUSTED_ROUTINE_CONFIG[index]) ||
-        actual.owner !== input.administrativeRole ||
-        actual.publicExecute ||
-        !sameSet(actual.grantees, expected.executableBy)
-      );
-    })
-    .map(({ signature }) => canonicalRoutineSignature(signature));
+  const unhardenedRoutines = trustRoutines.flatMap((expected) => {
+    const actual = actualRoutines.get(canonicalRoutineSignature(expected.signature));
+    return actual === undefined ||
+      actual.securityDefiner !== expected.securityDefiner ||
+      actual.config.length !== TRUSTED_ROUTINE_CONFIG.length ||
+      actual.config.some((setting, index) => setting !== TRUSTED_ROUTINE_CONFIG[index]) ||
+      actual.owner !== input.administrativeRole ||
+      actual.publicExecute ||
+      !sameSet(actual.grantees, expected.executableBy)
+      ? [canonicalRoutineSignature(expected.signature)]
+      : [];
+  });
   const undeclaredRoutines = [...actualRoutines.keys()].filter((signature) => !expectedSignatures.has(signature));
-  const exposedTrustTables = input.global.trustTableGrantees
-    .filter(({ grantee }) => grantee !== input.administrativeRole)
-    .map(({ table }) => table);
+  const exposedTrustTables = input.global.trustTableGrantees.flatMap(({ grantee, table }) =>
+    grantee === input.administrativeRole ? [] : [table],
+  );
   const unhardened = [...unhardenedRoutines, ...undeclaredRoutines, ...exposedTrustTables];
   addFinding(findings, unhardened.length > 0, {
     code: 'trusted_scope_entry_point_unhardened',
@@ -1112,14 +1096,11 @@ const buildGlobalFindings = (
   const crossIdentityMemberships = [
     ...input.global.identityMemberships.map(({ member, role }) => `${member}>${role}`),
     ...input.identities.flatMap(({ snapshot }) =>
-      snapshot.memberships
-        .filter(
-          ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
-            (canSetRole || canAdministerRole || canInheritRole) &&
-            role !== snapshot.runtimeRole &&
-            identityRoles.has(role),
-        )
-        .map(({ role }) => `${snapshot.runtimeRole}>${role}`),
+      snapshot.memberships.flatMap(({ canAdministerRole, canInheritRole, canSetRole, role }) =>
+        (canSetRole || canAdministerRole || canInheritRole) && role !== snapshot.runtimeRole && identityRoles.has(role)
+          ? [`${snapshot.runtimeRole}>${role}`]
+          : [],
+      ),
     ),
   ];
   addFinding(findings, crossIdentityMemberships.length > 0, {

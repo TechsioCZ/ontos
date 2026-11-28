@@ -18,7 +18,7 @@ const RECOVERY_SOURCES = [
 ] as const;
 
 const withoutComments = (text: string): string =>
-  text.replaceAll(/\/\*[\s\S]*?\*\//gu, '').replaceAll(/^\s*\/\/.*$/gmu, '');
+  text.replaceAll(/\/\*[\s\S]*?\*\//gu, '').replaceAll(/^[\t ]*\/\/.*$/gmu, '');
 
 /**
  * The one guard recovery code may name: the technical bound on a single platform digest step (`content-digest.ts`),
