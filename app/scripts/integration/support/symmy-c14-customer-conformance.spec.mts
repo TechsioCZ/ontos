@@ -37,7 +37,7 @@ import {
   CustomerNativeProfileInvocationSchema,
   issueCustomerProfileFixtureRecovery,
 } from './symmy-c14-customer-recovery.mts';
-import { verifySourceLedgerPlans } from './symmy-c14-privacy-ledger-plans.mts';
+import { measurePartyReceiptCorrelation, verifySourceLedgerPlans } from './symmy-c14-privacy-ledger-plans.mts';
 import { customerItemSource, customerOccurrenceId, customersBody } from './symmy-c14-customer-public.mts';
 import { customerFixtureWorkloads, customerIntakeContext, customerWorkerKey } from './symmy-c14-customer-rules.mts';
 import {
@@ -1137,6 +1137,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           pass,
         });
       }
+      yield* measurePartyReceiptCorrelation(admin, tenantId, legalEntityId, recordId, sourceIdentity);
       return yield* Effect.void;
     }
     const sourceBinding = admin`select source_occurrence_id,source_order
