@@ -682,12 +682,30 @@ it.live(
         expect(yield* profileSubject(personRecord('person-002'))).toEqual(provenAs('person-002'));
         expect(yield* profileSubject(null)).toEqual(provenAs('person-001'));
         expect(yield* profileSubject(personRecord('person-unknown'))).toEqual([]);
-        // A binding that names another Party than the profile's is a genuine conflict: nothing is proven for anybody.
+        // Put one exact locator and then a conflict beyond both the former 64-binding cap and its 65th-row sentinel.
+        yield* adminSql`insert into commerce_customer_context.customer_profile_source_bindings (
+          tenant_id, legal_entity_id, customer_profile_id, profile_kind, party_resource_id, party_resource_revision,
+          issuer, namespace, record_type, record_id, source_order, source_revision, source_occurrence_id, source_intent, recorded_at
+        )
+        select tenant_id, legal_entity_id, customer_profile_id, profile_kind, party_resource_id, party_resource_revision,
+          issuer, namespace, record_type, 'extra-customer-' || n, source_order, source_revision, 'extra-occurrence-' || n,
+          source_intent || jsonb_build_object(
+            'source', (source_intent->'source') || jsonb_build_object(
+              'recordId', 'extra-customer-' || n, 'occurrenceId', 'extra-occurrence-' || n, 'effectId', 'extra-effect-' || n),
+            'partySourceReference', (source_intent->'partySourceReference') || jsonb_build_object(
+              'recordId', 'extra-person-' || n, 'occurrenceId', 'extra-person-occurrence-' || n)),
+          recorded_at + n * interval '1 second'
+        from commerce_customer_context.customer_profile_source_bindings cross join generate_series(3, 66) n
+        where tenant_id = ${fixture.tenantId} and record_id = 'customer-002'`;
+        expect(yield* profileSubject(null)).toEqual(provenAs('person-001'));
+        expect(yield* profileSubject(personRecord('extra-person-66'))).toEqual(provenAs('extra-person-66'));
+
+        // A late conflict invalidates even the earliest matching binding.
         yield* adminSql`update commerce_customer_context.customer_profile_source_bindings
           set party_resource_id = ${randomUUID()}
-          where tenant_id = ${fixture.tenantId} and record_id = 'customer-002'`;
+          where tenant_id = ${fixture.tenantId} and record_id = 'extra-customer-66'`;
         expect(yield* profileSubject(personRecord('person-001'))).toEqual([]);
-        expect(yield* profileSubject(personRecord('person-002'))).toEqual([]);
+        expect(yield* profileSubject(personRecord('extra-person-66'))).toEqual([]);
         expect(yield* profileSubject(null)).toEqual([]);
       }),
     ).pipe(Effect.provide(platform)),
