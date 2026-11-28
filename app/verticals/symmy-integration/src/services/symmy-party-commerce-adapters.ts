@@ -108,11 +108,6 @@ import { CustomerProfileIcoRequestSchema } from '@app/commerce-customer-context/
 import type { CustomerProfileIcoResponseSchema } from '@app/commerce-customer-context/api/customer-profile-ico';
 import type { CustomerGroupDefinitionSourceResponse } from '@app/commerce-customer-context/api/customer-group-definition-source';
 import { executeCustomerProfileIcoWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-ico/client';
-import {
-  SourceProcessingEligibilityRequestSchema,
-  SourceProcessingEligibilityResponseSchema,
-} from '@app/privacy-contracts/source-processing-eligibility';
-import { executeSourceProcessingEligibilityWithAuthorization } from '@app/privacy-contracts/source-processing-eligibility/client';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
@@ -770,19 +765,30 @@ const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryConte
     input.originalRequestHash === undefined ||
     input.originalAuthContextRef === undefined
   ) {
+    yield* traceProfileStage('recovery-missing-original-identity');
     return Option.none();
   }
-  const original = yield* input.readOriginalActionInvocation({
-    actionKey: input.effect.ref.operation.entrypointKey,
-    idempotencyKey: input.effect.ref.effectId,
-    originalPrincipalId: input.originalExecutorPrincipalId,
-    requestHash: input.originalRequestHash,
-  });
-  if (
-    Option.isNone(original) ||
-    original.value.status !== 'succeeded' ||
-    (input.originalInvocationId !== undefined && input.originalInvocationId !== original.value.actionInvocationId)
-  ) {
+  const original = yield* input
+    .readOriginalActionInvocation({
+      actionKey: input.effect.ref.operation.entrypointKey,
+      idempotencyKey: input.effect.ref.effectId,
+      originalPrincipalId: input.originalExecutorPrincipalId,
+      requestHash: input.originalRequestHash,
+    })
+    .pipe(
+      Effect.tapError((failure) =>
+        traceProfileStage(
+          'recovery-original-read-failed',
+          Schema.decodeUnknownOption(DiagnosticFailureSchema)(failure),
+        ),
+      ),
+    );
+  if (Option.isNone(original) || original.value.status !== 'succeeded') {
+    yield* traceProfileStage('recovery-original-not-succeeded');
+    return Option.none();
+  }
+  if (input.originalInvocationId !== undefined && input.originalInvocationId !== original.value.actionInvocationId) {
+    yield* traceProfileStage('recovery-original-invocation-mismatch');
     return Option.none();
   }
   yield* input.recordInvocationId(original.value.actionInvocationId);
@@ -819,6 +825,7 @@ const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryConte
   ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   const { recovery } = context;
   if (recovery === undefined) {
+    yield* traceProfileStage('recovery-response-missing');
     return Option.none();
   }
   const expected = yield* Schema.decodeUnknownEffect(RegisteredGatewayRecoverySchema)({
@@ -831,6 +838,7 @@ const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryConte
     requestHash,
   }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
   if (!Schema.toEquivalence(RegisteredGatewayRecoverySchema)(expected, recovery)) {
+    yield* traceProfileStage('recovery-response-metadata-mismatch');
     return Option.none();
   }
   return Option.some({
@@ -840,77 +848,6 @@ const freshRecoveryContext = Effect.fn('SymmyPartyCommerceAdapters.recoveryConte
     requestCorrelation,
   });
 });
-
-const assignmentPrivacy = Effect.fn('SymmyPartyCommerceAdapters.assignmentPrivacy')(function* assignmentPrivacy(
-  crypto: Crypto.Crypto,
-  input: SymmyEffectAdapterInput,
-  intent: Extract<
-    SymmyPartyCommerceIntent,
-    { readonly _tag: 'AssignCustomerPriceGroup' | 'AssignCounterpartyPriceGroup' }
-  >,
-) {
-  if (input.legalEntityId === undefined) {
-    return yield* symmyJobWorkerUnavailable();
-  }
-  const original = input.effect.ref;
-  const request = yield* Schema.decodeUnknownEffect(SourceProcessingEligibilityRequestSchema)({
-    consumerModuleId: commerce,
-    operation: 'PRICE_GROUP_ASSIGN',
-    source: {
-      issuer: original.occurrence.record.issuerId,
-      namespace: original.occurrence.record.sourceNamespace,
-      occurrenceId: original.occurrence.occurrenceId,
-      recordId: original.occurrence.record.sourceRecordId,
-      recordType: original.occurrence.record.entityKind,
-      routeRef: original.occurrence.record.route.integrationRouteId,
-    },
-    target: {
-      kind: intent.payload.profile.kind === 'RETAIL' ? 'RETAIL_CUSTOMER_PROFILE' : 'COUNTERPARTY_PURCHASING_PROFILE',
-      resourceId: intent.payload.profile.resourceId,
-    },
-  });
-  const requestCorrelation = yield* crypto.randomUUIDv4().pipe(Effect.mapError(symmyJobWorkerUnavailable));
-  const common: RegisteredSubjectContext = {
-    declarationKey: 'privacy.core.source-processing-eligibility.read',
-    legalEntityId: input.legalEntityId,
-    operationRequirementKey: symmyOwnerOperationRequirementKey(
-      input.context === undefined ? 'admission' : 'worker',
-      'privacy.core.api.source-processing-eligibility',
-    ),
-  };
-  const subject =
-    input.context === undefined
-      ? { ...input.admission, ...common, _tag: 'RegisteredAdmission' as const }
-      : { ...common, _tag: 'RegisteredWorkload' as const, context: input.context };
-  const context = yield* acquireDelegatedGatewayContext(
-    { audience: 'privacy', legalEntityScope: 'subject', requestCorrelation, subject },
-    crypto,
-  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-  const decision = yield* executeSourceProcessingEligibilityWithAuthorization(
-    request,
-    context.authorization,
-    requestCorrelation,
-    { baseUrl: context.apiBaseUrl, compositionRevision: context.compositionRevision },
-  ).pipe(Effect.mapError(symmyJobWorkerUnavailable));
-  const checked = yield* Schema.decodeUnknownEffect(SourceProcessingEligibilityResponseSchema)(decision).pipe(
-    Effect.mapError(symmyJobWorkerUnavailable),
-  );
-  return checked.outcome === 'ALLOWED';
-});
-const currentIntentPrivacy = (
-  crypto: Crypto.Crypto,
-  input: SymmyEffectAdapterInput,
-  intent: SymmyPartyCommerceIntent,
-) =>
-  Match.value(intent).pipe(
-    Match.tag('AssignCustomerPriceGroup', (selected) => assignmentPrivacy(crypto, input, selected)),
-    Match.tag('AssignCounterpartyPriceGroup', (selected) =>
-      selected.payload.processingKind === 'ORGANIZATION_BUSINESS'
-        ? Effect.succeed(true)
-        : assignmentPrivacy(crypto, input, selected),
-    ),
-    Match.orElse(() => Effect.succeed(true)),
-  );
 
 const operationForIntent = (intent: SymmyPartyCommerceIntent) =>
   Match.value(intent).pipe(
@@ -1675,10 +1612,6 @@ const executeIntent = Effect.fn('SymmyPartyCommerceAdapters.execute')(
       return yield* symmyJobWorkerUnavailable();
     }
     const normalizedIntent = yield* decodeIntent(input, operation);
-    const processingAllowed = yield* currentIntentPrivacy(crypto, input, normalizedIntent);
-    if (!processingAllowed) {
-      return yield* outcome(input, 'denied');
-    }
     const unsupportedSelectedComplete =
       input.routeKey === 'customerGroupCustomersBatch' &&
       Match.value(normalizedIntent).pipe(

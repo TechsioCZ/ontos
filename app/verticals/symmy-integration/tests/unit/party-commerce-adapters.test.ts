@@ -6,7 +6,10 @@ import {
   AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
   AssignCounterpartyPriceGroupPayloadSchema,
 } from '@app/commerce-customer-context/api/assign-counterparty-price-group-action';
-import { AssignCustomerPriceGroupPayloadSchema } from '@app/commerce-customer-context/api/assign-customer-price-group-action';
+import {
+  AssignCustomerPriceGroupActionForbiddenProblemSchema,
+  AssignCustomerPriceGroupPayloadSchema,
+} from '@app/commerce-customer-context/api/assign-customer-price-group-action';
 import { ChangeOrganizationCustomerProfileIcoActionIneligibleProblemSchema } from '@app/commerce-customer-context/api/change-organization-customer-profile-ico-action';
 import { OrganizationCustomerProfileIcoForbiddenProblemSchema } from '@app/commerce-customer-context/api/organization-customer-profile-ico';
 import {
@@ -620,35 +623,6 @@ const assignmentResult = Schema.decodeUnknownSync(AssignCustomerPriceGroupResult
   changed: true,
   replacedAssignmentRef: null,
 });
-const privacyAllowed = Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema)({
-  authorityIncarnation: 'internal-authority-1',
-  authorityRevision: 'internal-revision-1',
-  evaluatedAt: '2026-11-07T00:00:00.000Z',
-  evidence: {
-    authoritativeReferences: [],
-    currentnessConditions: [],
-    evaluatedScope: {
-      controllerRef: 'internal:controller',
-      dataCategoryRefs: ['internal:customer-assignment'],
-      operation: 'PRICE_GROUP_ASSIGN',
-      processingScopeRef: { scopeId: 'internal:assignment-scope', scopeType: 'privacy.processing-scope' },
-      purposeRef: 'internal:explicit-purpose',
-      purposeVersionId: 'internal:purpose-v1',
-      recipientRefs: [],
-      subjectRef: {
-        moduleId: 'privacy.core',
-        resourceId: 'internal:subject-1',
-        resourceType: 'privacy.core.privacy-subject',
-        tenantId,
-      },
-    },
-    outcome: 'ALLOWED',
-    policyRevisions: [],
-    reasonCodes: ['INTERNAL_SCRIPTED_ALLOW'],
-    trustedDecisionTime: '2026-11-07T00:00:00.000Z',
-  },
-  outcome: 'ALLOWED',
-});
 const privacyDenied = Schema.decodeUnknownSync(SourceProcessingEligibilityResponseSchema)({
   evaluatedAt: '2026-11-07T00:00:00.000Z',
   outcome: 'DENIED',
@@ -665,27 +639,72 @@ const assignmentAdapter = Effect.gen(function* assignmentAdapter() {
   return adapter;
 });
 
-// The public Privacy owner response is scripted; production never manufactures this authority.
-describe('explicit Commerce assignment source Privacy', () => {
-  it.effect('checks the exact profile and source again after an earlier positive result', () =>
-    Effect.gen(function* recheck() {
+describe('explicit Commerce assignment owner authority', () => {
+  it.effect('sends the exact source command to governed Commerce without impersonating its Privacy consumer', () =>
+    Effect.gen(function* governedAssignment() {
       reset();
-      peer.privacy.succeedOnce(privacyAllowed).succeedOnce(privacyDenied);
+      peer.privacy.succeed(privacyDenied);
+      peer.assignment.succeed(assignmentResult);
+      const adapter = yield* assignmentAdapter;
+      const original = { ...input(), effect: assignmentEffect, legalEntityId: '10000000-0000-4000-8000-000000000020' };
+      const result = yield* adapter.execute(original);
+      expect(result.status).toBe('accepted_change');
+      expect(peer.assignment.sent).toHaveLength(1);
+      expect(peer.assignment.bodies[0]).toMatchObject({
+        expectedProfileRevision: 1,
+        priceGroupRef,
+        profile,
+        source: {
+          effectId,
+          occurrenceId: 'occurrence-1',
+          recordId: 'customer-1',
+          route: { id: routeId, revision: 'route-1' },
+        },
+      });
+      expect(peer.assignment.sent[0]?.headers.get('authorization')).toBe('Bearer internal-attempt-1');
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(1);
+      expect(peer.gateway[0]?.audience).toBe('commerce-customer-context');
+      const workload = Option.fromNullishOr(peer.gateway[0]).pipe(
+        Option.flatMap(({ subject }) =>
+          Match.value(subject).pipe(
+            Match.tag('RegisteredWorkload', Option.some),
+            Match.orElse(() => Option.none()),
+          ),
+        ),
+      );
+      expect(Option.getOrUndefined(workload)).toMatchObject({
+        declarationKey: 'commerce.customer-context.customer-price-group.assign',
+      });
+      expect(peer.hashes).toHaveLength(1);
+    }).pipe(asSymmyWorker),
+  );
+
+  it.effect('projects the current Commerce owner Privacy refusal even after an earlier successful assignment', () =>
+    Effect.gen(function* ownerDeniedAssignment() {
+      reset();
       peer.assignment.succeed(assignmentResult);
       const adapter = yield* assignmentAdapter;
       const original = { ...input(), effect: assignmentEffect, legalEntityId: '10000000-0000-4000-8000-000000000020' };
       const first = yield* adapter.execute(original);
       expect(first.status).toBe('accepted_change');
+      peer.assignment.fail(
+        AssignCustomerPriceGroupActionForbiddenProblemSchema,
+        AssignCustomerPriceGroupActionForbiddenProblemSchema.make({
+          code: 'customer_price_group_source_privacy_denied',
+          detail: 'Current owner Privacy denies the original source',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
+      );
       const denied = yield* adapter.execute(original);
       expect(denied.status).toBe('denied');
-      expect(peer.assignment.sent).toHaveLength(1);
-      expect(peer.privacy.sent).toHaveLength(2);
-      expect(peer.privacy.bodies[0]).toMatchObject({
-        consumerModuleId: 'commerce.customer-context',
-        operation: 'PRICE_GROUP_ASSIGN',
-        source: { occurrenceId: 'occurrence-1', recordId: 'customer-1' },
-        target: { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profile.resourceId },
-      });
+      expect(peer.assignment.sent).toHaveLength(2);
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.gateway).toHaveLength(2);
+      expect(peer.gateway.every(({ audience }) => audience === 'commerce-customer-context')).toBe(true);
+      expect(peer.factReads).toBe(1);
     }).pipe(asSymmyWorker),
   );
 
@@ -3090,10 +3109,19 @@ describe('explicit company price assignment processing branch', () => {
       });
     }).pipe(asSymmyWorker),
   );
-  it.effect('preserves the personal Counterparty policy check and stops its denied command', () =>
+  it.effect('projects the personal Counterparty owner policy refusal without impersonating its Privacy consumer', () =>
     Effect.gen(function* personalCounterpartyDenied() {
       reset();
-      peer.privacy.succeed(privacyDenied);
+      peer.counterpartyAssignment.fail(
+        AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
+        AssignCounterpartyPriceGroupActionForbiddenProblemSchema.make({
+          code: 'customer_price_group_source_privacy_denied',
+          detail: 'Current personal processing is denied',
+          status: 403,
+          title: 'Forbidden',
+          type: 'about:blank',
+        }),
+      );
       const personal = Match.value(organizationAssignmentIntent).pipe(
         Match.tag('AssignCounterpartyPriceGroup', (value) => ({
           ...value,
@@ -3110,9 +3138,28 @@ describe('explicit company price assignment processing branch', () => {
       const adapter = yield* counterpartyAssignmentAdapter;
       const result = yield* adapter.execute({ ...input(), effect: selected, legalEntityId: sellingLegalEntityId });
       expect(result.status).toBe('denied');
-      expect(peer.privacy.sent).toHaveLength(1);
-      expect(peer.counterpartyAssignment.sent).toHaveLength(0);
-      expect(peer.hashes).toHaveLength(0);
+      expect(peer.privacy.sent).toHaveLength(0);
+      expect(peer.counterpartyAssignment.sent).toHaveLength(1);
+      expect(peer.counterpartyAssignment.bodies[0]).toMatchObject({
+        processingKind: 'PERSONAL_DATA',
+        profile: organizationAssignmentProfile,
+        source: { effectId, occurrenceId: 'occurrence-1', recordId: 'customer-1' },
+      });
+      expect(peer.gateway).toHaveLength(1);
+      expect(peer.gateway[0]?.audience).toBe('commerce-customer-context');
+      const workload = Option.fromNullishOr(peer.gateway[0]).pipe(
+        Option.flatMap(({ subject }) =>
+          Match.value(subject).pipe(
+            Match.tag('RegisteredWorkload', Option.some),
+            Match.orElse(() => Option.none()),
+          ),
+        ),
+      );
+      expect(Option.getOrUndefined(workload)).toMatchObject({
+        declarationKey: 'commerce.customer-context.counterparty-price-group.assign',
+      });
+      expect(peer.hashes).toHaveLength(1);
+      expect(peer.factReads).toBe(0);
     }).pipe(asSymmyWorker),
   );
   it.effect('validates malformed company commands before any credential or owner HTTP call', () =>
