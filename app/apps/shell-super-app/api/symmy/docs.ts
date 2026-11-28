@@ -596,7 +596,6 @@ const apiKeySecurity = [{ [apiKeyScheme]: [] }];
 const describeOperation = (operation: OpenApi.OpenAPISpecOperation, route: DocumentedRoute, successStatus: number) => ({
   ...operation,
   description: route.description,
-  parameters: operation.parameters.filter(({ name }) => name !== 'x-api-key'),
   requestBody:
     operation.requestBody === undefined || route.requestExamples === undefined
       ? operation.requestBody

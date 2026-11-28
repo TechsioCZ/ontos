@@ -1,4 +1,5 @@
 import { DECISION_REASON_CODES } from '@app/core-runtime/access/decision/contract';
+import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import { DateTime, Effect, Layer, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -25,6 +26,9 @@ import {
   shellAuthenticationApiContract,
 } from '../../shared/browser-api.ts';
 import { ShellAuthenticationApi as ShellServerApi, SymmyIngressGroup } from '../../shared/api.ts';
+import { SymmyAuthentication } from '../../api/symmy/authentication.ts';
+import { SymmySchemaError } from '../../api/symmy/contract.ts';
+import { SymmyDefectBoundary } from '../../api/symmy/defect-boundary.ts';
 import {
   AccessDecisionReasonCodeSchema,
   DecideAccessChangesPayloadSchema,
@@ -108,6 +112,26 @@ it('shares each browser group with the server and mounts the ingress groups only
     expect(ShellServerApi.groups[group.identifier]).toBe(group);
   }
   expect(ShellServerApi.groups.symmy).toBe(SymmyIngressGroup);
+});
+
+it('wraps every assembled Symmy endpoint in its authentication inside the defect boundary', () => {
+  const endpoints = Object.values(ShellServerApi.groups.symmy.endpoints);
+  expect(endpoints).toHaveLength(20);
+  expect(endpoints.map(({ identifier }) => identifier).toSorted()).toEqual(
+    [
+      ...Object.keys({ ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES }),
+      'demoCatalogProducts',
+      'demoCatalogRevision',
+      'demoCategories',
+      'demoMedia',
+      'demoOrder',
+      'demoOrders',
+    ].toSorted(),
+  );
+  for (const endpoint of endpoints) {
+    // HttpApiBuilder applies an endpoint's middleware in insertion order, so the last one is the outermost.
+    expect([...endpoint.middlewares]).toEqual([SymmySchemaError, SymmyAuthentication, SymmyDefectBoundary]);
+  }
 });
 
 it('publishes authentication, identity lifecycle, and gateway operations', () => {

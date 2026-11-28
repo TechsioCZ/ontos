@@ -30,6 +30,7 @@ export type AuthenticationPhase = typeof AuthenticationPhaseSchema.Type;
 
 const isAuthenticationUnavailable = Schema.is(AuthenticationUnavailableError);
 const REQUEST_ID_PATTERN = /^[\w-]{1,64}$/u;
+export const isValidRequestId = (value: string): boolean => REQUEST_ID_PATTERN.test(value);
 
 /**
  * The id Cloudflare gives the request (`cf-ray`, also on the Workers Logs invocation), else the
@@ -42,7 +43,7 @@ export const authenticationRequestId = (requestHeaders: Headers | undefined): st
   if (candidate === null || candidate === undefined) {
     return 'missing';
   }
-  return REQUEST_ID_PATTERN.test(candidate) ? candidate : 'invalid';
+  return isValidRequestId(candidate) ? candidate : 'invalid';
 };
 
 const phaseAnnotations = Effect.fn('ShellAuthentication.phaseAnnotations')(function* phaseAnnotationsEffect(

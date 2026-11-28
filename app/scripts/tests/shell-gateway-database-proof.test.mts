@@ -6,6 +6,9 @@ import { expect, it } from 'effect-rstest';
 
 import { provedShellGatewayDatabaseSources } from '../shell-gateway-database-proof.mts';
 
+const nativeRuntimeEntry = 'apps/shell-super-app/api/index.ts';
+const nativeTransportEntry = 'apps/shell-super-app/api/symmy/transport.ts';
+const paymentTransportEntry = 'apps/shell-super-app/api/payment-gateway/transport.ts';
 const fixtureRoot = '/issuer-proof';
 const rootFile = `${fixtureRoot}/apps/shell-super-app/api/index.ts`;
 const helperFile = `${fixtureRoot}/apps/shell-super-app/api/auth/evidence.ts`;
@@ -191,6 +194,205 @@ it.live('needs no database exception for the current Shell issuer adapters', () 
       expect(adapter).toBeDefined();
       expect(adapter).not.toMatch(/CoreDatabase|drizzle-orm|transaction\.execute|database\.executor/u);
       expect(adapter).toContain('GatewayNativeEvidence');
+    }
+    // The route-scope adapter delegates to GatewayNativeEvidence. A database read placed in the workload check it
+    // exports is proved only through the Symmy group's authentication, which admits before any request is decoded.
+    const routeScope = nodePath.join(root, 'apps/shell-super-app/api/auth/gateway-symmy-route-scope.ts');
+    const reexportedWorkload = "  requireSymmyRouteWorkload,\n} from './gateway-symmy-route-proof.ts';\n";
+    expect(sources.get(routeScope)).toContain(reexportedWorkload);
+    const routeScopeQuery = new Map([
+      ...sources,
+      [
+        routeScope,
+        (sources.get(routeScope) ?? '').replace(
+          reexportedWorkload,
+          `} from './gateway-symmy-route-proof.ts';
+import { CoreDatabase } from '@app/core-runtime/db/client';
+import { sql } from 'drizzle-orm';
+export const requireSymmyRouteWorkload = Effect.fn('SymmyRouteScope.requireWorkload')(function* requireWorkload(
+  principal: TrustedPrincipalContext,
+  route: string,
+) {
+  const database = yield* CoreDatabase;
+  return yield* database.executor.transaction(Effect.fn('facts')(function* (transaction) {
+    return yield* transaction.execute(sql\`select \${principal.principalId}, \${route}\`);
+  }));
+});
+`,
+        ),
+      ],
+    ]);
+    expect([...provedShellGatewayDatabaseSources(routeScopeQuery, root, purePath, exports)]).toEqual([routeScope]);
+    const runtime = nodePath.join(root, nativeRuntimeEntry);
+    const transport = nodePath.join(root, nativeTransportEntry);
+    const shellApi = nodePath.join(root, 'apps/shell-super-app/shared/api.ts');
+    const unmountedAuthentication = { file: shellApi, from: '  .middleware(SymmyAuthentication)\n', to: '' };
+    const symmyMutations = [
+      // The SymmyIngress Layer configures no admit.
+      [{ file: runtime, from: '      return {\n        admit:', to: '      if (false) return {\n        admit:' }],
+      // The SymmyIngress Layer is merged beside the Symmy handlers instead of provided to them.
+      [
+        {
+          file: runtime,
+          from: '      Layer.provide(symmyIngressLive),\n    ),\n',
+          to: '    ),\n    symmyIngressLive,\n',
+        },
+      ],
+      // The Symmy handlers are not mounted.
+      [{ file: runtime, from: 'SymmyIngressHandlersLive.pipe(', to: 'unregisteredHandlers.pipe(' }],
+      // SymmyIngress is not a Context.Service.
+      [{ file: transport, from: 'Context.Service<', to: 'forgedContext.Service<' }],
+      // The Symmy group is not built on the public route inventory.
+      [{ file: shellApi, from: "from '@app/shared-contracts/symmy'", to: "from '@app/foreign-contracts/symmy'" }],
+      // The root Layer configures another service than SymmyIngress.
+      [
+        {
+          file: runtime,
+          from: 'const symmyIngressLive = Layer.effect(\n    SymmyIngress,',
+          to: 'const symmyIngressLive = Layer.effect(\n    foreignService,',
+        },
+      ],
+      // The authentication middleware is declared but not mounted on the Symmy group.
+      [unmountedAuthentication],
+      // An endpoint is added after the authentication middleware, so it runs without it.
+      [
+        {
+          file: shellApi,
+          from: '    sellerVatDeclarationsFixtureBatchEndpoint,\n  )\n  .middleware(SymmySchemaError)\n  .middleware(SymmyAuthentication)\n',
+          to: '  )\n  .middleware(SymmySchemaError)\n  .middleware(SymmyAuthentication)\n  .add(sellerVatDeclarationsFixtureBatchEndpoint)\n',
+        },
+      ],
+      // Only the job endpoint carries the authentication middleware.
+      [
+        unmountedAuthentication,
+        { file: shellApi, from: 'symmyJobOptions);', to: 'symmyJobOptions).middleware(SymmyAuthentication);' },
+      ],
+      // The authentication middleware wraps the defect boundary instead of running inside it.
+      [
+        {
+          file: shellApi,
+          from: '  .middleware(SymmyAuthentication)\n  .middleware(SymmyDefectBoundary);',
+          to: '  .middleware(SymmyDefectBoundary)\n  .middleware(SymmyAuthentication);',
+        },
+      ],
+      // The mounted schema-error middleware also declares security, with two schemes instead of one.
+      [
+        {
+          file: nodePath.join(root, 'apps/shell-super-app/api/symmy/contract.ts'),
+          from: "import { HttpApiMiddleware } from 'effect/http-api';",
+          to: "import { HttpApiMiddleware, HttpApiSecurity } from 'effect/http-api';",
+        },
+        {
+          file: nodePath.join(root, 'apps/shell-super-app/api/symmy/contract.ts'),
+          from: '{ error: SymmyInvalidProblemSchema },',
+          to: '{ error: SymmyInvalidProblemSchema, security: { bearer: HttpApiSecurity.bearer, basic: HttpApiSecurity.basic } },',
+        },
+      ],
+      // An unresolvable extra middleware cannot be assumed to be non-security.
+      [{ file: shellApi, from: '.middleware(SymmySchemaError)', to: '.middleware(unknownMiddleware)' }],
+      // The authentication Layer admits through a forged service.
+      [
+        {
+          file: runtime,
+          from: '    const ingress = yield* SymmyIngress;\n',
+          to: '    const ingress = yield* forgedIngress;\n',
+        },
+      ],
+      // The admission calls a renamed method.
+      [
+        {
+          file: transport,
+          from: '.admit(rawKey, yield* HttpServerRequest.HttpServerRequest, route)',
+          to: '.foreignAdmit(rawKey, yield* HttpServerRequest.HttpServerRequest, route)',
+        },
+      ],
+      // The admitting function is not the handler of the middleware's security scheme.
+      [
+        {
+          file: runtime,
+          from: '    return {\n      apiKey: (httpEffect',
+          to: '    return {\n      bearer: (httpEffect',
+        },
+      ],
+      // A second Layer implements the authentication middleware without admitting.
+      [
+        {
+          file: runtime,
+          from: '          SymmyIngressAuthenticationLive,\n',
+          to: '          SymmyIngressAuthenticationLive,\n          Layer.succeed(SymmyAuthentication, { apiKey: (httpEffect) => httpEffect }),\n',
+        },
+      ],
+      // The admitting Layer is provided to the payment handlers instead of the Symmy handlers.
+      [
+        { file: runtime, from: '          SymmyIngressAuthenticationLive,\n', to: '' },
+        {
+          file: runtime,
+          from: '          paymentGatewayRelayLive,\n',
+          to: '          paymentGatewayRelayLive,\n          SymmyIngressAuthenticationLive,\n',
+        },
+      ],
+      // The authentication middleware is declared on another group.
+      [
+        unmountedAuthentication,
+        {
+          file: shellApi,
+          from: '.add(PaymentNotificationsGroup.middleware(PaymentNotificationBoundary))',
+          to: '.add(PaymentNotificationsGroup.middleware(SymmyAuthentication).middleware(PaymentNotificationBoundary))',
+        },
+      ],
+      // A handler of another group admits through SymmyIngress.
+      [
+        unmountedAuthentication,
+        {
+          file: nodePath.join(root, paymentTransportEntry),
+          from: "import { ShellAuthenticationApi } from '../../shared/api.ts';\n",
+          to: "import { ShellAuthenticationApi } from '../../shared/api.ts';\nimport { SymmyIngress } from '../symmy/transport.ts';\n",
+        },
+        {
+          file: nodePath.join(root, paymentTransportEntry),
+          from: '  const relayService = yield* PaymentGatewayRelay;\n',
+          to: '  const symmyIngress = yield* SymmyIngress;\n  yield* symmyIngress.admit(apiKey.value, yield* HttpServerRequest.HttpServerRequest, notification.routeKey);\n  const relayService = yield* PaymentGatewayRelay;\n',
+        },
+      ],
+      // A Symmy handler admits after the request is decoded instead of the middleware.
+      [
+        unmountedAuthentication,
+        {
+          file: transport,
+          from: '    const ingress = yield* SymmyIngress;\n',
+          to: "    const ingress = yield* SymmyIngress;\n    yield* ingress.admit(Redacted.value(credential), yield* HttpServerRequest.HttpServerRequest, 'job');\n",
+        },
+      ],
+      // A Symmy handler imports a route-scope database function directly.
+      [
+        {
+          file: transport,
+          from: "import { SymmyAdmittedCaller } from './admitted-caller.ts';\n",
+          to: "import { SymmyAdmittedCaller } from './admitted-caller.ts';\nimport { requireSymmyRouteWorkload } from '../auth/gateway-symmy-route-scope.ts';\n",
+        },
+        {
+          file: transport,
+          from: ".handle('job', ({ params }) => handlePoll({ id: params.id, route: 'job' }))",
+          to: ".handle('job', ({ params }) => requireSymmyRouteWorkload(params.id, 'job'))",
+        },
+      ],
+      // The security handler calls a route-scope database function outside the admission.
+      [
+        {
+          file: runtime,
+          from: '        httpEffect.pipe(\n          Effect.provideServiceEffect(SymmyAdmittedCaller',
+          to: '        httpEffect.pipe(\n          Effect.tap(() => requireSymmyRouteWorkload(credential, endpoint.identifier)),\n          Effect.provideServiceEffect(SymmyAdmittedCaller',
+        },
+      ],
+    ];
+    for (const mutation of symmyMutations) {
+      const mutated = new Map(routeScopeQuery);
+      for (const change of mutation) {
+        const original = mutated.get(change.file) ?? '';
+        expect(original).toContain(change.from);
+        mutated.set(change.file, original.replace(change.from, change.to));
+      }
+      expect([...provedShellGatewayDatabaseSources(mutated, root, purePath, exports)]).toEqual([]);
     }
   }).pipe(Effect.provide(Path.layer)),
 );

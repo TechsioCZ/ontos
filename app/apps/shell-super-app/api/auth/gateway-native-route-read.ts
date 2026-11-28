@@ -138,7 +138,6 @@ const admitIntakeNativeRead = Effect.fn('GatewayDelegation.admitIntakeNativeRead
     principal: tenantPrincipal,
     requestCorrelation: input.requestCorrelation,
     routeRequest,
-    sourcePurpose: 'admit',
   });
   const current = yield* readSymmyRouteScope(proof);
   if (

@@ -4,6 +4,7 @@ import {
 } from '@app/symmy-integration/api/symmy-route-context';
 import { executeSymmyRouteContextWithAuthorization } from '@app/symmy-integration/api/symmy-route-context/client';
 import { resolveSymmyOwnerReleaseBase } from './owner-release-transport.ts';
+import { SYMMY_FIXTURE_ROUTES, SYMMY_ROUTES } from '@app/shared-contracts/symmy';
 import { Effect, Predicate, Schema } from 'effect';
 import {
   OutboxPayloadSchema,
@@ -41,23 +42,49 @@ export type Route = typeof SymmyRouteContextResponseSchema.Type;
 export type RouteRequest = typeof SymmyRouteContextRequestSchema.Encoded;
 const SourcePurposeSchema = Schema.Literals(['admit', 'read']);
 export type SourcePurpose = typeof SourcePurposeSchema.Type;
+/** The job read polls: the owner's job status Read admits only the poll workload. */
+export type WorkloadPurpose = SourcePurpose | 'poll';
 const routeJsonSchema = Schema.fromJsonString(SymmyRouteContextResponseSchema);
-const readRoutes: ReadonlySet<RouteRequest['routeKey']> = new Set([
-  'adminCustomers',
-  'adminProducts',
-  'adminRegions',
-  'priceLists',
+const symmyRouteInventory = { ...SYMMY_ROUTES, ...SYMMY_FIXTURE_ROUTES };
+const purposeByMode = {
+  business_read: 'read',
+  durable_job: 'admit',
+  item_results: 'admit',
+  job_read: 'poll',
+} as const satisfies Record<(typeof symmyRouteInventory)[keyof typeof symmyRouteInventory]['mode'], WorkloadPurpose>;
+/** Demo endpoints act under the enrolled route whose scoped owner assertion they acquire. */
+const demoEndpointRoutes = {
+  demoCatalogProducts: 'productsBatch',
+  demoCatalogRevision: 'productsBatch',
+  demoCategories: 'productsBatch',
+  demoMedia: 'productsBatch',
+  demoOrder: 'adminProducts',
+  demoOrders: 'adminProducts',
+} as const satisfies Record<string, keyof typeof SYMMY_ROUTES>;
+const routePurposes: ReadonlyMap<string, WorkloadPurpose> = new Map([
+  ...Object.entries(symmyRouteInventory).map(([route, { mode }]) => [route, purposeByMode[mode]] as const),
+  ...Object.entries(demoEndpointRoutes).map(
+    ([endpoint, route]) => [endpoint, purposeByMode[SYMMY_ROUTES[route].mode]] as const,
+  ),
 ]);
+/**
+ * What the named Symmy endpoint asks of its caller, read from the route inventories: a write admits, a business read
+ * reads and the job read polls. An endpoint in no inventory is forbidden.
+ */
+export const symmyRouteWorkloadPurpose = (route: string) => {
+  const purpose = routePurposes.get(route);
+  return purpose === undefined
+    ? Effect.fail(delegationForbidden('symmy_route_not_admitted')())
+    : Effect.succeed(purpose);
+};
 
 export const validateSymmyRouteRequest = Effect.fn('SymmyEvidencePolicy.validateRouteRequest')(
-  function* validate(input: { readonly routeRequest: RouteRequest; readonly sourcePurpose: SourcePurpose }) {
-    const sourcePurpose = yield* Schema.decodeUnknownEffect(SourcePurposeSchema)(input.sourcePurpose).pipe(
-      Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
-    );
+  function* validate(input: { readonly routeRequest: RouteRequest }) {
     const routeRequest = yield* Schema.decodeUnknownEffect(SymmyRouteContextRequestSchema)(input.routeRequest).pipe(
       Effect.mapError(delegationForbidden('symmy_route_not_admitted')),
     );
-    if ((sourcePurpose === 'read') !== readRoutes.has(routeRequest.routeKey)) {
+    const sourcePurpose = yield* symmyRouteWorkloadPurpose(routeRequest.routeKey);
+    if (sourcePurpose === 'poll') {
       return yield* delegationForbidden('symmy_route_not_admitted')();
     }
     return { routeRequest, sourcePurpose };
@@ -95,8 +122,15 @@ export const decodeSymmyOwnerRoute = (json: string) =>
     Effect.mapError(delegationUnavailable('symmy_route_unavailable')),
   );
 
-export const symmyRouteSourceWorkloads = (purpose: 'admit' | 'read'): RouteSourceWorkloads =>
-  purpose === 'read' ? { preferred: admissionWorkload, secondary: pollWorkload } : { preferred: admissionWorkload };
+/** A write admits, a business read admits or polls, and the job read polls. */
+export const symmyRouteSourceWorkloads = (purpose: WorkloadPurpose): RouteSourceWorkloads => {
+  if (purpose === 'poll') {
+    return { preferred: pollWorkload };
+  }
+  return purpose === 'read'
+    ? { preferred: admissionWorkload, secondary: pollWorkload }
+    : { preferred: admissionWorkload };
+};
 
 const historicalEvidenceSchema = Schema.Struct({
   eventPayload: OutboxPayloadSchema,

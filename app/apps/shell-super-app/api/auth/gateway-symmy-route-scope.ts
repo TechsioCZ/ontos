@@ -26,7 +26,11 @@ import {
 } from './gateway-symmy-route-proof.ts';
 import type { RouteScopeFacts, SymmyRouteScopeProof } from './gateway-symmy-route-proof.ts';
 
-export { acquireSymmyRouteScopeProof, readSymmyRouteScope } from './gateway-symmy-route-proof.ts';
+export {
+  acquireSymmyRouteScopeProof,
+  readSymmyRouteScope,
+  requireSymmyRouteWorkload,
+} from './gateway-symmy-route-proof.ts';
 export type { SymmyRouteScopeProof } from './gateway-symmy-route-proof.ts';
 
 const symmyAudience = 'symmy-integration';

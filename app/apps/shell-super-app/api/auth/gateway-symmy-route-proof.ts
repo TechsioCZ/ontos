@@ -7,9 +7,10 @@ import {
   encodeSymmyOwnerRoute,
   resolveSymmyOwnerRoute,
   symmyRouteSourceWorkloads,
+  symmyRouteWorkloadPurpose,
   validateSymmyRouteRequest,
 } from '../symmy/native-evidence-policy.ts';
-import type { Route, RouteRequest, SourcePurpose } from '../symmy/native-evidence-policy.ts';
+import type { Route, RouteRequest, SourcePurpose, WorkloadPurpose } from '../symmy/native-evidence-policy.ts';
 import { Effect, Option, Predicate, Schema } from 'effect';
 
 import { delegationForbidden, delegationUnavailable } from './gateway-delegation-errors.ts';
@@ -56,12 +57,19 @@ export const sameIdentity = (left: TrustedPrincipalContext, right: TrustedPrinci
 
 export const validateRoutePrincipal = Effect.fn('GatewayNativeEvidence.validateRoutePrincipal')(function* native(
   candidate: TrustedPrincipalContext,
-  sourcePurpose: SourcePurpose,
+  purpose: WorkloadPurpose,
 ) {
-  return yield* (yield* GatewayNativeEvidence).validateRoutePrincipal(
-    candidate,
-    symmyRouteSourceWorkloads(sourcePurpose),
-  );
+  return yield* (yield* GatewayNativeEvidence).validateRoutePrincipal(candidate, symmyRouteSourceWorkloads(purpose));
+});
+/**
+ * The tenant-local Symmy workload the named endpoint requires, checked before its request is decoded: a write admits,
+ * a business read admits or polls, and the job read polls. An unknown endpoint is forbidden.
+ */
+export const requireSymmyRouteWorkload = Effect.fn('SymmyRouteScope.requireWorkload')(function* requireWorkload(
+  principal: TrustedPrincipalContext,
+  route: string,
+) {
+  yield* validateRoutePrincipal(principal, yield* symmyRouteWorkloadPurpose(route));
 });
 
 export const validateCompany = Effect.fn('SymmyRouteScope.validateCompany')(function* company(
@@ -91,7 +99,6 @@ export const acquireSymmyRouteScopeProof = Effect.fn('SymmyRouteScope.acquire')(
   readonly principal: TrustedPrincipalContext;
   readonly requestCorrelation: string;
   readonly routeRequest: RouteRequest;
-  readonly sourcePurpose: SourcePurpose;
 }) {
   const { routeRequest, sourcePurpose } = yield* validateSymmyRouteRequest(input);
   const principal = yield* validateRoutePrincipal(input.principal, sourcePurpose);
