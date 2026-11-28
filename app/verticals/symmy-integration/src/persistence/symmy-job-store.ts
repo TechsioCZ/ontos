@@ -723,6 +723,7 @@ export const resolveSymmyMembershipCustomerProfiles = Effect.fn('SymmyJobStore.r
 /**
  * Lock the actual customer enrollment before fencing the previously queried resolution against it. Membership source
  * namespaces need not equal customer namespaces. Receipt history is neither identity authority nor required data.
+ * The read-only preparation takes no lock: it projects the same plan, and the admission write locks and fences again.
  */
 const resolveSourceProfiles = Effect.fn('SymmyJobStore.resolveSourceProfiles')(function* resolveSourceProfiles(
   transaction: ScopedTransactionExecutor,
@@ -730,6 +731,7 @@ const resolveSourceProfiles = Effect.fn('SymmyJobStore.resolveSourceProfiles')(f
   source: SymmyGroupMembershipCustomerSource,
   recordIds: readonly string[],
   facts: SymmyGroupMembershipCustomerResolution | undefined,
+  lock: boolean,
 ) {
   if (scope.legalEntityId === undefined || facts === undefined) {
     return yield* unavailable();
@@ -752,7 +754,9 @@ const resolveSourceProfiles = Effect.fn('SymmyJobStore.resolveSourceProfiles')(f
   if (routes.length !== 1 || customerRoute === undefined) {
     return yield* unavailable();
   }
-  yield* lockRoute(transaction, customerRoute);
+  if (lock) {
+    yield* lockRoute(transaction, customerRoute);
+  }
   const customerTemplate = yield* decodeRouteTemplate(customerRoute);
   if (customerTemplate === null) {
     return yield* unavailable();
@@ -812,8 +816,16 @@ const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(fun
     legalEntityId: scope.legalEntityId,
     // A public membership states the time its reservation issues.
     reserve: reserveLineageOrder(transaction, { idempotencyDigest, routeId: route.routeId }),
+    // No idempotency digest is the read-only preparation, which may take no row lock.
     resolveProfiles: (source, recordIds) =>
-      resolveSourceProfiles(transaction, scope, source, recordIds, input.groupCustomerFacts),
+      resolveSourceProfiles(
+        transaction,
+        scope,
+        source,
+        recordIds,
+        input.groupCustomerFacts,
+        idempotencyDigest !== null,
+      ),
     rows: input.groupCustomers,
     template,
     tenantId: scope.tenantId,
