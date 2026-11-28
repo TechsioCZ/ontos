@@ -182,7 +182,8 @@ const reserveMembershipOrder = defineScopedRoutine({
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
-    { source: 'input', type: 'text' },
+    // No digest is the read-only preparation: it projects the next order and reserves nothing.
+    { nullable: true, source: 'input', type: 'text' },
     { source: 'input', type: 'text' },
     { source: 'input', type: 'text' },
     { source: 'input', type: 'uuid' },
@@ -662,7 +663,7 @@ const sourceAuthority = (route: typeof symmyJobRoutes.$inferSelect, template: Sy
 
 /** The admission a membership order is reserved for: the route and the idempotency digest its job is admitted under. */
 interface MembershipAdmission {
-  readonly idempotencyDigest: string;
+  readonly idempotencyDigest: string | null;
   readonly routeId: string;
 }
 
@@ -821,7 +822,7 @@ const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(fun
 
 /** The admission transaction, its scope and the idempotency digest the job it admits is inserted under. */
 interface AdmissionPlanContext {
-  readonly idempotencyDigest: string;
+  readonly idempotencyDigest: string | null;
   readonly scope: OperationalScope;
   readonly transaction: ScopedTransactionExecutor;
 }
@@ -1725,35 +1726,6 @@ const membershipRouteForKey = Effect.fn('SymmyJobStore.membershipRouteForKey')(f
   return yield* retainedRouteContext(row, plan, digest, yield* decodeRouteTemplate(row));
 });
 
-const activeAdmissionRoute = Effect.fn('SymmyJobStore.activeAdmissionRoute')(function* activeAdmissionRoute(
-  transaction: ScopedTransactionExecutor,
-  scope: OperationalScope,
-  input: SymmyJobAdmissionRequest,
-) {
-  const activeRoute = and(
-    eq(symmyJobRoutes.active, true),
-    eq(symmyJobRoutes.tenantId, scope.tenantId),
-    eq(symmyJobRoutes.principalId, scope.principalId),
-    scope.legalEntityId === undefined
-      ? isNull(symmyJobRoutes.legalEntityId)
-      : eq(symmyJobRoutes.legalEntityId, scope.legalEntityId),
-    eq(symmyJobRoutes.routeKey, input.routeKey),
-    input.code === undefined ? isNull(symmyJobRoutes.routeCode) : eq(symmyJobRoutes.routeCode, input.code),
-  );
-
-  const routes = yield* transaction
-    .select()
-    .from(symmyJobRoutes)
-    .where(activeRoute)
-    .limit(2)
-    .pipe(Effect.mapError(unavailable));
-  const [route] = routes;
-  if (routes.length !== 1 || route === undefined) {
-    return yield* routeDenied();
-  }
-  return route;
-});
-
 export const symmyJobStoreFactory = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
@@ -2084,10 +2056,12 @@ export const symmyJobStoreFactory = (
       }
       const digest = yield* hash(input.idempotencyKey);
       const { route, template } = yield* resolveJobAdmissionRoute(transaction, scope, input, digest, false, true);
-      if (!permitsNewAdmission(route, scope, input.fixtureId ?? 'INTERNAL_C14')) {
+      const contract =
+        input.groupCustomers === undefined ? (input.fixtureId ?? 'INTERNAL_C14') : SYMMY_ERP_MEMBERSHIP_CONTRACT;
+      if (!permitsNewAdmission(route, scope, contract)) {
         return yield* routeDenied();
       }
-      const plan = yield* prepareAdmissionPlan({ scope, transaction }, route, input, template);
+      const plan = yield* prepareAdmissionPlan({ idempotencyDigest: null, scope, transaction }, route, input, template);
       return plan ?? (yield* routeDenied());
     }),
     readSyncAdmission: Effect.fn('SymmyJobStore.readSyncAdmission')(function* readSyncAdmission(admissionId: string) {

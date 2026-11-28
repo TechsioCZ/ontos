@@ -4,7 +4,7 @@ import { FetchHttpClient } from 'effect/http';
 import { SymmyJobPrivacy } from '../../src/services/symmy-job-privacy.service.ts';
 import { symmyJobRetentionService } from '../../src/services/symmy-job-retention.service.ts';
 import { TestClock } from 'effect/testing';
-import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
+import { SymmyEffectIdSchema, SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
 import { loadDatabaseConnectionPair, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
@@ -241,12 +241,57 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
           .from(symmyJobEffects)
           .where(eq(symmyJobEffects.effectId, state.effectId));
         expect(rows).toEqual([{ state: 'attempting' }]);
-        expect(
-          yield* state.adminDb
-            .select()
-            .from(symmyJobRetentionTombstones)
-            .where(eq(symmyJobRetentionTombstones.jobId, state.jobId)),
-        ).toHaveLength(0);
+        // Lease expiry makes the effect recoverable, not disposable. The owner might already have committed.
+        yield* state.admin`update symmy_integration.job_effects set lease_until=clock_timestamp()-interval '1 second'
+          where tenant_id=${state.scope.tenantId} and effect_id=${state.effectId}`;
+        const purge = state.secondDb.transaction((tx) =>
+          installOperationalScope(tx, state.governanceScope).pipe(
+            Effect.flatMap((executor) => symmyJobRetentionStore(executor).purge(state.purgeInput)),
+          ),
+        );
+        expect(yield* purge).toBe('BLOCKED');
+        const recoveryToken = crypto.randomUUID();
+        yield* state.firstDb.transaction((tx) =>
+          Effect.gen(function* recover() {
+            const store = symmyJobExecutionStore(yield* installOperationalScope(tx, state.scope));
+            const recovery = yield* store.claim(state.jobId, state.effectId, recoveryToken);
+            expect(recovery.mode).toBe('recover');
+            expect(yield* store.markIndeterminate(state.jobId, state.effectId, recoveryToken, recovery.version)).toBe(
+              true,
+            );
+          }),
+        );
+        expect(yield* purge).toBe('BLOCKED');
+        const tombstones = state.adminDb
+          .select()
+          .from(symmyJobRetentionTombstones)
+          .where(eq(symmyJobRetentionTombstones.jobId, state.jobId));
+        expect(yield* tombstones).toHaveLength(0);
+        // Once recovery reconciles the owner's outcome, the approved disposition erases the intent and keeps the outcome.
+        const reconciledToken = crypto.randomUUID();
+        yield* state.firstDb.transaction((tx) =>
+          Effect.gen(function* reconcile() {
+            const store = symmyJobExecutionStore(yield* installOperationalScope(tx, state.scope));
+            const recovery = yield* store.claim(state.jobId, state.effectId, reconciledToken);
+            expect(recovery.mode).toBe('recover');
+            const outcome = Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+              effectId: state.effectId,
+              owner: 'commerce.catalog',
+              status: 'accepted_change',
+            });
+            expect(yield* store.settle(state.jobId, state.effectId, reconciledToken, recovery.version, outcome)).toBe(
+              true,
+            );
+          }),
+        );
+        expect(yield* purge).toBe('PURGED');
+        expect(yield* tombstones).toHaveLength(1);
+        const settled = yield* state.adminDb
+          .select({ effect: symmyJobEffects.effect, outcome: symmyJobEffects.outcome, state: symmyJobEffects.state })
+          .from(symmyJobEffects)
+          .where(eq(symmyJobEffects.effectId, state.effectId));
+        expect(settled).toMatchObject([{ outcome: { status: 'accepted_change' }, state: 'settled' }]);
+        expect(JSON.stringify(settled)).not.toContain('internal-record');
       } else {
         expect(firstResult).toBe('PURGED');
         expect(secondResult).toMatchObject({ mode: 'blocked' });

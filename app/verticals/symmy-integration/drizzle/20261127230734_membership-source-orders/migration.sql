@@ -123,7 +123,7 @@ BEGIN
   -- The company is the one the admission transaction is scoped to, never another one of the tenant.
   IF p_tenant IS DISTINCT FROM nullif(current_setting('ontos.tenant_id', true), '')::uuid OR p_legal_entity IS NULL
     OR p_legal_entity IS DISTINCT FROM nullif(current_setting('ontos.legal_entity_id', true), '')::uuid
-    OR p_route IS NULL OR p_idempotency_digest IS NULL OR nullif(btrim(p_issuer), '') IS NULL OR p_profile IS NULL
+    OR p_route IS NULL OR nullif(btrim(p_issuer), '') IS NULL OR p_profile IS NULL
     OR NOT symmy_integration.symmy_membership_ledger_namespace(p_namespace) THEN
     RAISE EXCEPTION 'invalid membership order scope' USING ERRCODE = '42501';
   END IF;
@@ -140,7 +140,9 @@ BEGIN
   END IF;
   v_lineage := symmy_integration.symmy_membership_lineage(p_tenant, p_legal_entity, p_issuer, p_namespace, p_profile);
   -- Held until the admission commits: no other admission reads this lineage before its reservation commits or rolls back.
-  PERFORM pg_advisory_xact_lock(hashtextextended('symmy-membership-order:' || v_lineage, 0));
+  IF p_idempotency_digest IS NOT NULL THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('symmy-membership-order:' || v_lineage, 0));
+  END IF;
   -- The ledger is the lineage's only issuer, so its own last order and time are the whole floor.
   SELECT max(o.effective_at), coalesce(max(o.source_order), 0) + 1
   INTO v_effective_at, v_order
@@ -148,9 +150,12 @@ BEGIN
   WHERE o.tenant_id = p_tenant AND o.lineage_digest = v_lineage;
   v_effective_at := greatest(date_trunc('milliseconds', clock_timestamp()), v_effective_at);
   -- The reservation belongs to the admission's route and idempotency digest: only the job admitted under both binds it.
+  -- Preflight projects the same customer identities but commits no order or intent.
+  IF p_idempotency_digest IS NOT NULL THEN
   INSERT INTO symmy_integration.membership_source_orders
     (tenant_id, lineage_digest, source_order, effective_at, route_id, idempotency_digest)
   VALUES (p_tenant, v_lineage, v_order, v_effective_at, p_route, p_idempotency_digest);
+  END IF;
   RETURN QUERY SELECT to_char(v_effective_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), v_order;
 END;
 $$;
@@ -434,6 +439,50 @@ BEGIN
   RETURN jsonb_build_object('items', v_items,'sourceRouteId',COALESCE(p_plan->'sourceRouteId',to_jsonb(p_route)),'sourceRouteRevision',COALESCE(p_plan->>'sourceRouteRevision',p_revision),'sourceMappingVersion',COALESCE(p_plan->>'sourceMappingVersion',p_mapping)) || CASE WHEN p_plan ? 'selector' THEN jsonb_build_object('selector',p_plan->'selector') ELSE '{}'::jsonb END || CASE WHEN p_plan ? 'pricingSourceSystem' THEN jsonb_build_object('pricingSourceSystem',p_plan->'pricingSourceSystem') ELSE '{}'::jsonb END || CASE WHEN p_plan ? 'inventoryBackendId' THEN jsonb_build_object('inventoryBackendId',p_plan->'inventoryBackendId') ELSE '{}'::jsonb END;
 END;
 $$;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION symmy_integration.purge_symmy_job_intents(p_tenant uuid,p_job uuid,p_policy jsonb,p_authority jsonb)
+RETURNS TABLE(status text) LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,symmy_integration,pg_temp SET row_security=on AS $$
+DECLARE v_job symmy_integration.import_jobs%ROWTYPE; v_plan jsonb; v_tombstone symmy_integration.job_retention_tombstones%ROWTYPE;
+BEGIN
+ IF p_tenant IS DISTINCT FROM nullif(current_setting('ontos.tenant_id',true),'')::uuid THEN
+  RAISE EXCEPTION 'invalid retention scope' USING ERRCODE='42501'; END IF;
+ SELECT j.* INTO v_job FROM symmy_integration.import_jobs j WHERE j.tenant_id=p_tenant AND j.job_id=p_job FOR UPDATE;
+ IF NOT FOUND THEN RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
+ SELECT t.* INTO v_tombstone FROM symmy_integration.job_retention_tombstones t WHERE t.tenant_id=p_tenant AND t.job_id=p_job;
+ IF FOUND THEN RETURN QUERY SELECT 'ALREADY_PURGED'::text; RETURN; END IF;
+ IF (v_job.lifecycle_policy IS NOT NULL AND (v_job.lifecycle_policy->>'policyId' IS DISTINCT FROM p_policy->>'policyId'
+  OR v_job.lifecycle_policy->>'revision' IS DISTINCT FROM p_policy->>'revision'))
+  OR p_policy->>'routeId' IS DISTINCT FROM v_job.route_id::text
+  OR p_policy->'targetLegalEntityId' IS DISTINCT FROM coalesce(to_jsonb(v_job.legal_entity_id),'null'::jsonb)
+  OR nullif(p_policy->>'governanceLegalEntityId','') IS NULL
+  OR p_policy->>'governanceLegalEntityId' IS DISTINCT FROM nullif(current_setting('ontos.legal_entity_id',true),'')
+  OR (v_job.legal_entity_id IS NOT NULL AND p_policy->>'governanceLegalEntityId' IS DISTINCT FROM v_job.legal_entity_id::text)
+  OR nullif(p_policy->>'policyId','') IS NULL OR nullif(p_policy->>'revision','') IS NULL
+  OR jsonb_typeof(p_policy->'retentionMs') IS DISTINCT FROM 'number'
+  OR (p_policy->>'retentionMs')::bigint<=0
+  OR v_job.admitted_at+make_interval(secs=>(p_policy->>'retentionMs')::double precision/1000)>clock_timestamp()
+  OR p_authority->>'status' IS DISTINCT FROM 'CURRENT_APPROVED'
+  OR p_authority->>'resourceRef' IS DISTINCT FROM 'integration.symmy.job:'||p_job::text
+  OR p_authority->>'contentScopeRef' IS DISTINCT FROM 'integration.symmy.job:'||p_job::text||'#integration.symmy.job-intent'
+  OR nullif(p_authority->>'authorityReceiptRef','') IS NULL OR nullif(p_authority->>'authorityRevision','') IS NULL
+  OR NOT EXISTS(SELECT 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job) THEN
+  RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
+ -- Claimers lock an effect before publishing its lease. Acquire the same row locks before deciding.
+ PERFORM 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job ORDER BY e.effect_id FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job
+   AND e.state IN ('attempting','indeterminate')) THEN
+  RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
+ v_plan:=symmy_integration.erase_symmy_plan_payload(v_job.execution_plan);
+ IF v_plan IS NULL THEN RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
+ UPDATE symmy_integration.job_effects e SET effect=symmy_integration.erase_symmy_effect_payload(e.effect), resolved_effect=symmy_integration.erase_symmy_effect_payload(e.resolved_effect), effect_key='erased.'||e.effect_id::text WHERE e.tenant_id=p_tenant AND e.job_id=p_job;
+ UPDATE symmy_integration.import_jobs j SET execution_plan=v_plan, fixture_id='ERASED', route_code=NULL,
+  lifecycle_policy=coalesce(j.lifecycle_policy,jsonb_build_object('policyId',p_policy->>'policyId','revision',p_policy->>'revision')) WHERE j.tenant_id=p_tenant AND j.job_id=p_job;
+ INSERT INTO symmy_integration.job_retention_tombstones(tenant_id,job_id,policy_id,policy_revision,authority_receipt_ref,authority_revision,retained_effect_ids)
+ SELECT p_tenant,p_job,p_policy->>'policyId',p_policy->>'revision',p_authority->>'authorityReceiptRef',p_authority->>'authorityRevision',
+  jsonb_agg(e.effect_id ORDER BY e.effect_id) FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job;
+ RETURN QUERY SELECT 'PURGED'::text;
+END; $$;
 --> statement-breakpoint
 RESET row_security;
 --> statement-breakpoint
