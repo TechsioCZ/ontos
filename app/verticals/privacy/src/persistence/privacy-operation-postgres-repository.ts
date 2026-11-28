@@ -494,7 +494,10 @@ const interventionUsePredicate = (scope: IntendedProcessingScope, standing?: Sta
         processingInterventions.processingScopeRef,
         [scope, ...standing.priorScopes].map((prior) => prior.processingScopeRef.scopeId),
       ),
-      eq(sql<string>`${processingInterventions.interventionRecord}->'scope'->>'operation'`, standing.operation),
+      and(
+        eq(sql<string>`${processingInterventions.interventionRecord}->'scope'->>'operation'`, standing.operation),
+        eq(sql<string>`${processingInterventions.interventionRecord}->'scope'->>'controllerRef'`, scope.controllerRef),
+      ),
     ),
   );
 };
@@ -3184,7 +3187,8 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         if (!processingInterventionAuthorityMatches(authorityResult, actionInvocationId, tenantId, legalEntityId)) {
           return yield* conflict('Processing Intervention must come from an authoritative source');
         }
-        if (authorityResult.asOf < intervention.currentness.observedAt || authorityResult.receiptRef.length === 0) {
+        const observed = comparePrivacyNoticeInstants(intervention.currentness.observedAt, authorityResult.asOf);
+        if (observed === undefined || observed > 0 || authorityResult.receiptRef.length === 0) {
           return yield* conflict('Processing Intervention authority receipt does not match its materialized state');
         }
         const replayRows = yield* transaction
