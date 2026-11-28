@@ -80,6 +80,7 @@ export const STAGE_DECLARED_WORKLOAD_KEYS: ReadonlySet<string> = new Set([
   'party.registry.source-write',
   'party.registry.source-read',
   'commerce.customer-context.source-write',
+  'commerce.customer-context.source-profile-proof',
   'commerce.customer-context.source-read',
   'commerce.customer-context.organization-ico-facts.read',
   'integration.symmy.source-organization-facts.read',
