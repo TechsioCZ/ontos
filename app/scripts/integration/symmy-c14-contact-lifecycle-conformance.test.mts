@@ -112,6 +112,15 @@ const governContacts = Effect.fn('SymmyC14ContactLifecycle.govern')(function* go
             targetKinds: ['PARTY'],
           }) as const,
       ),
+      ...(['customer-profile-source.write', 'customer-profile-source.read'] as const).map(
+        (ownerOperation) =>
+          ({
+            allowTargetless: false,
+            consumerModuleId: 'commerce.customer-context',
+            operation: ownerOperation,
+            targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+          }) as const,
+      ),
     ],
     legalEntityId: fixture.legalEntityId,
     meaning: 'Standing source processing permits actual owner-correlated contact lifecycle, never a different Party',
