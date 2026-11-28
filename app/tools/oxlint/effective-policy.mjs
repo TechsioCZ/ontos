@@ -67,7 +67,16 @@ function capture(root) {
       JSON.parse(readFileSync(findPackageJSON(name, pathToFileURL(manifest)), 'utf-8')).version,
     ]),
   );
-  return { config, defaults, versions };
+  // --print-config omits disabled JS rules. Compare the selected preset to the effective root
+  // policy too: an upstream addition overridden before printing is invisible to a base/head diff.
+  const preset = req('ultracite/oxlint/js-plugins').selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
+  const disabledPresetRulesAtRoot = Object.fromEntries(
+    Object.entries(preset.rules).filter(
+      ([name, setting]) =>
+        ['error', 'warn'].includes(severity(setting)) && ['allow', undefined].includes(severity(config.rules[name])),
+    ),
+  );
+  return { config, defaults, disabledPresetRulesAtRoot, versions };
 }
 
 function ordered(value) {
@@ -115,6 +124,7 @@ function compare(before, after, baseCommit) {
     overrides: scopeDelta(oldScopes, overrides),
     other: changes(oldOther, other),
     declaredDefaults: changes(before.defaults, after.defaults),
+    disabledPresetRulesAtRoot: changes(before.disabledPresetRulesAtRoot, after.disabledPresetRulesAtRoot),
     analyzerVersions: changes(before.versions, after.versions),
     ...(before.versions['oxlint-tsgolint'] && !after.versions['oxlint-tsgolint']
       ? {

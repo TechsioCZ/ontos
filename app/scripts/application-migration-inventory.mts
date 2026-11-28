@@ -5,6 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Effect, FileSystem, Order, Schema } from 'effect';
+import { parse } from 'libpg-query';
+import type { Node } from 'libpg-query';
 
 import { DATABASE_IDENTITIES } from '../packages/core-runtime/src/db/database-identities.ts';
 
@@ -142,41 +144,50 @@ const portal: OwnerStreamSource = {
   verifierPaths: ['verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts'],
 };
 
-/** Existing native DDL statements can require an already-defined physical role before policy creation. */
-export const migrationRuntimeIdentityIds = (sql: string): readonly string[] => {
-  const requiredRoles = new Set<string>();
-  for (const part of sql.split('--> statement-breakpoint')) {
-    const statement = part
-      .replaceAll(/\/\*[\s\S]*?\*\//gu, ' ')
-      .replaceAll(/^[\t ]*--[^\n]*$/gmu, '')
-      .trim();
-    const start = [
-      /^(?:create|alter)\s+policy\b[^;]*?\bto\s+/iu,
-      /^grant\b[^;]*?\bto\s+/iu,
-      /^alter\b[^;]*?\bowner\s+to\s+/iu,
-      /^set\s+(?:local\s+)?role\s+/iu,
-    ]
-      .map((prefix) => prefix.exec(statement)?.[0])
-      .find((prefix) => prefix !== undefined);
-    if (start === undefined) {
-      continue;
-    }
-    const rolePattern = /(?:"(?<quoted>[a-z0-9_]+)"|(?<plain>[a-z0-9_]+))(?:\s*,\s*)?/iuy;
-    rolePattern.lastIndex = start.length;
-    let role = rolePattern.exec(statement);
-    while (role !== null) {
-      const name = role.groups?.['quoted'] ?? role.groups?.['plain']?.toLowerCase();
-      if (name !== undefined) {
-        requiredRoles.add(name);
-      }
-      if (!role[0].trimEnd().endsWith(',')) {
-        break;
-      }
-      role = rolePattern.exec(statement);
-    }
+const roleNames = (roles: readonly Node[] = []) =>
+  roles.map((role) => ('RoleSpec' in role ? role.RoleSpec.rolename : undefined));
+
+/** Only grantee, policy role, new owner and SET ROLE operands can add to this bootstrap inventory. */
+const statementRoleNames = (node: Node): readonly (string | undefined)[] => {
+  if ('GrantStmt' in node && node.GrantStmt.is_grant === true) {
+    return roleNames(node.GrantStmt.grantees);
   }
-  return DATABASE_IDENTITIES.flatMap((identity) => (requiredRoles.has(identity.role) ? [identity.id] : []));
+  if ('GrantRoleStmt' in node && node.GrantRoleStmt.is_grant === true) {
+    return roleNames(node.GrantRoleStmt.grantee_roles);
+  }
+  if ('CreatePolicyStmt' in node) {
+    return roleNames(node.CreatePolicyStmt.roles);
+  }
+  if ('AlterPolicyStmt' in node) {
+    return roleNames(node.AlterPolicyStmt.roles);
+  }
+  if ('AlterOwnerStmt' in node) {
+    return [node.AlterOwnerStmt.newowner?.rolename];
+  }
+  if ('AlterTableStmt' in node) {
+    return (node.AlterTableStmt.cmds ?? []).map((cmd) =>
+      'AlterTableCmd' in cmd ? cmd.AlterTableCmd.newowner?.rolename : undefined,
+    );
+  }
+  if ('VariableSetStmt' in node && node.VariableSetStmt.name === 'role') {
+    return (node.VariableSetStmt.args ?? []).map((arg) => ('A_Const' in arg ? arg.A_Const.sval?.sval : undefined));
+  }
+  return [];
 };
+
+/** PostgreSQL 18 resolves quoting, comments and statement boundaries before we inspect role-bearing clauses. */
+export const migrationRuntimeIdentityIds = Effect.fn('ApplicationMigrationInventory.runtimeIdentities')(
+  function* migrationRuntimeIdentityIdsEffect(sql: string, source: string) {
+    const parsed = yield* Effect.tryPromise({
+      catch: () => invalid(`Cannot parse migration SQL: ${source}`),
+      try: async () => await parse(sql),
+    });
+    const roles = new Set(
+      (parsed.stmts ?? []).flatMap(({ stmt }) => (stmt === undefined ? [] : statementRoleNames(stmt))),
+    );
+    return DATABASE_IDENTITIES.flatMap((identity) => (roles.has(identity.role) ? [identity.id] : []));
+  },
+);
 
 const readStream = Effect.fn('ApplicationMigrationInventory.readStream')(function* readStreamEffect(
   source: OwnerStreamSource,
@@ -198,11 +209,15 @@ const readStream = Effect.fn('ApplicationMigrationInventory.readStream')(functio
     names,
     (name) =>
       fs.readFileString(path.join(root, migrationDirectory, name, 'migration.sql')).pipe(
-        Effect.map((sql) => ({
-          hash: createHash('sha256').update(sql).digest('hex'),
-          name,
-          runtimeIdentityIds: migrationRuntimeIdentityIds(sql),
-        })),
+        Effect.flatMap((sql) =>
+          migrationRuntimeIdentityIds(sql, path.join(migrationDirectory, name)).pipe(
+            Effect.map((runtimeIdentityIds) => ({
+              hash: createHash('sha256').update(sql).digest('hex'),
+              name,
+              runtimeIdentityIds,
+            })),
+          ),
+        ),
       ),
     { concurrency: 4 },
   );
