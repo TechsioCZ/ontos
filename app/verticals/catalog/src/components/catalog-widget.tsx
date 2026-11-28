@@ -25,7 +25,7 @@ const CatalogWidgetContent = () => {
   );
 };
 
-export const CatalogWidget = () => (
+export const CatalogWidget = (_props: Record<string, never>) => (
   <FederatedI18nBoundary
     defaultNamespace="catalog"
     fallbackLanguage="en"

@@ -25,7 +25,7 @@ const PrivacyRouteContent = () => {
   );
 };
 
-const PrivacyRoute = (): JSX.Element => (
+const PrivacyRoute = (_props: Record<string, never>): JSX.Element => (
   <FederatedI18nBoundary
     defaultNamespace="privacy"
     fallbackLanguage="en"
