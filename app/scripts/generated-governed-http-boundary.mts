@@ -1953,6 +1953,188 @@ const governedRuntimeConstruction = {
   },
 };
 
+/** Only the returned expression of a closed, zero-argument Effect generator is its output. */
+const runtimeGeneratorBody = (expression: string | undefined): string | undefined => {
+  if (expression === undefined) {
+    return undefined;
+  }
+  const args = wholeCallArguments(expression, /^Effect\.gen\(/u);
+  const callback = args?.length === 1 ? args[0] : undefined;
+  const opening =
+    callback === undefined ? undefined : /^function\*\s+[A-Za-z_$][A-Za-z0-9_$]*\(\s*\)\s*\{/u.exec(callback);
+  if (callback === undefined || opening === null || opening === undefined) {
+    return undefined;
+  }
+  const bodyStart = opening[0].length - 1;
+  return matchingDelimiterEnd(callback, bodyStart, '{', '}') === callback.length - 1
+    ? callback.slice(bodyStart + 1, -1)
+    : undefined;
+};
+
+const runtimeGeneratorReturn = (body: string): string | undefined => {
+  const returns = [...maskNonCode(body).matchAll(/\breturn\s+/gu)].filter(
+    (entry) => entry.index !== undefined && isTopLevelCodePosition(body, entry.index),
+  );
+  const [returned] = returns;
+  if (returns.length !== 1 || returned?.index === undefined) {
+    return undefined;
+  }
+  const expression = body.slice(returned.index + returned[0].length).trim();
+  return expression.endsWith(';') ? expression.slice(0, -1).trim() : undefined;
+};
+
+const ownerRuntimeArguments = (
+  expression: string | undefined,
+  kind: 'read' | 'action',
+): readonly string[] | undefined => {
+  const pipeline = expression === undefined ? undefined : outputPipeExpression(expression);
+  return pipeline !== undefined &&
+    pipeline.transforms.length > 0 &&
+    pipeline.transforms.every(isOutputSafeLayerTransform)
+    ? wholeCallArguments(pipeline.base, governedRuntimeConstruction[kind].factory)
+    : undefined;
+};
+
+const runtimeSourceTokensMatch = (source: string | undefined, expected: string): boolean =>
+  source !== undefined && hasExactSourceTokens(tokenizeGovernedClient(source), expected);
+
+const isPreparedRuntimeDispatch = (source: string): boolean => {
+  const code = maskNonCode(source);
+  const questions = topLevelSeparators(code, '?');
+  const colons = topLevelSeparators(code, ':');
+  const [question] = questions;
+  const [colon] = colons;
+  return (
+    questions.length === 1 &&
+    colons.length === 1 &&
+    question !== undefined &&
+    colon !== undefined &&
+    question < colon &&
+    runtimeSourceTokensMatch(source.slice(question + 1, colon), 'runPrepared(input)') &&
+    runtimeSourceTokensMatch(source.slice(colon + 1), 'base.runAction(input)')
+  );
+};
+
+/** The preparation adapter's constructors and service tags must retain their public provenance. */
+const hasPreparedRuntimeImports = (source: string): boolean =>
+  [
+    ['Layer', 'effect'],
+    ['Effect', 'effect'],
+    ['Context', 'effect'],
+    ['ActionRuntime', CORE_RUNTIME_MODULE],
+    ['ActionAuthorizationPreflight', CORE_RUNTIME_MODULE],
+  ].every(([binding, module]) => hasExactValueImport(source, binding ?? '', module ?? '', true));
+
+const preparedRuntimeAdapterBody = (source: string, runtime: string): string | undefined => {
+  const pipeline = outputPipeExpression(runtime);
+  if (
+    pipeline === undefined ||
+    pipeline.base !== 'customerIntakeActionRuntime' ||
+    pipeline.transforms.length === 0 ||
+    !pipeline.transforms.every(isOutputSafeLayerTransform) ||
+    !hasPreparedRuntimeImports(source)
+  ) {
+    return undefined;
+  }
+  const adapter = constInitializer(source, pipeline.base);
+  const args = adapter === undefined ? undefined : wholeCallArguments(adapter, /^Layer\.effect\(/u);
+  return args?.length === 2 && args[0] === 'ActionRuntime' ? runtimeGeneratorBody(args[1]) : undefined;
+};
+
+/** The unprepared branch and commit resolver must come from the canonical Core layer. */
+const hasPreparedRuntimeBase = (body: string): boolean =>
+  runtimeGeneratorReturn(body) === 'runtime' &&
+  runtimeSourceTokensMatch(
+    constInitializer(body, 'baseContext'),
+    'yield* Layer.build(governedActionRuntimeCoreLive)',
+  ) &&
+  runtimeSourceTokensMatch(constInitializer(body, 'base'), 'Context.get(baseContext, ActionRuntime)');
+
+const hasPreparedRuntimeOutput = (body: string): boolean => {
+  const output = constInitializer(body, 'runtime');
+  const runAction = output === undefined ? undefined : objectPropertyValue(output, 'runAction');
+  const dispatch = runAction === undefined ? undefined : callbackReturnedExpression(runAction);
+  return (
+    output !== undefined &&
+    topLevelObjectEntries(output)?.length === 2 &&
+    objectPropertyValue(output, 'resolveActionCommit') === 'base.resolveActionCommit' &&
+    dispatch !== undefined &&
+    isPreparedRuntimeDispatch(dispatch)
+  );
+};
+
+const preparedRuntimeExecutionBody = (body: string): string | undefined => {
+  const prepared = constInitializer(body, 'runPrepared');
+  const scoped = prepared === undefined ? undefined : callbackReturnedExpression(prepared);
+  const args = scoped === undefined ? undefined : wholeCallArguments(scoped, /^Effect\.scoped\(/u);
+  return args?.length === 1 ? runtimeGeneratorBody(args[0]) : undefined;
+};
+
+/** A returned Effect is not execution: the adapter must yield the prepared owner's runAction. */
+const hasPreparedRuntimeExecution = (body: string): boolean => {
+  const returned = runtimeGeneratorReturn(body);
+  if (returned === undefined || !/^yield\*\s+/u.test(returned)) {
+    return false;
+  }
+  const pipeline = outputPipeExpression(returned.replace(/^yield\*\s+/u, ''));
+  return (
+    pipeline !== undefined &&
+    runtimeSourceTokensMatch(pipeline.base, 'Context.get(context, ActionRuntime).runAction(input)') &&
+    pipeline.transforms.every((transform) => isWholeCallExpression(transform, /^Effect\.provideService\(/u))
+  );
+};
+
+/** Preparation may inject its permit, but cannot substitute a different Core runtime. */
+const hasPreparedRuntimeContext = (body: string): boolean => {
+  const context = constInitializer(body, 'context');
+  const pipeline = context === undefined ? undefined : outputPipeExpression(context.replace(/^yield\*\s*/u, ''));
+  const built = pipeline === undefined ? undefined : wholeCallArguments(pipeline.base, /^Layer\.build\(/u);
+  return (
+    pipeline !== undefined &&
+    pipeline.transforms.every((transform) =>
+      isWholeCallExpression(transform, /^Effect\.(?:provideContext|mapError)\(/u),
+    ) &&
+    built?.length === 1 &&
+    runtimeSourceTokensMatch(
+      built[0],
+      'governedActionRuntimeCoreLive.pipe(Layer.provide(Layer.succeed(ActionAuthorizationPreflight, preflight)))',
+    )
+  );
+};
+
+const hasUnmodifiedPreparedRuntimeBindings = (body: string): boolean => {
+  const code = maskNonCode(body);
+  return (
+    !/\b(?:class|const|function|let|var)\s+governedActionRuntimeCoreLive\b/u.test(code) &&
+    !/\b(?:base|runtime|Context|Layer|ActionRuntime)\s*\.[A-Za-z_$][A-Za-z0-9_$]*\s*=(?!=)/u.test(code)
+  );
+};
+
+/**
+ * The invocation-preparation adapter still delegates both execution branches to the same owner-bound Core runtime.
+ * Prove its output path, not merely the presence of a decoy constructor elsewhere in the file.
+ */
+const preparedOwnerActionRuntimeArguments = (source: string, runtime: string): readonly string[] | undefined => {
+  const body = preparedRuntimeAdapterBody(source, runtime);
+  if (
+    body === undefined ||
+    !hasPreparedRuntimeBase(body) ||
+    !hasPreparedRuntimeOutput(body) ||
+    !hasUnmodifiedPreparedRuntimeBindings(body)
+  ) {
+    return undefined;
+  }
+  const preparedBody = preparedRuntimeExecutionBody(body);
+  if (
+    preparedBody === undefined ||
+    !hasPreparedRuntimeExecution(preparedBody) ||
+    !hasPreparedRuntimeContext(preparedBody)
+  ) {
+    return undefined;
+  }
+  return ownerRuntimeArguments(constInitializer(source, 'governedActionRuntimeCoreLive'), 'action');
+};
+
 /** Scaffolds may preserve adapted roots only when both construction and owner provenance are proven. */
 export const hasOwnerBoundGovernedRuntime = (
   source: string,
@@ -1964,15 +2146,10 @@ export const hasOwnerBoundGovernedRuntime = (
   }
   const construction = governedRuntimeConstruction[kind];
   const runtime = assignedExpression(source, construction.declaration);
-  const pipeline = runtime === undefined ? undefined : outputPipeExpression(runtime);
-  const args = pipeline === undefined ? undefined : wholeCallArguments(pipeline.base, construction.factory);
-  if (
-    pipeline === undefined ||
-    pipeline.transforms.length === 0 ||
-    !pipeline.transforms.every(isOutputSafeLayerTransform) ||
-    args?.length !== 2 ||
-    !args.every((argument) => /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(argument))
-  ) {
+  const args =
+    ownerRuntimeArguments(runtime, kind) ??
+    (kind === 'action' && runtime !== undefined ? preparedOwnerActionRuntimeArguments(source, runtime) : undefined);
+  if (args?.length !== 2 || !args.every((argument) => /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(argument))) {
     return false;
   }
   const registration = namedSourceImport(source, args[1] ?? '');

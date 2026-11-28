@@ -120,6 +120,22 @@ const observeUntil = <Value, Failure, Requirements>(
     return yield* unavailable('The actual customer owner dependency graph did not settle');
   });
 
+/** Bounded identity facts from this disposable native database; no source values, credentials or payloads are logged. */
+const logCustomerJobIdentity = (admin: PgClient.PgClient, jobId: string) =>
+  admin`select
+  e.effect_key,e.state,e.version,e.owner_receipt->>'_tag' as receipt_kind,a.status as native_status,
+  e.owner_request_hash=a.request_hash as request_hash_matches,
+  e.owner_auth_context_ref=a.auth_context_ref as auth_context_matches,
+  e.owner_executor_principal_id=a.principal_id as principal_matches,
+  a.legal_entity_id is not distinct from j.legal_entity_id as legal_entity_matches,
+  (select x.target_resource_type from core.audit_events x where x.action_invocation_id=a.action_invocation_id
+    and x.event_type='action.succeeded' limit 1) as native_target_kind
+  from symmy_integration.job_effects e join symmy_integration.import_jobs j on j.job_id=e.job_id
+  left join core.action_invocations a on a.tenant_id=e.tenant_id and a.idempotency_key=e.effect_id::text
+    and a.action_key=e.effect#>>'{ref,operation,entrypointKey}' where e.job_id=${jobId}`.pipe(
+    Effect.flatMap(Effect.logError),
+  );
+
 interface OwnerRuntime {
   readonly artifacts: Effect.Success<ReturnType<typeof buildProductOwner>>;
   readonly contract: Effect.Success<ReturnType<typeof productComposition>>['contracts'][number];
@@ -1068,7 +1084,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         [0, 16, 32, 48],
         (offset) => {
           const customers = pageCustomers.slice(offset, offset + 16);
-          return submitFor(`${pageKey}:${offset}`, customersBody(...customers)).pipe(
+          return submitFor(`${pageKey}_${offset}`, customersBody(...customers)).pipe(
             Effect.map((job) => ({ ...job, expected: customers.length * 2 })),
           );
         },
@@ -1211,6 +1227,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     ).pipe(
       Effect.tapError(() =>
         Effect.all([
+          logCustomerJobIdentity(admin, secondAccepted.jobId),
           secondWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
           shell.gatewayDiagnostics().pipe(Effect.flatMap(Effect.logError)),
           ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
@@ -1252,7 +1269,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
       ),
       (rows) => rows.length === 3 && rows.every((row) => row.state === 'settled'),
-    );
+    ).pipe(Effect.tapError(() => logCustomerJobIdentity(admin, resend.jobId)));
     expect(resent.every((effect) => Option.isSome(effect.owner_invocation_id))).toBe(true);
     expect((yield* tenantRows)[0]).toEqual({ parties: 2, profiles: 2 });
     yield* secondWorker.child.kill();

@@ -88,11 +88,15 @@ it.effect('preserves the actual Symmy owner runtimes with public unaliased Core 
     );
     const owner = { ...vertical, slug: 'symmy-integration' };
     const patched = patchRuntimeRoot(source, owner, 'admitSymmyJobActionApiLive');
+    expect(patched).toBe(source);
     expect(patched).toContain('makeReadRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)');
     expect(patched).toContain('makeActionRuntimeLive(ultramodernDeliveryUnit, symmyIntegrationRegistration)');
     expect(patchRuntimeRoot(patched, owner, 'admitSymmyJobActionApiLive')).toBe(patched);
     for (const [original, counterfeit] of [
-      ["from '@app/core-runtime';", "from './counterfeit-core.ts';"],
+      [
+        "  makeReadRuntimeLive,\n} from '@app/core-runtime';",
+        "  makeReadRuntimeLive,\n} from './counterfeit-core.ts';",
+      ],
       ["from '../vertical.registration.ts';", "from '../foreign/vertical.registration.ts';"],
       ["from '../shared/ultramodern-build.ts';", "from '../foreign/ultramodern-build.ts';"],
       ['makeReadRuntimeLive,', 'ReadRuntimeLive as makeReadRuntimeLive,'],
@@ -101,13 +105,29 @@ it.effect('preserves the actual Symmy owner runtimes with public unaliased Core 
         'makeActionRuntimeLive(ultramodernApiMarker, symmyIntegrationRegistration)',
       ],
       [
-        'const governedActionRuntimeLive = makeActionRuntimeLive(',
-        'const governedActionRuntimeLive = Layer.empty; const decoyActionRuntimeLive = makeActionRuntimeLive(',
+        'const governedActionRuntimeLive = customerIntakeActionRuntime.pipe(',
+        'const governedActionRuntimeLive = Layer.empty; const decoyActionRuntimeLive = customerIntakeActionRuntime.pipe(',
+      ],
+      ['yield* Layer.build(governedActionRuntimeCoreLive);', 'yield* Layer.build(foreignActionRuntime);'],
+      ['Context.get(baseContext, ActionRuntime)', 'Context.get(foreignContext, ActionRuntime)'],
+      ['Context.get(context, ActionRuntime)', 'Context.get(foreignContext, ActionRuntime)'],
+      ['return yield* Context.get(context, ActionRuntime)', 'return Context.get(context, ActionRuntime)'],
+      [
+        'governedActionRuntimeCoreLive.pipe(Layer.provide(Layer.succeed(ActionAuthorizationPreflight, preflight)))',
+        'foreignActionRuntime.pipe(Layer.provide(Layer.succeed(ActionAuthorizationPreflight, preflight)))',
+      ],
+      ['? runPrepared(input)', '? foreignActionRuntime.runAction(input)'],
+      ['? runPrepared(input)', '? foreignCondition ? foreignActionRuntime.runAction(input) : runPrepared(input)'],
+      [': base.runAction(input)', ': foreignActionRuntime.runAction(input)'],
+      ['return runtime;', 'return foreignActionRuntime;'],
+      [
+        'const baseContext = yield* Layer.build(governedActionRuntimeCoreLive);',
+        'const governedActionRuntimeCoreLive = foreignActionRuntime; const baseContext = yield* Layer.build(governedActionRuntimeCoreLive);',
       ],
     ] as const) {
       const changed = source.replace(original, counterfeit);
       expect(changed).not.toBe(source);
-      expect(() => patchRuntimeRoot(changed, owner, 'admitSymmyJobActionApiLive')).toThrow(/owner-bound/u);
+      expect(() => patchRuntimeRoot(changed, owner, 'admitSymmyJobActionApiLive'), original).toThrow(/owner-bound/u);
     }
   }),
 );
