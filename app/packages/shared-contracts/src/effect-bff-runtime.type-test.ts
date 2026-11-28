@@ -53,13 +53,9 @@ const fixtureRuntime = assembleEffectBffRuntime({
   handlers: fixtureHandlers,
 });
 
-export const concreteRuntime: EffectBffDefinition<typeof fixtureApi> & EffectBffRuntime<typeof fixtureApi> =
-  fixtureRuntime;
-export const inferredApiIsExact: IsExact<typeof fixtureRuntime.api, typeof fixtureApi> = true;
-export const inferredRequirementsAreExact: IsExact<
-  Layer.Services<typeof fixtureRuntime.layer>,
-  ExpectedRuntimeRequirements
-> = true;
+fixtureRuntime satisfies EffectBffDefinition<typeof fixtureApi> & EffectBffRuntime<typeof fixtureApi>;
+true satisfies IsExact<typeof fixtureRuntime.api, typeof fixtureApi>;
+true satisfies IsExact<Layer.Services<typeof fixtureRuntime.layer>, ExpectedRuntimeRequirements>;
 
 const failingFixtureHandlers = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
   handlers.handle('read', () => Effect.succeed({ value: 'unreachable' })),
