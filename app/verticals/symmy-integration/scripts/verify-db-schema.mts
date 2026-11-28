@@ -246,7 +246,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
           and t.tgtype = 23 -- row-level BEFORE INSERT and UPDATE
           and t.tgfoid = to_regprocedure('symmy_integration.guard_symmy_membership_route()'))
       )) = 3 as enabled`;
-  if (!membershipLedger?.enabled) {
+  if (!(membershipLedger?.enabled ?? false)) {
     yield* new SymmySchemaVerificationError({ reason: 'Membership ledger triggers mismatch' });
   }
   yield* verifyRouteEnrollmentRecords(client);
@@ -306,6 +306,31 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'symmy_original_route_active',
     'symmy_source_selector_code',
   ];
+  const noRuntime = new Set([
+    'guard_symmy_membership_route',
+    'require_membership_order_binding',
+    'require_membership_order_reservation',
+    'symmy_membership_ledger_namespace',
+    'publish_route_execution_gate',
+    'symmy_original_route_active',
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'advance_route_change_token',
+    'symmy_membership_lineage',
+  ]);
+  const notDefiner = new Set([
+    'symmy_membership_ledger_namespace',
+    'symmy_membership_lineage',
+    'symmy_source_selector_code',
+    'pin_symmy_fixture_plan',
+    'publish_route_execution_gate',
+    'symmy_original_route_active',
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'advance_route_change_token',
+  ]);
   if (
     routines.length !== routineNames.length ||
     routines.some(
@@ -313,33 +338,8 @@ const verification = Effect.gen(function* verifySymmySchema() {
         routine.name !== routineNames[index] ||
         routine.public_execute ||
         !routine.safe_settings ||
-        routine.runtime_execute !==
-          ![
-            'guard_symmy_membership_route',
-            'require_membership_order_binding',
-            'require_membership_order_reservation',
-            'symmy_membership_ledger_namespace',
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-            'symmy_membership_lineage',
-          ].includes(routine.name) ||
-        routine.definer !==
-          ![
-            'symmy_membership_ledger_namespace',
-            'symmy_membership_lineage',
-            'symmy_source_selector_code',
-            'pin_symmy_fixture_plan',
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name),
+        routine.runtime_execute !== !noRuntime.has(routine.name) ||
+        routine.definer !== !notDefiner.has(routine.name),
     )
   ) {
     yield* new SymmySchemaVerificationError({ reason: 'Symmy execution routine inventory or runtime grants mismatch' });

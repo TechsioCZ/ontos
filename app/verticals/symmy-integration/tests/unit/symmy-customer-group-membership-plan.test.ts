@@ -133,7 +133,7 @@ const ledger = (sent: Readonly<Record<string, string>> = firstCustomerSent) => {
   const resolveProfiles = (source: SymmyGroupMembershipCustomerSource, recordIds: readonly string[]) =>
     Effect.sync(() => {
       resolved.push({ recordIds, source });
-      const profiles = new Map(
+      return new Map(
         recordIds.flatMap((recordId) => {
           const resourceId = sent[recordId];
           return resourceId === undefined
@@ -161,7 +161,6 @@ const ledger = (sent: Readonly<Record<string, string>> = firstCustomerSent) => {
               ];
         }),
       );
-      return profiles;
     });
   return { reserve, reserved, resolved, resolveProfiles };
 };

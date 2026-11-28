@@ -771,10 +771,12 @@ describe('Symmy durable execution and original-effect recovery', () => {
   it.effect('rejects a receipt for another effect without settling the original', () =>
     Effect.gen(function* wrongReceipt() {
       const fixture = harness();
+      const [wrong] = initialJob.plan.items[0].effects;
+      assert.isDefined(wrong);
       fixture.execute((_effect, pin) =>
         pinOriginalRequest(pin).pipe(
           Effect.as({
-            effectId: initialJob.plan.items[0].effects[0].ref.effectId,
+            effectId: wrong.ref.effectId,
             owner: 'integration.symmy',
             status: 'accepted_change',
           } as const),

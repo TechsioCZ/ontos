@@ -1560,7 +1560,7 @@ const currentOrganizationIcoTarget = Effect.fn('SymmyPartyCommerceAdapters.curre
 /** Re-read current Commerce eligibility under the canonical customer source, never the synthetic membership source. */
 const currentMembershipCustomer = Effect.fn('SymmyPartyCommerceAdapters.currentMembershipCustomer')(
   function* currentMembershipCustomer(
-    crypto: Crypto.Crypto,
+    crypto: SecureRandom.SecureRandom['Service'],
     input: SymmyEffectAdapterInput,
     intent: SymmyPartyCommerceIntent,
   ) {

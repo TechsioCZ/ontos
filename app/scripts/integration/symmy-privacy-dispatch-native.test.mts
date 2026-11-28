@@ -529,8 +529,9 @@ it.live(
           fixture.admin`update core.outbox_deliveries d set available_at=clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end,status='pending',claimed_at=null,claimed_by=null,claim_expires_at=null from core.outbox_messages m where m.outbox_message_id=d.outbox_message_id and m.tenant_id=${fixture.tenantId} and d.worker_key='integration.symmy.execute-symmy-job' and m.payload_json->>'jobId'=${id} returning d.outbox_delivery_id`;
         for (const id of [committed, unsent]) {
           expect(yield* retargetDelivery(id, true)).toHaveLength(1);
-          const requested =
-            yield* fixture.admin`update symmy_integration.job_effects set state='attempting',outcome=null,claim_token=gen_random_uuid(),lease_until=clock_timestamp()-interval '1 second',version=version+1 where tenant_id=${fixture.tenantId} and job_id=${id} and effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product' returning owner_request_hash as request_hash`;
+          const requested = yield* fixture.admin<{
+            request_hash: string | null;
+          }>`update symmy_integration.job_effects set state='attempting',outcome=null,claim_token=gen_random_uuid(),lease_until=clock_timestamp()-interval '1 second',version=version+1 where tenant_id=${fixture.tenantId} and job_id=${id} and effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product' returning owner_request_hash as request_hash`;
           expect(requested).toHaveLength(1);
           if (id === unsent) {
             expect(requested[0]?.request_hash).toBeNull();

@@ -1,5 +1,5 @@
 import { Array as EffectArray, Option, Result, Schema, pipe } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import type { symmyJobRoutes } from '../../src/db/schema.ts';
 import {
@@ -461,7 +461,9 @@ describe('Symmy route request refusals', () => {
         },
       },
     } as const;
-    const withIntent: EncodedItem = { ...group, effects: [{ ...group.effects[0], intent }, ...group.effects.slice(1)] };
+    const [first, ...rest] = group.effects;
+    assert.isDefined(first);
+    const withIntent: EncodedItem = { ...group, effects: [{ ...first, intent }, ...rest] };
     expect(codes(withConfiguration('customerGroupsBatch', { items: [withIntent] }))).toEqual(['owner_intent_enrolled']);
   });
 
