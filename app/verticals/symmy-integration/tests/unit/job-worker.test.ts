@@ -148,7 +148,7 @@ const claimMode = (state: string): SymmyEffectClaim['mode'] => {
 const harness = () => {
   let job = initialJob;
   let jobPresent = true;
-  let loadsBeforeOutage = Number.POSITIVE_INFINITY;
+  let outageAfterExecutions = Number.POSITIVE_INFINITY;
   let originalEligible = true;
   let systemEligible = true;
   let routeEligible = true;
@@ -221,12 +221,11 @@ const harness = () => {
         return { effect: Option.some(entry.effect), mode, version };
       }),
     load: () =>
-      Effect.suspend(() => {
-        loadsBeforeOutage -= 1;
-        return loadsBeforeOutage < 0
+      Effect.suspend(() =>
+        executed.length >= outageAfterExecutions
           ? Effect.fail(new SymmyJobExecutionStoreError({ code: 'unavailable' }))
-          : Effect.succeed(jobPresent ? Option.some(job) : Option.none());
-      }),
+          : Effect.succeed(jobPresent ? Option.some(job) : Option.none()),
+      ),
     markBlocked: (_jobId: string, markedId: string) =>
       Effect.sync(() => {
         job = {
@@ -439,12 +438,8 @@ const harness = () => {
     jobPresent: (value: boolean) => {
       jobPresent = value;
     },
-    /** The store answers this many more job loads, then fails every later one as unavailable. */
     lineage: (claimedId: string, state: 'waiting' | 'refused') => {
       lineage.set(claimedId, state);
-    },
-    loadsBeforeOutage: (value: number) => {
-      loadsBeforeOutage = value;
     },
     makeWorker,
     notificationFails: (value: boolean) => {
@@ -454,8 +449,12 @@ const harness = () => {
     orderReady: (value: boolean) => {
       orderReady = value;
     },
+    /** Every job load fails as unavailable once this many owner calls have run. */
     originalEligible: (value: boolean) => {
       originalEligible = value;
+    },
+    outageAfterExecutions: (value: number) => {
+      outageAfterExecutions = value;
     },
     recover: (value: typeof recover) => {
       recover = value;
@@ -606,18 +605,25 @@ describe('Symmy durable execution and original-effect recovery', () => {
         effects: initialJob.effects.map((saved) => ({ ...saved, outcome: Option.none(), state: 'planned' as const })),
       });
       fixture.lineage(effectId, 'waiting');
-      // The first load starts the delivery; the refresh after the first wave is the one that fails.
-      fixture.loadsBeforeOutage(1);
+      // The sibling's owner call runs and settles; the only load after it is the refresh that ends the wave.
+      fixture.outageAfterExecutions(1);
       const now = DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
       yield* TestClock.setTime(now);
       const deferred = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+      expect(fixture.executed.map(({ ref }) => ref.effectId)).toEqual([siblingId]);
       expect(Schema.is(OutboxWorkerDeferred)(deferred)).toBe(true);
       expect(deferred).toMatchObject({ wakeAtMs: now + 30_000 });
-      // Without a waiting membership the same refresh failure still fails the delivery.
+      // Without a waiting membership the same refresh failure, after both owner calls ran, fails the delivery.
       const plain = harness();
-      plain.loadsBeforeOutage(1);
+      plain.replaceJob({
+        ...initialJob,
+        effects: initialJob.effects.map((saved) => ({ ...saved, outcome: Option.none(), state: 'planned' as const })),
+      });
+      plain.outageAfterExecutions(2);
       const failed = yield* Effect.flip((yield* plain.makeWorker()).execute({ jobId }, context));
+      expect(plain.executed).toHaveLength(2);
       expect(Schema.is(OutboxWorkerDeferred)(failed)).toBe(false);
+      expect(failed).toMatchObject({ code: 'symmy_job_worker_unavailable' });
     }),
   );
 
