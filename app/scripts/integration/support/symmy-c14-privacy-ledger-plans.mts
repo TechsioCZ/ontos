@@ -73,21 +73,24 @@ export const measurePartyReceiptCorrelation = Effect.fn('C14.measurePartyReceipt
       and d.evidence_evaluation->'evidence' @> jsonb_build_array(jsonb_build_object('kind','CLIENT_SOURCE_ASSERTION',
         'recordId',${recordId}::text,'source',jsonb_build_object('issuer',${source.issuer}::text,'namespace',${source.namespace}::text,
           'recordType',${source.recordType}::text,'routeRef',${source.routeRef}::text))) group by d.party_id limit 2`;
-  const [measurement] = yield* Schema.decodeUnknownEffect(
-    Schema.Tuple([
-      Schema.Struct({
-        'Execution Time': Schema.Number,
-        Plan: Schema.Struct({
+  const explain = Schema.Tuple([
+    Schema.Struct({
+      'Execution Time': Schema.Number,
+      Plan: Schema.StructWithRest(
+        Schema.Struct({
           'Actual Rows': Schema.Number,
+          'Node Type': Schema.String,
           'Shared Hit Blocks': Schema.Number,
           'Shared Read Blocks': Schema.Number,
         }),
-      }),
-    ]),
-  )(plan[0]?.['QUERY PLAN']);
+        [Schema.Record(Schema.String, Schema.Json)],
+      ),
+    }),
+  ]);
+  const result = yield* Schema.decodeUnknownEffect(explain)(plan[0]?.['QUERY PLAN']);
   // An empty or ambiguous owner lookup is not a receipt benchmark.
-  expect(measurement.Plan['Actual Rows']).toBe(1);
-  // This is the isolated synthetic fixture only. Keep the plan nodes so slow correlation can be distinguished
-  // from page transport; the numeric empty/ambiguous guard above is independent of PostgreSQL's text format.
-  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', plan: plan[0]?.['QUERY PLAN'] });
+  expect(result[0].Plan['Actual Rows']).toBe(1);
+  // Serialize the native plan: Rstest truncates nested objects, hiding the receipt join's nodes.
+  const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(explain))(result);
+  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', plan: encoded });
 });
