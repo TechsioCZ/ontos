@@ -699,6 +699,7 @@ describe('standing source processing authorization', () => {
           run(person(reconciledId, assertedId, [{ ...restriction, scope: priorScope }]));
         expect(yield* result(exactScope)).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
         for (const unrelated of [
+          { ...exactScope, controllerRef: 'controller:independent' },
           { ...exactScope, operation: 'READ' },
           { ...exactScope, subjectRef: refOf(admitted.get('client:two') ?? '') },
         ]) {
@@ -706,6 +707,30 @@ describe('standing source processing authorization', () => {
         }
       }),
     );
+    it('treats different timestamp spellings as one instant, not a later release', () => {
+      const at = '2026-11-07T10:00:00.000Z';
+      const active = restrictionFor(fixture.authorization, assertedId);
+      const record = (status: PrivacyProcessingIntervention['status'], observedAt: string) => ({
+        ...active,
+        currentness: { ...currentness, observedAt },
+        status,
+      });
+      const restriction = record('ACTIVE', at);
+      const concurrent = record('RESOLVED', '2026-11-07T10:00:00Z');
+      for (const rows of [
+        [restriction, concurrent],
+        [concurrent, restriction],
+      ]) {
+        expect(currentProcessingIntervention(rows, 'RESTRICTION', active.scope, at)).toMatchObject({
+          currentness: { authoritative: false, revision: 'conflict' },
+          status: 'ACTIVE',
+        });
+      }
+      const later = '2026-11-07T10:00:00.000001Z';
+      const rows = [record('RESOLVED', later), record('ACTIVE', '2026-11-07T10:00:00Z')];
+      expect(currentProcessingIntervention(rows, 'RESTRICTION', active.scope, at).status).toBe('ACTIVE');
+      expect(currentProcessingIntervention(rows, 'RESTRICTION', active.scope, later).status).toBe('RESOLVED');
+    });
     it.effect('never clears a predecessor restriction with an expired resolution', () =>
       Effect.gen(function* expiredResolution() {
         const history = [fixture.ended, renewed.authorization];

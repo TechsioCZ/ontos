@@ -173,15 +173,20 @@ it.live('checks standing source-route authorization against the native Privacy l
         Effect.gen(function* recordIntervention() {
           const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
           const actionInvocationId = yield* nextId();
-          const observedAt = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
+          const asOf = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
           const ref = `fixture:${kind}:${status}:${scopeOfUse.processingScopeRef.scopeId}:${tenantId}`;
           yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
             actionInvocationId,
-            asOf: observedAt,
+            asOf,
             authorityRef: ref,
             evidenceRefs: [ref],
             intervention: {
-              currentness: { authoritative: true, observedAt, revision: status, sourceRef: ref },
+              currentness: {
+                authoritative: true,
+                observedAt: asOf.replace('.000Z', 'Z'),
+                revision: status,
+                sourceRef: ref,
+              },
               interventionRef: ref,
               kind,
               scope: scopeOfUse,
@@ -203,6 +208,12 @@ it.live('checks standing source-route authorization against the native Privacy l
       purposeVersionId: yield* nextId(),
       recipientRefs: ['previous:customer-registry'],
     };
+    // This other controller's restriction remains active throughout the test. It cannot govern the first grant.
+    yield* intervention('RESTRICTION', 'ACTIVE', {
+      ...exactScope,
+      controllerRef: 'controller:independent',
+      processingScopeRef: { ...exactScope.processingScopeRef, scopeId: 'independent:exact' },
+    });
     yield* intervention('RESTRICTION', 'ACTIVE', exactScope);
     yield* prepareOwner((transaction, scope) =>
       Effect.gen(function* firstStandingGrant() {
