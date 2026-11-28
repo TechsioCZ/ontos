@@ -282,11 +282,14 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
   if (symmyContract === undefined) {
     return yield* new PrivacyDispatchNativeFailure({ reason: 'The actual Symmy worker deployment is missing' });
   }
-  const worker = yield* startProductWorker(yield* buildProductWorker(symmyContract), {
-    ...environment,
-    ONTOS_C14_WORKER_CLAIM_OWNER: `INTERNAL_PRIVACY_DISPATCH_${randomUUID()}`,
-    ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(symmyKey.secret),
-  });
+  const artifact = yield* buildProductWorker(symmyContract);
+  const startWorker = () =>
+    startProductWorker(artifact, {
+      ...environment,
+      ONTOS_C14_WORKER_CLAIM_OWNER: `INTERNAL_PRIVACY_DISPATCH_${randomUUID()}`,
+      ONTOS_GATEWAY_MODULE_API_KEY: Redacted.value(symmyKey.secret),
+    });
+  const worker = yield* startWorker();
   const client = yield* HttpClient.HttpClient;
   const submit = Effect.fn('PrivacyDispatchNative.submit')(function* submit(key: string) {
     // The public products body: its name is the private intent the job retains until Privacy dispatches its erasure.
@@ -319,6 +322,7 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     shell,
     snapshot,
     sourceKey,
+    startWorker,
     submit,
     tenantId,
     worker,

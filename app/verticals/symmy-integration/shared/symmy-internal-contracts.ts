@@ -48,6 +48,7 @@ export {
   SymmyCustomerGroupRowSchema,
   SymmyCustomerGroupRowsSchema,
   SymmyGroupCustomerRowsSchema,
+  projectSymmyMembershipCustomer,
   symmyGroupMembershipOccurrenceSeed,
   symmyGroupMembershipRecordSeed,
 } from './domain/symmy-customer-group-batch.ts';

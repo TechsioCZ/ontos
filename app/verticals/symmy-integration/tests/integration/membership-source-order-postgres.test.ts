@@ -34,6 +34,12 @@ import {
 } from '../../src/db/schema.ts';
 
 import { SymmyGroupCustomerRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
+import { symmyJobRetentionStore } from '../../src/services/symmy-job-retention-store.ts';
+import {
+  SymmyJobRetentionPolicySchema,
+  symmyJobResourceRef,
+  symmyJobIntentContentRef,
+} from '../../shared/domain/symmy-job-retention.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 
 const openDatabase = (connectionString: string) =>
@@ -684,6 +690,37 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
       expect(yield* claimMode(second)).toBe('execute');
       expect(yield* claimMode(third)).toBe('waiting');
       yield* setState(second.effectId, 'settled');
+
+      const purgeProfile = crypto.randomUUID();
+      const erasedOrder = yield* admit('retail', purgeProfile, '51');
+      const following = yield* admit('retail', purgeProfile, '52');
+      expect(yield* claimMode(following)).toBe('waiting');
+      const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)({
+        governanceLegalEntityId: legalEntityId,
+        policyId: 'ledger-retention',
+        retentionMs: 1,
+        revision: '1',
+        routeId: routeIds.retail,
+        targetLegalEntityId: legalEntityId,
+        tenantId,
+      });
+      expect(
+        yield* scoped((tx) =>
+          symmyJobRetentionStore(tx).purge({
+            authority: {
+              authorityReceiptRef: 'approved',
+              authorityRevision: '1',
+              contentScopeRef: symmyJobIntentContentRef(erasedOrder.jobId),
+              resourceRef: symmyJobResourceRef(erasedOrder.jobId),
+              status: 'CURRENT_APPROVED',
+            },
+            jobId: erasedOrder.jobId,
+            policy,
+          }),
+        ),
+      ).toBe('PURGED');
+      expect(yield* saved(erasedOrder.effectId)).toEqual({ state: 'settled', status: 'denied' });
+      expect(yield* claimMode(following)).toBe('execute');
 
       // Another profile is another lineage and never waits for this one.
       const other = yield* admit('retail', crypto.randomUUID(), 'd');

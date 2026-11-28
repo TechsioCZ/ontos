@@ -6,9 +6,8 @@ import type {
 import { Effect, Match, Option, Schema } from 'effect';
 
 import {
-  SymmyGroupMembershipCustomerFactSchema,
+  projectSymmyMembershipCustomer,
   SymmyGroupMembershipCustomerResolutionSchema,
-  symmyMembershipSourceMatches,
 } from '../domain/symmy-customer-group-batch.ts';
 import type { SymmyGroupMembershipCustomerFact } from '../domain/symmy-customer-group-batch.ts';
 
@@ -57,28 +56,17 @@ export const readSymmyGroupMembershipFacts = Effect.fn('SymmyMembershipIntake.re
           Match.tag('REFUSED', () => Effect.fail(SymmyMembershipCustomerRefused.make({}))),
           Match.tag(
             'CURRENT',
-            Effect.fn('SymmyMembershipIntake.currentFact')(function* currentFact({
-              item,
-            }: Extract<CustomerProfileSourceResponse, { readonly _tag: 'CURRENT' }>) {
-              const { partyRef, profile, source } = item;
-              if (
-                !symmyMembershipSourceMatches(request, source) ||
-                profile.profileRef.tenantId !== input.tenantId ||
-                partyRef.tenantId !== input.tenantId ||
-                profile.subject.kind !== profile.profileRef.kind ||
-                (profile.profileRef.kind === 'COUNTERPARTY' && item.icoAuthority === undefined)
-              ) {
-                return yield* new SymmyMembershipSourceUnavailable();
+            Effect.fn('SymmyMembershipIntake.currentFact')(function* currentFact(
+              current: Extract<CustomerProfileSourceResponse, { readonly _tag: 'CURRENT' }>,
+            ) {
+              const projection = projectSymmyMembershipCustomer(request, input.tenantId, current);
+              if (projection.status === 'INVALID') {
+                return yield* unavailable();
               }
-              if (profile.state !== 'ACTIVE') {
+              if (projection.status === 'INACTIVE') {
                 return yield* Effect.fail(SymmyMembershipProfileInactive.make({}));
               }
-              const fact = yield* Schema.decodeUnknownEffect(SymmyGroupMembershipCustomerFactSchema)({
-                customerSource: source,
-                processingKind: item.icoAuthority === 'ORGANIZATION' ? 'ORG_BUSINESS_REFERENCE' : 'PERSONAL',
-                profile: { profileKind: profile.profileRef.kind, profileRef: profile.profileRef },
-              }).pipe(Effect.mapError(unavailable));
-              return Option.some(fact);
+              return Option.some(projection.fact);
             }),
           ),
           Match.orElse(() => Effect.fail(unavailable())),

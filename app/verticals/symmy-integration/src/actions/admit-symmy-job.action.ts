@@ -81,6 +81,9 @@ const handleAdmitSymmyJob = Effect.fn('SymmyJobAdmission.handle')(function* admi
     });
   }
   const receipt = { jobId: admitted.jobId, phase: admitted.phase };
+  if (admitted.sourceEffectCommitments !== undefined) {
+    Object.assign(receipt, { sourceEffectCommitments: admitted.sourceEffectCommitments });
+  }
   if (admitted.sourcePreparationId !== undefined) {
     Object.assign(receipt, {
       sourceBindingCommitments: admitted.sourceBindingCommitments,

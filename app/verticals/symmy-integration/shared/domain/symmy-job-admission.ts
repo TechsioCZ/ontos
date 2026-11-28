@@ -155,6 +155,9 @@ export const AdmitSymmyJobResultSchema = Schema.Struct({
   jobId: SymmyJobIdSchema,
   phase: Schema.Literal('admitted'),
   sourceBindingCommitments: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)))),
+  sourceEffectCommitments: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))).check(Schema.isMaxLength(16)),
+  ),
   sourcePreparationId: Schema.optionalKey(
     Schema.String.check(Schema.isUUID()).pipe(
       Schema.brand('SourceAdmissionPreparationId'),

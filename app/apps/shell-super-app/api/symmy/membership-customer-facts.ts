@@ -1,10 +1,10 @@
 import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
-import type { CustomerProfileSourceResponse } from '@app/commerce-customer-context/api/customer-profile-source';
 import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
-import { symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
+import { symmyCustomerRecordProven, symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { executeSymmyRouteContextWithAuthorization } from '@app/symmy-integration/api/symmy-route-context/client';
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
+import { projectSymmyMembershipCustomer } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyGroupCustomerRows } from '@app/symmy-integration/symmy-internal-contracts';
 import { Duration, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -25,9 +25,7 @@ const customerFactsSchema = AdmitSymmyJobPayloadSchema.fields.groupCustomerFacts
 const customerFactSchema = customerFactsSchema.fields.profiles.value;
 type CustomerFacts = typeof customerFactsSchema.Type;
 type CustomerFact = typeof customerFactSchema.Type;
-type CurrentProfile = Extract<CustomerProfileSourceResponse, { readonly _tag: 'CURRENT' }>;
 const [currentRequestSchema] = CustomerProfileSourceRequestSchema.members;
-type CurrentRequest = typeof currentRequestSchema.Type;
 
 const profileSourceRead = 'commerce.customer-context.api.customer-profile-source';
 const commerceModule = 'commerce.customer-context';
@@ -42,43 +40,6 @@ const digest = (value: string) =>
     Effect.timeoutOrElse({ duration: Duration.seconds(2), orElse: unavailable }),
     Effect.map((bytes) => Hex.encode(new Uint8Array(bytes))),
   );
-
-/**
- * The fact of one current profile, when it is exactly the queried customer source's, of the route's tenant, active
- * and of the kind it states. Evidence about another source, tenant or kind admits nothing at all. An inactive profile
- * is exact evidence that this one customer cannot be assigned: its item alone is refused, as for an absent one.
- */
-const currentFact = Effect.fn('SymmyMembershipIntake.currentFact')(function* currentFact(
-  { item }: CurrentProfile,
-  request: CurrentRequest,
-  tenantId: string,
-): Effect.fn.Return<Option.Option<CustomerFact>, SymmyIngressProblem> {
-  const { partyRef, profile, source } = item;
-  if (
-    source.issuer !== request.issuer ||
-    source.namespace !== request.namespace ||
-    source.recordType !== request.recordType ||
-    source.recordId !== request.recordId ||
-    source.mappingRevision !== request.mappingRevision ||
-    source.route.id !== request.route.id ||
-    source.route.revision !== request.route.revision ||
-    profile.profileRef.tenantId !== tenantId ||
-    partyRef.tenantId !== tenantId ||
-    profile.subject.kind !== profile.profileRef.kind ||
-    (profile.profileRef.kind === 'COUNTERPARTY' && item.icoAuthority === undefined)
-  ) {
-    return yield* unavailable();
-  }
-  if (profile.state !== 'ACTIVE') {
-    return Option.none();
-  }
-  const fact = yield* Schema.decodeUnknownEffect(customerFactSchema)({
-    customerSource: source,
-    processingKind: item.icoAuthority === 'ORGANIZATION' ? 'ORG_BUSINESS_REFERENCE' : 'PERSONAL',
-    profile: { profileKind: profile.profileRef.kind, profileRef: profile.profileRef },
-  }).pipe(Effect.mapError(mapSymmyOwnerReadProblem));
-  return Option.some(fact);
-});
 
 /** Current owner evidence is read before the job Action, never accepted from the public membership body. */
 export const readSymmyMembershipCustomerFacts = Effect.fn('SymmyMembershipIntake.customerFacts')(
@@ -126,6 +87,16 @@ export const readSymmyMembershipCustomerFacts = Effect.fn('SymmyMembershipIntake
       Effect.fn('SymmyMembershipIntake.currentCustomer')(function* currentCustomer({ customerId }) {
         // The customer intake names the customer by the same record: one rule, shared by both.
         const recordId = yield* symmyCustomerSourceRecordId(customerId, digest);
+        if (
+          !(yield* symmyCustomerRecordProven(
+            { ...authority, tenantId: membershipRoute.tenantId },
+            customerId,
+            recordId,
+            digest,
+          ).pipe(Effect.mapError(mapSymmyOwnerReadProblem)))
+        ) {
+          return yield* unavailable();
+        }
         const request = yield* Schema.decodeUnknownEffect(currentRequestSchema)({
           ...authority,
           mode: 'CURRENT',
@@ -141,7 +112,12 @@ export const readSymmyMembershipCustomerFacts = Effect.fn('SymmyMembershipIntake
         return yield* Match.value(result).pipe(
           // The owner names no profile for the record: its item is refused alone.
           Match.tag('ABSENT', () => Effect.succeed(Option.none<CustomerFact>())),
-          Match.tag('CURRENT', (current) => currentFact(current, request, membershipRoute.tenantId)),
+          Match.tag('CURRENT', (current) => {
+            const projection = projectSymmyMembershipCustomer(request, membershipRoute.tenantId, current);
+            return projection.status === 'INVALID'
+              ? unavailable()
+              : Effect.succeed(projection.status === 'INACTIVE' ? Option.none() : Option.some(projection.fact));
+          }),
           // A fresh admission names no customer Privacy currently refuses: the request is refused whole, as a read
           // the route may not make, and nothing of that customer is planned, pinned or kept.
           Match.tag('REFUSED', () => Effect.fail(symmyOwnerReadForbidden)),

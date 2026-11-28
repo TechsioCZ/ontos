@@ -166,7 +166,7 @@ END;
 $$;
 --> statement-breakpoint
 CREATE FUNCTION symmy_integration.record_symmy_membership_orders(p_tenant uuid, p_job uuid)
-RETURNS TABLE(recorded integer) LANGUAGE plpgsql SECURITY DEFINER
+RETURNS TABLE(recorded integer, commitments jsonb) LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, symmy_integration, pg_temp SET row_security = on AS $$
 DECLARE v_job symmy_integration.import_jobs%ROWTYPE; v_memberships integer; v_count integer;
 BEGIN
@@ -201,7 +201,9 @@ BEGIN
   IF v_count <> v_memberships THEN
     RAISE EXCEPTION 'membership order was not reserved by this admission' USING ERRCODE = '42501';
   END IF;
-  RETURN QUERY SELECT v_count;
+  RETURN QUERY SELECT v_count, coalesce(jsonb_agg(trust.source_effect_commitment(e.effect#>>'{ref,operation,entrypointKey}',e.effect#>'{intent,payload}') ORDER BY e.effect_id),'[]'::jsonb)
+    FROM symmy_integration.membership_source_orders o JOIN symmy_integration.job_effects e ON e.tenant_id=o.tenant_id AND e.effect_id=o.effect_id
+    WHERE o.tenant_id=p_tenant AND e.job_id=p_job;
 END;
 $$;
 --> statement-breakpoint
@@ -485,6 +487,14 @@ BEGIN
   RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
  v_plan:=symmy_integration.erase_symmy_plan_payload(v_job.execution_plan);
  IF v_plan IS NULL THEN RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
+ -- A reserved order cannot disappear. A never-dispatched assignment is definitively denied by erasure;
+ -- retaining that terminal outcome releases the next order without ever handing the erased one to Commerce.
+ UPDATE symmy_integration.job_effects e SET state='settled',
+  outcome=jsonb_build_object('effectId',e.effect_id,'owner',e.effect#>>'{ref,operation,moduleId}','status','denied'),
+  claim_token=NULL, lease_until=NULL, version=e.version+1
+ FROM symmy_integration.membership_source_orders o
+ WHERE e.tenant_id=p_tenant AND e.job_id=p_job AND e.state IN ('planned','blocked')
+  AND o.tenant_id=e.tenant_id AND o.effect_id=e.effect_id;
  UPDATE symmy_integration.job_effects e SET effect=symmy_integration.erase_symmy_effect_payload(e.effect), resolved_effect=symmy_integration.erase_symmy_effect_payload(e.resolved_effect), effect_key='erased.'||e.effect_id::text WHERE e.tenant_id=p_tenant AND e.job_id=p_job;
  UPDATE symmy_integration.import_jobs j SET execution_plan=v_plan, fixture_id='ERASED', route_code=NULL,
   lifecycle_policy=coalesce(j.lifecycle_policy,jsonb_build_object('policyId',p_policy->>'policyId','revision',p_policy->>'revision')) WHERE j.tenant_id=p_tenant AND j.job_id=p_job;

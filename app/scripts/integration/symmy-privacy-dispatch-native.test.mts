@@ -514,6 +514,63 @@ it.live(
         expect(afterRace.tombstones).toBe(0);
         expect(Option.getOrNull(afterRace.fence)).toBe('open');
         expect(afterRace.owner_commands).toBe(3);
+        // Model the two durable crash boundaries with the worker stopped: only the lease/delivery is
+        // rewound, never the source fence or owner invocation. Recovery and disposition use real processes.
+        const committed = (yield* fixture.submit('INTERNAL_RECONCILE_COMMITTED')).receipt.jobId;
+        yield* observePrivacyDispatchUntil(
+          'The original Catalog command did not commit',
+          observation(fixture.admin, fixture.tenantId, committed),
+          ({ effects, settled }) => effects > 0 && settled === effects,
+        );
+        yield* fixture.worker.child.kill();
+        yield* fixture.worker.child.exitCode;
+        const unsent = (yield* fixture.submit('INTERNAL_RECONCILE_UNSENT')).receipt.jobId;
+        const retargetDelivery = (id: string, defer: boolean) =>
+          fixture.admin`update core.outbox_deliveries d set available_at=clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end,status='pending',claimed_at=null,claimed_by=null,claim_expires_at=null from core.outbox_messages m where m.outbox_message_id=d.outbox_message_id and m.tenant_id=${fixture.tenantId} and d.worker_key='integration.symmy.execute-symmy-job' and m.payload_json->>'jobId'=${id} returning d.outbox_delivery_id`;
+        for (const id of [committed, unsent]) {
+          expect(yield* retargetDelivery(id, true)).toHaveLength(1);
+          const requested =
+            yield* fixture.admin`update symmy_integration.job_effects set state='attempting',outcome=null,claim_token=gen_random_uuid(),lease_until=clock_timestamp()-interval '1 second',version=version+1 where tenant_id=${fixture.tenantId} and job_id=${id} and effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product' returning owner_request_hash as request_hash`;
+          expect(requested).toHaveLength(1);
+          if (id === unsent) {
+            expect(requested[0]?.request_hash).toBeNull();
+          } else {
+            expect(requested[0]?.request_hash).toBeTruthy();
+          }
+        }
+        const beforeRecovery = (yield* observation(fixture.admin, fixture.tenantId, unsent)).owner_commands;
+        yield* fixture.startWorker();
+        for (const id of [committed, unsent]) {
+          const ref = `integration.symmy.job:${id}`;
+          const policy = yield* seedMeasureExecutionNativeFixture({
+            connections: fixture.isolated.connections,
+            contentScopeRef: `${ref}#integration.symmy.job-intent`,
+            governancePrincipalId: fixture.human.principalId,
+            legalEntityId: fixture.legalEntityId,
+            resourceRef: ref,
+            tenantId: fixture.tenantId,
+          });
+          yield* dispatch(policy.handoff, `INTERNAL_RECONCILE_${id}`);
+          yield* observePrivacyDispatchUntil(
+            'Transient retention must preserve the source fence',
+            policy.observe(),
+            ({ outcomes }) => outcomes.some(({ status }) => status === 'BLOCKED'),
+          );
+          const blockedRecovery = yield* observation(fixture.admin, fixture.tenantId, id);
+          expect(Option.getOrNull(blockedRecovery.fence)).toBe('open');
+          expect(blockedRecovery.private_present).toBe(true);
+          expect(yield* retargetDelivery(id, false)).toHaveLength(1);
+          yield* observePrivacyDispatchUntil(
+            'Production recovery must settle the effect before real erasure',
+            policy.observe(),
+            ({ outcomes }) => outcomes.some(({ status }) => status === 'SUCCEEDED'),
+          );
+          const recovered = yield* observation(fixture.admin, fixture.tenantId, id);
+          expect(recovered.settled).toBe(recovered.effects);
+          expect(recovered.private_present).toBe(false);
+          expect(Option.getOrNull(recovered.fence)).toBe('cancelled');
+          expect(recovered.owner_commands).toBe(beforeRecovery + (id === unsent ? 1 : 0));
+        }
         return yield* Effect.void;
       }),
     ).pipe(

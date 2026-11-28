@@ -1,4 +1,9 @@
-export { symmyCustomerRecordSeed, symmyCustomerSourceRecordId } from './customer-record.ts';
+export {
+  symmyCustomerRecordProjection,
+  symmyCustomerRecordProven,
+  symmyCustomerRecordSeed,
+  symmyCustomerSourceRecordId,
+} from './customer-record.ts';
 export {
   pinSymmyOwnerEffect,
   qualifySymmySourceRecord,

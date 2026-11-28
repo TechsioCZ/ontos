@@ -1,3 +1,5 @@
+import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { holdSourceEligibilityStable } from '@app/privacy-contracts/source-processing-eligibility/commit-interlock';
 import { membershipCustomerSourceReadServices } from './customer-profile-source-persistence.ts';
 import type { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
@@ -332,17 +334,38 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
             ? ORG_WRITE_PRIVACY_REQUIREMENT
             : WRITE_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
+        const workload = readVerifiedGatewayWorkload(scope);
+        const admittedBy =
+          workload?.sourceMode === 'worker' &&
+          workload.recovery === undefined &&
+          workload.sourceAppId === 'symmy-integration' &&
+          workload.entrypointKey === 'commerce.customer-context.apply-customer-group-membership-source'
+            ? workload.admissionInvocationId
+            : null;
         // Only an ERP assignment names the customer record it was resolved from.
         const customerSource = Match.value(payload).pipe(
           Match.when({ operation: 'ASSIGN' }, (assignment) => Option.fromUndefinedOr(assignment.customerSource)),
           Match.orElse(() => Option.none()),
         );
         if (Option.isSome(customerSource)) {
+          // The prior positive was in Symmy's transaction. Re-evaluate both independent decisions while
+          // Privacy cannot commit a change to their governing inputs. No policy is replicated in Commerce.
+          const [interlock] = yield* transaction
+            .invoke(holdSourceEligibilityStable, [])
+            .pipe(Effect.mapError(unavailable));
+          if (interlock?.held !== true) {
+            return yield* unavailable();
+          }
           yield* requireCurrentCustomerSource(payload, customerSource.value);
         }
         yield* checkPrivacy(payload, payload.source, WRITE_PRIVACY_OPERATION, requirement, payload);
         const [row] = yield* transaction
-          .invoke(applyMembershipSourceRoutine, [scope.principalId, invocationId, recordedAt, payload])
+          .invoke(applyMembershipSourceRoutine, [
+            scope.principalId,
+            invocationId,
+            recordedAt,
+            admittedBy === null ? payload : { ...payload, _sourceAdmission: admittedBy },
+          ])
           .pipe(Effect.mapError(unavailable));
         if (row === undefined) {
           return yield* unavailable();

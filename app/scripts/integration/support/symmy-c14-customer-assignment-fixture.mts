@@ -113,6 +113,7 @@ export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = 
   }[];
   readonly includePriceGroup?: boolean;
   readonly initializeScopes: (input: SymmyC14CustomerFixtureScopeInput) => Effect.Effect<void, Failure, Requirements>;
+  readonly recordId?: string;
   readonly verifyPausedIntake?: boolean;
   readonly workloads?: readonly string[];
 }
@@ -324,7 +325,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const customerJobKey = 'INTERNAL_C14_CUSTOMER_JOB';
     // Governance describes the route; the actual Privacy admission Action must admit this first customer.
     const occurrenceId = customerOccurrenceId(customerJobKey, 'customer-0');
-    const recordId = 'INTERNAL_C14_NAMED_PERSON';
+    const recordId = options.recordId ?? 'INTERNAL_C14_NAMED_PERSON';
     const observedAt = yield* DateTime.now;
     const customerPlan = symmyC14CustomerPlanData({
       legalEntityId,

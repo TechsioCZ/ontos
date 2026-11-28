@@ -19,6 +19,7 @@
     "./record-owner-execution-outcome": "./src/apis/record-owner-execution-outcome.ts",
     "./record-owner-execution-outcome/client": "./src/api/record-owner-execution-outcome-client.ts",
     "./resources/privacy-subject": "./src/resources/privacy-subject.ts",
+    "./source-processing-eligibility/commit-interlock": "./src/source-eligibility-commit-interlock.ts",
     "./source-processing-eligibility": "./src/apis/source-processing-eligibility.ts",
     "./source-processing-eligibility/client": "./src/api/source-processing-eligibility-client.ts"
   },

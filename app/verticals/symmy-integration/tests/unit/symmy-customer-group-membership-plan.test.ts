@@ -2,12 +2,12 @@ import {
   readSymmyGroupMembershipFacts,
   SymmyMembershipSourceUnavailable,
 } from '../../shared/readers/symmy-membership-customer-facts.ts';
-import { symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
+import { symmyCustomerRecordProven, symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
 import { CustomerProfileSourceResponseSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { createHash } from 'node:crypto';
 
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SymmyCustomerRowsSchema, symmyCustomerRecordSeed } from '../../shared/domain/symmy-customer-batch.ts';
@@ -351,21 +351,23 @@ describe('Symmy group membership plan from the public customers', () => {
         derived(' padded '),
         'e\u0301',
         'é',
-        // An id already in the derived form is never taken as a record: it is derived like any id the owners refuse.
-        derived(literalInDerivedForm),
+        literalInDerivedForm,
       ]);
-      // No two customer ids name one record, a literal id that spells another id's derived record included.
-      const colliding = [' padded ', derived(' padded '), `symmy-customer:${derived(' padded ')}`];
-      const records = yield* Effect.forEach(
-        colliding,
-        (customerId) => symmyCustomerSourceRecordId(customerId, digest),
-        {
-          concurrency: 1,
-        },
+      // A previous literal and a padded input can name the same old record. Only the source can say which it owns.
+      const literal = derived(' padded ');
+      const origin = { ...customerAuthority, tenantId };
+      const proof = (customerId: string) => symmyCustomerRecordProven(origin, customerId, literal, digest);
+      const configured = ConfigProvider.fromUnknown({
+        ONTOS_SYMMY_CUSTOMER_RECORD_PROVENANCE: JSON.stringify([
+          { ...origin, recordId: literal, wireDigest: derived(literal).slice('symmy-customer:'.length) },
+        ]),
+      });
+      expect(yield* symmyCustomerSourceRecordId(literal, digest)).toBe(literal);
+      expect(yield* proof(literal)).toBe(false);
+      expect(yield* proof(literal).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configured))).toBe(true);
+      expect(yield* proof(' padded ').pipe(Effect.provideService(ConfigProvider.ConfigProvider, configured))).toBe(
+        false,
       );
-      expect(new Set(records).size).toBe(colliding.length);
-      expect(records[0]).toBe(derived(' padded '));
-      expect(records[1]).toBe(derived(derived(' padded ')));
     }),
   );
 

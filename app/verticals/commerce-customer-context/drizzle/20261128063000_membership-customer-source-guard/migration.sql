@@ -1,3 +1,19 @@
+SET LOCAL lock_timeout = '5s';
+--> statement-breakpoint
+SET LOCAL statement_timeout = '30s';
+--> statement-breakpoint
+SET LOCAL row_security = off;
+--> statement-breakpoint
+LOCK TABLE commerce_customer_context.customer_group_membership_source_routes, commerce_customer_context.customer_group_membership_source_receipts IN SHARE ROW EXCLUSIVE MODE;
+--> statement-breakpoint
+DO $migration$ BEGIN
+ IF EXISTS (SELECT FROM commerce_customer_context.customer_group_membership_source_routes WHERE starts_with(source_namespace, 'erp-membership-v1:')) OR EXISTS (SELECT FROM commerce_customer_context.customer_group_membership_source_receipts WHERE starts_with(source_namespace, 'erp-membership-v1:')) THEN
+   RAISE EXCEPTION 'Reserved ERP membership namespace already has Commerce routes or order history' USING ERRCODE = '55000';
+ END IF;
+END; $migration$;
+--> statement-breakpoint
+RESET row_security;
+--> statement-breakpoint
 CREATE OR REPLACE FUNCTION commerce_customer_context.apply_customer_group_membership_source(
   p_tenant_id uuid, p_legal_entity_id uuid, p_actor_principal_id uuid,
   p_invocation_id uuid, p_recorded_at timestamptz, p_payload jsonb
@@ -13,7 +29,8 @@ DECLARE
   v_kind text := CASE WHEN p_payload->>'processingKind' = 'ORG_BUSINESS_REFERENCE'
     THEN 'ORG_BUSINESS_REFERENCE' ELSE 'PERSON' END;
   v_code text;
-  v_payload jsonb := p_payload;
+  v_admission uuid := (p_payload->>'_sourceAdmission')::uuid;
+  v_payload jsonb := p_payload - '_sourceAdmission';
   v_outcome text;
   v_result jsonb;
   v_receipt_kind text;
@@ -21,6 +38,10 @@ DECLARE
   v_current jsonb;
   v_read_outcome text;
 BEGIN
+  p_payload := v_payload;
+  IF starts_with(p_payload#>>'{manager,sourceNamespace}','erp-membership-v1:') AND NOT trust.hold_admitted_source_effect(p_tenant_id,p_legal_entity_id,v_admission,'integration.symmy.admit-symmy-job','commerce.customer-context.apply-customer-group-membership-source',p_payload) THEN
+    RETURN QUERY SELECT 'SOURCE_AUTHORITY_DENIED'::text,NULL::jsonb; RETURN;
+  END IF;
   -- This namespace belongs to ERP assignment, never to an unfenced direct writer.
   IF starts_with(p_payload #>> '{manager,sourceNamespace}', 'erp-membership-v1:') OR v_customer IS NOT NULL THEN
     IF v_customer IS NULL OR p_payload->>'operation' IS DISTINCT FROM 'ASSIGN'

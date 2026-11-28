@@ -11,7 +11,10 @@ import { observeCustomerGroupSourceNativeFixture } from '@app/commerce-customer-
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
-import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
+import {
+  endSourceProcessingNativeGrant,
+  retireSourceProcessingNativePurpose,
+} from '@app/privacy/testing/source-processing-governance-native';
 import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
@@ -22,7 +25,7 @@ import {
 } from '@app/symmy-integration/symmy-internal-contracts';
 import { assert, expect, it } from 'effect-rstest';
 import { PgClient } from '@effect/sql-pg';
-import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Fiber, Option, Redacted, Schema } from 'effect';
 import { HttpBody, HttpClient } from 'effect/http';
 
 import {
@@ -114,6 +117,7 @@ it.live(
                 writeTestTenantScopes(core, { legalEntityIds: [legalEntityId], principalId, tenantId }),
               ),
             ),
+          recordId: 'symmy-customer:INTERNAL_C14_NAMED_PERSON',
         });
         const { admin, integration, isolated, legalEntityId, shell, systemId, tenantId } = fixture;
         const sourceRouteId = yield* uuid;
@@ -415,7 +419,7 @@ it.live(
         // An ERP membership names its customer by the customer id, so the customer route's standing authorization also
         // covers the current customer read: Shell's at admission and Commerce's again inside the membership write.
         // Renewing the route keeps its principals and grants; the read grant names a target kind, not a customer.
-        yield* seedSourceProcessingNativeFixture({
+        const customerPrivacy = yield* seedSourceProcessingNativeFixture({
           connections: isolated.connections,
           contexts: [customerIntakeContext(integration.principalId, fixture.flatSource, null)],
           contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
@@ -745,6 +749,56 @@ it.live(
           order: 2,
           sourceRecordId: source.recordId,
         });
+        // The worker can read the customer successfully. Hold the mutation side while it reaches Commerce,
+        // commit the customer grant end, then let Commerce re-evaluate. The membership grant remains active.
+        const barrierReady = yield* Deferred.make<boolean>();
+        const race = yield* Effect.forkScoped(
+          admin.withTransaction(
+            Effect.gen(function* revokeDuringWrite() {
+              const [holder] = yield* admin<{
+                pid: number;
+              }>`select pg_backend_pid() as pid, pg_advisory_xact_lock_shared(hashtextextended('privacy.source-eligibility:'||${tenantId}::text||':'||${legalEntityId}::text,0))`;
+              assert.isDefined(holder);
+              yield* Deferred.succeed(barrierReady, true);
+              yield* observeCustomerFixtureUntil(
+                admin<{
+                  waiting: boolean;
+                }>`select exists(select from pg_stat_activity where ${holder.pid}=any(pg_blocking_pids(pid)) and query like '%hold_source_eligibility_stable%') as waiting`,
+                ([row]) => row?.waiting,
+              );
+              yield* endSourceProcessingNativeGrant({
+                connections: isolated.connections,
+                governancePrincipalId: fixture.governancePrincipalId,
+                issuer: fixture.sourceIdentity.issuer,
+                legalEntityId,
+                namespace: fixture.sourceIdentity.namespace,
+                ownedDatabase: isolated,
+                purpose: 'implementation-1096-registered-workload-gateway',
+                purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(customerPrivacy.purposeRef),
+                routeRef: fixture.proofTransport.request.route.id,
+                tenantId,
+              });
+            }),
+          ),
+        );
+        yield* Deferred.await(barrierReady);
+        const deniedWorker = yield* startProductWorker(fixture.workerArtifact, {
+          ...environment,
+          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',
+          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
+        });
+        yield* Fiber.join(race);
+        const deniedEffects = yield* observeCustomerFixtureUntil(
+          admin<{
+            state: string;
+            status: string;
+          }>`select state,outcome->>'status' as status from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${deniedJob.jobId}`,
+          (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
+        );
+        expect(deniedEffects).toEqual([{ state: 'settled', status: 'denied' }]);
+        yield* deniedWorker.child.kill();
+        yield* deniedWorker.child.exitCode;
+        expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: isolated.connections,
           governancePrincipalId: fixture.governancePrincipalId,
@@ -768,22 +822,6 @@ it.live(
         const refused = yield* submit(selectedCode, 'INTERNAL_C14_FRESH_AFTER_RETIREMENT');
         expect(refused.status).toBe(403);
         expect(yield* admittedJobs).toEqual(jobsBeforeDenial);
-        const deniedWorker = yield* startProductWorker(fixture.workerArtifact, {
-          ...environment,
-          ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',
-          ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
-        });
-        const deniedEffects = yield* observeCustomerFixtureUntil(
-          admin<{
-            state: string;
-            status: string;
-          }>`select state,outcome->>'status' as status from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${deniedJob.jobId}`,
-          (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
-        );
-        expect(deniedEffects).toEqual([{ state: 'settled', status: 'denied' }]);
-        yield* deniedWorker.child.kill();
-        yield* deniedWorker.child.exitCode;
-        expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
         const [implicit] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and (action_key like 'commerce.pricing.%' or action_key like 'commerce.assortment.%' or action_key like '%promotion%' or action_key in ('commerce.customer-context.assign-customer-price-group','commerce.customer-context.assign-counterparty-price-group'))`;

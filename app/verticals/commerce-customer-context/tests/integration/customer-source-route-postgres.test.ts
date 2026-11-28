@@ -1177,7 +1177,6 @@ it.live('an ERP membership is written only while the customer record it names is
         return (yield* Schema.decodeUnknownEffect(CurrentCustomerSourceSchema)(row)).result.item.source;
       });
       const customerSource = yield* currentSource('C-1');
-      const otherCustomerSource = yield* currentSource('C-2');
       const effectiveAt = yield* isoNow;
       const assignment = (effectId: string, order: number) => {
         const command = membershipCommand(
@@ -1199,13 +1198,8 @@ it.live('an ERP membership is written only while the customer record it names is
       expect(
         yield* applyMembership(writer, { ...assignment('erp-removal', 1), customerSource, operation: 'REMOVE' }),
       ).toMatchObject(denied);
-      // Another customer's record never anchors this Profile.
-      expect(
-        yield* applyMembership(writer, { ...assignment('erp-other-customer', 1), customerSource: otherCustomerSource }),
-      ).toMatchObject({ outcome: 'TARGET_INELIGIBLE' });
-      expect(yield* applyMembership(writer, { ...assignment('erp-assign', 1), customerSource })).toMatchObject({
-        outcome: 'APPLIED',
-      });
+      // Both authorities and an exact customer are insufficient: only a committed reservation may order this write.
+      expect(yield* applyMembership(writer, { ...assignment('erp-assign', 1), customerSource })).toMatchObject(denied);
       // Pausing the customer route ends the authority the customer record was read under. The membership route stays
       // active, yet the next assignment of the same lineage is refused inside its own write.
       expect(yield* pause('PROFILE', routes.profile.route.id, 1)).toEqual(resultOf({ _tag: 'PAUSED', generation: 2 }));

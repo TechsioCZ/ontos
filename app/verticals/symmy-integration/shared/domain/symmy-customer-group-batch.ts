@@ -1,7 +1,7 @@
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
 import { UpdateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/update-customer-group-action';
-import { Schema } from 'effect';
+import { Option, Schema } from 'effect';
 import {
   CustomerProfileSourceRequestSchema,
   CustomerProfileSourceResponseSchema,
@@ -165,6 +165,33 @@ export const symmyMembershipSourceMatches = (
   source.mappingRevision === request.mappingRevision &&
   source.route.id === request.route.id &&
   source.route.revision === request.route.revision;
+
+/** Project exactly the Current owner record that was requested. Consumers decide how to report inactivity. */
+export const projectSymmyMembershipCustomer = (
+  request: CurrentRequest,
+  tenantId: string,
+  { item }: Extract<typeof CustomerProfileSourceResponseSchema.Type, { readonly _tag: 'CURRENT' }>,
+) => {
+  const { partyRef, profile, source } = item;
+  if (
+    !symmyMembershipSourceMatches(request, source) ||
+    profile.profileRef.tenantId !== tenantId ||
+    partyRef.tenantId !== tenantId ||
+    profile.subject.kind !== profile.profileRef.kind ||
+    (profile.profileRef.kind === 'COUNTERPARTY' && item.icoAuthority === undefined)
+  ) {
+    return { status: 'INVALID' } as const;
+  }
+  if (profile.state !== 'ACTIVE') {
+    return { status: 'INACTIVE' } as const;
+  }
+  const fact = Schema.decodeUnknownOption(SymmyGroupMembershipCustomerFactSchema)({
+    customerSource: source,
+    processingKind: item.icoAuthority === 'ORGANIZATION' ? 'ORG_BUSINESS_REFERENCE' : 'PERSONAL',
+    profile: { profileKind: profile.profileRef.kind, profileRef: profile.profileRef },
+  });
+  return Option.isSome(fact) ? ({ fact: fact.value, status: 'CURRENT' } as const) : ({ status: 'INVALID' } as const);
+};
 
 const {
   mode: _currentMode,

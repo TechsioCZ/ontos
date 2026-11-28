@@ -8,7 +8,8 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Config, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { ProcessingPurposeRefSchema } from '../../shared/resources/processing-purpose.ts';
-import { privacyRelations, processingPurposes } from '../../src/database/schema.ts';
+import { SourceProcessingAuthorizationSchema } from '../../shared/domain/privacy-source-processing-authorization.ts';
+import { privacyRelations, processingPurposes, sourceProcessingAuthorizations } from '../../src/database/schema.ts';
 
 const Uuid = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('SourceGovernanceFixtureUuid'),
@@ -255,3 +256,63 @@ export const retireSourceProcessingNativePurpose = Effect.fn('PrivacySourceGover
     );
   },
 );
+
+/** End only this fixture's customer grant; the membership grant, purpose, basis and profile stay active. */
+export const endSourceProcessingNativeGrant = Effect.fn('PrivacySourceGovernanceNative.endGrant')(function* endGrant(
+  input: SourceProcessingGovernanceNativeInput & {
+    readonly issuer: string;
+    readonly namespace: string;
+    readonly routeRef: string;
+  },
+) {
+  const pins = yield* Schema.decodeUnknownEffect(PinsSchema)(input).pipe(Effect.mapError(unavailable));
+  return yield* withNativeTransaction(input, (tx) =>
+    Effect.gen(function* end() {
+      const predicate = and(
+        eq(sourceProcessingAuthorizations.tenantId, pins.tenantId),
+        eq(sourceProcessingAuthorizations.legalEntityId, pins.legalEntityId),
+        eq(sourceProcessingAuthorizations.sourceIssuer, input.issuer),
+        eq(sourceProcessingAuthorizations.sourceNamespace, input.namespace),
+        eq(sourceProcessingAuthorizations.sourceRouteRef, input.routeRef),
+        eq(sourceProcessingAuthorizations.lifecycle, 'ACTIVE'),
+      );
+      const rows = yield* tx
+        .select({ record: sourceProcessingAuthorizations.authorizationRecord })
+        .from(sourceProcessingAuthorizations)
+        .where(predicate)
+        .for('update');
+      const current = yield* Schema.decodeUnknownEffect(SourceProcessingAuthorizationSchema)(rows[0]?.record);
+      if (
+        rows.length !== 1 ||
+        current.createdBy.principalId !== pins.governancePrincipalId ||
+        current.scopeTemplate.purposeRef !== pins.purposeRef.resourceId
+      ) {
+        return yield* unavailable();
+      }
+      const now = yield* DateTime.now;
+      const ended = {
+        ...current,
+        endedAt: DateTime.formatIso(now),
+        endedBy: current.createdBy,
+        endReason: 'INTERNAL customer grant revocation',
+        lifecycle: 'ENDED' as const,
+        revision: current.revision + 1,
+      };
+      const result = yield* tx
+        .update(sourceProcessingAuthorizations)
+        .set({
+          authorizationRecord: yield* Schema.encodeEffect(SourceProcessingAuthorizationSchema)(ended),
+          endedAt: DateTime.toDateUtc(now),
+          endedByActionInvocationId: sql`gen_random_uuid()`,
+          lifecycle: 'ENDED',
+          revision: ended.revision,
+        })
+        .where(predicate)
+        .returning({ id: sourceProcessingAuthorizations.authorizationId });
+      if (result.length !== 1) {
+        return yield* unavailable();
+      }
+      return yield* Effect.void;
+    }),
+  );
+});

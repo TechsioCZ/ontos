@@ -69,7 +69,8 @@ import { SymmyProductRowsSchema } from '../../shared/domain/symmy-product-batch.
 import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared/domain/symmy-product-batch.ts';
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
-import { buildSymmyCustomerPlan, createPartyOperation } from './symmy-customer-plan.ts';
+import { symmyCustomerRecordProven, symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
+import { buildSymmyCustomerPlan, createPartyOperation, enrolledCustomerSource } from './symmy-customer-plan.ts';
 import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
 import { buildSymmyGroupMembershipPlan } from './symmy-customer-group-membership-plan.ts';
 import type {
@@ -199,7 +200,7 @@ const recordMembershipOrders = defineScopedRoutine({
     { source: 'tenantId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
   ],
-  resultSchema: Schema.Struct({ recorded: Schema.Int }),
+  resultSchema: Schema.Struct({ commitments: Schema.Array(Schema.String), recorded: Schema.Int }),
   routineKey: 'symmy-membership.record-orders',
 });
 const lockRoute = Effect.fn('SymmyJobStore.lockEnrollment')(function* lockRouteSnapshot(
@@ -588,6 +589,22 @@ const requestTenant = (scope: OperationalScope) =>
  * price lists, price batch, products or customers. They are admitted for the enrolled operations only, so a route that does not
  * enroll them yields no plan, nothing is pinned and no owner call is made.
  */
+const requireRecordProvenance = Effect.fn('SymmyJobStore.requireCustomerRecordProvenance')(function* requireProven(
+  origin: Parameters<typeof symmyCustomerRecordProven>[0],
+  rows: readonly { readonly customerId: string }[],
+) {
+  return yield* Effect.forEach(
+    rows,
+    Effect.fn('SymmyJobStore.proveOneCustomer')(function* proveOne({ customerId }) {
+      const recordId = yield* symmyCustomerSourceRecordId(customerId, hash);
+      if (!(yield* symmyCustomerRecordProven(origin, customerId, recordId, hash).pipe(Effect.mapError(unavailable)))) {
+        return yield* routeDenied();
+      }
+      return yield* Effect.void;
+    }),
+    { concurrency: 1, discard: true },
+  );
+});
 const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(function* admissionPlanSource(
   route: typeof symmyJobRoutes.$inferSelect,
   input: SymmyJobAdmissionRequest,
@@ -595,6 +612,19 @@ const admissionPlanSource = Effect.fn('SymmyJobStore.admissionPlanSource')(funct
   template: SymmyFixtureExecutionPlan,
 ) {
   if (input.customers !== undefined) {
+    const enrolled = enrolledCustomerSource(input.customers, template);
+    if (Option.isNone(enrolled)) {
+      return Option.none<SymmyFixtureExecutionPlan>();
+    }
+    yield* requireRecordProvenance(
+      {
+        issuer: enrolled.value.issuerId,
+        namespace: enrolled.value.sourceNamespace,
+        recordType: enrolled.value.entityKind,
+        tenantId: scope.tenantId,
+      },
+      input.customers,
+    );
     const { sourceMappingVersion, sourceRouteId, sourceRouteRevision } = routeSourceAuthority(route, template);
     return yield* buildSymmyCustomerPlan({
       authority: { mappingRevision: sourceMappingVersion, routeId: sourceRouteId, routeRevision: sourceRouteRevision },
@@ -808,6 +838,14 @@ const membershipPlanSource = Effect.fn('SymmyJobStore.membershipPlanSource')(fun
   template: SymmyFixtureExecutionPlan,
 ) {
   const { idempotencyDigest, scope, transaction } = context;
+  if (input.groupCustomerFacts === undefined) {
+    return yield* routeDenied();
+  }
+  // resolveSourceProfiles independently locks and compares this origin with the actual customer enrollment.
+  yield* requireRecordProvenance(
+    { ...input.groupCustomerFacts.authority, tenantId: scope.tenantId },
+    input.groupCustomers,
+  );
   return yield* buildSymmyGroupMembershipPlan({
     admittedRouteId: route.routeId,
     authority: sourceAuthority(route, template),
@@ -1538,6 +1576,7 @@ interface SymmyJobAdmissionReceipt {
   readonly jobId: string;
   readonly phase: 'admitted';
   readonly sourceBindingCommitments?: readonly string[];
+  readonly sourceEffectCommitments?: readonly string[];
   readonly sourcePreparationId?: string;
 }
 
@@ -1650,9 +1689,14 @@ const insertPlannedEffects = Effect.fn('SymmyJobStore.insertPlannedEffects')(fun
   if (effects.length > 0) {
     yield* transaction.insert(symmyJobEffects).values(effects).pipe(Effect.mapError(unavailable));
   }
-  if (ledgerOrdered) {
-    yield* transaction.invoke(recordMembershipOrders, [jobId]).pipe(Effect.mapError(unavailable));
+  if (!ledgerOrdered) {
+    return Option.none<readonly string[]>();
   }
+  const [ledger] = yield* transaction.invoke(recordMembershipOrders, [jobId]).pipe(Effect.mapError(unavailable));
+  if (ledger === undefined || ledger.commitments.length !== ledger.recorded) {
+    return yield* unavailable();
+  }
+  return Option.some(ledger.commitments);
 });
 
 interface SymmyJobStore {
@@ -1856,6 +1900,12 @@ export const symmyJobStoreFactory = (
         .pipe(Effect.mapError(unavailable));
 
       if (inserted !== undefined) {
+        const receipt: SymmyJobAdmissionReceipt = {
+          executionReady: inserted.executionPlan !== null,
+          inserted: true,
+          jobId: inserted.jobId,
+          phase: inserted.phase,
+        };
         if (inserted.executionPlan !== null) {
           if (admissionInvocationId !== undefined) {
             yield* openScopedSourceExecutionFence(transaction, admissionInvocationId, {
@@ -1867,20 +1917,17 @@ export const symmyJobStoreFactory = (
           const plan = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema, { onExcessProperty: 'error' })(
             inserted.executionPlan,
           ).pipe(Effect.mapError(unavailable));
-          yield* insertPlannedEffects(
+          const commitments = yield* insertPlannedEffects(
             transaction,
             scope,
             inserted.jobId,
             plan,
             fixtureId === SYMMY_ERP_MEMBERSHIP_CONTRACT,
           );
+          if (Option.isSome(commitments)) {
+            Object.assign(receipt, { sourceEffectCommitments: commitments.value });
+          }
         }
-        const receipt: SymmyJobAdmissionReceipt = {
-          executionReady: inserted.executionPlan !== null,
-          inserted: true,
-          jobId: inserted.jobId,
-          phase: inserted.phase,
-        };
         if (Option.isSome(selection)) {
           Object.assign(receipt, selection.value);
         }

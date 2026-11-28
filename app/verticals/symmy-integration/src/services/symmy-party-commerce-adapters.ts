@@ -81,7 +81,10 @@ import type { CustomerPriceGroupAssignmentReceiptResponse } from '@app/commerce-
 import { executeCustomerPriceGroupAssignmentReceiptWithAuthorization } from '@app/commerce-customer-context/api/customer-price-group-assignment-receipt/client';
 import { AssignCustomerPriceGroupPayloadSchema } from '@app/commerce-customer-context/api/assign-customer-price-group-action';
 import { AssignCounterpartyPriceGroupPayloadSchema } from '@app/commerce-customer-context/api/assign-counterparty-price-group-action';
-import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
+import {
+  ApplyCustomerGroupMembershipSourceActionIneligibleProblemSchema,
+  ApplyCustomerGroupMembershipSourcePayloadSchema,
+} from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import { ChangeCustomerProfileIcoPayloadSchema } from '@app/commerce-customer-context/api/change-customer-profile-ico-action';
 import { CreateCounterpartyPurchasingProfilePayloadSchema } from '@app/commerce-customer-context/api/create-counterparty-purchasing-profile-action';
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
@@ -567,6 +570,12 @@ const ownerFailure = Effect.fn('SymmyPartyCommerceAdapters.ownerFailure')(functi
       }).pipe(Effect.mapError(symmyJobWorkerUnavailable));
     }
     return yield* outcome(input, cause.code === 'INVALID_TRANSITION' ? 'conflict' : 'denied');
+  }
+  if (
+    Schema.is(ApplyCustomerGroupMembershipSourceActionIneligibleProblemSchema)(cause) &&
+    cause.code === 'TARGET_INELIGIBLE'
+  ) {
+    return yield* outcome(input, 'denied');
   }
   const invocation = Schema.decodeUnknownOption(invocationErrorSchema)(cause);
   if (Option.isSome(invocation)) {

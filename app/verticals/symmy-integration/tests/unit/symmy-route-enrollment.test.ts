@@ -31,6 +31,7 @@ import {
   decideSymmyRouteDeactivation,
   decideSymmyRouteWrite,
   symmyCoreRefusals,
+  symmyEnrolledInventory,
   symmyOutstandingRefusals,
   symmyPlannedRouteRow,
   symmyRelatedRouteRefusals,
@@ -319,6 +320,11 @@ const reserved = (enrolled: EncodedItem): EncodedItem => ({
   source: { ...enrolled.source, sourceNamespace: 'erp-membership-v1:AKROS' },
 });
 
+const executorReads = (enrollment: SymmyRouteEnrollmentRequest) =>
+  symmyEnrolledInventory(inventoryOf(enrollment.routeKey), enrollment.configuration)
+    .filter(({ caller }) => caller === 'executor')
+    .flatMap(({ reads }) => (reads ?? []).map(({ entrypointKey }) => entrypointKey));
+
 describe('Symmy route inventories', () => {
   it('enrolls the ERP membership contract alone exactly on a membership route of a namespace reserved for it', () => {
     // A membership route of any other namespace keeps the contract it always had and never admits an ERP customer id.
@@ -345,6 +351,10 @@ describe('Symmy route inventories', () => {
         }),
       ],
     });
+    expect(executorReads(request('customerGroupCustomersBatch'))).not.toContain(
+      'commerce.customer-context.api.customer-profile-source',
+    );
+    expect(executorReads(erp)).toContain('commerce.customer-context.api.customer-profile-source');
     expect(codes(erp)).toEqual([]);
     expect(symmyPlannedRouteRow(erp).fixtureIds).toEqual(['ERP_MEMBERSHIP_V1']);
     // The reserved namespace means nothing on any other route: only the membership route's ledger orders it.

@@ -1,10 +1,10 @@
+import { symmyCustomerRecordProjection } from '@app/shared-contracts/symmy';
 import { createHash } from 'node:crypto';
 
 import {
   symmyCustomerAddressRecordSeed,
   symmyCustomerContactRecordSeed,
   symmyCustomerOccurrenceSeed,
-  symmyCustomerRecordSeed,
   symmyGroupMembershipOccurrenceSeed,
   symmyGroupMembershipRecordSeed,
 } from '@app/symmy-integration/symmy-internal-contracts';
@@ -28,9 +28,11 @@ export const groupMembershipOccurrenceId = (input: Parameters<typeof symmyGroupM
 
 /** The source record of a customer id the owners accept as it is (at most 200 characters, no surrounding blanks). */
 export const customerRecordId = (customerId: string): string =>
-  customerId.length <= 200 && customerId === customerId.trim()
-    ? customerId
-    : `symmy-customer:${hex(symmyCustomerRecordSeed(customerId))}`;
+  symmyCustomerRecordProjection(
+    customerId,
+    (id) => id,
+    (seed, name) => name(hex(seed)),
+  );
 
 export const groupMembershipRecordId = (group: string, customer: string): string =>
   `symmy-membership:${hex(symmyGroupMembershipRecordSeed(group, customerRecordId(customer)))}`;

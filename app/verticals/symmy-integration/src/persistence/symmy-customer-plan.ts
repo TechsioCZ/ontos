@@ -456,7 +456,7 @@ const sameSource = (left: TemplateSource, right: TemplateSource) =>
   left.sourceNamespace === right.sourceNamespace;
 
 /** The one source every customer record shares, or none when the route does not enroll the operations the rows need. */
-const enrolledSource = (
+export const enrolledCustomerSource = (
   rows: SymmyCustomerRows,
   template: SymmyFixtureExecutionPlan,
 ): Option.Option<TemplateSource> => {
@@ -502,7 +502,7 @@ export const buildSymmyCustomerPlan = Effect.fn('SymmyCustomerPlan.build')(funct
   input: SymmyCustomerPlanInput<Failure>,
 ) {
   const { authority, digest, idempotencyKey, legalEntityId, receivedAt, rows, template, tenantId } = input;
-  const source = enrolledSource(rows, template);
+  const source = enrolledCustomerSource(rows, template);
   if (Option.isNone(source) || legalEntityId === undefined) {
     return Option.none<SymmyFixtureExecutionPlan>();
   }

@@ -316,10 +316,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       operations: [
         shellRead(customerModule, customerProfileSourceRead),
         executor(customerGroupOperation('commerce.customer-context.apply-customer-group-membership-source'), {
-          reads: [
-            read('commerce.customer-context.api.customer-group-definition-source'),
-            read(customerProfileSourceRead),
-          ],
+          reads: [read('commerce.customer-context.api.customer-group-definition-source')],
           required: true,
         }),
       ],
@@ -451,10 +448,20 @@ const enrolledOperations = (configuration: SymmyFixtureExecutionPlan) =>
     effects.map(({ operation }) => ({ entityKind: source.entityKind, operation })),
   );
 /** The inventory operations a configuration enrolls. */
-export const symmyEnrolledInventory = (inventory: SymmyRouteInventory, configuration: SymmyFixtureExecutionPlan) =>
-  inventory.operations.filter((operation) =>
-    enrolledOperations(configuration).some((enrolled) => sameOperation(enrolled.operation, operation)),
-  );
+export const symmyEnrolledInventory = (inventory: SymmyRouteInventory, configuration: SymmyFixtureExecutionPlan) => {
+  const configured = enrolledOperations(configuration);
+  const ledger = configuration.items.some(({ source }) => isSymmyErpMembershipNamespace(source.sourceNamespace));
+  return inventory.operations.flatMap((operation) => {
+    if (!configured.some((enrolled) => sameOperation(enrolled.operation, operation))) {
+      return [];
+    }
+    return [
+      ledger && operation.entrypointKey === 'commerce.customer-context.apply-customer-group-membership-source'
+        ? { ...operation, reads: [...(operation.reads ?? []), read(customerProfileSourceRead)] }
+        : operation,
+    ];
+  });
+};
 
 /** A route with complete plans enrolls every operation of at least one of them. */
 const completePlanRefusals = (
