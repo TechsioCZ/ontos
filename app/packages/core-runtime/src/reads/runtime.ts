@@ -41,7 +41,7 @@ import { ReadRunEvidenceLive } from './run-evidence-live.ts';
 import { executeRunFormRead, preserveFailureCause, sanitizeReadHandlerFailure } from './run-form.ts';
 import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import { ConnectionError, SqlError, isSqlError } from 'effect/sql/SqlError';
-/* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
+/* oxlint-disable sonarjs/no-duplicate-string, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, DateTime, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
 import type { AccessDeclaration, AccessFieldGroup, AccessTarget } from '../authorization/access-declaration.ts';
@@ -700,12 +700,7 @@ const computeReadQueryHash = (
   captureMode: ReadEvidenceCaptureMode,
   decodedInput: unknown,
 ): Effect.Effect<string | undefined, ReadInputValidationError> =>
-  captureMode === 'hash_only'
-    ? computeRequiredReadQueryHash(decodedInput)
-    : Effect.void.pipe(
-        // oxlint-disable-next-line unicorn/no-useless-undefined -- Effect.as requires the explicit optional hash value.
-        Effect.as(undefined),
-      );
+  captureMode === 'hash_only' ? computeRequiredReadQueryHash(decodedInput) : Effect.void.pipe(Effect.as(undefined));
 /* oxlint-enable effect-native/no-nullable-service-outcome */
 
 const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarget')(
