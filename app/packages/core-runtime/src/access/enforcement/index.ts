@@ -85,7 +85,10 @@ export {
 } from '../workloads/source-execution-fence.ts';
 
 export { requireScopedSourceExecutionFenceOpen } from '../workloads/source-execution-fence.ts';
-export { readScopedSourceExecutionFence } from '../workloads/source-execution-fence.ts';
+export {
+  readScopedPreparedSourceExecutionFence,
+  readScopedSourceExecutionFence,
+} from '../workloads/source-execution-fence.ts';
 export type { SourceExecutionFenceFact } from '../workloads/source-execution-fence.ts';
 export { readScopedSourceAdmissionEnrollment } from '../workloads/source-admission-enrollment.ts';
 export type { SourceAdmissionEnrollmentFact } from '../workloads/source-admission-enrollment.ts';

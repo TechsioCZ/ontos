@@ -1,4 +1,5 @@
-import { sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
+import { actionInvocations } from '../../db/schema.ts';
 import { Effect, Option, Schema } from 'effect';
 
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
@@ -111,6 +112,44 @@ export const readScopedSourceExecutionFence = Effect.fn('SourceExecutionFence.re
         state: row.fence_state,
       }),
     );
+  },
+);
+
+/** The native admission accepted this exact preparation, not merely a concurrent attempt at the same invocation.
+ * A cancelled fence is still historical proof. This never grants authority to execute or to process a new use. */
+export const readScopedPreparedSourceExecutionFence = Effect.fn('SourceExecutionFence.readPreparedSnapshot')(
+  function* readPrepared(
+    transaction: ScopedTransactionExecutor,
+    invocationId: string,
+    preparationId: string,
+    bindingCommitment: string,
+  ) {
+    const fence = yield* readScopedSourceExecutionFence(transaction, invocationId);
+    if (Option.isNone(fence)) {
+      return fence;
+    }
+    const [receipt] = yield* transaction
+      .select({ id: actionInvocations.actionInvocationId })
+      .from(actionInvocations)
+      .where(
+        and(
+          eq(actionInvocations.tenantId, transaction.scope.tenantId),
+          eq(actionInvocations.actionInvocationId, fence.value.admissionInvocationId),
+          eq(actionInvocations.actionKey, fence.value.actionKey),
+          eq(actionInvocations.principalId, fence.value.originalPrincipalId),
+          Option.isSome(fence.value.legalEntityId)
+            ? eq(actionInvocations.legalEntityId, fence.value.legalEntityId.value)
+            : isNull(actionInvocations.legalEntityId),
+          eq(actionInvocations.status, 'succeeded'),
+          sql`${actionInvocations.committedReplyJson}->>'kind' = 'result' and ${actionInvocations.committedReplyJson}->'encoded'->>'sourcePreparationId' = ${preparationId} and ${actionInvocations.committedReplyJson}->'encoded'->'sourceBindingCommitments' @> to_jsonb(array[${bindingCommitment}::text])`,
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (!isLiveScopedOperationTransaction(transaction)) {
+      return yield* unavailable();
+    }
+    return receipt === undefined ? Option.none<SourceExecutionFenceFact>() : fence;
   },
 );
 

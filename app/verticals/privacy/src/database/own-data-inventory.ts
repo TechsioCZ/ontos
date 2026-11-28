@@ -107,7 +107,7 @@ const categoriesById = {
       table: 'source_processing_admissions',
     },
     excludedContent: ['ENDPOINT_ADDRESS', 'AUTH_SECRET_OR_PROOF'],
-    personalDataKinds: ['SUBJECT_REFERENCE', 'TIMING_FACT'],
+    personalDataKinds: ['STAFF_ACTOR_PRINCIPAL', 'SUBJECT_REFERENCE', 'TIMING_FACT'],
     recordContentScope: 'privacy.source-record-admission',
     retention: pendingPrivacyOwner,
     storage: [
@@ -120,6 +120,9 @@ const categoriesById = {
           'privacy_subject_id',
           'source_identity_key',
           'source_record',
+          'symmy_invocation_id',
+          'symmy_preparation_id',
+          'symmy_principal_id',
         ],
         table: 'source_processing_admissions',
       },

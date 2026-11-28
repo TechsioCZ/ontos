@@ -37,6 +37,7 @@ const fixture = {
     ],
   },
 };
+const preparation = { invocationId: ids.tenantId, preparationId: ids.legalEntityId };
 const scope = {
   authMethod: 'api_key' as const,
   correlationId: 'source-processing-action-test',
@@ -54,6 +55,7 @@ type EndContext = Parameters<typeof handleEndSourceProcessingAuthorization>[1];
 const ledgers = (authorization: SourceProcessingAuthorization) => {
   const subjects = new Map<string, PrivacySubjectRecord>();
   const admissions = new Map<string, SourceProcessingAdmissionRow>();
+  const candidates = new Map<string, SourceProcessingAdmissionRow>();
   let issued = 0;
   const services: AdmitServices = {
     authorizations: {
@@ -62,8 +64,9 @@ const ledgers = (authorization: SourceProcessingAuthorization) => {
         Effect.suspend(() => {
           for (const { role, source } of input.sources) {
             const key = sourceProcessingIdentityKey(source);
-            const prior = admissions.get(key);
-            admissions.set(key, {
+            const ledger = role === 'CHILD' ? candidates : admissions;
+            const prior = ledger.get(key);
+            ledger.set(key, {
               firstAdmittedAt: prior?.firstAdmittedAt ?? input.admittedAt,
               lastAdmittedAt: input.admittedAt,
               role,
@@ -74,7 +77,10 @@ const ledgers = (authorization: SourceProcessingAuthorization) => {
             input.membershipRoot === undefined
               ? input.sources.find(({ role }) => role === 'SUBJECT')
               : input.sources[0];
-          const row = subject === undefined ? undefined : admissions.get(sourceProcessingIdentityKey(subject.source));
+          const row =
+            subject === undefined
+              ? undefined
+              : (subject.role === 'CHILD' ? candidates : admissions).get(sourceProcessingIdentityKey(subject.source));
           return row === undefined ? Effect.die('The subject source was not admitted') : Effect.succeed(row);
         }),
       sourceSubjectId: (source) =>
@@ -100,7 +106,7 @@ const ledgers = (authorization: SourceProcessingAuthorization) => {
     }),
     profileSource: () => Effect.succeed(Option.none()),
   };
-  return { admissions, services, subjects };
+  return { admissions, candidates, services, subjects };
 };
 
 const collectorFields = (
@@ -138,12 +144,12 @@ const admitContext = (
 describe('source processing subject admission', () => {
   it.effect('gives each customer its own subject and keeps a replay on the same subject', () =>
     Effect.gen(function* admit() {
-      const { admissions, services, subjects } = ledgers(fixture.authorization);
+      const { admissions, candidates, services, subjects } = ledgers(fixture.authorization);
       const run = (payload: Parameters<typeof handleAdmitSourceProcessingSubject>[0], invocation: string) =>
         handleAdmitSourceProcessingSubject(payload, admitContext(services, invocation));
       const contact = customer('contact:one');
       const one = yield* run(
-        { childSources: [contact], source: customer('client:one') },
+        { childSources: [contact], preparation, source: customer('client:one') },
         '30000000-0000-4000-8000-0000000000a1',
       );
       const two = yield* run(
@@ -151,14 +157,18 @@ describe('source processing subject admission', () => {
         '30000000-0000-4000-8000-0000000000a2',
       );
       const replay = yield* run(
-        { childSources: [contact], source: customer('client:one') },
+        { childSources: [contact], preparation, source: customer('client:one') },
         '30000000-0000-4000-8000-0000000000a3',
       );
+      expect(one.bindingCommitments).toHaveLength(1);
+      expect(two.bindingCommitments).toEqual([]);
+      expect(replay.bindingCommitments).not.toEqual(one.bindingCommitments);
       expect(one.subjectRef.resourceId).not.toBe(two.subjectRef.resourceId);
       expect(replay.subjectRef).toEqual(one.subjectRef);
       expect(one.authorizationRef).toEqual(fixture.authorization.authorizationRef);
       expect(subjects.size).toBe(2);
-      expect(admissions.get(sourceProcessingIdentityKey(contact))).toMatchObject({
+      expect(admissions.has(sourceProcessingIdentityKey(contact))).toBe(false);
+      expect(candidates.get(sourceProcessingIdentityKey(contact))).toMatchObject({
         role: 'CHILD',
         subjectId: one.subjectRef.resourceId,
       });
@@ -179,7 +189,7 @@ describe('source processing subject admission', () => {
           recordTypes: [...fixture.authorization.source.recordTypes, 'CUSTOMER_GROUP_MEMBERSHIP'],
         },
       };
-      const { admissions, services, subjects } = ledgers(authorization);
+      const { admissions, candidates, services, subjects } = ledgers(authorization);
       const root = customer('customer:one');
       const ctx = admitContext(services, '30000000-0000-4000-8000-0000000000a1');
       const first = yield* handleAdmitSourceProcessingSubject({ childSources: [], source: root }, ctx);
@@ -213,6 +223,7 @@ describe('source processing subject admission', () => {
           kind: 'RETAIL_CUSTOMER_PROFILE' as const,
           resourceId: '30000000-0000-4000-8000-0000000000a4',
         },
+        preparation,
         source: { ...root, recordId: 'member:one', recordType: 'CUSTOMER_GROUP_MEMBERSHIP' },
       };
       expect(Exit.isFailure(yield* Effect.exit(handleAdmitSourceProcessingSubject(member, ctx)))).toBe(true);
@@ -224,7 +235,8 @@ describe('source processing subject admission', () => {
         ),
       );
       expect(admitted.subjectRef).toEqual(first.subjectRef);
-      expect(admissions.get(sourceProcessingIdentityKey(member.source))?.role).toBe('CHILD');
+      expect(admissions.has(sourceProcessingIdentityKey(member.source))).toBe(false);
+      expect(candidates.get(sourceProcessingIdentityKey(member.source))?.role).toBe('CHILD');
       expect(subjects.size).toBe(1);
     }),
   );

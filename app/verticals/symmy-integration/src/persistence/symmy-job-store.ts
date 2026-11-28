@@ -44,6 +44,7 @@ import {
 } from '../services/symmy-catalog-pricing-inventory-adapters.ts';
 import { prepareSymmyPartyCommerceRequestHash } from '../services/symmy-party-commerce-adapters.ts';
 import { SymmyCatalogPricingInventoryIntentSchema } from '../../shared/domain/symmy-catalog-pricing-inventory-intents.ts';
+import { isSymmyCustomerIntakeRoute } from '../../shared/domain/symmy-job-identities.ts';
 import { SymmyCustomerRowsSchema } from '../../shared/domain/symmy-customer-batch.ts';
 import type { SymmyCustomerRows } from '../../shared/domain/symmy-customer-batch.ts';
 import { SymmyCustomerGroupRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
@@ -1254,6 +1255,8 @@ interface SymmyJobAdmissionReceipt {
   readonly inserted: boolean;
   readonly jobId: string;
   readonly phase: 'admitted';
+  readonly sourceBindingCommitments?: readonly string[];
+  readonly sourcePreparationId?: string;
 }
 
 type SymmySyncAdmissionReceiptDecoded = typeof AdmitSymmySyncResultSchema.Type;
@@ -1262,7 +1265,13 @@ export interface SymmySyncAdmissionReceipt extends SymmySyncAdmissionReceiptDeco
 }
 
 type SymmyJobPollResult = typeof SymmyJobExecutionProjectionSchema.Type;
-type BeforeJobInsert<R> = (plan: SymmyPinnedJobPlan) => Effect.Effect<void, SymmyJobStoreError, R>;
+type BeforeJobInsert<R> = (
+  plan: SymmyPinnedJobPlan,
+) => Effect.Effect<
+  Option.Option<{ readonly sourceBindingCommitments: readonly string[]; readonly sourcePreparationId: string }>,
+  SymmyJobStoreError,
+  R
+>;
 
 const authorizeNewJob = Effect.fn('SymmyJobStore.authorizeNewJob')(function* authorize<R>(
   plan: SymmyPinnedJobPlan | null,
@@ -1274,13 +1283,13 @@ const authorizeNewJob = Effect.fn('SymmyJobStore.authorizeNewJob')(function* aut
     if (plan?.items.some(({ effects }) => effects.some(({ intent }) => intent !== undefined)) === true) {
       return yield* routeDenied();
     }
-    return yield* Effect.void;
+    return Option.none();
   }
   if (plan === null) {
     return yield* routeDenied();
   }
-  if (routeKey !== 'customersBatch') {
-    return yield* Effect.void;
+  if (!isSymmyCustomerIntakeRoute(routeKey)) {
+    return Option.none();
   }
   if (beforeInsert === undefined) {
     return yield* unavailable();
@@ -1430,7 +1439,7 @@ export const symmyJobStoreFactory = (
         return yield* routeDenied();
       }
       const preparedPlan = yield* prepareAdmissionPlan({ scope, transaction }, route, input, template);
-      yield* authorizeNewJob(preparedPlan, input.routeKey, admissionInvocationId, beforeInsert);
+      const selection = yield* authorizeNewJob(preparedPlan, input.routeKey, admissionInvocationId, beforeInsert);
       // The shared route lock retains the exact enrollment while typed effect bookkeeping is pinned.
       // All inserts, native Action receipt and outbox admission commit in the same Core operation.
       const [inserted] = yield* transaction
@@ -1486,12 +1495,16 @@ export const symmyJobStoreFactory = (
             )
             .pipe(Effect.mapError(unavailable));
         }
-        return {
+        const receipt: SymmyJobAdmissionReceipt = {
           executionReady: inserted.executionPlan !== null,
           inserted: true,
           jobId: inserted.jobId,
           phase: inserted.phase,
         };
+        if (Option.isSome(selection)) {
+          Object.assign(receipt, selection.value);
+        }
+        return receipt;
       }
 
       // A new READ COMMITTED statement observes the winning transaction after an insert conflict.
@@ -1672,7 +1685,7 @@ export const symmyJobStoreFactory = (
     }),
     prepareIntake: Effect.fn('SymmyJobStore.prepareIntake')(function* prepareIntake(input) {
       if (
-        input.routeKey !== 'customersBatch' ||
+        !isSymmyCustomerIntakeRoute(input.routeKey) ||
         transaction.scope.tenantId !== scope.tenantId ||
         transaction.scope.legalEntityId !== scope.legalEntityId
       ) {

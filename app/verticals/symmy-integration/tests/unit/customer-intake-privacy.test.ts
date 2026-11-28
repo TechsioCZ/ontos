@@ -365,19 +365,21 @@ it.effect('names the customer record a contact describes, so Privacy can check i
   }),
 );
 
-/** What Privacy holds after the calls of an intake: admitted subjects and the bindings of other records to them. */
+const attempt = {
+  invocationId: '10000000-0000-4000-8000-000000000090',
+  preparationId: '10000000-0000-4000-8000-000000000091',
+};
+
+// Observe Symmy's actual calls. Only the native Privacy ledger test can assert whether a binding is effective.
 const recordingPrivacy = (refuses: (checkedRecordId: string) => boolean) => {
-  const bindings = new Map<string, string>();
   const calls: string[] = [];
-  const subjects = new Set<string>();
+  const admissions: { key: string; payload: typeof AdmitSourceProcessingSubjectPayloadSchema.Type }[] = [];
   const privacy: SymmyCustomerIntakePrivacyCalls = {
-    admit: (payload) =>
+    admit: (payload, key) =>
       Effect.sync(() => {
-        subjects.add(payload.source.recordId);
-        for (const child of payload.childSources) {
-          bindings.set(child.recordId, payload.source.recordId);
-        }
-        calls.push(`admit:${payload.source.recordId}:${payload.childSources.length}`);
+        admissions.push({ key, payload });
+        calls.push('admit');
+        return payload.childSources.map(() => 'a'.repeat(64));
       }),
     check: (request) => {
       const checked = request.source?.recordId ?? '';
@@ -385,31 +387,37 @@ const recordingPrivacy = (refuses: (checkedRecordId: string) => boolean) => {
       return refuses(checked) ? Effect.fail(new SymmyJobStoreError({ code: 'route_denied' })) : Effect.void;
     },
   };
-  return { bindings, calls, privacy, subjects };
+  return { admissions, calls, privacy };
 };
 
-it.effect('leaves no binding behind a refused plan, and binds the contact of the corrected plan', () =>
+it.effect('checks every use before preparing child records and scopes preparation to the current attempt', () =>
   Effect.gen(function* refusedThenCorrected() {
     const refused = recordingPrivacy((checked) => checked === 'contact:one');
     const wrongCustomer = yield* projectSymmyCustomerIntake(scope, yield* customerWithContact('customer:wrong'));
-    expect(yield* settleSymmyCustomerIntake(wrongCustomer, refused.privacy).pipe(Effect.flip)).toMatchObject({
+    expect(yield* settleSymmyCustomerIntake(wrongCustomer, refused.privacy, attempt).pipe(Effect.flip)).toMatchObject({
       code: 'route_denied',
     });
-    // Only the customer's own subject was admitted; the contact is bound to nobody.
-    expect(refused.calls).toEqual(['admit:customer:wrong:0', 'check:customer:wrong', 'check:contact:one']);
-    expect([...refused.bindings]).toEqual([]);
-
-    const allowed = recordingPrivacy(() => false);
-    const corrected = yield* projectSymmyCustomerIntake(scope, yield* customerWithContact('customer:one'));
-    yield* settleSymmyCustomerIntake(corrected, allowed.privacy);
-    // Subjects first, every use next, the immutable binding last.
-    expect(allowed.calls).toEqual([
-      'admit:customer:one:0',
-      'check:customer:one',
-      'check:contact:one',
-      'admit:customer:one:1',
+    expect(refused.calls).toEqual(['admit', 'check:customer:wrong', 'check:contact:one']);
+    expect(refused.admissions.map(({ payload }) => payload)).toEqual([
+      { childSources: [], source: sourceRecord('customer:wrong') },
     ]);
-    expect([...allowed.bindings]).toEqual([['contact:one', 'customer:one']]);
+
+    const corrected = yield* projectSymmyCustomerIntake(scope, yield* customerWithContact('customer:one'));
+    const prepare = Effect.fnUntraced(function* prepare(preparation: typeof attempt) {
+      const recorded = recordingPrivacy(() => false);
+      expect(yield* settleSymmyCustomerIntake(corrected, recorded.privacy, preparation)).toEqual(['a'.repeat(64)]);
+      expect(recorded.calls).toEqual(['admit', 'check:customer:one', 'check:contact:one', 'admit']);
+      expect(recorded.admissions.map(({ payload }) => payload)).toEqual([
+        { childSources: [], source: sourceRecord('customer:one') },
+        { childSources: [sourceRecord('contact:one')], preparation, source: sourceRecord('customer:one') },
+      ]);
+      return recorded.admissions.map(({ key }) => key);
+    });
+    const first = yield* prepare(attempt);
+    const retried = yield* prepare({ ...attempt, preparationId: '10000000-0000-4000-8000-000000000092' });
+    // Root admission is idempotent across attempts. A losing attempt's child cannot stand in for the winner's.
+    expect(first[0]).toBe(retried[0]);
+    expect(first[1]).not.toBe(retried[1]);
   }),
 );
 
@@ -418,7 +426,13 @@ it.effect('requires the exact post-permission preparation and rejects changed sc
     const job = yield* customerWithContact('customer:one');
     const intake = yield* projectSymmyCustomerIntake(scope, job);
     const actionInvocationId = '10000000-0000-4000-8000-000000000090';
-    const prepared = { actionInvocationId, intakeHash: computeCanonicalValueHash(intake), scope };
+    const prepared = {
+      actionInvocationId,
+      bindingCommitments: [],
+      intakeHash: computeCanonicalValueHash(intake),
+      preparationId: attempt.preparationId,
+      scope,
+    };
     const current = { actionInvocationId, intake, scope };
     expect(customerIntakePreparationMatches(prepared, current)).toBe(true);
     expect(customerIntakePreparationMatches(prepared, { ...current, actionInvocationId: itemId })).toBe(false);

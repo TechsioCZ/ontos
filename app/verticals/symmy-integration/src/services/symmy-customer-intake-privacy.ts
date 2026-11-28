@@ -361,8 +361,12 @@ const admitSubject = Effect.fn('SymmyCustomerIntakePrivacy.admitSubject')(functi
       idempotencyKey,
     },
   ).pipe(
-    Effect.asVoid,
-    Effect.catchIf(admissionAlreadyCommitted, () => Effect.void),
+    Effect.flatMap((receipt) =>
+      'bindingCommitments' in receipt ? Effect.succeed(receipt.bindingCommitments) : Effect.fail(unavailable()),
+    ),
+    Effect.catchIf(admissionAlreadyCommitted, () =>
+      payload.preparation === undefined ? Effect.succeed([]) : Effect.fail(unavailable()),
+    ),
     Effect.mapError((cause) =>
       Schema.is(AdmitSourceProcessingSubjectActionConflictProblemSchema)(cause) ||
       Schema.is(AdmitSourceProcessingSubjectActionIneligibleProblemSchema)(cause)
@@ -377,16 +381,22 @@ export interface SymmyCustomerIntakePrivacyCalls {
   readonly admit: (
     payload: AdmitSourceProcessingSubjectPayload,
     idempotencyKey: string,
-  ) => Effect.Effect<void, SymmyJobStoreError>;
+  ) => Effect.Effect<readonly string[], SymmyJobStoreError>;
   readonly check: (request: SourceProcessingEligibilityRequest) => Effect.Effect<void, SymmyJobStoreError>;
 }
+
+type Preparation = NonNullable<AdmitSourceProcessingSubjectPayload['preparation']>;
+const childSourcesOf = ({ payload }: Admission) =>
+  payload.membershipProfile === undefined ? payload.childSources : [payload.source];
+const hasChildren = ({ payload }: Admission) =>
+  payload.membershipProfile !== undefined || payload.childSources.length > 0;
 
 /**
  * The order that keeps a refused plan from leaving a binding behind:
  * 1. first contact creates or finds the Privacy subject of each customer record itself and binds no other record to it;
  * 2. Privacy checks every use of the plan, with the bindings of the plan only proposed;
- * 3. the immutable bindings (a contact, an address or a membership to its customer) are committed once every use is
- *    allowed. A replay of the job repeats the same admissions; a new job is a new use.
+ * 3. Privacy returns a preparation receipt for each group. It writes only nonexclusive candidates. Only the native
+ *    job transaction may consume those exact receipts, by opening its Core fence and committing the selection in its native result.
  */
 export const settleSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.settle')(function* settle(
   intake: {
@@ -394,6 +404,7 @@ export const settleSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.s
     readonly requests: readonly SourceProcessingEligibilityRequest[];
   },
   privacy: SymmyCustomerIntakePrivacyCalls,
+  preparation: Preparation,
 ) {
   yield* Effect.forEach(
     intake.admissions.filter(({ payload }) => payload.membershipProfile === undefined),
@@ -402,13 +413,24 @@ export const settleSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.s
     { concurrency: 1, discard: true },
   );
   yield* Effect.forEach(intake.requests, privacy.check, { concurrency: 1, discard: true });
-  return yield* Effect.forEach(
-    intake.admissions.filter(
-      ({ payload }) => payload.membershipProfile !== undefined || payload.childSources.length > 0,
-    ),
-    ({ occurrenceId, payload }) => privacy.admit(payload, `privacy-source-admission:${occurrenceId}:records`),
-    { concurrency: 1, discard: true },
+  const groups = yield* Effect.forEach(
+    intake.admissions.filter(hasChildren),
+    (group) =>
+      privacy
+        .admit(
+          { ...group.payload, preparation },
+          `privacy-source-admission:${preparation.preparationId}:${group.occurrenceId}`,
+        )
+        .pipe(
+          Effect.filterOrFail(
+            (commitments) => commitments.length === childSourcesOf(group).length,
+            () => unavailable(),
+          ),
+        ),
+    { concurrency: 1 },
   );
+  const commitments = groups.flat();
+  return new Set(commitments).size === commitments.length ? commitments : yield* unavailable();
 });
 
 const itemRequests = Effect.fn('SymmyCustomerIntakePrivacy.itemRequests')(function* itemRequests(
@@ -484,7 +506,9 @@ export const projectSymmyCustomerIntakeRequests = (scope: OperationalScope, plan
 /** A preparation belongs to this exact Core invocation; it never supplies a reusable Privacy allowance. */
 export interface SymmyCustomerIntakePreparation {
   readonly actionInvocationId: string;
+  readonly bindingCommitments: readonly string[];
   readonly intakeHash: string;
+  readonly preparationId: string;
   readonly scope: OperationalScope;
 }
 export const customerIntakePreparationMatches = (
@@ -510,7 +534,10 @@ export class SymmyPreparedCustomerIntake extends Context.Service<
       readonly actionInvocationId: string;
       readonly intake: Effect.Success<ReturnType<typeof projectSymmyCustomerIntake>>;
       readonly scope: OperationalScope;
-    }) => Effect.Effect<void, SymmyJobStoreError>;
+    }) => Effect.Effect<
+      Pick<SymmyCustomerIntakePreparation, 'bindingCommitments' | 'preparationId'>,
+      SymmyJobStoreError
+    >;
   }
 >()('@app/symmy-integration/services/symmy-customer-intake-privacy/SymmyPreparedCustomerIntake') {}
 
@@ -550,19 +577,25 @@ const customerIntakePrivacyCalls = Effect.fn('SymmyCustomerIntakePrivacy.calls')
 });
 
 /** Runs only in Core's post-permission, pre-transaction permit phase: nested Privacy Actions must not wait on the
- * Symmy write's tenant lock. Every proposed child binding is still committed only after all governing checks pass. */
+ * Symmy write's tenant lock. The preparations do not bind a child. */
 export const prepareSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakePrivacy.prepare')(function* prepare(
   scope: OperationalScope,
   plan: SymmyPinnedJobPlan,
+  preparation: Preparation,
 ) {
   const intake = yield* projectSymmyCustomerIntake(scope, plan);
   if (intake.requests.length > 0) {
     if (intake.admissions.length > 0) {
       yield* requireModuleOperation(customerIntakeAdmissionRequirement).pipe(Effect.mapError(unavailable));
     }
-    yield* settleSymmyCustomerIntake(intake, yield* customerIntakePrivacyCalls(scope));
+    const bindingCommitments = yield* settleSymmyCustomerIntake(
+      intake,
+      yield* customerIntakePrivacyCalls(scope),
+      preparation,
+    );
+    return { bindingCommitments, intake };
   }
-  return intake;
+  return { bindingCommitments: [], intake };
 });
 
 /** Rechecks Current Privacy inside Symmy's normal serialized write, but performs no nested write there. */
@@ -570,14 +603,57 @@ export const requireSymmyCustomerIntakePrivacy = Effect.fn('SymmyCustomerIntakeP
   function* requirePrivacy(scope: OperationalScope, plan: SymmyPinnedJobPlan, actionInvocationId: string) {
     const intake = yield* projectSymmyCustomerIntake(scope, plan);
     if (intake.requests.length === 0) {
-      return yield* Effect.void;
+      return Option.none();
     }
     const prepared = yield* Effect.serviceOption(SymmyPreparedCustomerIntake);
     if (Option.isNone(prepared)) {
       return yield* unavailable();
     }
-    yield* prepared.value.verify({ actionInvocationId, intake, scope });
+    const selected = yield* prepared.value.verify({ actionInvocationId, intake, scope });
     const privacy = yield* customerIntakePrivacyCalls(scope);
-    return yield* Effect.forEach(intake.requests, privacy.check, { concurrency: 1, discard: true });
+    // Privacy returns commitments in requested CHILD order. Each final Read proves that its precise source,
+    // subject and active grant produce that commitment; no extra assertion on the same attempt is selected.
+    const childSources = intake.admissions.flatMap(childSourcesOf);
+    const bySource = new Map(
+      childSources.map((source, i) => [computeCanonicalValueHash(source), selected.bindingCommitments[i]]),
+    );
+    if (bySource.size !== childSources.length || childSources.length !== selected.bindingCommitments.length) {
+      return yield* denied();
+    }
+    const confirmations = yield* Effect.forEach(
+      intake.requests,
+      Effect.fnUntraced(function* confirm(request) {
+        if (
+          !isPersonalUse(request) ||
+          (request.describedSubjectSource === undefined && request.source?.recordType !== 'CUSTOMER_GROUP_MEMBERSHIP')
+        ) {
+          yield* privacy.check(request);
+          return Option.none<string>();
+        }
+        if (request.source === null) {
+          return yield* denied();
+        }
+        const { occurrenceId: _occurrenceId, ...source } = request.source;
+        const bindingCommitment = bySource.get(computeCanonicalValueHash(source));
+        if (bindingCommitment === undefined) {
+          return yield* denied();
+        }
+        yield* privacy.check({
+          ...request,
+          preparation: { bindingCommitment, invocationId: actionInvocationId, preparationId: selected.preparationId },
+        });
+        return Option.some(bindingCommitment);
+      }),
+      { concurrency: 1 },
+    );
+    if (new Set(EffectArray.getSomes(confirmations)).size !== childSources.length) {
+      return yield* denied();
+    }
+    return intake.admissions.some(hasChildren)
+      ? Option.some({
+          sourceBindingCommitments: selected.bindingCommitments,
+          sourcePreparationId: selected.preparationId,
+        })
+      : Option.none();
   },
 );

@@ -4,6 +4,7 @@ import type {
   ActionRuntimeService,
 } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
+import { isSymmyCustomerIntakeRoute } from '../shared/domain/symmy-job-identities.ts';
 import { AdmitSymmyJobPayloadSchema } from '../shared/domain/symmy-job-admission.ts';
 import { admitSymmyJobAction } from '../src/actions/admit-symmy-job.action.ts';
 import { symmyJobOperationFactory } from '../src/auth/symmy-job-operation-factory.ts';
@@ -178,10 +179,17 @@ const prepareCustomerIntake = Effect.fn('SymmyCustomerIntake.prepareInvocation')
       }),
     )
     .pipe(Effect.mapError((cause) => (Schema.is(SymmyJobStoreError)(cause) ? cause : intakeUnavailable(cause))));
-  const intake = yield* prepareSymmyCustomerIntakePrivacy(source.scope, plan);
+  const crypto = yield* Crypto.Crypto;
+  const preparationId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(intakeUnavailable));
+  const { bindingCommitments, intake } = yield* prepareSymmyCustomerIntakePrivacy(source.scope, plan, {
+    invocationId: source.actionInvocationId,
+    preparationId,
+  });
   return {
     actionInvocationId: source.actionInvocationId,
+    bindingCommitments,
     intakeHash: computeCanonicalValueHash(intake),
+    preparationId,
     scope: source.scope,
   };
 });
@@ -223,7 +231,9 @@ const preparedCustomerIntake = (state: IntakePreparationState) =>
           if (Result.isFailure(result)) {
             return Effect.fail(result.failure);
           }
-          return customerIntakePreparationMatches(result.success, current) ? Effect.void : Effect.fail(intakeDenied());
+          return customerIntakePreparationMatches(result.success, current)
+            ? Effect.succeed(result.success)
+            : Effect.fail(intakeDenied());
         }),
       ),
   });
@@ -273,7 +283,7 @@ const customerIntakeActionRuntime = Layer.effect(
         const payload = Schema.decodeUnknownOption(AdmitSymmyJobPayloadSchema)(input.payload);
         return Object.is(input.registration, admitSymmyJobAction) &&
           Option.isSome(payload) &&
-          payload.value.routeKey === 'customersBatch'
+          isSymmyCustomerIntakeRoute(payload.value.routeKey)
           ? runPrepared(input)
           : base.runAction(input);
       },

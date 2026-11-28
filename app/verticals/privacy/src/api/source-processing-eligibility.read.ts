@@ -1073,7 +1073,10 @@ type ProfileOwnerRecord = (
  * membership is the one Commerce proves for the exact profile.
  */
 const resolveUseAdmission = Effect.fn('Privacy.resolveUseAdmission')(function* resolveAdmission(
-  authorizations: Pick<SourceProcessingAuthorizationRepositoryService, 'admission' | 'sourceSubjectId'>,
+  authorizations: Pick<
+    SourceProcessingAuthorizationRepositoryService,
+    'admission' | 'preparedSubject' | 'sourceSubjectId'
+  >,
   request: SourceProcessingEligibilityRequest,
   source: PrivacySourceRecordIdentity,
   profileOwnerRecord: ProfileOwnerRecord,
@@ -1082,7 +1085,6 @@ const resolveUseAdmission = Effect.fn('Privacy.resolveUseAdmission')(function* r
     .admission(source)
     .pipe(Effect.mapError(unavailable));
   const membershipProfile =
-    Option.isNone(committed) &&
     request.consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
     source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' &&
     isProfileTarget(request.target)
@@ -1101,6 +1103,14 @@ const resolveUseAdmission = Effect.fn('Privacy.resolveUseAdmission')(function* r
   const root = yield* authorizations.admission(described.value).pipe(Effect.mapError(unavailable));
   if (Option.isNone(root) || root.value.role !== 'SUBJECT') {
     return Option.none<UseAdmission>();
+  }
+  if (request.preparation !== undefined) {
+    const prepared = yield* authorizations
+      .preparedSubject(source, request.preparation)
+      .pipe(Effect.mapError(unavailable));
+    if (Option.isNone(prepared) || prepared.value !== root.value.subjectId) {
+      return Option.none<UseAdmission>();
+    }
   }
   if (Option.isSome(committed)) {
     // A committed binding is immutable: a use that describes another customer for the same record is refused.
@@ -1123,7 +1133,10 @@ const resolveUseAdmission = Effect.fn('Privacy.resolveUseAdmission')(function* r
 const resolveSourceSubject = Effect.fn('Privacy.resolveSourceSubject')(function* resolveSubject(
   transaction: SourceTransaction,
   scope: OperationalScope,
-  authorizations: Pick<SourceProcessingAuthorizationRepositoryService, 'admission' | 'sourceSubjectId'>,
+  authorizations: Pick<
+    SourceProcessingAuthorizationRepositoryService,
+    'admission' | 'preparedSubject' | 'sourceSubjectId'
+  >,
   request: SourceProcessingEligibilityRequest,
   targetAdmission: TargetAdmission,
   profileOwnerRecord: ProfileOwnerRecord,
