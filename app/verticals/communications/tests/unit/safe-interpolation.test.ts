@@ -55,8 +55,10 @@ const refusal = (result: Result.Result<RenderedMessage, RenderRefusal>): RenderR
   expect(Result.isFailure(result)).toBe(true);
   return Result.isFailure(result) ? result.failure : { code: 'contract_mismatch', placeholders: [] };
 };
-const omitting = (...names: string[]): Record<string, GenericValue> =>
-  Object.fromEntries(Object.entries(baseValues).filter(([name]) => !names.includes(name)));
+const omitting = (...names: string[]): Record<string, GenericValue> => {
+  const excluded = new Set(names);
+  return Object.fromEntries(Object.entries(baseValues).filter(([name]) => !excluded.has(name)));
+};
 
 const linkTo = (url: string) => render({ values: { portal_link: { kind: 'link', url } } });
 
