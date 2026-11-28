@@ -1,10 +1,11 @@
+import { sha256Bytes } from '@app/core-runtime/crypto/sha256';
 import { requireModuleOperation } from '@app/core-runtime';
 import { readVerifiedGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { executeSymmyJobPrivacyExecutionWithAuthorization } from '@app/symmy-integration/api/symmy-job-privacy-execution/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { Digest, SecureRandom } from 'effect/crypto';
+import { SecureRandom, WebCrypto } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -38,7 +39,6 @@ const symmyReceiptRequirement = 'privacy.core.requirement.symmy-owner-execution-
 
 export const fingerprintSymmyOwnerHandoff = Effect.fn('Privacy.SymmyOwnerReceipt.fingerprint')(function* fingerprint(
   handoff: PrivacyMeasureHandoff,
-  digest: Digest.Digest['Service'],
 ) {
   const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHandoffSchema))({
     ...handoff,
@@ -47,7 +47,11 @@ export const fingerprintSymmyOwnerHandoff = Effect.fn('Privacy.SymmyOwnerReceipt
     preconditionRefs: handoff.preconditionRefs.toSorted(),
     resourceRefs: handoff.resourceRefs.toSorted(),
   }).pipe(Effect.mapError(unavailable));
-  return Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(encoded)));
+  return Hex.encode(
+    yield* sha256Bytes(yield* WebCrypto.WebCrypto, new TextEncoder().encode(encoded), '5 seconds').pipe(
+      Effect.mapError(unavailable),
+    ),
+  );
 });
 interface ReceiptTransport {
   readonly authorization: Redacted.Redacted;
@@ -60,7 +64,6 @@ export const resolveSymmyOwnerExecutionReceipt = Effect.fn('Privacy.SymmyOwnerRe
   request: OwnerExecutionOutcomeRequest,
   context: OwnerExecutionAuthorityContext,
   transport: ReceiptTransport,
-  digest: Digest.Digest['Service'],
 ) {
   const { handoff, scope } = context;
   if (
@@ -84,7 +87,7 @@ export const resolveSymmyOwnerExecutionReceipt = Effect.fn('Privacy.SymmyOwnerRe
     return yield* unavailable();
   }
   const receipt = result.value;
-  if (receipt.handoffFingerprint !== (yield* fingerprintSymmyOwnerHandoff(handoff, digest))) {
+  if (receipt.handoffFingerprint !== (yield* fingerprintSymmyOwnerHandoff(handoff))) {
     return yield* conflict('Symmy receipt does not attest the exact complete Privacy handoff');
   }
   const authority = yield* Schema.decodeUnknownEffect(OwnerExecutionAuthorityResultSchema)({
@@ -110,7 +113,7 @@ export const SymmyOwnerExecutionAuthorityLive = Layer.effect(
   OwnerExecutionAuthority,
   Effect.gen(function* make() {
     const crypto = yield* SecureRandom.SecureRandom;
-    const digest = yield* Digest.Digest;
+
     return OwnerExecutionAuthority.of({
       resolve: Effect.fn('Privacy.SymmyOwnerExecutionAuthority.resolve')(function* resolve(request, context) {
         if (context.handoff.owningCapability !== 'integration.symmy') {
@@ -164,16 +167,11 @@ export const SymmyOwnerExecutionAuthorityLive = Layer.effect(
           },
           crypto,
         ).pipe(Effect.mapError(unavailable));
-        return yield* resolveSymmyOwnerExecutionReceipt(
-          request,
-          context,
-          {
-            authorization: Redacted.make(issued.authorization),
-            baseUrl: issued.apiBaseUrl,
-            compositionRevision: issued.compositionRevision,
-          },
-          digest,
-        );
+        return yield* resolveSymmyOwnerExecutionReceipt(request, context, {
+          authorization: Redacted.make(issued.authorization),
+          baseUrl: issued.apiBaseUrl,
+          compositionRevision: issued.compositionRevision,
+        });
       }),
     });
   }),

@@ -12,7 +12,7 @@ import {
   finalizationCallerMatches,
   pricingFinalizationOwnerGateways,
 } from '../../src/integrations/order-finalization-owner-gateways.ts';
-import { makeFinalCartCandidateWire } from './support/final-cart-candidate.fixture.ts';
+import { makeFinalCartCandidateWire } from '@app/commerce-cart-finalization-contracts/testing/final-cart-candidate';
 import { makeIssue788Binding, makeIssue788CommercialTotal } from './support/issue-788-confirmation.fixture.ts';
 import { makeOwnerTransport, ownerBearer, ownerTransportConfiguration } from './support/owner-transport.fixture.ts';
 

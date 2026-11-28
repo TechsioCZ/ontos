@@ -505,3 +505,23 @@ it.effect('refuses a nonempty upload with a typed outage before sending bytes if
     ),
   ),
 );
+
+it.effect('bounds a stalled payload hash independently of the provider request timeout', () =>
+  Effect.gen(function* stalledPayloadHash() {
+    const { requests, storage } = storageOn(configWith(), () => ok());
+    const fiber = yield* (yield* storage)
+      .put({ body: Stream.make(new Uint8Array([1])), contentType: 'a/b', key })
+      .pipe(Effect.flip, Effect.forkChild);
+    yield* TestClock.adjust(4999);
+    expect(fiber.pollUnsafe()).toBeUndefined();
+    yield* TestClock.adjust(1);
+    expect(fiber.pollUnsafe()).toBeDefined();
+    expect(yield* Fiber.join(fiber)).toBeInstanceOf(ObjectStorageServerError);
+    expect(requests).toEqual([]);
+  }).pipe(
+    Effect.provideService(
+      WebCrypto.WebCrypto,
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    ),
+  ),
+);

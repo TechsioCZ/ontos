@@ -64,3 +64,26 @@ it.effect('fails until the baseline is lowered after a disable is removed', () =
     }
   }),
 );
+
+it('tracks actual line-scoped Effect exemptions by rule and file, not comments in strings or positive diagnostic settings', () => {
+  const directive = [
+    '//',
+    '@effect-diagnostics-next-line',
+    'nodeBuiltinImport:off schemaNumber:error -- audited exception',
+  ].join(' ');
+  expect(
+    countLintSuppressions([
+      {
+        path: fixturePath,
+        source: [
+          directive,
+          "import path from 'node:path';",
+          directive,
+          "import fs from 'node:fs';",
+          `const example = ${JSON.stringify(directive)};`,
+        ].join('\n'),
+      },
+      { path: 'other.ts', source: directive },
+    ]),
+  ).toEqual({ 'effect-next-line/nodeBuiltinImport@fixture.ts': 2, 'effect-next-line/nodeBuiltinImport@other.ts': 1 });
+});

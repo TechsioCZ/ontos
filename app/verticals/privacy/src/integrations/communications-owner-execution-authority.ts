@@ -1,10 +1,11 @@
+import { sha256Bytes } from '@app/core-runtime/crypto/sha256';
 import { requireModuleOperation } from '@app/core-runtime';
 import { readVerifiedGatewayPrivacyDispatch } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { executePrivacyOwnerExecutionOutcomeWithAuthorization } from '@app/communications-contracts/privacy-owner-execution-outcome/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { Digest, SecureRandom } from 'effect/crypto';
+import { SecureRandom, WebCrypto } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 
 import {
@@ -43,10 +44,12 @@ const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(PrivacyMeasureHa
  * owner's receipt attests the handoff Privacy dispatched and not a caller's copy of it.
  */
 export const fingerprintCommunicationsOwnerHandoff = Effect.fn('Privacy.CommunicationsOwnerReceipt.fingerprint')(
-  function* fingerprint(handoff: PrivacyMeasureHandoff, crypto: Digest.Digest['Service']) {
+  function* fingerprint(handoff: PrivacyMeasureHandoff) {
     const encoded = yield* encodeHandoff(normalizePrivacyMeasureHandoff(handoff)).pipe(Effect.mapError(unavailable));
     return Hex.encode(
-      yield* crypto.digest(Digest.sha256, new TextEncoder().encode(encoded)).pipe(Effect.mapError(unavailable)),
+      yield* sha256Bytes(yield* WebCrypto.WebCrypto, new TextEncoder().encode(encoded), '5 seconds').pipe(
+        Effect.mapError(unavailable),
+      ),
     );
   },
 );
@@ -63,7 +66,6 @@ export const resolveCommunicationsOwnerExecutionReceipt = Effect.fn('Privacy.Com
     request: OwnerExecutionOutcomeRequest,
     context: OwnerExecutionAuthorityContext,
     transport: ReceiptTransport,
-    crypto: Digest.Digest['Service'],
   ) {
     const { handoff, scope } = context;
     if (
@@ -87,7 +89,7 @@ export const resolveCommunicationsOwnerExecutionReceipt = Effect.fn('Privacy.Com
       return yield* unavailable();
     }
     const receipt = result.value;
-    if (receipt.handoffFingerprint !== (yield* fingerprintCommunicationsOwnerHandoff(handoff, crypto))) {
+    if (receipt.handoffFingerprint !== (yield* fingerprintCommunicationsOwnerHandoff(handoff))) {
       return yield* conflict('Communications receipt does not attest the exact complete Privacy handoff');
     }
     const authority = yield* Schema.decodeUnknownEffect(OwnerExecutionAuthorityResultSchema)({
@@ -159,7 +161,7 @@ export const CommunicationsOwnerExecutionAuthorityLive = Layer.effect(
   OwnerExecutionAuthority,
   Effect.gen(function* make() {
     const crypto = yield* SecureRandom.SecureRandom;
-    const digest = yield* Digest.Digest;
+
     const otherOwners = yield* OwnerExecutionAuthority;
     return OwnerExecutionAuthority.of({
       resolve: Effect.fn('Privacy.CommunicationsOwnerExecutionAuthority.resolve')(function* resolve(request, context) {
@@ -189,16 +191,11 @@ export const CommunicationsOwnerExecutionAuthorityLive = Layer.effect(
           },
           crypto,
         ).pipe(Effect.mapError(unavailable));
-        return yield* resolveCommunicationsOwnerExecutionReceipt(
-          request,
-          context,
-          {
-            authorization: Redacted.make(issued.authorization),
-            baseUrl: issued.apiBaseUrl,
-            compositionRevision: issued.compositionRevision,
-          },
-          digest,
-        );
+        return yield* resolveCommunicationsOwnerExecutionReceipt(request, context, {
+          authorization: Redacted.make(issued.authorization),
+          baseUrl: issued.apiBaseUrl,
+          compositionRevision: issued.compositionRevision,
+        });
       }),
     });
   }),

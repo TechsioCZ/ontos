@@ -1,3 +1,6 @@
+import { TestClock } from 'effect/testing';
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { executeRecordOwnerExecutionOutcomeWithAuthorization } from '@app/privacy/api/client';
@@ -9,7 +12,7 @@ import {
 import { OwnerExecutionOutcomeSchema, PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { OwnerExecutionOutcome } from '@app/privacy/domain/privacy-measure-handoff';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Fiber, Layer, Option, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import { SymmyJobPrivacyExecutionReceiptSchema } from '../../shared/domain/symmy-job-privacy-execution.ts';
@@ -350,4 +353,20 @@ it.effect(
       expect(Schema.is(RecordOwnerExecutionOutcomeActionCommitIndeterminateProblemSchema)(uncertain)).toBe(true);
       expect(symmyJobPrivacyOutcomeAlreadyRecorded({ code: 'action_already_committed', status: 409 })).toBe(false);
     }),
+);
+
+it.effect('neither executes retention nor writes a report when the host cannot fingerprint the handoff', () =>
+  Effect.gen(function* noUnverifiedDispatch() {
+    const fixture = yield* harness;
+    for (const host of [
+      webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    ]) {
+      const fiber = yield* fixture.run().pipe(Effect.provide(WebCrypto.layer(host)), Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('5 seconds');
+      expect((yield* Fiber.join(fiber)).code).toBe('privacy_execution_unavailable');
+    }
+    expect(fixture.events).not.toContain('execute');
+    expect(fixture.reports).toEqual([]);
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );

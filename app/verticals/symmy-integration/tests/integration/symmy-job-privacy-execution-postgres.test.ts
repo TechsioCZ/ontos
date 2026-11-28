@@ -1,8 +1,14 @@
+import { SymmyJobPrivacyLive } from '../../src/services/symmy-job-privacy.service.ts';
+import { FetchHttpClient } from 'effect/http';
+import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
+import { symmyJobPrivacyExecutionService } from '../../src/services/symmy-job-privacy-execution.service.ts';
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { loadDatabaseConnectionPair, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { LegalEntityIdSchema } from '@app/core-runtime/access/ids';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
-import { NodeServices } from '@effect/platform-node';
+import { NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -381,4 +387,81 @@ it.effect('serializes an absent first receipt across two actual transactions bef
         .where(eq(symmyJobPrivacyExecutions.tenantId, state.scope.tenantId)),
     ).toHaveLength(1);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.effect('leaves the retained job and receipt tables untouched when execute or load cannot hash', () =>
+  Effect.gen(function* privacyDigestOutage() {
+    const state = yield* fixture;
+    const { tenantId } = state.governanceScope;
+    const resource = symmyJobResourceRef(state.jobId);
+    const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
+      contentScopeRefs: [symmyJobIntentContentRef(state.jobId)],
+      controllerObligationRef: null,
+      dispositionDecision: 'DELETE',
+      expectedEvidenceRefs: [],
+      idempotencyKey: 'outage-receipt',
+      kind: 'DELETE',
+      measureId: 'internal-measure',
+      owningCapability: 'integration.symmy',
+      preconditionRefs: [],
+      requestedAt: '2026-11-07T00:00:00.000Z',
+      requestedResult: 'Erase the operational job intent',
+      resourceRefs: [resource],
+      right: 'ERASURE',
+      sourceDecisionRef: 'internal-decision',
+      sourceDecisionRevision: 1,
+      subjectRef: 'internal-subject',
+      taskId: 'internal-task',
+      tenantId,
+    });
+    const retained = state.adminDb.select().from(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId));
+    const original = yield* retained;
+    expect(original).toHaveLength(1);
+    for (const host of [
+      webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    ]) {
+      yield* state.firstDb.transaction((tx) =>
+        Effect.gen(function* verifyHashBeforePersistence() {
+          const executor = yield* installOperationalScope(tx, state.governanceScope);
+          const services = yield* symmyJobPrivacyExecutionService(executor, state.governanceScope);
+          const fiber = yield* Effect.all(
+            {
+              execute: Effect.flip(services.execute(handoff, crypto.randomUUID())),
+              load: Effect.flip(services.load(handoff.idempotencyKey)),
+            },
+            { concurrency: 2 },
+          ).pipe(Effect.provide(WebCrypto.layer(host)), Effect.forkChild);
+          yield* TestClock.adjust('5 seconds');
+          const errors = yield* Fiber.join(fiber);
+          expect(errors.execute.code).toBe('privacy_execution_unavailable');
+          expect(errors.load.code).toBe('privacy_execution_unavailable');
+        }),
+      );
+    }
+    expect(yield* retained).toEqual(original);
+    expect(
+      yield* state.adminDb
+        .select()
+        .from(symmyJobRetentionTombstones)
+        .where(eq(symmyJobRetentionTombstones.tenantId, tenantId)),
+    ).toEqual([]);
+    expect(
+      yield* state.adminDb
+        .select()
+        .from(symmyJobPrivacyExecutions)
+        .where(eq(symmyJobPrivacyExecutions.tenantId, tenantId)),
+    ).toEqual([]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        SymmyJobPrivacyLive,
+        FetchHttpClient.layer,
+        NodeCrypto.layer,
+        NodeServices.layer,
+        Reactivity.layer,
+      ),
+    ),
+  ),
 );

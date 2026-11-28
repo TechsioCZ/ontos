@@ -213,7 +213,7 @@ const payloadDigest = (
 ): Effect.Effect<string, ObjectStorageFailure> =>
   bytes.byteLength === 0
     ? Effect.succeed(EMPTY_PAYLOAD_SHA256)
-    : sha256Bytes(crypto, bytes, Duration.infinity).pipe(
+    : sha256Bytes(crypto, bytes, '5 seconds').pipe(
         Effect.map(Hex.encode),
         Effect.catchTag('PlatformError', () => Effect.fail(serverError('The payload digest could not be computed'))),
       );

@@ -57,7 +57,7 @@ import {
 import { NodeCrypto, NodeHttpServer, NodeServices } from '@effect/platform-node';
 import { sql } from 'drizzle-orm';
 import { ConfigProvider, Context, DateTime, Deferred, Effect, Layer, Option, Redacted, Ref, Schema } from 'effect';
-import { Digest, SecureRandom } from 'effect/crypto';
+import { SecureRandom } from 'effect/crypto';
 import type { Exit } from 'effect';
 import { FetchHttpClient, HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http';
 import { NetAddress } from 'effect/net';
@@ -740,26 +740,22 @@ const servePushPeer = Effect.fnUntraced(function* servePushPeer(
 /** The REAL reporter, bound to this process's Crypto and HTTP client exactly as the worker host binds it. */
 const realPrivacyReporter = Effect.gen(function* bindRealPrivacyReporter() {
   const crypto = yield* SecureRandom.SecureRandom;
-  const digest = yield* Digest.Digest;
+
   const httpClient = Context.get(yield* Layer.build(FetchHttpClient.layer), HttpClient.HttpClient);
   const operations = yield* privacyMeasureReporterService();
   return PrivacyMeasureReporter.of({
     report: (handoff, attempt, context) =>
-      operations
-        .report(handoff, attempt, context)
-        .pipe(
-          Effect.provideService(SecureRandom.SecureRandom, crypto),
-          Effect.provideService(Digest.Digest, digest),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
+      operations.report(handoff, attempt, context).pipe(
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ),
     reportRecorded: (continuation, context) =>
-      operations
-        .reportRecorded(continuation, context)
-        .pipe(
-          Effect.provideService(SecureRandom.SecureRandom, crypto),
-          Effect.provideService(Digest.Digest, digest),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-        ),
+      operations.reportRecorded(continuation, context).pipe(
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+      ),
   });
 });
 

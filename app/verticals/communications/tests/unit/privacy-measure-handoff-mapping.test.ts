@@ -1,10 +1,14 @@
+import { recordPrivacyMeasureHandoff } from '../../src/services/privacy-measure-handoff-record.ts';
+import { TestClock } from 'effect/testing';
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { NodeCrypto } from '@effect/platform-node';
 import {
   PrivacyMeasureHandoffSchema,
   validateOwnerExecutionAuthorityResult,
 } from '@app/privacy-contracts/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy-contracts/domain/privacy-measure-handoff';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Fiber, PlatformError, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -339,3 +343,20 @@ describe("the owner's answer in Privacy's own Owner Execution Outcome vocabulary
     expect(accepted(rejected)).toBeUndefined();
   });
 });
+
+it.effect('never records a Communications receipt when the native handoff hash rejects or stalls', () =>
+  Effect.gen(function* unrecordedHandoff() {
+    for (const host of [
+      webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    ]) {
+      const fiber = yield* recordPrivacyMeasureHandoff(
+        { invoke: () => Effect.die('unexpected receipt write') },
+        handoffOf(),
+        'fictional-invocation',
+      ).pipe(Effect.provide(WebCrypto.layer(host)), Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('5 seconds');
+      expect(PlatformError.isPlatformError(yield* Fiber.join(fiber))).toBe(true);
+    }
+  }),
+);

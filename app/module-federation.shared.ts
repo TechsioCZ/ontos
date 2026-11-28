@@ -1,8 +1,8 @@
 /// <reference types="node" />
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Node federation config must enumerate kit exports synchronously; remove-when: its config factory can await FileSystem.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- owner: Shell federation; tracking: #1556. Node federation config must enumerate kit exports synchronously; remove-when: its config factory can await FileSystem.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Resolve platform-native paths alongside that synchronous filesystem scan; remove-when: the config receives an Effect Path service.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- owner: Shell federation; tracking: #1556. Resolve platform-native paths alongside that synchronous filesystem scan; remove-when: the config receives an Effect Path service.
 import path from 'node:path';
 
 import { sort } from 'effect/Array';

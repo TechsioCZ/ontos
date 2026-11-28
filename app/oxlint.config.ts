@@ -54,7 +54,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'apps/*/api/index.ts',
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
-        // Modern's native development middleware is a Connect-to-Effect adapter.
+        // Shared tooling, #1556: remove when Modern accepts an Effect-returning dev middleware.
         'packages/shared-contracts/tooling/modern-config.ts',
       ],
     },
@@ -82,7 +82,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'apps/*/api/index.ts',
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
-        // The development-server adapter owns its Node FileSystem layer.
+        // Shared tooling, #1556: remove when the dev server supplies the Node FileSystem layer.
         'packages/shared-contracts/tooling/modern-config.ts',
         'packages/core-runtime/src/db/client.ts',
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
@@ -122,7 +122,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
       seamPaths: [
         '**/http-error-seam.ts',
         '**/http-error-seam.tsx',
-        // Forward the development middleware's native Effect exit to Connect's error handler.
+        // Shared tooling, #1556: remove when the dev middleware no longer forwards native exits to Connect.
         'packages/shared-contracts/tooling/modern-config.ts',
         // CCC ingress transaction settlement: only native SqlError becomes typed unavailability;
         // every unrelated defect and caller interruption remains unchanged (#1231, approved boundary).
@@ -1333,6 +1333,7 @@ export default defineConfig({
       },
     },
     {
+      // Codesmith, #1556: remove when discovery no longer needs computed imports.
       // The Action HTTP generator runs unbundled on Node and loads the generated owner modules it inspects by
       // file URL; react-doctor's rule is advice for browser bundles, where a computed path defeats code splitting.
       files: ['scripts/scaffolding/action-http/scaffold.mts'],

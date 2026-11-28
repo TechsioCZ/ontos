@@ -1,6 +1,7 @@
-import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Redacted, Schema } from 'effect';
-import { Digest } from 'effect/crypto';
+import { TestClock } from 'effect/testing';
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
+import { Effect, Fiber, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -14,7 +15,6 @@ it.effect(
   'independently reads the exact historical Symmy outcome and rejects receipt and complete-scope substitution',
   () =>
     Effect.gen(function* exactSymmyOwnerReceipt() {
-      const crypto = yield* Digest.Digest;
       const tenantId = '75000000-0000-4000-8000-000000000001';
       const legalEntityId = '75000000-0000-4000-8000-000000000002';
       const principalId = '75000000-0000-4000-8000-000000000003';
@@ -57,7 +57,7 @@ it.effect(
       });
       const receipt = {
         actionInvocationId: '75000000-0000-4000-8000-000000000007',
-        handoffFingerprint: yield* fingerprintSymmyOwnerHandoff(fixture.handoff, crypto),
+        handoffFingerprint: yield* fingerprintSymmyOwnerHandoff(fixture.handoff),
         outcome,
       };
       let body = JSON.stringify(receipt);
@@ -77,10 +77,19 @@ it.effect(
         compositionRevision: 'a'.repeat(64),
       };
       const read = () =>
-        resolveSymmyOwnerExecutionReceipt(request, context, transport, crypto).pipe(
+        resolveSymmyOwnerExecutionReceipt(request, context, transport).pipe(
           Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
         );
       expect((yield* read()).outcome).toEqual(outcome);
+      for (const host of [
+        webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+        webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+      ]) {
+        const fiber = yield* read().pipe(Effect.provide(WebCrypto.layer(host)), Effect.flip, Effect.forkChild);
+        yield* TestClock.adjust('5 seconds');
+        const failure = yield* Fiber.join(fiber);
+        expect(failure.code).toBe('privacy_operation_persistence_unavailable');
+      }
       for (const changed of [
         { ...receipt, handoffFingerprint: 'b'.repeat(64) },
         { ...receipt, outcome: { ...outcome, attempt: 2 } },
@@ -95,5 +104,5 @@ it.effect(
       status = 503;
       body = '{}';
       expect((yield* Effect.flip(read())).code).toBe('privacy_operation_persistence_unavailable');
-    }).pipe(Effect.provide(NodeCrypto.layer)),
+    }),
 );
