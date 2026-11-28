@@ -1,7 +1,8 @@
 /// <reference types="node" />
-// @effect-diagnostics nodeBuiltinImport:off -- Module Federation requires synchronous filesystem discovery while loading its Node config; remove-when: its config factory supports an asynchronous Effect layer.
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Node federation config must enumerate kit exports synchronously; remove-when: its config factory can await FileSystem.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Resolve platform-native paths alongside that synchronous filesystem scan; remove-when: the config receives an Effect Path service.
 import path from 'node:path';
 
 import { sort } from 'effect/Array';
