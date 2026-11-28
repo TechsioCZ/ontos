@@ -1314,7 +1314,7 @@
     "sonarjs/no-mixed-completion-style": "deny",
     "sonarjs/no-mutate-reactive-state-in-updated-hook": "deny",
     "sonarjs/no-nested-assignment": "deny",
-    "sonarjs/no-nested-functions": "deny",
+    "sonarjs/no-nested-functions": ["deny", { "threshold": 4 }],
     "sonarjs/no-nested-incdec": "deny",
     "sonarjs/no-nested-switch": "deny",
     "sonarjs/no-nested-template-literals": "deny",
