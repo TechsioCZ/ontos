@@ -1324,3 +1324,75 @@ diff --git a/pg-core/session.d.ts b/pg-core/session.d.ts
 +export { PgReturningResult, PgBasePreparedQuery, PgQueryResultHKT, PgQueryResultKind, PgSession, PgTransactionConfig, PreparedQueryConfig };
  //# sourceMappingURL=session.d.ts.map
 \ No newline at end of file
+diff --git a/cockroach-core/query-builders/insert.d.ts b/cockroach-core/query-builders/insert.d.ts
+--- a/cockroach-core/query-builders/insert.d.ts
++++ b/cockroach-core/query-builders/insert.d.ts
+@@ -168,7 +168,7 @@
+   toSQL(): Query;
+   prepare(name?: string): CockroachInsertPrepare<this>;
+   private authToken?;
+-  execute: ReturnType<this['prepare']>['execute'];
++  execute: (placeholderValues?: Record<string, unknown>) => Promise<TReturning extends undefined ? CockroachQueryResultKind<TQueryResult, never> : TReturning[]>;
+   $dynamic(): CockroachInsertDynamic<this>;
+ }
+ //#endregion
+diff --git a/cockroach-core/query-builders/update.d.ts b/cockroach-core/query-builders/update.d.ts
+--- a/cockroach-core/query-builders/update.d.ts
++++ b/cockroach-core/query-builders/update.d.ts
+@@ -155,7 +155,7 @@
+   returning<TSelectedFields extends SelectedFields>(fields: TSelectedFields): CockroachUpdateReturning<this, TDynamic, TSelectedFields>;
+   toSQL(): Query;
+   prepare(name?: string): CockroachUpdatePrepare<this>;
+-  execute: ReturnType<this['prepare']>['execute'];
++  execute: (placeholderValues?: Record<string, unknown>) => Promise<TReturning extends undefined ? CockroachQueryResultKind<TQueryResult, never> : TReturning[]>;
+   $dynamic(): CockroachUpdateDynamic<this>;
+ }
+ //#endregion
+diff --git a/cockroach-core/query-builders/delete.d.ts b/cockroach-core/query-builders/delete.d.ts
+--- a/cockroach-core/query-builders/delete.d.ts
++++ b/cockroach-core/query-builders/delete.d.ts
+@@ -99,7 +99,7 @@
+   returning<TSelectedFields extends SelectedFieldsFlat>(fields: TSelectedFields): CockroachDeleteReturning<this, TDynamic, TSelectedFields>;
+   toSQL(): Query;
+   prepare(name: string): CockroachDeletePrepare<this>;
+-  execute: ReturnType<this['prepare']>['execute'];
++  execute: (placeholderValues?: Record<string, unknown>) => Promise<TReturning extends undefined ? CockroachQueryResultKind<TQueryResult, never> : TReturning[]>;
+   $dynamic(): CockroachDeleteDynamic<this>;
+ }
+ //#endregion
+diff --git a/cockroach-core/query-builders/insert.d.cts b/cockroach-core/query-builders/insert.d.cts
+--- a/cockroach-core/query-builders/insert.d.cts
++++ b/cockroach-core/query-builders/insert.d.cts
+@@ -168,7 +168,7 @@
+   toSQL(): Query;
+   prepare(name?: string): CockroachInsertPrepare<this>;
+   private authToken?;
+-  execute: ReturnType<this['prepare']>['execute'];
++  execute: (placeholderValues?: Record<string, unknown>) => Promise<TReturning extends undefined ? CockroachQueryResultKind<TQueryResult, never> : TReturning[]>;
+   $dynamic(): CockroachInsertDynamic<this>;
+ }
+ //#endregion
+diff --git a/cockroach-core/query-builders/update.d.cts b/cockroach-core/query-builders/update.d.cts
+--- a/cockroach-core/query-builders/update.d.cts
++++ b/cockroach-core/query-builders/update.d.cts
+@@ -155,7 +155,7 @@
+   returning<TSelectedFields extends SelectedFields>(fields: TSelectedFields): CockroachUpdateReturning<this, TDynamic, TSelectedFields>;
+   toSQL(): Query;
+   prepare(name?: string): CockroachUpdatePrepare<this>;
+-  execute: ReturnType<this['prepare']>['execute'];
++  execute: (placeholderValues?: Record<string, unknown>) => Promise<TReturning extends undefined ? CockroachQueryResultKind<TQueryResult, never> : TReturning[]>;
+   $dynamic(): CockroachUpdateDynamic<this>;
+ }
+ //#endregion
+diff --git a/cockroach-core/query-builders/delete.d.cts b/cockroach-core/query-builders/delete.d.cts
+--- a/cockroach-core/query-builders/delete.d.cts
++++ b/cockroach-core/query-builders/delete.d.cts
+@@ -99,7 +99,7 @@
+   returning<TSelectedFields extends SelectedFieldsFlat>(fields: TSelectedFields): CockroachDeleteReturning<this, TDynamic, TSelectedFields>;
+   toSQL(): Query;
+   prepare(name: string): CockroachDeletePrepare<this>;
+-  execute: ReturnType<this['prepare']>['execute'];
++  execute: (placeholderValues?: Record<string, unknown>) => Promise<TReturning extends undefined ? CockroachQueryResultKind<TQueryResult, never> : TReturning[]>;
+   $dynamic(): CockroachDeleteDynamic<this>;
+ }
+ //#endregion

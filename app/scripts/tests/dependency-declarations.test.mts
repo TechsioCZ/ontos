@@ -106,7 +106,7 @@ cockroachRole('invalid', { createRole: 1 });
         );
         expect(result.error).toBeUndefined();
         const diagnostics = result.stdout + result.stderr;
-        expect(result.status, diagnostics).toBe(errors === 0 ? 0 : 1);
+        expect(result.status, diagnostics).toBe(errors === 0 ? 0 : 2);
         expect(countDiagnostics(diagnostics, /error TS2322:/gu), diagnostics).toBe(errors);
         expect(countDiagnostics(diagnostics, /error TS\d+:/gu), diagnostics).toBe(errors);
       }
