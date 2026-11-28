@@ -137,7 +137,7 @@ export const Pill = ({
 };
 
 export const Dot = ({ tone }: { readonly tone: Tone }) => (
-  <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${palette[tone].accent}`} />
+  <span aria-hidden className={`inline-block size-8 shrink-0 rounded-full ${palette[tone].accent}`} />
 );
 
 // ---- Icons (inline SVG, Material Design paths) -------------------------------------------------------------------

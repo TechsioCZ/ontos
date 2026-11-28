@@ -33,7 +33,7 @@ const occupiedDayClass = 'bg-surface bg-linear-to-r from-fg-secondary/22 to-fg-s
 const reservedDayClass =
   'bg-[repeating-linear-gradient(135deg,var(--tw-gradient-from)_0_3px,transparent_3px_6px)] from-fg-secondary/16 font-semibold text-fg-primary';
 const freeDayClass = 'text-fg-secondary';
-const legendMarkClass = 'inline-grid size-6 place-items-center rounded-sm';
+const legendMarkClass = 'inline-grid h-6 w-6 place-items-center rounded-sm';
 const unitHeaderClass = 'sticky left-0 z-1 min-w-17 bg-surface px-0.5 py-1.5 text-left font-medium';
 const dayCellClass =
   'grid min-h-7.5 min-w-6.5 place-items-center rounded-sm no-underline hover:outline-1 hover:outline-fg-secondary';
