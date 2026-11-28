@@ -1519,9 +1519,25 @@ export const sourceProcessingAdmissions = privacySchema.table.withRLS(
     role: text('role').notNull(),
     sourceIdentityKey: text('source_identity_key').notNull(),
     sourceRecord: jsonb('source_record').notNull(),
+    symmyInvocationId: uuid('symmy_invocation_id'),
+    symmyPreparationId: uuid('symmy_preparation_id'),
+    symmyPrincipalId: uuid('symmy_principal_id'),
   },
   (table) => [
-    unique('privacy_source_admissions_source_uk').on(table.tenantId, table.legalEntityId, table.sourceIdentityKey),
+    uniqueIndex('privacy_source_admissions_source_uk')
+      .on(table.tenantId, table.legalEntityId, table.sourceIdentityKey)
+      .where(sql`${table.symmyInvocationId} is null`),
+    uniqueIndex('privacy_source_admissions_candidate_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.sourceIdentityKey,
+      table.symmyInvocationId,
+      table.symmyPreparationId,
+    ),
+    check(
+      'privacy_source_admissions_candidate_ck',
+      sql`(${table.role} = 'SUBJECT' and ${table.symmyInvocationId} is null and ${table.symmyPreparationId} is null and ${table.symmyPrincipalId} is null) or (${table.role} = 'CHILD' and ${table.symmyInvocationId} is not null and ${table.symmyPreparationId} is not null and ${table.symmyPrincipalId} is not null)`,
+    ),
     index('privacy_source_admissions_subject_idx').on(
       table.tenantId,
       table.legalEntityId,

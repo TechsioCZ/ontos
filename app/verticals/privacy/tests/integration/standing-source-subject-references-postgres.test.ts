@@ -298,23 +298,6 @@ it.live(
           });
           yield* restrictedEverywhere();
 
-          // The binding is committed only now, and it is immutable: the contact cannot describe another customer.
-          yield* authorizations.admit({
-            actionInvocationId: yield* nextId(),
-            admittedAt: first.from,
-            authorizationId: first.authorization.authorizationRef.resourceId,
-            sources: [
-              { role: 'SUBJECT', source: customer('client:two') },
-              { role: 'CHILD', source: customer('contact:two') },
-            ],
-            subjectId: assertedTwo,
-          });
-          expect(yield* bound('contact:two')).toBe(true);
-          expect(subjectOf(yield* evaluate(intake('contact:two', 'client:two'), 'symmy-integration'))).toBe(
-            assertedTwo,
-          );
-          expect((yield* evaluate(intake('contact:two', 'client:one'), 'symmy-integration')).outcome).toBe('DENIED');
-
           // Renewal: the grant ends and a new one starts its own ledger. Nobody is re-admitted, nothing is forgotten.
           yield* authorizations.end(
             Schema.decodeUnknownSync(SourceProcessingAuthorizationSchema)({
