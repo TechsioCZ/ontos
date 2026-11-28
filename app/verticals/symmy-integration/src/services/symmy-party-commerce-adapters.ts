@@ -1028,8 +1028,19 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
   const request = yield* Schema.decodeUnknownEffect(PartySourceEffectReceiptRequestSchema)({
     operation,
     payload: intent.payload,
-  });
-  const requestHash = yield* readRequestHash(PartySourceEffectReceiptRequestSchema, request);
+  }).pipe(
+    Effect.tapError((failure) =>
+      traceProfileStage('recovery-party-request-invalid', Schema.decodeUnknownOption(DiagnosticFailureSchema)(failure)),
+    ),
+  );
+  const requestHash = yield* readRequestHash(PartySourceEffectReceiptRequestSchema, request).pipe(
+    Effect.tapError((failure) =>
+      traceProfileStage(
+        'recovery-party-request-hash-invalid',
+        Schema.decodeUnknownOption(DiagnosticFailureSchema)(failure),
+      ),
+    ),
+  );
   const authorized = yield* freshRecoveryContext(
     crypto,
     input,
@@ -1037,6 +1048,13 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     party,
     'party.registry.api.party-source-effect-receipt',
     requestHash,
+  ).pipe(
+    Effect.tapError((failure) =>
+      traceProfileStage(
+        'recovery-party-authority-failed',
+        Schema.decodeUnknownOption(DiagnosticFailureSchema)(failure),
+      ),
+    ),
   );
   if (Option.isNone(authorized)) {
     return unavailableRecovery;
@@ -1047,8 +1065,13 @@ const recoverParty = Effect.fn('SymmyPartyCommerceAdapters.recoverParty')(functi
     context.authorization,
     context.requestCorrelation,
     context.options,
+  ).pipe(
+    Effect.tapError((failure) =>
+      traceProfileStage('recovery-party-read-failed', Schema.decodeUnknownOption(DiagnosticFailureSchema)(failure)),
+    ),
   );
   if (receipt.outcome !== 'COMMITTED' || receipt.operation !== operation) {
+    yield* traceProfileStage('recovery-party-receipt-not-exactly-committed');
     return unavailableRecovery;
   }
   yield* Match.value(receipt).pipe(
