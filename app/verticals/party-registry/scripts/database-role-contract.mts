@@ -434,17 +434,16 @@ const policyRowMismatches = (policy: PgPolicy, row: PolicyRow): readonly string[
   return mismatches;
 };
 
+const requestRoles: ReadonlySet<string> = new Set([PARTY_REGISTRY_REQUEST_IDENTITY.role]);
+
 /** The declared policy shape of one table: four request policies and one worker read policy on worker tables. */
-const declaredPolicyMismatches = (
+export const declaredPolicyMismatches = (
   qualifiedTable: string,
   expected: readonly PgPolicy[],
   workerTables: readonly string[],
 ): readonly string[] => {
   const mismatches: string[] = [];
-  const requestPolicies = expected.filter((policy) =>
-    // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Party #1556: each policy supplies a different target list, searched only once. Remove with loop-invariant receiver detection.
-    policyRoles(policy.to).includes(PARTY_REGISTRY_REQUEST_IDENTITY.role),
-  );
+  const requestPolicies = expected.filter((policy) => policyRoles(policy.to).some((role) => requestRoles.has(role)));
   if (requestPolicies.length !== 4) {
     mismatches.push(`${qualifiedTable} declares ${requestPolicies.length} request policies, expected 4`);
   }

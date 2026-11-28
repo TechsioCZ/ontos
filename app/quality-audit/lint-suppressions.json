@@ -73,7 +73,6 @@
     "promise/prefer-await-to-then": 4,
     "react-doctor/js-cache-property-access": 1,
     "react-doctor/js-combine-iterations": 1,
-    "react-doctor/js-set-map-lookups": 4,
     "sonarjs/no-built-in-override": 1,
     "sonarjs/no-duplicate-string": 16,
     "sonarjs/no-nested-functions": 37,

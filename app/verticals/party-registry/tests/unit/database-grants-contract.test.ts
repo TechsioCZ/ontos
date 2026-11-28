@@ -1,5 +1,5 @@
-import { ACCESS_DECISION_REQUEST_GRANTS } from '@app/core-runtime';
-import { getTableConfig } from 'drizzle-orm/pg-core';
+import { ACCESS_DECISION_REQUEST_GRANTS, PARTY_REGISTRY_REQUEST_IDENTITY } from '@app/core-runtime';
+import { getTableConfig, pgPolicy } from 'drizzle-orm/pg-core';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -9,6 +9,24 @@ import {
 import { CONTACTS_SCHEMA_NAME, CONTACTS_TABLES } from '../../src/db/engagement-schema.ts';
 import { PARTY_SCHEMA_NAME, PARTY_TABLES } from '../../src/db/schema.ts';
 import { partyRegistryManifest } from '../../vertical.manifest.ts';
+
+import { declaredPolicyMismatches } from '../../scripts/database-role-contract.mts';
+
+it('counts each policy that targets the request role exactly once', () => {
+  const request = PARTY_REGISTRY_REQUEST_IDENTITY.role;
+  const policies = [
+    pgPolicy('a', { to: request }),
+    pgPolicy('b', { to: [request, request] }),
+    pgPolicy('c', { to: ['public', request] }),
+    pgPolicy('d', { to: request }),
+    pgPolicy('other', { to: 'public' }),
+  ];
+  const table = 'party.example';
+  expect(declaredPolicyMismatches(table, policies, [])).toEqual([]);
+  expect(declaredPolicyMismatches(table, policies.slice(1), [])).toEqual([
+    'party.example declares 3 request policies, expected 4',
+  ]);
+});
 
 const qualifiedName = (table: (typeof PARTY_TABLES)[number] | (typeof CONTACTS_TABLES)[number]): string => {
   const config = getTableConfig(table);

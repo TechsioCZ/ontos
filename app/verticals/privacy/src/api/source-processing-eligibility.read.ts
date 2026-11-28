@@ -828,7 +828,7 @@ const verifiedProfileSubject = Effect.fn('Privacy.verifiedProfileSubject')(funct
   subject: PrivacySubjectRecord,
   scope: OperationalScope,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
-  crypto: SecureRandom.SecureRandom,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
   // The person's own source record is known before Commerce is asked, so Commerce proves that exact binding and a
   // second record of the same person on the profile cannot make the proof ambiguous.
@@ -978,7 +978,7 @@ const verifyStandingSubject = Effect.fn('Privacy.verifyStandingSubject')(functio
   subject: PrivacySubjectRecord,
   request: SourceProcessingEligibilityRequest,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
-  crypto: SecureRandom.SecureRandom,
+  crypto: SecureRandom.SecureRandom['Service'],
   targetAdmission: TargetAdmission,
 ) {
   // A first-contact customer has no reconciled Data Subject yet. Party attests, from its own committed receipt, that
@@ -1020,7 +1020,7 @@ const sourceSubjectExists = Effect.fn('Privacy.sourceSubjectExists')(function* s
   subjectRef: string,
   request: SourceProcessingEligibilityRequest,
   repository: Pick<PrivacyOperationRepositoryService, 'resolveSourceSubjectReference'>,
-  crypto: SecureRandom.SecureRandom,
+  crypto: SecureRandom.SecureRandom['Service'],
   targetAdmission: TargetAdmission,
   admittedAs?: ResolvedSourceSubject['admittedAs'],
 ) {

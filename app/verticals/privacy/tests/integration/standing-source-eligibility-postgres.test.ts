@@ -1,7 +1,8 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import {
   evaluateSourceProcessingEligibility,
@@ -52,8 +53,8 @@ it.live('checks standing source-route authorization against the native Privacy l
         scope: PrivacyLedgerScope,
       ) => Effect.Effect<Value, Failure, Requirements>,
     ) => inPrivacyLedger(ledgerScope, (transaction) => body(transaction, ledgerScope));
-    const crypto = yield* Crypto.Crypto;
-    const nextId = () => crypto.randomUUIDv4();
+    const crypto = yield* SecureRandom.SecureRandom;
+    const nextId = () => crypto.uuidV4();
     const { principalId, tenantId } = ledgerScope;
     const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(ledgerScope.legalEntityId));
     const subjectRefOfTenant = subjectRefOf(tenantId);

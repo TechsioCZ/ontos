@@ -53,7 +53,6 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import {
   Context,
-  Crypto,
   Effect,
   Layer,
   Layer as GovernedReadLayer,
@@ -66,6 +65,7 @@ import {
   Schema,
   Tracer,
 } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -179,8 +179,8 @@ const prepareCustomerIntake = Effect.fn('SymmyCustomerIntake.prepareInvocation')
       }),
     )
     .pipe(Effect.mapError((cause) => (Schema.is(SymmyJobStoreError)(cause) ? cause : intakeUnavailable(cause))));
-  const crypto = yield* Crypto.Crypto;
-  const preparationId = yield* crypto.randomUUIDv4().pipe(Effect.mapError(intakeUnavailable));
+  const crypto = yield* SecureRandom.SecureRandom;
+  const preparationId = yield* crypto.uuidV4();
   const { bindingCommitments, intake } = yield* prepareSymmyCustomerIntakePrivacy(source.scope, plan, {
     invocationId: source.actionInvocationId,
     preparationId,
@@ -198,9 +198,9 @@ const customerIntakePreflight = Effect.fn('SymmyCustomerIntake.preflight')(funct
   state: IntakePreparationState,
 ) {
   const database = yield* ActionAuthorizationPreflightDatabase;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* SecureRandom.SecureRandom;
   const dependencies = Context.make(ActionAuthorizationPreflightDatabase, database).pipe(
-    Context.add(Crypto.Crypto, crypto),
+    Context.add(SecureRandom.SecureRandom, crypto),
   );
   const preflight: ActionAuthorizationPreflightService = {
     prepare: (source) => {
@@ -246,10 +246,14 @@ const customerIntakeActionRuntime = Layer.effect(
     const baseContext = yield* Layer.build(governedActionRuntimeCoreLive);
     const base = Context.get(baseContext, ActionRuntime);
     const configuration = yield* DatabaseConfig;
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     // Select only dependencies: capturing Effect.context would also retain the server's resource Scope.
-    const dependencies = Context.make(DatabaseConfig, configuration).pipe(Context.add(Crypto.Crypto, crypto));
-    const preparationDependencies = yield* Effect.context<ActionAuthorizationPreflightDatabase | Crypto.Crypto>();
+    const dependencies = Context.make(DatabaseConfig, configuration).pipe(
+      Context.add(SecureRandom.SecureRandom, crypto),
+    );
+    const preparationDependencies = yield* Effect.context<
+      ActionAuthorizationPreflightDatabase | SecureRandom.SecureRandom
+    >();
     const runPrepared: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
         Effect.gen(function* preparedRun() {

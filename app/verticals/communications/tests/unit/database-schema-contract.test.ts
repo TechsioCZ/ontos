@@ -8,6 +8,17 @@ import {
   COMMUNICATIONS_TABLES,
 } from '../../src/database/schema.ts';
 
+import { matchesHistoryConstraint } from '../../src/database/history-constraint.ts';
+
+it('checks every literal SQL fragment and keeps exact constraints exact', () => {
+  const digest = '[0-9a-f]{64}';
+  const definition = "CHECK ((fingerprint ~ '[0-9a-f]{64}'))";
+  expect(matchesHistoryConstraint(definition, undefined, [digest, 'fingerprint'])).toBe(true);
+  expect(matchesHistoryConstraint(definition, undefined, [digest, 'missing'])).toBe(false);
+  expect(matchesHistoryConstraint(definition, digest)).toBe(false);
+  expect(matchesHistoryConstraint(definition, definition)).toBe(true);
+});
+
 const configs = COMMUNICATIONS_TABLES.map((table) => getTableConfig(table));
 
 describe('Communications database schema contract', () => {

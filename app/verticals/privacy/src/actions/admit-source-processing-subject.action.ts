@@ -3,7 +3,8 @@
 // @ontos-action-slug admit-source-processing-subject
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { Crypto, DateTime, Effect, Option } from 'effect';
+import { DateTime, Effect, Option } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 
 import {
   AdmitSourceProcessingSubjectPayloadSchema,
@@ -207,7 +208,7 @@ export const admitSourceProcessingSubjectAction = defineAction(
   },
   handleAdmitSourceProcessingSubject,
   Effect.fn('AdmitSourceProcessingSubjectAction.services')(function* makeServices(transaction, scope) {
-    const crypto = yield* Crypto.Crypto;
+    const crypto = yield* SecureRandom.SecureRandom;
     const { authorizations, operations } = yield* Effect.all(
       {
         authorizations: sourceProcessingAuthorizationRepositoryForScope(transaction, scope),
@@ -218,18 +219,7 @@ export const admitSourceProcessingSubjectAction = defineAction(
     return {
       authorizations,
       createSubject: operations.createSubject,
-      nextSubjectId: crypto.randomUUIDv4().pipe(
-        Effect.mapError((cause) =>
-          Object.defineProperty(
-            new PrivacyOperationPersistenceError({
-              code: 'privacy_operation_persistence_unavailable',
-              reason: 'A Privacy subject identity could not be issued',
-            }),
-            'cause',
-            { configurable: true, value: cause },
-          ),
-        ),
-      ),
+      nextSubjectId: crypto.uuidV4(),
       profileSource: (target: ProfileTarget) =>
         readProfileSubject(scope, target, 'privacy.core.requirement.admit-profile-subject', crypto).pipe(
           Effect.map(

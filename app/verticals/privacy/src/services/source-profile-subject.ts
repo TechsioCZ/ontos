@@ -12,7 +12,7 @@ import {
   SourceProfileSubjectResponseSchema,
 } from '@app/commerce-customer-context/api/source-profile-subject';
 import { Effect, Option, Schema } from 'effect';
-import type { Crypto } from 'effect';
+import type { SecureRandom } from 'effect/crypto';
 
 import { privacySourceSubjectIdentityKey } from '../../shared/domain/privacy-subject.ts';
 import type { PrivacySourceRecordIdentity } from '../../shared/domain/privacy-subject.ts';
@@ -33,7 +33,7 @@ export const readProfileSubject = Effect.fn('Privacy.readProfileSubject')(functi
   requirement:
     | 'privacy.core.requirement.source-processing-profile-subject'
     | 'privacy.core.requirement.admit-profile-subject',
-  crypto: Crypto.Crypto,
+  crypto: SecureRandom.SecureRandom['Service'],
   personRecord?: PrivacySourceRecordIdentity,
 ) {
   yield* requireModuleOperation(requirement);

@@ -1,7 +1,8 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, Effect, Layer, Option, Schema } from 'effect';
+import { Effect, Layer, Option, Schema } from 'effect';
+import { SecureRandom } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 
 import { SourceProcessingEligibilityRequestSchema } from '@app/privacy-contracts/source-processing-eligibility';
@@ -55,8 +56,8 @@ it.live(
   'keeps a restriction across both subject references and a renewal, and commits no binding by evaluating a use',
   () =>
     Effect.gen(function* subjectReferences() {
-      const crypto = yield* Crypto.Crypto;
-      const nextId = () => crypto.randomUUIDv4();
+      const crypto = yield* SecureRandom.SecureRandom;
+      const nextId = () => crypto.uuidV4();
       const scope = yield* freshPrivacyLedgerScope('api_key');
       const { principalId, tenantId } = scope;
       const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
