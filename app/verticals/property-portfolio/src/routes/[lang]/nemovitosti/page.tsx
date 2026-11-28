@@ -8,29 +8,42 @@ import { useBlocker, useNavigate, useRouterState } from '@modern-js/plugin-tanst
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Result, Schema } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
 import { useEffect, useEffectEvent, useId, useRef, useState, useSyncExternalStore } from 'react';
-import { Combobox, FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
+import {
+  CheckboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import {
   savePropertyEdit,
+  createRecordForm,
   currentEditDraft,
+  draftOfValues,
   editCommandOf,
+  editRecordForm,
   editUnchangedSince,
+  emptyRecordValues,
   propertyDraftErrors,
+  recordValuesOf,
   responsibleSelection,
   sameEditDraft,
+  sameRecordValues,
   usePropertyEditor,
-  withLifecycle,
-  withResponsibleEmployees,
-  withTextField,
 } from './use-property-editor.ts';
-import type { PropertyDraft } from './use-property-editor.ts';
+import type { PropertyDraft, RecordForm } from './use-property-editor.ts';
 import { ResponsibleEmployeesField } from './responsible-employees-field.tsx';
 import {
   DocumentTitle,
   SaveBar,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   useHeldSnapshot,
   useRecordDraft,
@@ -41,7 +54,7 @@ import type { PropertyCommand } from '../../../../shared/actions/apply-command.t
 import { UnitStory, pragueToday } from './unit-story.tsx';
 import type { LeaseBlock } from './unit-story.tsx';
 import type { RecordsResponse } from '../../../../shared/apis/records';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/property-portfolio.json';
 import enResource from '../../../../locales/en/property-portfolio.json';
@@ -59,7 +72,6 @@ import type { PropertySearch, PropertyTab } from './property-navigation.ts';
 import { PropertyWorkspace } from './property-workspace.tsx';
 import csWorkspace from '../../../../locales/cs/property-workspace.json';
 import enWorkspace from '../../../../locales/en/property-workspace.json';
-import '../../index.css';
 import {
   propertyRecords,
   recordsInput,
@@ -290,10 +302,10 @@ const usePropertyRecords = (input: RecordsInput) => {
     work,
   };
 };
-const secondaryTextClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
-const relatedCardClass = 'propertyportfolio:min-w-0 space-y-250';
-const detailHeadingClass = 'propertyportfolio:font-semibold';
-const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
+const secondaryTextClass = 'text-sm text-fg-secondary';
+const relatedCardClass = 'min-w-0 space-y-250';
+const detailHeadingClass = 'font-semibold';
+const tableWrapperClass = 'min-w-0 overflow-x-auto';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
 type RecordsModel = ReturnType<typeof usePropertyRecords>;
@@ -312,6 +324,14 @@ interface RecordConfirmation {
   readonly onConfirm: (reason: string) => void;
   readonly title: string;
 }
+/** Why a record is archived; the confirmation sends it, Enter in the field confirms like the button. */
+const archiveReasonForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const archiveReasonField = archiveReasonForm.getFieldAtoms(archiveReasonForm.fields.reason);
+
 const RecordsConfirmation = ({
   onClose,
   request,
@@ -321,8 +341,9 @@ const RecordsConfirmation = ({
   readonly request: RecordConfirmation;
   readonly view: RecordsView;
 }) => {
-  const { key, t } = view.model;
-  const [reason, setReason] = useState(request.initialReason ?? '');
+  const { key, language, t } = view.model;
+  const initialReason = request.initialReason ?? '';
+  const reason = Option.getOrElse(useAtomValue(archiveReasonField.value), () => initialReason);
   const needsReason = request.initialReason !== undefined;
   const confirm = () => {
     if (view.editor.busy || (needsReason && reason.trim() === '')) {
@@ -331,6 +352,15 @@ const RecordsConfirmation = ({
     request.onConfirm(reason.trim());
     onClose();
   };
+  useAtomSubscribe(
+    archiveReasonForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        confirm();
+      }
+    },
+    { immediate: false },
+  );
   return (
     <Dialog
       actions={
@@ -362,20 +392,18 @@ const RecordsConfirmation = ({
       title={request.title}
     >
       {needsReason && (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            confirm();
-          }}
+        <FormRoot
+          defaultValues={{ reason: initialReason }}
+          form={archiveReasonForm}
+          translateMessage={(message) => t(message)}
         >
-          <FormInput
+          <archiveReasonForm.reason
             id="record-archive-reason"
             label={t(`${key}.editor.archiveReason`)}
-            onChange={(event) => setReason(event.target.value)}
             required
-            value={reason}
+            requiredLabel={requiredLabelFor(language)}
           />
-        </form>
+        </FormRoot>
       )}
     </Dialog>
   );
@@ -399,24 +427,15 @@ interface EditorFieldsProps {
   readonly draft: PropertyDraft;
   readonly errors: PropertyEditor['errors'];
   readonly fields: PropertyEditor['fields'];
+  /** The form that holds the values of `draft`. */
+  readonly form: RecordForm;
   readonly model: RecordsModel;
-  readonly onEmployees: (value: string | string[]) => void;
-  readonly onLifecycle: (value: string) => void;
-  readonly onText: (field: Exclude<PropertyEditor['fields'][number], 'responsibleEmployeeIds'>, value: string) => void;
 }
 
 /** The fields of a building or unit, shared by the create dialog and the edit dialog. */
-const RecordsEditorFields = ({
-  disabled,
-  draft,
-  errors,
-  fields,
-  model,
-  onEmployees,
-  onLifecycle,
-  onText,
-}: EditorFieldsProps) => {
-  const { key, t } = model;
+const RecordsEditorFields = ({ disabled, draft, errors, fields, form, model }: EditorFieldsProps) => {
+  const { key, language, t } = model;
+  const requiredLabel = requiredLabelFor(language);
   const propertyDraft = draft.unitFor === undefined && draft.unit === undefined;
   return (
     <>
@@ -430,53 +449,47 @@ const RecordsEditorFields = ({
                 loading: t(`${key}.editor.employeesLoading`),
                 placeholder: t(`${key}.editor.employeesPlaceholder`),
                 required: t(`${key}.editor.responsibleRequired`),
+                requiredLabel,
                 retry: t(`${key}.editor.employeesRetry`),
                 unavailable: t(`${key}.editor.employeeUnknown`),
               }}
               disabled={disabled}
               error={model.employeesMessage}
+              form={form}
               invalid={errors.responsibleEmployeeIds !== undefined}
               key={field}
               loading={model.recordsLoading}
-              onChange={onEmployees}
               onRetry={() => model.refresh()}
               selection={responsibleSelection(draft, model.employees)}
             />
           );
         }
         if (field === 'note') {
-          return (
-            <FormTextarea
-              disabled={disabled}
-              id="property-note"
-              key={field}
-              label={t(`${key}.editor.note`)}
-              onChange={(event) => onText('note', event.target.value)}
-              value={draft.note}
-            />
-          );
+          return <form.note disabled={disabled} id="property-note" key={field} label={t(`${key}.editor.note`)} />;
         }
         return (
-          <FormInput
+          <form.text
             disabled={disabled || (field === 'code' && draft.property !== undefined)}
+            entry={field}
             id={`property-${field}`}
             key={field}
             label={t(`${key}.editor.${field}`)}
-            onChange={(event) => onText(field, event.target.value)}
             required
-            value={draft[field]}
+            requiredLabel={requiredLabel}
             {...(errors[field] === undefined
               ? {}
               : {
                   helpText: t(`${key}.editor.${errors[field]}`, { field: t(`${key}.editor.${field}`) }),
-                  validateStatus: 'error' as const,
+                  invalid: true,
                 })}
           />
         );
       })}
       {propertyDraft && (
-        <Combobox
+        <form.lifecycleState
           allowCustomValue={false}
+          // A building always has a state: there is no empty choice to clear to.
+          clearable={false}
           disabled={disabled}
           id="property-lifecycle"
           items={(['PLANNED', 'ACTIVE', 'INACTIVE', 'DISPOSED'] as const).map((value) => ({
@@ -484,8 +497,6 @@ const RecordsEditorFields = ({
             value,
           }))}
           label={t(`${key}.state`)}
-          onChange={(value) => onLifecycle(Array.isArray(value) ? (value[0] ?? '') : value)}
-          value={[draft.lifecycleState]}
         />
       )}
     </>
@@ -534,6 +545,36 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
     }
   }, [base, server, settledOnServer]);
   const { draft } = record;
+  const values = useAtomValue(editRecordForm.values);
+  const setValues = useAtomSet(editRecordForm.setValues);
+  // Typing changes the form; the draft follows it, so the save bar and the leave question see every change.
+  useAtomSubscribe(
+    editRecordForm.values,
+    (next) => {
+      if (Option.isSome(next)) {
+        record.setDraft((current) => draftOfValues(current, next.value));
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also changes without typing (a newer server version taken, Zahodit změny, Načíst aktuální verzi): the
+  // form then shows it.
+  const shown = recordValuesOf(draft);
+  useEffect(() => {
+    if (Option.isSome(values) && !sameRecordValues(values.value, shown)) {
+      setValues(shown);
+    }
+  }, [setValues, shown, values]);
+  // Enter in the form is Uložit.
+  useAtomSubscribe(
+    editRecordForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        record.save();
+      }
+    },
+    { immediate: false },
+  );
   const labels = saveLabelsFor(language);
   // Router navigation asks the same question as every other way out; the guard owns the closing-tab prompt.
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
@@ -565,25 +606,21 @@ const RecordsEditPanel = ({ base: opened, view }: { readonly base: PropertyDraft
         name: draft.unit?.name ?? draft.property?.name ?? '',
       })}
     >
-      <form
-        className="propertyportfolio:grid gap-250"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          record.save();
-        }}
+      <FormRoot
+        className="grid gap-250"
+        defaultValues={shown}
+        form={editRecordForm}
+        translateMessage={(message) => t(message)}
       >
         <RecordsEditorFields
           disabled={false}
           draft={draft}
           errors={propertyDraftErrors(draft, records)}
           fields={isUnit ? unitFields : propertyFields}
+          form={editRecordForm}
           model={model}
-          onEmployees={(value) => record.setDraft((current) => withResponsibleEmployees(current, value))}
-          onLifecycle={(value) => record.setDraft((current) => withLifecycle(current, value))}
-          onText={(field, value) => record.setDraft((current) => withTextField(current, field, value))}
         />
-      </form>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </Dialog>
   );
@@ -602,6 +639,16 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
     withResolver: true,
   });
   const createGuard = useUnsavedChangesGuard({ draft: create, navigation: createBlocker, onDiscard: editor.cancel });
+  // Enter in the form is the dialog's Uložit.
+  useAtomSubscribe(
+    createRecordForm.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        editor.createDraft.save();
+      }
+    },
+    { immediate: false },
+  );
   if (editing !== undefined) {
     return (
       <RecordsEditPanel
@@ -646,26 +693,22 @@ const RecordsEditorForm = ({ view }: { readonly view: RecordsView }) => {
           : t(`${key}.editor.createUnitIn`, { name: draft.unitFor.name })
       }
     >
-      <form
-        className="propertyportfolio:grid gap-250"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          editor.createDraft.save();
-        }}
+      <FormRoot
+        className="grid gap-250"
+        defaultValues={emptyRecordValues}
+        form={createRecordForm}
+        translateMessage={(message) => t(message)}
       >
         <RecordsEditorFields
           disabled={editor.busy}
           draft={draft}
           errors={editor.errors}
           fields={editor.fields}
+          form={createRecordForm}
           model={model}
-          onEmployees={(value) => editor.changeResponsibleEmployees(value)}
-          onLifecycle={(value) => editor.changeLifecycle(value)}
-          onText={(field, value) => editor.change(field, value)}
         />
         {editor.feedback !== undefined && <output>{t(`${key}.editor.${editor.feedback}`)}</output>}
-      </form>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={createGuard.prompt} />
     </Dialog>
   );
@@ -692,7 +735,7 @@ const RecordsTables = ({ kind, view }: { readonly kind: 'units' | 'assets'; read
   return (
     <div className={tableWrapperClass}>
       <Table appearance="line" size="sm">
-        <Table.Caption className="propertyportfolio:sr-only">{t(`${key}.${kind}`)}</Table.Caption>
+        <Table.Caption className="sr-only">{t(`${key}.${kind}`)}</Table.Caption>
         <Table.Header>
           <Table.Row>
             {['code', 'name', 'state', 'detail'].map((column) => (
@@ -869,10 +912,10 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
   return (
     <div className="space-y-200">
       <DocumentTitle title={name} />
-      <h2 className="propertyportfolio:text-xl propertyportfolio:font-semibold">{name}</h2>
+      <h2 className="text-xl font-semibold">{name}</h2>
       <p className={secondaryTextClass}>{unit === undefined ? property.address : unit.code}</p>
       {unit === undefined ? (
-        <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">
+        <dl className="grid gap-200 sm:grid-cols-2">
           <div>
             <dt className={secondaryTextClass}>{t(`${key}.editor.propertyType`)}</dt>
             <dd>{property.propertyType ?? t(`${key}.notProvided`)}</dd>
@@ -893,7 +936,7 @@ const RecordsMetadata = ({ view }: { readonly view: RecordsView }) => {
           </div>
         </dl>
       ) : (
-        <dl className="propertyportfolio:grid gap-200 propertyportfolio:sm:grid-cols-2">
+        <dl className="grid gap-200 sm:grid-cols-2">
           <div>
             <dt className={secondaryTextClass}>{t(`${key}.kind`)}</dt>
             <dd>{unit.unitKind ?? t(`${key}.notProvided`)}</dd>
@@ -1089,29 +1132,60 @@ const RecordsTabContent = ({ tab, view }: { readonly tab: PropertyTab; readonly 
   );
 };
 
+/** What the register lists besides active records; the address holds it, ticking a box changes the address at once. */
+const recordsFilterForm = FormReact.make(
+  FormBuilder.empty.addField('includeArchived', Schema.Boolean).addField('includeClosed', Schema.Boolean),
+  {
+    fields: { includeArchived: CheckboxField, includeClosed: CheckboxField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
 const RecordsFilters = ({ view }: { readonly view: RecordsView }) => {
   const { editor, model } = view;
   const { key, search, t } = model;
   const archivedCount =
     (model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0) +
     (model.records?.units.filter((item) => item.archive !== undefined).length ?? 0);
+  const includeArchived = search.includeArchived === true;
+  const includeClosed = search.includeClosed === true;
+  const setValues = useAtomSet(recordsFilterForm.setValues);
+  // A ticked box changes the address; the address (also Back and Forward) decides what the boxes show.
+  useAtomSubscribe(
+    recordsFilterForm.values,
+    (next) => {
+      if (
+        Option.isSome(next) &&
+        (next.value.includeArchived !== includeArchived || next.value.includeClosed !== includeClosed)
+      ) {
+        model.updateSearch({
+          ...search,
+          includeArchived: next.value.includeArchived ? true : undefined,
+          includeClosed: next.value.includeClosed ? true : undefined,
+        });
+      }
+    },
+    { immediate: false },
+  );
+  useEffect(() => {
+    setValues({ includeArchived, includeClosed });
+  }, [includeArchived, includeClosed, setValues]);
   return (
-    <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center gap-250">
-      <FormCheckbox
-        checked={search.includeClosed === true}
-        disabled={editor.busy}
-        label={t(`${key}.includeClosed`)}
-        onCheckedChange={(checked) => model.updateSearch({ ...search, includeClosed: checked ? true : undefined })}
-      />
+    <FormRoot
+      className="flex flex-wrap items-center gap-250"
+      defaultValues={{ includeArchived, includeClosed }}
+      form={recordsFilterForm}
+      translateMessage={(message) => t(message)}
+    >
+      <recordsFilterForm.includeClosed disabled={editor.busy} label={t(`${key}.includeClosed`)} />
       {archivedCount > 0 && (
-        <FormCheckbox
-          checked={search.includeArchived === true}
+        <recordsFilterForm.includeArchived
           disabled={editor.busy}
           label={t(`${key}.includeArchived`, { count: archivedCount })}
-          onCheckedChange={(checked) => model.updateSearch({ ...search, includeArchived: checked ? true : undefined })}
         />
       )}
-    </div>
+    </FormRoot>
   );
 };
 
@@ -1207,7 +1281,7 @@ const RecordsPageContent = (input: RecordsInput) => {
   return (
     <>
       <UltramodernRouteHead />
-      <h1 className="mb-300 propertyportfolio:text-3xl propertyportfolio:font-semibold">{t(`${key}.title`)}</h1>
+      <h1 className="mb-300 text-3xl font-semibold">{t(`${key}.title`)}</h1>
       {confirmation !== undefined && (
         <RecordsConfirmation onClose={() => setConfirmation(undefined)} request={confirmation} view={view} />
       )}
@@ -1223,7 +1297,7 @@ const RecordsPageContent = (input: RecordsInput) => {
       ) : (
         <PropertyWorkspace
           actions={
-            <div className="propertyportfolio:flex propertyportfolio:flex-wrap gap-200">
+            <div className="flex flex-wrap gap-200">
               {unit === undefined ? <RecordsPropertyActions view={view} /> : <RecordsUnitActions view={view} />}
             </div>
           }

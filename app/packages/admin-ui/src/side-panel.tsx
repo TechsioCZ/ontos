@@ -6,7 +6,6 @@ import { Schema } from 'effect';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
-import { sidePanelSurfaceClassName } from './ui-kit-classes.ts';
 import { UnsavedChangesBoundary, useEnclosingScope, useUnsavedChangesScope } from './unsaved-changes.tsx';
 import type { UnsavedChangesGuard } from './unsaved-changes.tsx';
 import { useSidePanelResize } from './use-side-panel-resize.ts';
@@ -257,7 +256,7 @@ export const SidePanel = ({
   return (
     <UnsavedChangesBoundary scope={scope}>
       <Dialog
-        className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
+        className={`min-w-0 sm:min-w-(--container-dialog-sm) ${className ?? ''}`}
         {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
         {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
         {...(peek ? peekDialogProps : modalDialogProps)}
@@ -316,8 +315,14 @@ export const SidePanel = ({
           </div>
         )}
         {/* The body scrolls on its own, so the footer actions stay visible at the bottom of a tall panel. The
-            inline padding pair keeps focus rings from being clipped by the scroll edge. */}
-        <div className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100">{children}</div>
+            inline padding pair keeps focus rings from being clipped by the scroll edge. The panel edge is the
+            outline, so as the kit's surface frame it takes the outline off every card inside it. */}
+        <div
+          className="-mx-100 flex min-h-0 flex-1 flex-col gap-dialog-content overflow-y-auto px-100"
+          data-surface-frame=""
+        >
+          {children}
+        </div>
       </Dialog>
     </UnsavedChangesBoundary>
   );

@@ -15,12 +15,12 @@ const PropertyLeasingRouteContent = () => {
 
   return (
     <section
-      className="propertyleasing:rounded-2xl propertyleasing:bg-white/90 propertyleasing:p-5 propertyleasing:shadow-xl propertyleasing:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalPropertyLeasing"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="propertyleasing:text-2xl propertyleasing:font-black">{t('property-leasing.title')}</h2>
-      <p className="propertyleasing:mt-2 propertyleasing:text-stone-600">{t('property-leasing.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('property-leasing.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('property-leasing.routeSurface')}</p>
     </section>
   );
 };

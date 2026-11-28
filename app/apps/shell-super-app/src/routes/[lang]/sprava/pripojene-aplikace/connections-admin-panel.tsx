@@ -1,10 +1,29 @@
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { AgentAccessClientIdSchema } from '@app/shared-contracts/agent-access';
+import {
+  AgentAccessClientIdSchema,
+  CONNECTION_REVOKE_REASON_MAX,
+  ConnectionRevokeRequestSchema,
+} from '@app/shared-contracts/agent-access';
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
-import { Effect, Option, Schema } from 'effect';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  FormRootError,
+  TextAreaField,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema, Struct } from 'effect';
 import { Url } from 'effect/http';
+import { AsyncResult } from 'effect/reactivity';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import type {
@@ -13,11 +32,10 @@ import type {
   ConnectionStatus,
   ConnectionSummary,
 } from '@app/shared-contracts/agent-access';
-import type { ChangeEvent } from 'react';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { revokeConnection } from '../../profile/connected-apps-client.ts';
 import { ModulePageSkeleton } from '../../../module-page-skeleton.tsx';
 import { DEFAULT_CONNECTIONS_FILTER, companyConnectionsData } from './connections-admin-data.ts';
@@ -52,9 +70,6 @@ const initialFilter = (grant: string | undefined, agent: string | undefined): Co
   return agent === undefined ? DEFAULT_CONNECTIONS_FILTER : { actingPrincipalId: AgentPrincipalIdSchema.make(agent) };
 };
 
-const FilterKeySchema = Schema.Literals(['actingPrincipalId', 'clientId', 'status', 'userPrincipalId']);
-type FilterKey = typeof FilterKeySchema.Type;
-
 const statusOptions: readonly { readonly label: string; readonly value: ConnectionStatus }[] = [
   { label: 'Aktivní', value: 'active' },
   { label: 'Odpojené', value: 'revoked' },
@@ -62,21 +77,64 @@ const statusOptions: readonly { readonly label: string; readonly value: Connecti
   { label: 'Zamítnuté', value: 'denied' },
 ];
 
-/** Sets one filter key; an empty choice removes the key, so "Všichni" means no restriction. */
-const withFilterValue = (filter: ConnectionAdminFilter, key: FilterKey, value: string): ConnectionAdminFilter => {
-  const kept = Object.fromEntries(Object.entries(filter).filter(([name]) => name !== key));
-  if (value === '') {
-    return kept;
+/**
+ * The list filter: one choice per filter key, where an empty choice ("Všichni") means no restriction. `routeKey` is
+ * the detail link the choice was made for; a choice made for another link does not apply.
+ */
+const filterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('actingPrincipalId', Schema.String)
+    .addField('clientId', Schema.String)
+    .addField('routeKey', Schema.String)
+    .addField('status', Schema.String)
+    .addField('userPrincipalId', Schema.String),
+  {
+    fields: {
+      actingPrincipalId: ChoiceField,
+      clientId: ChoiceField,
+      routeKey: TextField,
+      status: ChoiceField,
+      userPrincipalId: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type FilterValues = typeof filterForm.schema.Encoded;
+
+const filterValuesOf = (filter: ConnectionAdminFilter, routeKey: string): FilterValues => ({
+  actingPrincipalId: filter.actingPrincipalId ?? '',
+  clientId: filter.clientId ?? '',
+  routeKey,
+  status: filter.status ?? '',
+  userPrincipalId: filter.userPrincipalId ?? '',
+});
+
+const filterOf = (values: FilterValues): ConnectionAdminFilter => {
+  let filter: ConnectionAdminFilter = {};
+  if (values.actingPrincipalId !== '') {
+    filter = { ...filter, actingPrincipalId: AgentPrincipalIdSchema.make(values.actingPrincipalId) };
   }
-  if (key === 'status') {
-    return { ...kept, status: value };
+  if (values.clientId !== '') {
+    filter = { ...filter, clientId: AgentAccessClientIdSchema.make(values.clientId) };
   }
-  if (key === 'clientId') {
-    return { ...kept, clientId: AgentAccessClientIdSchema.make(value) };
+  if (values.status !== '') {
+    filter = { ...filter, status: values.status };
   }
-  return key === 'actingPrincipalId'
-    ? { ...kept, actingPrincipalId: AgentPrincipalIdSchema.make(value) }
-    : { ...kept, userPrincipalId: AgentPrincipalIdSchema.make(value) };
+  if (values.userPrincipalId !== '') {
+    filter = { ...filter, userPrincipalId: AgentPrincipalIdSchema.make(values.userPrincipalId) };
+  }
+  return filter;
+};
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier mount left, so the values are read only after `onReady`.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
 };
 
 const useConnectionFilter = () => {
@@ -89,26 +147,54 @@ const useConnectionFilter = () => {
   const targetAgentId = firstDetailValue(search.agent);
   const defaultFilter = initialFilter(targetGrantId, targetAgentId);
   const routeKey = targetGrantId === undefined ? `agent:${targetAgentId ?? ''}` : `grant:${targetGrantId}`;
-  const [choice, setChoice] = useState<{ readonly filter: ConnectionAdminFilter; readonly routeKey: string }>();
-  const filter = choice?.routeKey === routeKey ? choice.filter : defaultFilter;
-  const onFilterChange = (key: FilterKey) => (event: ChangeEvent<HTMLSelectElement>) => {
-    const { value } = event.target;
-    setChoice((previous) => ({
-      filter: withFilterValue(previous?.routeKey === routeKey ? previous.filter : defaultFilter, key, value),
-      routeKey,
-    }));
-  };
-  return { filter, onFilterChange, targetGrantId };
+  const [ready, setReady] = useState(false);
+  const chosen = Option.filter(useAtomValue(filterForm.values), (values) => ready && values.routeKey === routeKey);
+  const filter = Option.match(chosen, { onNone: () => defaultFilter, onSome: filterOf });
+  return { defaultValues: filterValuesOf(defaultFilter, routeKey), filter, routeKey, setReady, targetGrantId };
 };
+
+/** The administrator's reason for a revoke; the payload's own reason is optional, this panel always asks for one. */
+const revokeReasonSchema = Schema.String.check(Schema.isPattern(/\S/u, { message: 'Uveďte důvod.' }));
+
+/** Why the Shell did not revoke the connection, in the Czech text the dialog shows. */
+class RevokeRefused extends Schema.TaggedError<RevokeRefused>()('RevokeRefused', { message: Schema.String }) {}
+
+/** Revokes one connection; answers the notice the list shows, also when the connection had ended meanwhile. */
+const revokeGrant = Effect.fn('ConnectionsAdminPanel.revokeGrant')(function* revokeGrant(input: {
+  readonly clientName: string;
+  readonly grantId: ConnectionSummary['grantId'];
+  readonly reason: string;
+}) {
+  const outcome = yield* revokeConnection({ grantId: input.grantId, reason: input.reason.trim() });
+  if (outcome.status === 'ok') {
+    return `Připojení ${input.clientName} je odpojené.`;
+  }
+  if (isStale(outcome.reason)) {
+    return `${failureText(outcome.reason, outcome.detail)} Seznam je znovu načtený.`;
+  }
+  return yield* new RevokeRefused({ message: failureText(outcome.reason, outcome.detail) });
+});
+
+const revokeForm = FormReact.make(
+  fromPayload(ConnectionRevokeRequestSchema.mapFields(Struct.pick(['grantId'])))
+    .addField('clientName', Schema.String)
+    .addField('reason', revokeReasonSchema),
+  {
+    fields: { clientName: TextField, grantId: TextField, reason: TextAreaField },
+    onSubmit: (_submit, { decoded }) => revokeGrant(decoded),
+    runtime: browserAtomRuntime,
+    submitErrors: ({ message }) => [{ message, path: '' }],
+  },
+);
+
+/** The texts of this panel are Czech already, not i18n keys. */
+const shownAsIs = (message: string) => message;
 
 const tiles = (stats: ConnectionAdminListResponse['stats']) => [
   { label: 'Aktivní připojení', value: stats.active },
   { label: 'Připojení agenti', value: stats.agentsConnected },
   { label: 'S přímým zápisem', value: stats.directWrite },
 ];
-
-const selectClass = 'w-full min-w-0 max-w-full truncate rounded-md border border-border-primary bg-base p-100';
-const labelClass = 'grid min-w-0 gap-50 text-sm';
 
 /** The stored status, except that an active grant whose live check does not pass now is not usable, not active. */
 const StatusBadge = ({ connection }: { readonly connection: ConnectionSummary }) =>
@@ -140,73 +226,59 @@ const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary })
 };
 
 const ConnectionRevokeDialog = ({
-  busy,
   closeRevoke,
-  reason,
-  revokeError,
-  setReason,
-  submitRevoke,
   target,
 }: {
-  readonly busy: boolean;
   readonly closeRevoke: () => void;
-  readonly reason: string;
-  readonly revokeError: string;
-  readonly setReason: (reason: string) => void;
-  readonly submitRevoke: () => void;
   readonly target: ConnectionSummary | undefined;
-}) => (
-  <Dialog
-    actions={
-      <>
-        <Button appearance="outline" onClick={closeRevoke} severity="secondary" size="sm">
-          Zrušit
-        </Button>
-        <Button disabled={busy} onClick={submitRevoke} severity="danger" size="sm">
-          Odpojit
-        </Button>
-      </>
-    }
-    closeLabel="Zavřít dialog"
-    customTrigger
-    description="Aplikace ztratí přístup hned při dalším požadavku. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
-    onOpenChange={({ open }) => {
-      if (!open) {
-        closeRevoke();
+}) => {
+  const submitRevoke = useAtomSet(revokeForm.submit);
+  const busy = useAtomValue(revokeForm.submit).waiting;
+  return (
+    <Dialog
+      actions={
+        <>
+          <Button appearance="outline" onClick={closeRevoke} severity="secondary" size="sm">
+            Zrušit
+          </Button>
+          <Button disabled={busy} onClick={() => submitRevoke()} severity="danger" size="sm">
+            Odpojit
+          </Button>
+        </>
       }
-    }}
-    open={target !== undefined}
-    role="alertdialog"
-    size="sm"
-    title={target === undefined ? '' : `Odpojit ${target.client.name} (${target.user.displayName})?`}
-  >
-    <div className="grid gap-150">
-      <label className={labelClass}>
-        Důvod odpojení
-        <textarea
-          className="w-full rounded-md border border-border-primary bg-base p-100"
-          maxLength={500}
-          onChange={(event) => setReason(event.target.value)}
-          rows={3}
-          value={reason}
-        />
-      </label>
-      {revokeError === '' ? null : (
-        <StatusText aria-live="polite" showIcon status="error">
-          {revokeError}
-        </StatusText>
+      closeLabel="Zavřít dialog"
+      customTrigger
+      description="Aplikace ztratí přístup hned při dalším požadavku. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
+      onOpenChange={({ open }) => {
+        if (!open) {
+          closeRevoke();
+        }
+      }}
+      open={target !== undefined}
+      role="alertdialog"
+      size="sm"
+      title={target === undefined ? '' : `Odpojit ${target.client.name} (${target.user.displayName})?`}
+    >
+      {target === undefined ? null : (
+        <FormRoot
+          className="grid gap-150"
+          defaultValues={{ clientName: target.client.name, grantId: target.grantId, reason: '' }}
+          form={revokeForm}
+          key={target.grantId}
+          translateMessage={shownAsIs}
+        >
+          <revokeForm.reason label="Důvod odpojení" maxLength={CONNECTION_REVOKE_REASON_MAX} rows={3} />
+          <FormRootError form={revokeForm} />
+        </FormRoot>
       )}
-    </div>
-  </Dialog>
-);
+    </Dialog>
+  );
+};
 
 export const ConnectionsAdminPanel = () => {
-  const { filter, onFilterChange, targetGrantId } = useConnectionFilter();
+  const { defaultValues, filter, routeKey, setReady, targetGrantId } = useConnectionFilter();
   const [notice, setNotice] = useState('');
   const [target, setTarget] = useState<ConnectionSummary | undefined>();
-  const [reason, setReason] = useState('');
-  const [revokeError, setRevokeError] = useState('');
-  const [busy, setBusy] = useState(false);
 
   // The Shell prepared the default list before it revealed the page; another filter loads on demand.
   const snapshot = useSyncExternalStore(
@@ -244,44 +316,15 @@ export const ConnectionsAdminPanel = () => {
 
   const closeRevoke = () => {
     setTarget(undefined);
-    setReason('');
-    setRevokeError('');
   };
-
-  const submitRevoke = () => {
-    if (target === undefined) {
+  useAtomSubscribe(revokeForm.submit, (result) => {
+    if (result.waiting || !AsyncResult.isSuccess(result)) {
       return;
     }
-    const trimmed = reason.trim();
-    if (trimmed === '') {
-      setRevokeError('Uveďte důvod.');
-      return;
-    }
-    setBusy(true);
-    setRevokeError('');
-    browserRuntime.runFork(
-      revokeConnection({ grantId: target.grantId, reason: trimmed }).pipe(
-        Effect.andThen((outcome) =>
-          Effect.sync(() => {
-            setBusy(false);
-            if (outcome.status === 'ok') {
-              setNotice(`Připojení ${target.client.name} je odpojené.`);
-              closeRevoke();
-              reload();
-              return;
-            }
-            if (isStale(outcome.reason)) {
-              setNotice(`${failureText(outcome.reason, outcome.detail)} Seznam je znovu načtený.`);
-              closeRevoke();
-              reload();
-              return;
-            }
-            setRevokeError(failureText(outcome.reason, outcome.detail));
-          }),
-        ),
-      ),
-    );
-  };
+    setNotice(result.value);
+    closeRevoke();
+    reload();
+  });
 
   if (state.state === 'pending') {
     return <ModulePageSkeleton />;
@@ -321,74 +364,58 @@ export const ConnectionsAdminPanel = () => {
       <p className="text-fg-secondary">
         Všechna připojení ChatGPT, Claude a dalších aplikací ve firmě {company.legalName.replace(/\.$/u, '')}. Odpojená
         aplikace ztratí přístup hned při dalším požadavku.{' '}
-        <a className="font-medium text-fg-primary underline" href="/cs/sprava/aktivita-agentu">
+        <Link className="font-medium text-fg-primary" href="/cs/sprava/aktivita-agentu" size="current">
           Zobrazit aktivitu agentů
-        </a>
+        </Link>
       </p>
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
         {tiles(stats).map((tile) => (
-          <div className="ontos-tile rounded-lg bg-surface p-250" key={tile.label}>
+          <div className="rounded-lg bg-surface p-250" key={tile.label}>
             <p className="text-fg-secondary text-sm">{tile.label}</p>
             <p className="font-semibold text-2xl">{tile.value}</p>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2 lg:grid-cols-4">
-        <label className={labelClass}>
-          Osoba
-          <select
-            className={selectClass}
-            onChange={onFilterChange('userPrincipalId')}
-            value={filter.userPrincipalId ?? ''}
-          >
-            <option value="">Všichni</option>
-            {filterOptions.people.map((person) => (
-              <option key={person.principalId} value={person.principalId}>
-                {person.displayName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={labelClass}>
-          Agent
-          <select
-            className={selectClass}
-            onChange={onFilterChange('actingPrincipalId')}
-            value={filter.actingPrincipalId ?? ''}
-          >
-            <option value="">Všichni</option>
-            {filterOptions.agents.map((agent) => (
-              <option key={agent.principalId} value={agent.principalId}>
-                {agent.displayName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={labelClass}>
-          Aplikace
-          <select className={selectClass} onChange={onFilterChange('clientId')} value={filter.clientId ?? ''}>
-            <option value="">Všechny</option>
-            {filterOptions.clients.map((client) => (
-              <option key={client.clientId} value={client.clientId}>
-                {client.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className={labelClass}>
-          Stav
-          <select className={selectClass} onChange={onFilterChange('status')} value={filter.status ?? ''}>
-            <option value="">Všechny</option>
-            {statusOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      <FormRoot
+        className="grid grid-cols-1 gap-200 sm:grid-cols-2 lg:grid-cols-4"
+        defaultValues={defaultValues}
+        form={filterForm}
+        key={routeKey}
+        translateMessage={shownAsIs}
+      >
+        <FormReady onReady={setReady} />
+        <filterForm.userPrincipalId
+          items={[
+            { label: 'Všichni', value: '' },
+            ...filterOptions.people.map((person) => ({ label: person.displayName, value: person.principalId })),
+          ]}
+          label="Osoba"
+          placeholder="Všichni"
+        />
+        <filterForm.actingPrincipalId
+          items={[
+            { label: 'Všichni', value: '' },
+            ...filterOptions.agents.map((agent) => ({ label: agent.displayName, value: agent.principalId })),
+          ]}
+          label="Agent"
+          placeholder="Všichni"
+        />
+        <filterForm.clientId
+          items={[
+            { label: 'Všechny', value: '' },
+            ...filterOptions.clients.map((client) => ({ label: client.name, value: client.clientId })),
+          ]}
+          label="Aplikace"
+          placeholder="Všechny"
+        />
+        <filterForm.status
+          items={[{ label: 'Všechny', value: '' }, ...statusOptions]}
+          label="Stav"
+          placeholder="Všechny"
+        />
+      </FormRoot>
 
       {connections.length === 0 ? (
         <p className="py-400 text-center text-fg-secondary">{emptyText}</p>
@@ -451,7 +478,7 @@ export const ConnectionsAdminPanel = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li className="ontos-tile rounded-lg bg-surface p-250" key={c.grantId}>
+              <li className="rounded-lg bg-surface p-250" key={c.grantId}>
                 <div className="grid gap-100 text-sm">
                   <p>
                     <span className="font-semibold">{c.client.name}</span>{' '}
@@ -485,15 +512,7 @@ export const ConnectionsAdminPanel = () => {
         </>
       )}
 
-      <ConnectionRevokeDialog
-        busy={busy}
-        closeRevoke={closeRevoke}
-        reason={reason}
-        revokeError={revokeError}
-        setReason={setReason}
-        submitRevoke={submitRevoke}
-        target={target}
-      />
+      <ConnectionRevokeDialog closeRevoke={closeRevoke} target={target} />
     </div>
   );
 };

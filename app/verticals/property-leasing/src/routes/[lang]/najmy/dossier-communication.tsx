@@ -3,15 +3,23 @@
 // entry shows why and stays in the form for another Uložit.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
+import {
+  ChoiceLensField,
+  FormReact,
+  FormRoot,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Option, Schema } from 'effect';
-import type { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import { TenantActivityInputSchema } from '../../../../shared/apis/records.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { dossierFieldsClass, dossierMutedClass, dossierTileClass, dossierTitleClass } from './dossier-classes.ts';
 import type { DossierChanges } from './leasing-save.ts';
 import { additionSaveOutcome } from './occupancy-command.ts';
 import type { OccupancyOutcome } from './occupancy-command.ts';
@@ -21,13 +29,26 @@ export type DossierLog = (changes: DossierChanges) => Effect.Effect<OccupancyOut
 
 type CommunicationKind = typeof TenantActivityInputSchema.fields.kind.Type;
 
-interface CommunicationDraft {
-  readonly kind: CommunicationKind;
-  readonly summary: string;
-}
+/** The kind picked in the list; a choice that is no kind of entry keeps the current one. */
+const kindChoice = {
+  read: (kind: CommunicationKind) => kind,
+  write: (kind: CommunicationKind, choice: string) =>
+    Option.getOrElse(Schema.decodeUnknownOption(TenantActivityInputSchema.fields.kind)(choice), () => kind),
+};
+
+/** The entry as the timeline takes it: every field and check comes from the activity payload. Enter never logs. */
+const communicationForm = FormReact.make(fromPayload(TenantActivityInputSchema), {
+  fields: { kind: ChoiceLensField<CommunicationKind>, summary: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+type CommunicationDraft = typeof communicationForm.schema.Encoded;
 
 const emptyCommunication: CommunicationDraft = { kind: 'CALL', summary: '' };
 const KINDS: readonly CommunicationKind[] = ['CALL', 'EMAIL', 'MEETING', 'NOTE'];
+const decodeCommunication = Schema.decodeUnknownEffect(communicationForm.schema);
+const decodesAsActivity = (draft: CommunicationDraft) =>
+  Option.isSome(Schema.decodeUnknownOption(communicationForm.schema)(draft));
 
 /** Two drafts are the same when they would log the same entry; the kind alone is not input yet. */
 const sameCommunication = (left: CommunicationDraft, right: CommunicationDraft) =>
@@ -46,29 +67,29 @@ export const DossierCommunication = ({
 }) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
-  const [draft, setDraft] = useState(emptyCommunication);
+  const draft = Option.getOrElse(useAtomValue(communicationForm.values), () => emptyCommunication);
+  const reset = useAtomSet(communicationForm.reset);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   const record = useDraftSave<CommunicationDraft, never>({
     equals: sameCommunication,
     initial: emptyCommunication,
-    isValid: (value) => value.summary.trim().length > 0,
+    isValid: decodesAsActivity,
     runtime: browserRuntime,
     save: (value) =>
-      additionSaveOutcome(onSave({ activity: { kind: value.kind, summary: value.summary.trim() } }), setReason),
+      additionSaveOutcome(
+        decodeCommunication(value).pipe(Effect.flatMap((activity) => onSave({ activity }))),
+        setReason,
+      ),
     value: draft,
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({
-    draft: record,
-    navigation: blocker,
-    onDiscard: () => setDraft(emptyCommunication),
-  });
+  const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: () => reset() });
   const handleSave = () => {
     record.save();
     // A logged entry is in the timeline: the form is ready for the next one.
     record.afterSave((status) => {
       if (status === 'saved') {
-        setDraft(emptyCommunication);
+        reset();
         record.adopt(emptyCommunication);
       }
     });
@@ -77,61 +98,41 @@ export const DossierCommunication = ({
     return null;
   }
   return (
-    <form
-      className="sp-tenant-contact"
-      noValidate
-      onSubmit={(event) => {
-        // Enter never logs: only Uložit does.
-        event.preventDefault();
-      }}
-    >
-      <h3>Zapsat komunikaci</h3>
-      <div className="sp-tenant-fields">
-        <label className="sp-tenant-stack">
-          <span>{t('property-leasing.dossier.communicationKind')}</span>
-          <select
-            aria-label={t('property-leasing.dossier.communicationKind')}
-            id="communication-kind"
-            onChange={(event) => {
-              const selected = Schema.decodeUnknownOption(TenantActivityInputSchema.fields.kind)(event.target.value);
-              if (Option.isSome(selected)) {
-                setDraft((current) => ({ ...current, kind: selected.value }));
-              }
-            }}
-            value={draft.kind}
-          >
-            {KINDS.map((value) => (
-              <option key={value} value={value}>
-                {activityLabels[value]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <FormInput
-          id="communication-summary"
-          label={t('property-leasing.dossier.communicationSummary')}
-          maxLength={500}
-          onChange={(event) => {
-            const { value } = event.target;
-            setDraft((current) => ({ ...current, summary: value }));
-          }}
-          placeholder={t('property-leasing.dossier.communicationPlaceholder')}
-          value={draft.summary}
+    <>
+      <FormRoot
+        className={dossierTileClass}
+        defaultValues={emptyCommunication}
+        form={communicationForm}
+        translateMessage={() => t('property-leasing.demo.feedback.validation')}
+      >
+        <h3 className={dossierTitleClass}>Zapsat komunikaci</h3>
+        <div className={dossierFieldsClass}>
+          <communicationForm.kind
+            items={KINDS.map((value) => ({ label: activityLabels[value], value }))}
+            label={t('property-leasing.dossier.communicationKind')}
+            {...kindChoice}
+          />
+          <communicationForm.summary
+            id="communication-summary"
+            label={t('property-leasing.dossier.communicationSummary')}
+            maxLength={500}
+            placeholder={t('property-leasing.dossier.communicationPlaceholder')}
+          />
+        </div>
+        <p className={dossierMutedClass}>{t('property-leasing.dossier.communicationManual')}</p>
+        <SaveBar
+          error={Option.match(reason, {
+            onNone: () => null,
+            onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+          })}
+          labels={labels}
+          onReloadLatest={constVoid}
+          onSave={handleSave}
+          size="sm"
+          status={record.status}
         />
-      </div>
-      <p className="sp-tenant-muted">{t('property-leasing.dossier.communicationManual')}</p>
-      <SaveBar
-        error={Option.match(reason, {
-          onNone: () => null,
-          onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
-        })}
-        labels={labels}
-        onReloadLatest={constVoid}
-        onSave={handleSave}
-        size="sm"
-        status={record.status}
-      />
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-    </form>
+    </>
   );
 };

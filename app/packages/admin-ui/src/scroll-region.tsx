@@ -1,19 +1,18 @@
 import { constVoid } from 'effect/Function';
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 export interface ScrollRegionProps {
   /** Marks the region busy while its content is still loading. */
   readonly busy?: boolean;
   readonly children?: ReactNode;
+  /** Viewport classes. Defaults to horizontal scrolling within the available width. */
   readonly className?: string;
   /** Accessible name of the region, announced when keyboard focus reaches it. */
   readonly label: string;
-  /** Viewport styling. Defaults to horizontal scrolling within the available width. */
-  readonly style?: CSSProperties;
 }
 
-const horizontalViewport: CSSProperties = { maxWidth: '100%', minWidth: 0, overflowX: 'auto' };
+const horizontalViewport = 'min-w-0 max-w-full overflow-x-auto';
 
 const overflows = (viewport: HTMLElement) =>
   viewport.scrollWidth > viewport.clientWidth || viewport.scrollHeight > viewport.clientHeight;
@@ -23,7 +22,7 @@ const overflows = (viewport: HTMLElement) =>
  * While its content overflows, the region joins the tab order so keyboard users can focus it and scroll it with the
  * arrow keys (WCAG 2.1.1). Content that fits adds no empty tab stop.
  */
-export const ScrollRegion = ({ busy, children, className, label, style = horizontalViewport }: ScrollRegionProps) => {
+export const ScrollRegion = ({ busy, children, className = horizontalViewport, label }: ScrollRegionProps) => {
   const viewport = useRef<HTMLElement>(null);
   const [scrollable, setScrollable] = useState(false);
 
@@ -50,7 +49,6 @@ export const ScrollRegion = ({ busy, children, className, label, style = horizon
       aria-label={label}
       className={className}
       ref={viewport}
-      style={style}
       tabIndex={scrollable ? 0 : undefined}
     >
       {children}

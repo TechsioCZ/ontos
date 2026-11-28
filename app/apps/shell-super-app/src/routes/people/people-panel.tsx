@@ -1,30 +1,33 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { czechPlural } from '@app/shared-contracts';
-import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
-import type { SaveOutcome } from '@app/admin-ui';
+import { SaveBar, UnsavedChangesDialog, requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+import { ChoiceField, FormReact, FormRoot, TextField, fromPayload, useAtomSet } from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
-import { Effect, Fiber, Match, Option, Schema } from 'effect';
-import type { HttpClient } from 'effect/http';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { Effect, Equal, Fiber, Match, Option, Schema, Struct } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useEffectEvent, useState } from 'react';
 
+import {
+  CompanyMembershipStatusSchema,
+  InvitePeopleRequestSchema,
+  SetPeopleCompanyMembershipRequestSchema,
+} from '../../../shared/people-api.ts';
 import type { PeopleList, Person } from '../../../shared/people-api.ts';
-import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import type { PeopleOutcome } from './people-client.ts';
 import { changeCompanyMembership, loadAllPeople, loadPeopleAccess } from './people-client.ts';
+import { acceptedValue, incompleteChange, peopleSubmitErrors, usePeopleDialogSave } from './people-dialog-save.ts';
 import {
   accessRoleNamesOf,
-  defaultPeopleFilters,
   isChangeConfirmed,
   membershipLabels,
   personKindLabel,
   personStatusKey,
 } from './people-model.ts';
-import type { PeopleAccessView, PeopleEditKind, PeopleFilters, PendingPeopleChange } from './people-model.ts';
+import type { PeopleAccessView, PeopleEditKind, PendingPeopleChange } from './people-model.ts';
 import { InvitePersonButton } from './invite-person-button.tsx';
 import { PersonRoleEditor } from './person-role-editor.tsx';
 import { PeopleTable, PeopleToolbar, PersonStatusDot } from './people-table.tsx';
@@ -35,7 +38,78 @@ interface Editor {
   readonly kind: PeopleEditKind;
   readonly person: Person;
 }
-const selectClass = 'w-full rounded-md border border-border-primary bg-base p-100';
+
+/** The person whose company membership the open editor changes, as the server last confirmed it. */
+interface MembershipTarget {
+  readonly base: MembershipBase;
+  readonly kind: Person['kind'];
+  readonly principalRef: Person['principalRef'];
+  readonly revision: number;
+}
+const membershipTarget = Atom.make(Option.none<MembershipTarget>()).pipe(Atom.keepAlive);
+
+const MembershipChoiceSchema = Schema.Struct({
+  affiliation: InvitePeopleRequestSchema.fields.affiliation,
+  reason: Schema.String,
+  status: CompanyMembershipStatusSchema,
+});
+interface MembershipValues {
+  readonly affiliation: string;
+  readonly reason: string;
+  readonly status: string;
+}
+const membershipDraftFrom = (values: MembershipValues): Option.Option<MembershipDraft> =>
+  Schema.decodeUnknownOption(MembershipChoiceSchema)(values);
+const sameMembershipValues = (left: MembershipValues, right: MembershipValues): boolean =>
+  Option.getOrElse(Option.zipWith(membershipDraftFrom(left), membershipDraftFrom(right), sameMembershipDraft), () =>
+    Equal.equals(left, right),
+  );
+
+/**
+ * The change is audited, so it is sent only with a reason and only when it differs from the membership the server
+ * confirmed; the revision the editor read is the one the change builds on.
+ */
+const sendMembershipChange = Effect.fn('PeopleEditor.sendMembership')(function* sendMembershipChange(
+  values: MembershipValues,
+  get: Atom.FnContext,
+) {
+  const target = get(membershipTarget);
+  const edit = Option.flatMap(Option.all([target, membershipDraftFrom(values)]), ([{ base }, draft]) =>
+    membershipEditOf(draft, base),
+  );
+  if (Option.isNone(target) || Option.isNone(edit)) {
+    return yield* incompleteChange;
+  }
+  const { kind, principalRef, revision } = target.value;
+  const result = yield* changeCompanyMembership({
+    affiliation: kind === 'agent' ? null : edit.value.affiliation,
+    expectedRevision: revision,
+    principalRef,
+    reason: edit.value.reason,
+    status: edit.value.status,
+  }).pipe(Effect.flatMap(acceptedValue));
+  const change: PendingPeopleChange = { kind: 'membership', result };
+  return change;
+});
+
+/** The company membership: the affiliation and status picked from lists, the reason from the Action payload. */
+const membershipForm = FormReact.make(
+  fromPayload(SetPeopleCompanyMembershipRequestSchema.mapFields(Struct.pick(['reason'])))
+    .addField('affiliation', Schema.String)
+    .addField('status', Schema.String),
+  {
+    fields: { affiliation: ChoiceField, reason: TextField, status: ChoiceField },
+    onSubmit: (_submit, { decoded, get }) => sendMembershipChange(decoded, get),
+    runtime: browserAtomRuntime,
+    submitErrors: peopleSubmitErrors,
+  },
+);
+
+const affiliations = [
+  { label: 'Zaměstnanec', value: 'employee' },
+  { label: 'Externí osoba', value: 'external' },
+];
+const membershipStatuses = Object.entries(membershipLabels).map(([value, label]) => ({ label, value }));
 
 const PeopleEditor = ({
   editor,
@@ -49,58 +123,27 @@ const PeopleEditor = ({
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const { person } = editor;
-  const membership = person.selectedCompanyMembership;
   const { kind, principalRef } = person;
-  const [error, setError] = useState('');
-  // The company membership is saved only by Uložit. The change is audited, so it is sent only once the reason is
-  // filled in, and the revision the server answered with is the one the next change builds on.
-  const openedBase: MembershipBase = {
-    affiliation: membership?.affiliation ?? null,
-    status: membership?.status ?? 'invited',
-  };
-  const base = useRef<MembershipBase>(openedBase);
-  const revision = useRef(membership?.revision ?? 0);
-  const [membershipDraft, setMembershipDraft] = useState<MembershipDraft>(() => membershipDraftOf(openedBase));
-  const record = useDraftSave<MembershipDraft, HttpClient.HttpClient>({
-    equals: sameMembershipDraft,
-    isValid: (value) => Option.isSome(membershipEditOf(value, base.current)),
-    runtime: browserRuntime,
-    save: (value) =>
-      Option.match(membershipEditOf(value, base.current), {
-        onNone: () => Effect.succeed<SaveOutcome>('saved'),
-        onSome: (edit) =>
-          changeCompanyMembership({
-            affiliation: kind === 'agent' ? null : edit.affiliation,
-            expectedRevision: revision.current,
-            principalRef,
-            reason: edit.reason,
-            status: edit.status,
-          }).pipe(
-            Effect.map((outcome): SaveOutcome => {
-              if (outcome.status === 'failed') {
-                setError(outcome.message);
-                return 'failed';
-              }
-              const changed = outcome.value.membership;
-              revision.current = changed.revision;
-              base.current = { affiliation: changed.affiliation, status: changed.status };
-              setError('');
-              onCommitted({ kind: 'membership', result: outcome.value });
-              return 'saved';
-            }),
-          ),
-      }),
-    value: membershipDraft,
+  // The company membership is saved only by Uložit, against the membership and revision the editor opened with.
+  const base = baseOf(person);
+  const revision = person.selectedCompanyMembership?.revision ?? 0;
+  const opened = membershipDraftOf(base);
+  const setTarget = useAtomSet(membershipTarget);
+  useEffect(() => {
+    setTarget(
+      Option.some({ base: { affiliation: base.affiliation, status: base.status }, kind, principalRef, revision }),
+    );
+  }, [base.affiliation, base.status, kind, principalRef, revision, setTarget]);
+  const { guard, record, refusal } = usePeopleDialogSave({
+    equals: sameMembershipValues,
+    form: membershipForm,
+    onSaved: onCommitted,
+    opened,
+    valid: (values) =>
+      Option.isSome(Option.flatMap(membershipDraftFrom(values), (draft) => membershipEditOf(draft, base))),
   });
-  const patchMembership = (patch: Partial<MembershipDraft>) =>
-    setMembershipDraft((current) => ({ ...current, ...patch }));
-  const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({
-    draft: record,
-    navigation: blocker,
-    onDiscard: () => setMembershipDraft(record.confirmed),
-  });
-  const handleReloadLatest = () => record.adopt(membershipDraftOf(baseOf(person)));
+  const reset = useAtomSet(membershipForm.reset);
+  const handleReloadLatest = () => reset();
   const requestClose = () => {
     guard.request(onClose);
   };
@@ -113,7 +156,13 @@ const PeopleEditor = ({
             <Button appearance="outline" onClick={requestClose} severity="secondary">
               Zavřít
             </Button>
-            <SaveBar labels={labels} onReloadLatest={handleReloadLatest} onSave={handleSave} status={record.status} />
+            <SaveBar
+              error={refusal}
+              labels={labels}
+              onReloadLatest={handleReloadLatest}
+              onSave={handleSave}
+              status={record.status}
+            />
           </>
         }
         closeLabel="Zavřít"
@@ -126,63 +175,32 @@ const PeopleEditor = ({
         open
         title={t('shell.people.membershipTitle')}
       >
-        <div className="grid gap-200">
+        <FormRoot
+          className="grid gap-200"
+          defaultValues={opened}
+          form={membershipForm}
+          translateMessage={(message) => t(message, { defaultValue: message })}
+        >
           <p>{person.displayName}</p>
           {kind === 'human' ? (
-            <label className="grid gap-50">
-              Zařazení ve firmě
-              <select
-                className={selectClass}
-                onChange={(event) =>
-                  patchMembership({ affiliation: event.target.value === 'employee' ? 'employee' : 'external' })
-                }
-                value={membershipDraft.affiliation}
-              >
-                <option value="employee">Zaměstnanec</option>
-                <option value="external">Externí osoba</option>
-              </select>
-            </label>
+            <membershipForm.affiliation items={affiliations} label="Zařazení ve firmě" />
           ) : (
             <p>AI agent nemá zaměstnanecké ani externí zařazení.</p>
           )}
           {editor.kind === 'membership' ? (
-            <label className="grid gap-50">
-              Stav členství
-              <select
-                className={selectClass}
-                onChange={(event) => {
-                  const { value } = event.target;
-                  if (value === 'active' || value === 'disabled' || value === 'departed' || value === 'invited') {
-                    patchMembership({ status: value });
-                  }
-                }}
-                value={membershipDraft.status}
-              >
-                {Object.entries(membershipLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <membershipForm.status items={membershipStatuses} label="Stav členství" />
           ) : null}
           <p className="text-fg-secondary text-sm">
             Zařazení ve firmě a stav členství jsou organizační údaje: neurčují práva a jejich změna sama neodebere
             žádnou roli. Oprávnění se mění přiřazením role; členství a správu firmy nastavujete ve správě přístupu.
           </p>
-          <FormInput
+          <membershipForm.reason
             label={t('shell.people.changeReason')}
             maxLength={500}
-            onChange={(event) => patchMembership({ reason: event.target.value })}
             required
-            value={membershipDraft.reason}
+            requiredLabel={requiredLabelFor(language)}
           />
-          {error === '' ? null : (
-            <StatusText role="alert" status="error">
-              {error}
-            </StatusText>
-          )}
-        </div>
+        </FormRoot>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -428,7 +446,6 @@ export const PeoplePanel = ({
   const [loaded, setLoaded] = useState<Loaded<PeopleList>>();
   const [editor, setEditor] = useState<Editor | undefined>();
   const [pending, setPending] = useState<readonly PendingPeopleChange[]>([]);
-  const [filters, setFilters] = useState<PeopleFilters>(defaultPeopleFilters);
   const [reload, setReload] = useState(0);
   const viewKey = `${companyId}:${scope}:${linkedPersonCompanyQualified}:${linkedPerson ?? ''}`;
   // A background reload keeps the rows of the same view on screen; only a new view starts empty.
@@ -484,12 +501,9 @@ export const PeoplePanel = ({
         access={access}
         actions={scope === 'company' && list !== undefined ? <InvitePersonButton onCommitted={commit} /> : null}
         companyAvailable={companyId !== undefined}
-        filters={filters}
-        onFiltersChange={setFilters}
         onScopeChange={(next) => {
           setScope(next);
           setEditor(undefined);
-          setFilters((value) => ({ ...value, roleId: 'all' }));
         }}
         scope={scope}
       />
@@ -517,10 +531,8 @@ export const PeoplePanel = ({
       {current?.status === 'failed' ? null : (
         <PeopleTable
           access={access}
-          filters={filters}
           loading={loading}
           onEdit={(kind, person) => setEditor({ kind, person })}
-          onFiltersChange={setFilters}
           onOpen={setDetail}
           people={list?.items ?? []}
           scope={scope}

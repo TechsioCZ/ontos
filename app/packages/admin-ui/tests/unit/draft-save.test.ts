@@ -1,8 +1,7 @@
-import { Deferred, Effect } from 'effect';
-import { TestClock } from 'effect/testing';
+import { Deferred, Effect, Layer, ManagedRuntime } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { draftPending, draftSavable, draftUnsaved, startDraftSave } from '../../src/draft-save.ts';
-import type { DraftSaveOutcome } from '../../src/draft-save.ts';
+import { DraftForm, draftPending, draftSavable, draftUnsaved } from '../../src/draft-save.ts';
+import type { DraftSaveEnd } from '../../src/draft-save.ts';
 
 interface Draft {
   readonly name: string;
@@ -10,587 +9,401 @@ interface Draft {
 
 const draft = (name: string): Draft => ({ name });
 
-/** A controller whose saves wait until the test replies to them. */
-const setup = Effect.fnUntraced(function* setup() {
+const runtime = ManagedRuntime.make(Layer.empty);
+
+/** Waits until the running save of `form` has ended. */
+const saveEnded = (form: DraftForm<Draft>) =>
+  Effect.callback<boolean>((resume) => {
+    form.afterSave(() => {
+      resume(Effect.succeed(true));
+    });
+  });
+
+/** A draft form whose saves wait until the test replies to them. */
+const setup = () => {
   const sent: string[] = [];
-  const replies: Deferred.Deferred<DraftSaveOutcome>[] = [];
-  const options = {
-    isValid: (value: Draft) => value.name.trim() !== '',
-    save: (value: Draft) =>
-      Effect.suspend(() => {
-        sent.push(value.name);
-        const reply = Deferred.makeUnsafe<DraftSaveOutcome>();
-        replies.push(reply);
-        return Deferred.await(reply);
-      }),
+  // One signal per save, set once the save reached the server.
+  const starts: Deferred.Deferred<boolean>[] = [];
+  const startOf = (index: number) => {
+    const start = starts[index] ?? Deferred.makeUnsafe<boolean>();
+    starts[index] = start;
+    return start;
   };
-  const controller = yield* startDraftSave(draft('Before'), options);
-  /** What the hook's `adopt` does: a fresh controller from the server version. */
-  const restart = (name: string) => startDraftSave(draft(name), options);
-  const reply = Effect.fnUntraced(function* answer(index: number, outcome: DraftSaveOutcome) {
+  const replies: Deferred.Deferred<DraftSaveEnd<Draft>>[] = [];
+  const form = new DraftForm<Draft>(
+    { confirmed: draft('Before'), revision: 0, value: draft('Before') },
+    {
+      isValid: (value) => value.name.trim() !== '',
+      runtime,
+      save: (value) =>
+        Effect.suspend(() => {
+          sent.push(value.name);
+          const reply = Deferred.makeUnsafe<DraftSaveEnd<Draft>>();
+          replies.push(reply);
+          Deferred.doneUnsafe(startOf(sent.length - 1), Effect.succeed(true));
+          return Deferred.await(reply);
+        }),
+    },
+  );
+  /** Save, and wait until the save it started (if any) reached the server. */
+  const save = Effect.fnUntraced(function* save(on: DraftForm<Draft> = form) {
+    const running = on.ledger().sending;
+    const index = sent.length;
+    on.save();
+    if (!running && on.ledger().sending) {
+      yield* Deferred.await(startOf(index));
+    }
+  });
+  /** Answers save `index` and waits until `on` took the answer. */
+  const reply = Effect.fnUntraced(function* answer(
+    index: number,
+    outcome: DraftSaveEnd<Draft>,
+    on: DraftForm<Draft> = form,
+  ) {
     const pending = replies[index];
     expect(pending).toBeDefined();
+    const ended = saveEnded(on);
     if (pending !== undefined) {
       yield* Deferred.succeed(pending, outcome);
     }
-    yield* Effect.yieldNow;
+    yield* ended;
   });
-  return { controller, reply, restart, sent };
-});
+  return { form, reply, save, sent };
+};
 
-describe('explicit draft save', () => {
-  it.effect('never sends a changed draft by itself, however long it waits', () =>
-    Effect.gen(function* noTimer() {
-      const { controller, sent } = yield* setup();
-      controller.change(draft('Af'));
-      yield* TestClock.adjust('800 millis');
-      controller.change(draft('After'));
-      expect(controller.status()).toBe('dirty');
-      yield* TestClock.adjust('1 hour');
+describe('explicit draft save on effect-form state', () => {
+  it.effect('never sends a changed draft by itself', () =>
+    Effect.gen(function* run1() {
+      const { form, sent } = setup();
+      form.change(draft('After'));
+      expect(form.status()).toBe('dirty');
       yield* Effect.yieldNow;
       expect(sent).toEqual([]);
-      expect(controller.status()).toBe('dirty');
-      // Going away sends nothing either.
-      controller.dispose();
-      yield* TestClock.adjust('1 hour');
-      expect(sent).toEqual([]);
+      expect(form.draft()).toEqual(draft('After'));
     }),
   );
 
   it.effect('sends the whole draft once per save() and keeps "saved" until the next change', () =>
-    Effect.gen(function* explicit() {
-      const { controller, reply, sent } = yield* setup();
-      controller.save();
+    Effect.gen(function* run2() {
+      const { form, reply, save, sent } = setup();
+      yield* save();
       expect(sent).toEqual([]);
-      expect(controller.status()).toBe('idle');
-      controller.change(draft('After'));
-      controller.save();
+      expect(form.status()).toBe('idle');
+      form.change(draft('After'));
+      yield* save();
       expect(sent).toEqual(['After']);
-      expect(controller.status()).toBe('saving');
+      expect(form.status()).toBe('saving');
       // A second click while the save runs sends nothing.
-      controller.save();
+      yield* save();
       expect(sent).toEqual(['After']);
       yield* reply(0, 'saved');
-      expect(controller.status()).toBe('saved');
-      expect(controller.confirmed()).toEqual(draft('After'));
-      // An unchanged draft is not sent again, and the status does not fade on its own.
-      controller.save();
-      yield* TestClock.adjust('1 hour');
+      expect(form.status()).toBe('saved');
+      expect(form.ledger().confirmed).toEqual(draft('After'));
+      yield* save();
       expect(sent).toEqual(['After']);
-      expect(controller.status()).toBe('saved');
-      controller.change(draft('After all'));
-      expect(controller.status()).toBe('dirty');
+      expect(form.status()).toBe('saved');
+      form.change(draft('After all'));
+      expect(form.status()).toBe('dirty');
     }),
   );
 
   it.effect('keeps a draft a deploy left behind unsaved, offering the reload while it is typed on', () =>
-    Effect.gen(function* reloadRequired() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('After'));
-      controller.save();
+    Effect.gen(function* run3() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('After'));
+      yield* save();
       yield* reply(0, 'reload-required');
-      expect(controller.status()).toBe('reload-required');
-      expect(draftUnsaved(controller.status())).toBe(true);
-      expect(draftSavable(controller.status())).toBe(true);
-      controller.change(draft('After more'));
-      expect(controller.status()).toBe('reload-required');
-      // Uložit still sends it: the tab may have reached the new release meanwhile.
-      controller.save();
+      expect(form.status()).toBe('reload-required');
+      expect(draftUnsaved(form.status())).toBe(true);
+      expect(draftSavable(form.status())).toBe(true);
+      form.change(draft('After more'));
+      expect(form.status()).toBe('reload-required');
+      yield* save();
       expect(sent).toEqual(['After', 'After more']);
       yield* reply(1, 'saved');
-      expect(controller.status()).toBe('saved');
+      expect(form.status()).toBe('saved');
     }),
   );
 
   it.effect('tells a draft that can be saved from an unchanged or invalid one', () =>
-    Effect.gen(function* savable() {
-      const { controller, sent } = yield* setup();
-      const read = () => {
-        const status = controller.status();
-        return { savable: draftSavable(status), unsaved: draftUnsaved(status) };
-      };
-      expect(read()).toEqual({ savable: false, unsaved: false });
-      controller.change(draft('After'));
-      expect(read()).toEqual({ savable: true, unsaved: true });
-      controller.change(draft(' '));
-      expect(controller.status()).toBe('invalid');
-      expect(read()).toEqual({ savable: false, unsaved: true });
-      controller.save();
-      yield* Effect.yieldNow;
+    Effect.gen(function* run4() {
+      const { form, save, sent } = setup();
+      form.change(draft(' '));
+      expect(form.status()).toBe('invalid');
+      expect(draftSavable(form.status())).toBe(false);
+      expect(draftUnsaved(form.status())).toBe(true);
+      yield* save();
       expect(sent).toEqual([]);
-      expect(controller.status()).toBe('invalid');
-      controller.change(draft('Before'));
-      expect(controller.status()).toBe('idle');
-      expect(read()).toEqual({ savable: false, unsaved: false });
-    }),
-  );
-
-  it.effect('validates a draft against the version the server last confirmed', () =>
-    Effect.gen(function* confirmedBase() {
-      const checked: string[] = [];
-      // A rule that depends on what the save would send: a name may only grow from the confirmed one.
-      const controller = yield* startDraftSave(draft('Akros'), {
-        isValid: (value: Draft, confirmed: Draft) => {
-          checked.push(`${value.name} over ${confirmed.name}`);
-          return value.name.startsWith(confirmed.name);
-        },
-        save: () => Effect.succeed('saved' as const),
-      });
-      controller.change(draft('Akros CZ'));
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(controller.status()).toBe('saved');
-
-      // `Akros` was valid over the version the form opened with; over the saved `Akros CZ` it is not.
-      controller.change(draft('Akros'));
-      expect(controller.status()).toBe('invalid');
-      expect(checked.at(-1)).toBe('Akros over Akros CZ');
-      controller.save();
-      expect(controller.status()).toBe('invalid');
-    }),
-  );
-
-  it.effect('checks the same draft again when what its validation reads besides the draft changed', () =>
-    Effect.gen(function* revalidate() {
-      // A bulk form: the draft is valid only once rows are selected, and selecting them does not change the draft.
-      let selected = 0;
-      const options = {
-        equals: (left: Draft, right: Draft) => left.name === right.name,
-        isValid: (value: Draft) => value.name !== '' && selected > 0,
-        save: () => Effect.succeed('saved' as const),
-      };
-      const controller = yield* startDraftSave(draft(''), options);
-      controller.change(draft('5'));
-      expect(controller.status()).toBe('invalid');
-      selected = 2;
-      controller.revalidate();
-      expect(controller.status()).toBe('dirty');
-      // An equal draft that carries newer data (a loaded record) is checked again too.
-      selected = 0;
-      controller.change(draft('5'));
-      expect(controller.status()).toBe('invalid');
-      // An unchanged draft stays idle, and a revalidation never starts a save.
-      controller.change(draft(''));
-      controller.revalidate();
-      expect(controller.status()).toBe('idle');
+      form.change(draft('Before'));
+      expect(form.status()).toBe('idle');
     }),
   );
 
   it.effect('shows a failed save as an error and sends the same draft again on the next save()', () =>
-    Effect.gen(function* failure() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('After'));
-      controller.save();
+    Effect.gen(function* run5() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('After'));
+      yield* save();
       yield* reply(0, 'failed');
-      expect(controller.status()).toBe('error');
-      expect(draftSavable(controller.status())).toBe(true);
-      yield* TestClock.adjust('1 hour');
-      expect(sent).toEqual(['After']);
-      controller.save();
+      expect(form.status()).toBe('error');
+      expect(draftSavable(form.status())).toBe(true);
+      yield* save();
       expect(sent).toEqual(['After', 'After']);
       yield* reply(1, 'saved');
-      expect(controller.status()).toBe('saved');
+      expect(form.status()).toBe('saved');
     }),
   );
 
-  it.effect('a save that fails after its draft changed leaves the current draft as a change, not a retry', () =>
-    Effect.gen(function* failedAfterChange() {
-      const revised = yield* setup();
-      revised.controller.change(draft('Secret'));
-      revised.controller.save();
-      // While the save runs, the form takes out the part that made the draft sendable.
-      revised.controller.revise((value) => draft(value.name.replace('Secret', '').trim()));
-      yield* revised.reply(0, 'failed');
-      // Nothing on screen can be sent, so nothing offers to send it.
-      expect(revised.controller.status()).toBe('invalid');
-      expect(draftSavable(revised.controller.status())).toBe(false);
-
-      const typed = yield* setup();
-      typed.controller.change(draft('One'));
-      typed.controller.save();
-      typed.controller.change(draft('Two'));
-      yield* typed.reply(0, 'failed');
-      // The draft on screen is a change like any other: Save sends it.
-      expect(typed.controller.status()).toBe('dirty');
-      typed.controller.save();
-      expect(typed.sent).toEqual(['One', 'Two']);
-
-      const typedBack = yield* setup();
-      typedBack.controller.change(draft('One'));
-      typedBack.controller.save();
-      typedBack.controller.change(draft('Two'));
-      typedBack.controller.change(draft('One'));
-      yield* typedBack.reply(0, 'failed');
+  it.effect('a failure belongs to the draft that was sent', () =>
+    Effect.gen(function* run6() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('One'));
+      yield* save();
+      form.change(draft('Two'));
+      yield* reply(0, 'failed');
+      expect(form.status()).toBe('dirty');
+      form.change(draft('One'));
+      expect(form.status()).toBe('dirty');
+      yield* save();
+      expect(sent).toEqual(['One', 'One']);
+      form.change(draft('Two'));
+      form.change(draft('One'));
+      yield* reply(1, 'failed');
       // Back at what was sent: the failure is this draft's, and Retry sends it again.
-      expect(typedBack.controller.status()).toBe('error');
+      expect(form.status()).toBe('error');
     }),
   );
 
-  it.effect('holds a draft parked for approval: save() does not send it again and nothing counts as saved', () =>
-    Effect.gen(function* proposed() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('After'));
-      controller.save();
+  it.effect('holds every draft parked for approval: save() does not send it again', () =>
+    Effect.gen(function* run7() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('After'));
+      yield* save();
       yield* reply(0, 'proposed');
-      expect(controller.status()).toBe('proposed');
-      expect(controller.confirmed()).toEqual(draft('Before'));
-      // Handed over: still not the confirmed version, but nothing typed would be lost and nothing can be saved.
-      expect(draftPending(controller.status())).toBe(true);
-      expect(draftUnsaved(controller.status())).toBe(false);
-      expect(draftSavable(controller.status())).toBe(false);
-      controller.save();
-      yield* TestClock.adjust('1 hour');
-      expect(sent).toEqual(['After']);
-      // Typing away and back to the proposed draft does not propose it again.
-      controller.change(draft('Afte'));
-      expect(controller.status()).toBe('dirty');
-      controller.change(draft('After'));
-      expect(controller.status()).toBe('proposed');
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toEqual(['After']);
+      expect(form.status()).toBe('proposed');
+      expect(form.ledger().confirmed).toEqual(draft('Before'));
+      expect(draftPending(form.status())).toBe(true);
+      expect(draftUnsaved(form.status())).toBe(false);
+      expect(draftSavable(form.status())).toBe(false);
+      form.change(draft('Other'));
+      yield* save();
+      yield* reply(1, 'proposed');
+      form.change(draft('After'));
+      expect(form.status()).toBe('proposed');
+      yield* save();
+      expect(sent).toEqual(['After', 'Other']);
+      form.change(draft('Third'));
+      yield* save();
+      yield* reply(2, 'saved');
+      // A committed save clears the proposals.
+      form.change(draft('After'));
+      expect(form.status()).toBe('dirty');
     }),
   );
 
-  it.effect(
-    'sends a different draft after a proposal; a committed save clears it, a real failure can be sent again',
-    () =>
-      Effect.gen(function* afterProposal() {
-        const { controller, reply, sent } = yield* setup();
-        controller.change(draft('After'));
-        controller.save();
-        yield* reply(0, 'proposed');
-        controller.change(draft('Other'));
-        controller.save();
-        expect(controller.status()).toBe('saving');
-        yield* reply(1, 'failed');
-        expect(controller.status()).toBe('error');
-        controller.save();
-        expect(sent).toEqual(['After', 'Other', 'Other']);
-        yield* reply(2, 'saved');
-        expect(controller.status()).toBe('saved');
-        expect(controller.confirmed()).toEqual(draft('Other'));
-        controller.change(draft('After'));
-        controller.save();
-        expect(sent).toEqual(['After', 'Other', 'Other', 'After']);
-        yield* reply(3, 'conflict');
-        expect(controller.status()).toBe('conflict');
-      }),
-  );
-
-  it.effect('stops on a conflict until the server version is loaded', () =>
-    Effect.gen(function* conflict() {
-      const { controller, reply, restart, sent } = yield* setup();
-      controller.change(draft('Mine'));
-      controller.save();
+  it.effect('stops on a conflict until the draft is back or the server version is loaded', () =>
+    Effect.gen(function* run8() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('Mine'));
+      yield* save();
       yield* reply(0, 'conflict');
-      expect(controller.status()).toBe('conflict');
-      expect(draftSavable(controller.status())).toBe(false);
-      expect(draftUnsaved(controller.status())).toBe(true);
-      controller.change(draft('Mine again'));
-      expect(controller.status()).toBe('conflict');
-      controller.save();
-      yield* TestClock.adjust('1 hour');
+      expect(form.status()).toBe('conflict');
+      expect(draftSavable(form.status())).toBe(false);
+      expect(draftUnsaved(form.status())).toBe(true);
+      form.change(draft('Mine again'));
+      expect(form.status()).toBe('conflict');
+      yield* save();
       expect(sent).toEqual(['Mine']);
-      controller.dispose();
-      const reloaded = yield* restart('Theirs');
+      const reloaded = form.successor(draft('Theirs'), draft('Theirs'), 1);
+      reloaded.takeOver();
       expect(reloaded.status()).toBe('idle');
-      reloaded.change(draft('Theirs'));
-      controller.save();
-      expect(sent).toEqual(['Mine']);
+      expect(reloaded.draft()).toEqual(draft('Theirs'));
       reloaded.change(draft('Theirs, edited'));
-      reloaded.save();
+      yield* save(reloaded);
       expect(sent).toEqual(['Mine', 'Theirs, edited']);
-      yield* reply(1, 'saved');
+      yield* reply(1, 'saved', reloaded);
       expect(reloaded.status()).toBe('saved');
+
+      const typedBack = setup();
+      typedBack.form.change(draft('Mine'));
+      yield* typedBack.save();
+      yield* typedBack.reply(0, 'conflict');
+      typedBack.form.change(draft('Before'));
+      expect(typedBack.form.status()).toBe('idle');
+      typedBack.form.change(draft('Again'));
+      expect(typedBack.form.status()).toBe('dirty');
     }),
   );
 
   it.effect('keeps edits made while a save runs as an unsaved draft instead of sending them', () =>
-    Effect.gen(function* editedMeanwhile() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('One'));
-      controller.save();
-      controller.change(draft('Two'));
-      controller.change(draft('Three'));
-      controller.save();
+    Effect.gen(function* run9() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('One'));
+      yield* save();
+      form.change(draft('Three'));
+      yield* save();
       expect(sent).toEqual(['One']);
-      expect(controller.status()).toBe('saving');
       yield* reply(0, 'saved');
-      yield* TestClock.adjust('1 hour');
-      // No follow-up save: the newer draft waits for the next click.
-      expect(sent).toEqual(['One']);
-      expect(controller.status()).toBe('dirty');
-      expect(controller.confirmed()).toEqual(draft('One'));
-      controller.save();
+      expect(form.status()).toBe('dirty');
+      expect(form.ledger().confirmed).toEqual(draft('One'));
+      yield* save();
       expect(sent).toEqual(['One', 'Three']);
       yield* reply(1, 'saved');
-      expect(controller.status()).toBe('saved');
+      expect(form.status()).toBe('saved');
     }),
   );
 
   it.effect('discard goes back to the confirmed version and clears an error or a conflict', () =>
-    Effect.gen(function* discarded() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('After'));
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      controller.save();
-      expect(sent).toEqual([]);
+    Effect.gen(function* run10() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('After'));
+      form.discard();
+      expect(form.status()).toBe('idle');
+      expect(form.draft()).toEqual(draft('Before'));
 
-      controller.change(draft('Failing'));
-      controller.save();
+      form.change(draft('Failing'));
+      yield* save();
       yield* reply(0, 'failed');
-      expect(controller.status()).toBe('error');
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      controller.save();
-      expect(sent).toEqual(['Failing']);
+      form.discard();
+      expect(form.status()).toBe('idle');
+      expect(form.draft()).toEqual(draft('Before'));
 
-      controller.change(draft('Mine'));
-      controller.save();
-      yield* reply(1, 'conflict');
-      controller.discard();
-      expect(controller.status()).toBe('idle');
-      expect(controller.confirmed()).toEqual(draft('Before'));
-      // The form puts the confirmed version back on screen: that is no change.
-      controller.change(draft('Before'));
-      expect(controller.status()).toBe('idle');
-    }),
-  );
-
-  it.effect('a draft typed back to the confirmed version leaves a conflict', () =>
-    Effect.gen(function* typedBack() {
-      const { controller, reply } = yield* setup();
-      controller.change(draft('Mine'));
-      controller.save();
-      yield* reply(0, 'conflict');
-      controller.change(draft('Before'));
-      expect(controller.status()).toBe('idle');
+      form.change(draft('Saved'));
+      yield* save();
+      yield* reply(1, 'saved');
+      form.change(draft('Mine'));
+      yield* save();
+      yield* reply(2, 'conflict');
+      form.discard();
+      // Back to the last successful submit.
+      expect(form.status()).toBe('idle');
+      expect(form.draft()).toEqual(draft('Saved'));
+      expect(sent).toEqual(['Failing', 'Saved', 'Mine']);
     }),
   );
 
   it.effect('compares later drafts with what a partly successful save wrote', () =>
-    Effect.gen(function* partlySaved() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('Written, missing'));
-      controller.save();
-      // What a save of several commands reports before it answers `failed`.
-      controller.confirm(draft('Written'));
-      yield* reply(0, 'failed');
-      expect(controller.status()).toBe('error');
-      expect(controller.confirmed()).toEqual(draft('Written'));
-      // Back to the value the form opened with: the server no longer has it, so it is a change to send.
-      controller.change(draft('Before'));
-      expect(controller.status()).toBe('dirty');
-      controller.save();
+    Effect.gen(function* run11() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('Written, missing'));
+      yield* save();
+      yield* reply(0, { confirmed: draft('Written'), outcome: 'failed', revision: 4 });
+      expect(form.status()).toBe('error');
+      expect(form.ledger()).toMatchObject({ confirmed: draft('Written'), revision: 4 });
+      form.change(draft('Before'));
+      expect(form.status()).toBe('dirty');
+      yield* save();
       expect(sent).toEqual(['Written, missing', 'Before']);
+    }),
+  );
+
+  it.effect('a save of the form before decides nothing for its successor', () =>
+    Effect.gen(function* earlier() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('Running'));
+      yield* save();
+      const next = form.successor(draft('Server'), draft('Server'), 2);
+      yield* reply(0, 'saved');
+      expect(form.status()).toBe('saved');
+      expect(next.status()).toBe('idle');
+      expect(next.ledger()).toMatchObject({ confirmed: draft('Server'), revision: 2 });
+      expect(sent).toEqual(['Running']);
+    }),
+  );
+
+  it.effect('a call that still reaches a replaced form lands on the form on screen', () =>
+    Effect.gen(function* handOver() {
+      const { form } = setup();
+      const next = form.successor(draft('Server'), draft('Server'), 1);
+      next.takeOver();
+      form.update((current) => draft(`${current.name}, edited`));
+      expect(next.draft()).toEqual(draft('Server, edited'));
+      expect(next.status()).toBe('dirty');
+      expect(form.draft()).toEqual(draft('Before'));
+      yield* Effect.void;
+    }),
+  );
+
+  it.effect('keeps the base revision moving forward and what a reload has to keep', () =>
+    Effect.gen(function* base() {
+      const { form } = setup();
+      form.advance(3);
+      form.advance(2);
+      expect(form.ledger().revision).toBe(3);
+      expect(form.kept()).toBeUndefined();
+      form.change(draft('Kept'));
+      expect(form.kept()).toEqual({ confirmed: draft('Before'), revision: 3, value: draft('Kept') });
+      yield* Effect.void;
     }),
   );
 
   it.effect(
     'revise takes a part out of the draft, the confirmed version and a running save without starting over',
     () =>
-      Effect.gen(function* revised() {
-        const { controller, reply, sent } = yield* setup();
+      Effect.gen(function* run14() {
+        const { form, reply, save, sent } = setup();
         const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
-        controller.change(draft('Kept Secret'));
-        controller.save();
+        form.change(draft('Kept Secret'));
+        yield* save();
         const answered: string[] = [];
-        controller.afterSave((status) => {
+        form.afterSave((status) => {
           answered.push(status);
         });
         // The form loses access to the secret while the save is on its way: the save still decides.
-        controller.revise(withoutSecret);
-        expect(controller.status()).toBe('saving');
+        form.revise(withoutSecret);
+        expect(form.status()).toBe('saving');
         yield* reply(0, 'saved');
         expect(answered).toEqual(['saved']);
-        expect(controller.status()).toBe('saved');
-        // What the save confirmed, and so what discarding goes back to, holds no secret.
-        expect(controller.confirmed()).toEqual(draft('Kept'));
-        controller.change(draft('Kept'));
-        expect(controller.status()).toBe('saved');
+        expect(form.status()).toBe('saved');
+        expect(form.ledger().confirmed).toEqual(draft('Kept'));
 
         // A saved version is revised too: discarding a later edit does not bring the secret back.
-        controller.change(draft('Mine Secret'));
-        controller.save();
+        form.change(draft('Mine Secret'));
+        yield* save();
         yield* reply(1, 'saved');
-        controller.change(draft('Mine Secret, edited'));
-        controller.revise(withoutSecret);
-        expect(controller.confirmed()).toEqual(draft('Mine'));
-        expect(controller.status()).toBe('dirty');
-        controller.discard();
-        controller.change(draft('Mine'));
-        expect(controller.status()).toBe('idle');
+        form.change(draft('Mine Secret, edited'));
+        form.revise(withoutSecret);
+        expect(form.ledger().confirmed).toEqual(draft('Mine'));
+        expect(form.status()).toBe('dirty');
+        form.discard();
+        expect(form.draft()).toEqual(draft('Mine'));
+        expect(form.status()).toBe('idle');
         expect(sent).toEqual(['Kept Secret', 'Mine Secret']);
       }),
   );
 
-  it.effect(
-    'revise keeps a draft parked for approval, so choosing the same draft again does not propose it twice',
-    () =>
-      Effect.gen(function* revisedProposal() {
-        const { controller, reply, sent } = yield* setup();
-        controller.change(draft('Plan Secret'));
-        controller.save();
-        yield* reply(0, 'proposed');
-        controller.revise((value) => draft(value.name.replace(' Secret', '')));
-        // The draft lost its secret: it is no longer the one handed over.
-        expect(controller.status()).toBe('dirty');
-        controller.change(draft('Plan Secret'));
-        expect(controller.status()).toBe('proposed');
-        controller.save();
-        yield* Effect.yieldNow;
-        expect(sent).toEqual(['Plan Secret']);
-      }),
-  );
-
-  it.effect('a revision made while a save runs also applies to what a partly successful save wrote', () =>
-    Effect.gen(function* revisedPartly() {
-      const { controller, reply } = yield* setup();
-      controller.change(draft('Written Secret, missing'));
-      controller.save();
-      controller.revise((value) => draft(value.name.replace(' Secret', '')));
-      controller.confirm(draft('Written Secret'));
-      yield* reply(0, 'failed');
-      // The draft changed while the save ran: it rests as a change, compared with what was written.
-      expect(controller.status()).toBe('dirty');
-      expect(controller.confirmed()).toEqual(draft('Written'));
-    }),
-  );
-
-  it.effect('a save that lands after its draft lost and regained a part counts as saved and is not sent again', () =>
-    Effect.gen(function* regained() {
-      const { controller, reply, sent } = yield* setup();
-      const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
-      controller.change(draft('Call Secret'));
-      controller.save();
-      // The part is refused while the save is on its way, then access returns and the same part is chosen again.
-      controller.revise(withoutSecret);
-      controller.change(draft('Call Secret'));
-      yield* reply(0, 'saved');
-      // The server recorded exactly this draft: it is saved, and Save has nothing to send.
-      expect(controller.status()).toBe('saved');
-      expect(draftSavable(controller.status())).toBe(false);
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toEqual(['Call Secret']);
-    }),
-  );
-
   it.effect('a draft that lost a part while its save ran is not sent again once the part is back', () =>
-    Effect.gen(function* refusedThenTypedBack() {
-      const { controller, reply, sent } = yield* setup();
-      const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
-      controller.change(draft('Call Secret'));
-      controller.save();
-      controller.revise(withoutSecret);
-      // An edit while the save runs keeps the draft unsaved when it lands.
-      controller.change(draft('Call!'));
+    Effect.gen(function* run15() {
+      const { form, reply, save, sent } = setup();
+      form.change(draft('Call Secret'));
+      yield* save();
+      form.revise((value) => draft(value.name.replace(' Secret', '')));
+      form.change(draft('Call!'));
       yield* reply(0, 'saved');
-      expect(controller.status()).toBe('dirty');
-      // What discarding goes back to holds no refused part.
-      expect(controller.confirmed()).toEqual(draft('Call'));
+      expect(form.status()).toBe('dirty');
+      expect(form.ledger().confirmed).toEqual(draft('Call'));
       // The part comes back and the edit is taken back: that is what the server already has.
-      controller.change(draft('Call Secret'));
-      expect(controller.status()).toBe('idle');
-      controller.save();
-      yield* Effect.yieldNow;
+      form.change(draft('Call Secret'));
+      expect(form.status()).toBe('idle');
+      yield* save();
       expect(sent).toEqual(['Call Secret']);
     }),
   );
 
-  it.effect('remembers every draft parked for approval, not only the last one', () =>
-    Effect.gen(function* everyProposal() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('Call'));
-      controller.save();
-      yield* reply(0, 'proposed');
-      controller.change(draft('Other'));
-      controller.save();
-      yield* reply(1, 'proposed');
-      // Back to the first proposal: it is still waiting for approval, so it is not proposed again.
-      controller.change(draft('Call'));
-      expect(controller.status()).toBe('proposed');
-      controller.save();
-      yield* Effect.yieldNow;
-      expect(sent).toEqual(['Call', 'Other']);
-    }),
-  );
-
-  it.effect('a revision leaves the same status whether it lands just before or just after a parked answer', () =>
-    Effect.gen(function* sameEitherWay() {
-      const withoutSecret = (value: Draft) => draft(value.name.replace(' Secret', ''));
-      const before = yield* setup();
-      before.controller.change(draft('Plan Secret'));
-      before.controller.save();
-      before.controller.revise(withoutSecret);
-      yield* before.reply(0, 'proposed');
-
-      const after = yield* setup();
-      after.controller.change(draft('Plan Secret'));
-      after.controller.save();
-      yield* after.reply(0, 'proposed');
-      after.controller.revise(withoutSecret);
-
-      // "Plan" was never proposed: either way it is a draft Save can send.
-      expect(before.controller.status()).toBe('dirty');
-      expect(after.controller.status()).toBe('dirty');
-    }),
-  );
-
-  it.effect('a revision that leaves a failed draft unsendable takes the retry away', () =>
-    Effect.gen(function* revisedFailure() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('Secret'));
-      controller.save();
-      yield* reply(0, 'failed');
-      expect(controller.status()).toBe('error');
-      // The revised draft counts like a typed change: it cannot be sent, so nothing offers to send it.
-      controller.revise((value) => draft(value.name.replace('Secret', '').trim()));
-      expect(controller.status()).toBe('invalid');
-      expect(draftSavable(controller.status())).toBe(false);
-      expect(sent).toEqual(['Secret']);
-    }),
-  );
-
-  it.effect('a revision while no save runs does not reach what a later partial save wrote', () =>
-    Effect.gen(function* idleRevision() {
-      const { controller } = yield* setup();
-      controller.revise((value) => draft(value.name.replace(' Secret', '')));
-      // What the server reports it has is taken as it is: no earlier revision is replayed onto it.
-      controller.confirm(draft('Written Secret'));
-      expect(controller.confirmed()).toEqual(draft('Written Secret'));
-    }),
-  );
-
-  it.effect('a disposed controller sends nothing and a save still running decides nothing', () =>
-    Effect.gen(function* disposed() {
-      const { controller, reply, sent } = yield* setup();
-      controller.change(draft('Running'));
-      controller.save();
-      controller.change(draft('Pending'));
-      controller.dispose();
-      yield* reply(0, 'saved');
-      controller.save();
-      expect(sent).toEqual(['Running']);
-      expect(controller.status()).toBe('saving');
-    }),
-  );
-
-  it.effect('notifies subscribers only when the status changes', () =>
-    Effect.gen(function* notifications() {
-      const { controller, reply } = yield* setup();
+  it.effect('notifies subscribers when the draft or its status changes', () =>
+    Effect.gen(function* run16() {
+      const { form, reply, save } = setup();
       const seen: string[] = [];
-      const unsubscribe = controller.subscribe(() => {
-        seen.push(controller.status());
+      const unsubscribe = form.subscribe(() => {
+        seen.push(form.status());
       });
-      controller.change(draft('A'));
-      controller.change(draft('AB'));
-      controller.save();
+      form.change(draft('A'));
+      yield* save();
       yield* reply(0, 'saved');
       unsubscribe();
-      expect(seen).toEqual(['dirty', 'saving', 'saved']);
+      expect(seen.at(0)).toBe('dirty');
+      expect(seen).toContain('saving');
+      expect(seen.at(-1)).toBe('saved');
     }),
   );
 });

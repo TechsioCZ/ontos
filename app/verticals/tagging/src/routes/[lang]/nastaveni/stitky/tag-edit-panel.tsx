@@ -6,10 +6,13 @@ import {
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
+import { useAtomSet, useAtomSubscribe, useAtomValue } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
+import { useEffect, useRef } from 'react';
 import { applyTaggingCommandIfUnchanged } from '../../../../tags/records-commands.ts';
 import { refreshTagCatalog } from '../../../../tags/tag-catalog.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -23,7 +26,7 @@ import {
   validTagDraft,
 } from './tag-draft.ts';
 import type { TagDraft } from './tag-draft.ts';
-import { TagFields } from './tag-fields.tsx';
+import { TagForm, sameTagValues, tagDraftOfValues, tagEditState, tagValuesOf } from './tag-fields.tsx';
 
 const refreshCatalog = Effect.sync(refreshTagCatalog);
 
@@ -47,6 +50,32 @@ export const TagEditPanel = ({ onClose, tag }: { readonly onClose: () => void; r
       ),
     server: tagDraftOf(tag),
   });
+  const { draft, setDraft } = record;
+  const values = useAtomValue(tagEditState.values);
+  const setValues = useAtomSet(tagEditState.setValues);
+  // The fields are the draft: a change of a field changes it at once.
+  useAtomSubscribe(
+    tagEditState.values,
+    (next) => {
+      if (Option.isSome(next)) {
+        setDraft(tagDraftOfValues(next.value, draft));
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also moves without typing (Zahodit změny, the current version, a newer server version): the fields
+  // follow it.
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    const next = tagValuesOf(draft);
+    if (Option.exists(values, (shown) => !sameTagValues(shown, next))) {
+      setValues(next);
+    }
+  }, [draft, setValues, values]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const labels = saveLabelsFor(language);
@@ -55,7 +84,16 @@ export const TagEditPanel = ({ onClose, tag }: { readonly onClose: () => void; r
   };
   const handleSave = record.save;
   const handleReloadLatest = record.reloadLatest;
-  const handleDraftChange = record.setDraft;
+  // Enter checks the fields and, when they hold a tag, is Save.
+  useAtomSubscribe(
+    tagEditState.submit,
+    (result) => {
+      if (AsyncResult.isSuccess(result) && !result.waiting) {
+        handleSave();
+      }
+    },
+    { immediate: false },
+  );
   return (
     <>
       <SidePanel
@@ -78,16 +116,7 @@ export const TagEditPanel = ({ onClose, tag }: { readonly onClose: () => void; r
         size="md"
         title={t('tagging.tags.edit')}
       >
-        <form
-          className="flex flex-col gap-200 py-200"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            handleSave();
-          }}
-        >
-          <TagFields draft={record.draft} onChange={handleDraftChange} showErrors />
-        </form>
+        <TagForm defaultValues={tagValuesOf(draft)} kind="edit" />
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

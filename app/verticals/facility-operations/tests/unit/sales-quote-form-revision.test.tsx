@@ -163,7 +163,7 @@ const mountPanel = (quote: SalesQuote, revision: number) =>
   mountInRoute(panelOf(quote, revision), {
     path: 'provoz/nakupy',
     url: '/cs/provoz/nakupy',
-  }).pipe(Effect.tap(() => waitUntil(() => document.querySelector('[name="sales-customer"]') !== null)));
+  }).pipe(Effect.tap(() => waitUntil(() => document.querySelector('[name="customerId"]') !== null)));
 
 afterEach(unmountAll);
 

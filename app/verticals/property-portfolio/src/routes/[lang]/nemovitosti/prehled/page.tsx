@@ -3,14 +3,18 @@ import { executeRecords as executeAgreements } from '@app/legal-agreements/clien
 import { executeRecords as executeFinance } from '@app/finance-billing/clients/records';
 import { executeRecords as executeOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
+import { surfaceCardClassName, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
-import { Effect, Match, Random, Record as EffectRecord } from 'effect';
+import { CheckboxField, FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
+import { Effect, Match, Option, Random, Record as EffectRecord, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { executeRecords as executeProperty } from '../../../../api/records-client';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/property-portfolio.json';
 import enResource from '../../../../../locales/en/property-portfolio.json';
@@ -38,8 +42,28 @@ import type {
   SourceRow,
   WorkRecords,
 } from './overview-model';
-import '../../../index.css';
-import './overview.css';
+
+const overviewClass = 'grid min-w-0 gap-6 max-[480px]:gap-4';
+const headingClass = 'flex flex-wrap items-start justify-between gap-4';
+const stackClass = 'grid min-w-0 gap-2';
+const eyebrowClass = 'text-[11px] font-[650] tracking-[0.1em] uppercase text-fg-secondary';
+const titleClass = 'text-[28px] font-[650] tracking-tight max-[480px]:text-[24px]';
+const sectionTitleClass = 'text-[18px] font-semibold';
+const mutedClass = 'text-[13px] leading-[1.6] text-fg-secondary';
+/** Panels are the one outlined surface; KPI tiles are tinted, the same as SectionCard and StatCard elsewhere. */
+const panelClass = `${surfaceCardClassName} grid min-w-0 gap-4 p-5 max-[480px]:p-4`;
+const statsClass = 'grid grid-cols-4 gap-4 max-[1000px]:grid-cols-2 max-[480px]:gap-2';
+const statClass = `${surfaceTileClassName} grid min-w-0 items-stretch justify-stretch gap-1.5 p-5 text-left hover:bg-overlay max-[480px]:p-4`;
+const statValueClass = 'text-[28px] font-[650] leading-[1.4] tabular-nums max-[480px]:text-[23px]';
+const columnsClass = 'grid grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)] items-start gap-6 max-[1000px]:grid-cols-1';
+/** A link that reads as the text around it: no underline, the surrounding colour. */
+const plainLinkClass = 'text-inherit no-underline';
+const attentionClass =
+  'grid gap-1.5 border-b border-border-primary/60 py-3 text-inherit no-underline last:border-0 last:pb-0';
+const attentionLabelClass = 'text-[13px] font-semibold';
+const unitsClass = 'grid grid-cols-4 gap-2 max-[480px]:grid-cols-2';
+const unitClass = 'grid min-w-0 gap-2 rounded-md p-3 text-inherit no-underline hover:bg-surface';
+const cellClass = 'border-b border-border-primary/60 px-2 py-3 align-top';
 
 const propertyPortfolioI18nResources = {
   cs: { 'property-portfolio': csResource },
@@ -327,41 +351,56 @@ const OverviewStats = ({ view }: { readonly view: OverviewView }) => {
     units,
   } = view;
   return (
-    <section aria-label={t('property-portfolio.overview.todaySummary')} className="sp-stats">
-      <button
-        className="sp-stat"
+    <section aria-label={t('property-portfolio.overview.todaySummary')} className={statsClass}>
+      <Button
+        className={statClass}
+        composition
         disabled={property === undefined || occupancy === undefined}
         onClick={() => setSelection('occupied')}
-        type="button"
+        size="current"
+        unstyled
       >
-        <span className="sp-muted">Obsazené jednotky</span>
-        <strong>
+        <span className={mutedClass}>Obsazené jednotky</span>
+        <strong className={statValueClass}>
           {property === undefined || occupancy === undefined ? '—' : `${occupied.length} / ${units.length}`}
         </strong>
-        <span className="sp-muted">Aktivní nájmy právě dnes · zobrazit →</span>
-      </button>
-      <button
-        className="sp-stat"
+        <span className={mutedClass}>Aktivní nájmy právě dnes · zobrazit →</span>
+      </Button>
+      <Button
+        className={statClass}
+        composition
         disabled={property === undefined || occupancy === undefined}
         onClick={() => setSelection('available')}
-        type="button"
+        size="current"
+        unstyled
       >
-        <span className="sp-muted">Volné jednotky</span>
-        <strong>{property === undefined || occupancy === undefined ? '—' : available.length}</strong>
-        <span className="sp-muted">Dnešní dostupnost · zobrazit →</span>
-      </button>
-      <button className="sp-stat" disabled={occupancy === undefined} onClick={() => setSelection('rent')} type="button">
-        <span className="sp-muted">Sjednaná měsíční platba</span>
-        <strong>{occupancy === undefined || knownRent.length === 0 ? '—' : formatCzk(rent)}</strong>
-        <span className="sp-muted">
+        <span className={mutedClass}>Volné jednotky</span>
+        <strong className={statValueClass}>
+          {property === undefined || occupancy === undefined ? '—' : available.length}
+        </strong>
+        <span className={mutedClass}>Dnešní dostupnost · zobrazit →</span>
+      </Button>
+      <Button
+        className={statClass}
+        composition
+        disabled={occupancy === undefined}
+        onClick={() => setSelection('rent')}
+        size="current"
+        unstyled
+      >
+        <span className={mutedClass}>Sjednaná měsíční platba</span>
+        <strong className={statValueClass}>
+          {occupancy === undefined || knownRent.length === 0 ? '—' : formatCzk(rent)}
+        </strong>
+        <span className={mutedClass}>
           Nájemné včetně záloh · {knownRent.length} z {activeLeases?.length ?? '—'} aktivních nájmů
         </span>
-      </button>
-      <button className="sp-stat" onClick={() => setSelection('attention')} type="button">
-        <span className="sp-muted">Vyžaduje pozornost</span>
-        <strong>{attention.length}</strong>
-        <span className="sp-muted">{overdueCount} po termínu · další termíny do 60 dní</span>
-      </button>
+      </Button>
+      <Button className={statClass} composition onClick={() => setSelection('attention')} size="current" unstyled>
+        <span className={mutedClass}>Vyžaduje pozornost</span>
+        <strong className={statValueClass}>{attention.length}</strong>
+        <span className={mutedClass}>{overdueCount} po termínu · další termíny do 60 dní</span>
+      </Button>
     </section>
   );
 };
@@ -379,27 +418,27 @@ const OverviewSelection = ({
   const { attention, setSelection } = view;
   return (
     selection !== '' && (
-      <section aria-label={t('property-portfolio.pages.overview.sourceRecords')} className="sp-panel">
-        <div className="sp-heading">
-          <h2>{selectionTitle(selection)}</h2>
+      <section aria-label={t('property-portfolio.pages.overview.sourceRecords')} className={panelClass}>
+        <div className={headingClass}>
+          <h2 className={sectionTitleClass}>{selectionTitle(selection)}</h2>
           <Button appearance="ghost" onClick={() => setSelection('')} severity="secondary" size="sm">
             Zavřít
           </Button>
         </div>
         {selection === 'attention'
           ? attention.map((item) => (
-              <a className="sp-attention" href={item.href} key={item.id}>
-                <strong>{item.label}</strong>
-                <span className="sp-muted">{item.detail}</span>
-              </a>
+              <Link className={attentionClass} href={item.href} key={item.id} size="current">
+                <strong className={`justify-self-start ${attentionLabelClass}`}>{item.label}</strong>
+                <span className={mutedClass}>{item.detail}</span>
+              </Link>
             ))
           : rows.map((row) => (
-              <a className="sp-attention" href={row.href} key={row.id}>
-                <strong>{row.label}</strong>
-                <span className="sp-muted">{row.detail}</span>
-              </a>
+              <Link className={attentionClass} href={row.href} key={row.id} size="current">
+                <strong className={`justify-self-start ${attentionLabelClass}`}>{row.label}</strong>
+                <span className={mutedClass}>{row.detail}</span>
+              </Link>
             ))}
-        {selection !== 'attention' && rows.length === 0 && <p className="sp-muted">Žádné odpovídající záznamy.</p>}
+        {selection !== 'attention' && rows.length === 0 && <p className={mutedClass}>Žádné odpovídající záznamy.</p>}
       </section>
     )
   );
@@ -408,27 +447,32 @@ const OverviewSelection = ({
 const OverviewBuildings = ({ view }: { readonly view: OverviewView }) => {
   const { activeBuildings, closedBuildings, href, occupancy, property, today } = view;
   return (
-    <section className="sp-panel">
-      <div className="sp-heading">
-        <h2>Portfolio nemovitostí</h2>
-        <span className="sp-muted">{portfolioDescription(view)}</span>
+    <section className={panelClass}>
+      <div className={headingClass}>
+        <h2 className={sectionTitleClass}>Portfolio nemovitostí</h2>
+        <span className={mutedClass}>{portfolioDescription(view)}</span>
       </div>
       {activeBuildings.map((building) => {
         const buildingId = building.propertyRef.resourceId;
         return (
-          <article className="sp-property" key={buildingId}>
-            <div className="sp-heading">
-              <div className="sp-stack">
-                <h3>
-                  <a href={href('nemovitosti', buildingId)}>{building.name} →</a>
+          <article
+            className="grid gap-4 border-b border-border-primary/60 pb-5 last:border-0 last:p-0"
+            key={buildingId}
+          >
+            <div className={headingClass}>
+              <div className={stackClass}>
+                <h3 className="text-[16px] font-semibold">
+                  <Link className={plainLinkClass} href={href('nemovitosti', buildingId)} size="current">
+                    {building.name} →
+                  </Link>
                 </h3>
-                <p className="sp-muted">{building.address}</p>
+                <p className={mutedClass}>{building.address}</p>
               </div>
               <Badge severity={building.lifecycleState === 'ACTIVE' ? 'success' : 'neutral'} size="sm">
                 {building.lifecycleState === 'ACTIVE' ? 'Aktivní' : 'Archivováno'}
               </Badge>
             </div>
-            <div className="sp-units">
+            <div className={unitsClass}>
               {property?.units.flatMap((unit) => {
                 if (unit.propertyRef.resourceId !== buildingId || unit.lifecycleState === 'RETIRED') {
                   return [];
@@ -442,15 +486,19 @@ const OverviewBuildings = ({ view }: { readonly view: OverviewView }) => {
                   )
                   .toSorted((a, b) => a.startDate.localeCompare(b.startDate))[0];
                 return [
-                  <a className="sp-unit" href={href('nemovitosti', unitId)} key={unitId}>
-                    <strong>{unit.code}</strong>
-                    <Badge severity={occupancy === undefined ? 'neutral' : availabilityTone[state]} size="sm">
+                  <Link className={unitClass} href={href('nemovitosti', unitId)} key={unitId} size="current">
+                    <strong className="text-[17px]">{unit.code}</strong>
+                    <Badge
+                      className="justify-self-start text-[12px]"
+                      severity={occupancy === undefined ? 'neutral' : availabilityTone[state]}
+                      size="sm"
+                    >
                       {occupancy === undefined ? 'Bez dat' : availabilityLabel[state]}
                     </Badge>
-                    <span className="sp-muted">
+                    <span className="text-[12px] leading-[1.6] text-fg-secondary">
                       {next === undefined ? unit.name : `Rezervace od ${formatDay(next.startDate)}`}
                     </span>
-                  </a>,
+                  </Link>,
                 ];
               })}
             </div>
@@ -458,12 +506,14 @@ const OverviewBuildings = ({ view }: { readonly view: OverviewView }) => {
         );
       })}
       {property !== undefined && property.properties.length === 0 && (
-        <p className="sp-muted">Zatím nejsou evidovány žádné nemovitosti.</p>
+        <p className={mutedClass}>Zatím nejsou evidovány žádné nemovitosti.</p>
       )}
       {closedBuildings > 0 && (
-        <p className="sp-muted">
+        <p className={mutedClass}>
           Plánované a archivované nemovitosti ({closedBuildings}) najdete v{' '}
-          <a href={href('nemovitosti')}>evidenci nemovitostí →</a>
+          <Link className={plainLinkClass} href={href('nemovitosti')} size="current">
+            evidenci nemovitostí →
+          </Link>
         </p>
       )}
     </section>
@@ -481,83 +531,90 @@ const OverviewAgenda = ({
   readonly href: OverviewView['href'];
   readonly lang: string;
 }) => (
-  <section className="sp-panel">
-    <div className="sp-heading">
-      <div className="sp-stack">
-        <h2>Kalendář nájmů a provozu</h2>
-        <p className="sp-muted">Termíny na příštích 60 dní. Každý řádek otevírá původní záznam.</p>
+  <section className={panelClass}>
+    <div className={headingClass}>
+      <div className={stackClass}>
+        <h2 className={sectionTitleClass}>Kalendář nájmů a provozu</h2>
+        <p className={mutedClass}>Termíny na příštích 60 dní. Každý řádek otevírá původní záznam.</p>
       </div>
-      <a className="sp-muted" href={`/${lang}/provoz/agenda`}>
+      <Link className={`no-underline ${mutedClass}`} href={`/${lang}/provoz/agenda`}>
         Otevřít celou agendu →
-      </a>
+      </Link>
     </div>
-    <div className="sp-table-scroll">
-      <table>
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse text-left text-[13px]">
         <thead>
           <tr>
-            <th>Datum</th>
-            <th>Událost</th>
-            <th>Jednotka / předmět</th>
+            <th className={`${cellClass} text-[12px] font-medium text-fg-secondary`}>Datum</th>
+            <th className={`${cellClass} text-[12px] font-medium text-fg-secondary`}>Událost</th>
+            <th className={`${cellClass} text-[12px] font-medium text-fg-secondary`}>Jednotka / předmět</th>
           </tr>
         </thead>
         <tbody>
           {agenda.map((entry) => (
             <tr key={entry.id}>
-              <td>{formatDay(entry.date)}</td>
-              <td>{agendaLabels[entry.kind]}</td>
-              <td>
-                <a href={href(ownerRoutes[entry.owner], entry.resourceId)}>{agendaLabel(entry)} →</a>
+              <td className={`${cellClass} whitespace-nowrap`}>{formatDay(entry.date)}</td>
+              <td className={cellClass}>{agendaLabels[entry.kind]}</td>
+              <td className={cellClass}>
+                <Link className={plainLinkClass} href={href(ownerRoutes[entry.owner], entry.resourceId)} size="current">
+                  {agendaLabel(entry)} →
+                </Link>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
-    {agenda.length === 0 && <p className="sp-muted">V dostupných agendách nejsou v tomto období žádné termíny.</p>}
+    {agenda.length === 0 && <p className={mutedClass}>V dostupných agendách nejsou v tomto období žádné termíny.</p>}
   </section>
 );
 
+/** The search over the agendas: every change of the text or the box searches again, nothing is submitted. */
+const overviewSearchForm = FormReact.make(
+  FormBuilder.empty.addField('includeClosed', Schema.Boolean).addField('query', Schema.String),
+  {
+    fields: { includeClosed: CheckboxField, query: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const emptyOverviewSearch: typeof overviewSearchForm.schema.Encoded = { includeClosed: false, query: '' };
+const overviewSearch = overviewSearchForm.values.pipe(Atom.map(Option.getOrElse(() => emptyOverviewSearch)));
+
 const OverviewSearch = ({
   hits,
-  includeClosed,
   query,
-  setIncludeClosed,
-  setQuery,
 }: {
   readonly hits: ReturnType<typeof searchRentalOverview>;
-  readonly includeClosed: boolean;
   readonly query: string;
-  readonly setIncludeClosed: (value: boolean) => void;
-  readonly setQuery: (query: string) => void;
 }) => {
   const { t } = useModernI18n();
   return (
-    <section className="sp-panel">
-      <h2>Najít v nemovitostech</h2>
-      <label className="sp-stack">
-        <span className="sp-muted">Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol</span>
-        <input
-          className="sp-search"
-          onChange={(event) => setQuery(event.target.value)}
+    <section className={panelClass}>
+      <h2 className={sectionTitleClass}>Najít v nemovitostech</h2>
+      <FormRoot
+        className="grid min-w-0 gap-4"
+        defaultValues={emptyOverviewSearch}
+        form={overviewSearchForm}
+        translateMessage={(message) => t(message)}
+      >
+        <overviewSearchForm.query
+          label="Nemovitost, jednotka, smlouva, nájem, faktura nebo úkol"
           placeholder={t('property-portfolio.overview.searchPlaceholder')}
           type="search"
-          value={query}
         />
-      </label>
-      <label className="sp-muted">
-        <input checked={includeClosed} onChange={(event) => setIncludeClosed(event.target.checked)} type="checkbox" />{' '}
-        Zahrnout ukončené a archivované
-      </label>
+        <overviewSearchForm.includeClosed label="Zahrnout ukončené a archivované" />
+      </FormRoot>
       {hits.map((hit) => (
-        <a className="sp-attention" href={hit.href} key={hit.id}>
-          <strong>
+        <Link className={attentionClass} href={hit.href} key={hit.id} size="current">
+          <strong className={`justify-self-start ${attentionLabelClass}`}>
             {hit.kind} · {hit.label}
           </strong>
-          <span className="sp-muted">{hit.detail}</span>
-        </a>
+          <span className={mutedClass}>{hit.detail}</span>
+        </Link>
       ))}
       {query.trim().length >= 2 && hits.length === 0 && (
-        <p className="sp-muted">Žádné výsledky v agendách, ke kterým máte oprávnění.</p>
+        <p className={mutedClass}>Žádné výsledky v agendách, ke kterým máte oprávnění.</p>
       )}
     </section>
   );
@@ -593,8 +650,7 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   }, [legalEntityId]);
   const sources: OverviewSources | undefined = snapshot.state === 'ready' ? snapshot.value : undefined;
   const loading = snapshot.state === 'pending' || snapshot.refreshing;
-  const [query, setQuery] = useState('');
-  const [includeClosed, setIncludeClosed] = useState(false);
+  const { includeClosed, query } = useAtomValue(overviewSearch);
   const [selection, setSelection] = useState('');
   const today = pragueToday();
   const portfolio = overviewPortfolio(sources, today);
@@ -627,23 +683,31 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   return (
     <>
       <UltramodernRouteHead />
-      <section aria-busy={loading} aria-labelledby="overview-heading" className="sp-overview">
-        <header className="sp-heading">
-          <div className="sp-stack">
-            <span className="sp-eyebrow">SPRÁVA NEMOVITOSTÍ</span>
-            <h1 id="overview-heading">Vaše nemovitosti v souvislostech</h1>
-            <p className="sp-muted">
+      {/* The search keeps what was typed while its panel is briefly gone, such as during a reload of the agendas. */}
+      <overviewSearchForm.KeepAlive />
+      <section aria-busy={loading} aria-labelledby="overview-heading" className={overviewClass}>
+        <header className={headingClass}>
+          <div className={stackClass}>
+            <span className={eyebrowClass}>SPRÁVA NEMOVITOSTÍ</span>
+            <h1 className={titleClass} id="overview-heading">
+              Vaše nemovitosti v souvislostech
+            </h1>
+            <p className={mutedClass}>
               Obsazenost, nájemci a nejbližší kroky na jednom místě. Stav k {formatDay(today)}.
             </p>
           </div>
         </header>
-        <nav aria-label={t('property-portfolio.overview.propertyAgendas')} className="sp-quicklinks">
+        <nav aria-label={t('property-portfolio.overview.propertyAgendas')} className="flex flex-wrap gap-2">
           {nav.flatMap((item) =>
             item.source?.status === 'ready'
               ? [
-                  <a href={href(ownerRoutes[item.owner])} key={item.owner}>
+                  <Link
+                    className="rounded-md px-3 py-2 text-[13px] text-inherit no-underline"
+                    href={href(ownerRoutes[item.owner])}
+                    key={item.owner}
+                  >
                     {item.label} →
-                  </a>,
+                  </Link>,
                 ]
               : [],
           )}
@@ -652,40 +716,37 @@ const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
           <>
             <OverviewStats view={view} />
             <OverviewSelection rows={rows} selection={selection} view={view} />
-            <div className="sp-columns">
+            <div className={columnsClass}>
               <OverviewBuildings view={view} />
-              <aside className="sp-panel">
-                <div className="sp-heading">
-                  <h2>Na co nezapomenout</h2>
+              <aside className={panelClass}>
+                <div className={headingClass}>
+                  <h2 className={sectionTitleClass}>Na co nezapomenout</h2>
                   <Badge appearance="outline" severity="neutral" size="sm">
                     Nejbližších 60 dní
                   </Badge>
                 </div>
                 {attention.slice(0, 6).map((item) => (
-                  <a className="sp-attention" href={item.href} key={item.id}>
-                    <Badge severity={item.tone} size="sm">
+                  <Link className={attentionClass} href={item.href} key={item.id} size="current">
+                    <Badge className="justify-self-start" severity={item.tone} size="sm">
                       {item.kind}
                     </Badge>
-                    <strong>{item.label}</strong>
-                    <span className="sp-muted">{item.detail}</span>
-                  </a>
+                    <strong className={attentionLabelClass}>{item.label}</strong>
+                    <span className={mutedClass}>{item.detail}</span>
+                  </Link>
                 ))}
                 {attention.length === 0 && (
-                  <p className="sp-muted">V dostupných agendách nejsou žádné blížící se ani překročené termíny.</p>
+                  <p className={mutedClass}>V dostupných agendách nejsou žádné blížící se ani překročené termíny.</p>
                 )}
               </aside>
             </div>
             <OverviewAgenda agenda={agenda} agendaLabel={agendaLabel} href={href} lang={lang} />
-            <OverviewSearch
-              hits={hits}
-              includeClosed={includeClosed}
-              query={query}
-              setIncludeClosed={setIncludeClosed}
-              setQuery={setQuery}
-            />
-            <footer aria-label={t('property-portfolio.overview.sourceAvailability')} className="sp-sources">
+            <OverviewSearch hits={hits} query={query} />
+            <footer
+              aria-label={t('property-portfolio.overview.sourceAvailability')}
+              className="flex flex-wrap gap-x-4 gap-y-2"
+            >
               {EffectRecord.keys(sourceLabels).map((key) => (
-                <span className="sp-muted" key={key}>
+                <span className={mutedClass} key={key}>
                   {sourceLabels[key]}: {sourceMessages[sources[key].status]}
                 </span>
               ))}

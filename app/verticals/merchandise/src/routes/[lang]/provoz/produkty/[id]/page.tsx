@@ -29,7 +29,6 @@ import { productVariantIdFromSearch } from '../product-variant-destination.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import csResource from '../../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../../locales/en/merchandise.json';
-import '../../../../index.css';
 
 const merchandiseI18nResources = {
   cs: { merchandise: csResource },

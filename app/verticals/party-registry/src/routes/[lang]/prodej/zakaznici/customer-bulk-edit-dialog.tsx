@@ -1,15 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SidePanel } from '@app/admin-ui';
+import { FormBuilder, FormReact, FormRoot, RadioField, useAtomSet, useAtomValue } from '@app/core-runtime/ui/form';
 import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
 
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { archiveCustomer } from '../../../../api/customers-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { isCustomerWriteForbidden } from './customers-data.ts';
 import { bulkArchiveReason } from './customers-model.ts';
 
@@ -22,7 +22,17 @@ const KEY = 'party-registry.pages.customers.bulkEdit';
 export const BulkEditActionSchema = Schema.Literals(['archive', 'tags']);
 export type BulkEditAction = typeof BulkEditActionSchema.Type;
 
-const parseAction = (value: string | null): BulkEditAction => (value === 'archive' ? 'archive' : 'tags');
+const parseAction = (value: string): BulkEditAction => (value === 'archive' ? 'archive' : 'tags');
+
+/** The action the bulk edit takes; the panel's own button acts on it, so the form itself is never submitted. */
+const bulkEditForm = FormReact.make(FormBuilder.empty.addField('action', Schema.String), {
+  fields: { action: RadioField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+/** A role that may tag starts from the neutral tag choice; without tagging, archive is the only choice. */
+const openingAction = (canTag: boolean): BulkEditAction => (canTag ? 'tags' : 'archive');
 
 type ArchiveError = Effect.Error<ReturnType<typeof archiveCustomer>>;
 
@@ -83,7 +93,11 @@ export const CustomerBulkEditDialog = ({
 }: CustomerBulkEditDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [chosenAction, setChosenAction] = useState<BulkEditAction>('tags');
+  const chosenAction = Option.match(useAtomValue(bulkEditForm.values), {
+    onNone: () => openingAction(canTag),
+    onSome: (values) => parseAction(values.action),
+  });
+  const setValues = useAtomSet(bulkEditForm.setValues);
   // Without tagging write the tag choice is not offered, so archive is the action whatever was chosen before.
   const action: BulkEditAction = canTag ? chosenAction : 'archive';
   const [busy, setBusy] = useState(false);
@@ -96,7 +110,7 @@ export const CustomerBulkEditDialog = ({
 
   // The dialog stays mounted, so the action resets to the neutral tag choice; a reopen never preselects archive.
   const close = () => {
-    setChosenAction('tags');
+    setValues({ action: openingAction(canTag) });
     setNotice(null);
     setFailed([]);
     onOpenChange(false);
@@ -191,23 +205,21 @@ export const CustomerBulkEditDialog = ({
       title={t(`${KEY}.title`)}
     >
       <div className="flex flex-col gap-200 py-200">
-        <RadioGroup onValueChange={(next) => setChosenAction(parseAction(next))} size="sm" value={action}>
-          <RadioGroup.Label>{t(`${KEY}.actionLabel`)}</RadioGroup.Label>
-          <RadioGroup.ItemGroup>
-            {canTag && (
-              <RadioGroup.Item value="tags">
-                <RadioGroup.ItemHiddenInput />
-                <RadioGroup.ItemControl />
-                <RadioGroup.ItemText>{t(`${KEY}.actionTags`)}</RadioGroup.ItemText>
-              </RadioGroup.Item>
-            )}
-            <RadioGroup.Item value="archive">
-              <RadioGroup.ItemHiddenInput />
-              <RadioGroup.ItemControl />
-              <RadioGroup.ItemText>{t(`${KEY}.actionArchive`)}</RadioGroup.ItemText>
-            </RadioGroup.Item>
-          </RadioGroup.ItemGroup>
-        </RadioGroup>
+        {/* A change of the tagging right starts the choice over, from what that role may choose. */}
+        <FormRoot
+          defaultValues={{ action: openingAction(canTag) }}
+          form={bulkEditForm}
+          key={String(canTag)}
+          translateMessage={(message) => t(message)}
+        >
+          <bulkEditForm.action
+            items={[
+              ...(canTag ? [{ label: t(`${KEY}.actionTags`), value: 'tags' }] : []),
+              { label: t(`${KEY}.actionArchive`), value: 'archive' },
+            ]}
+            label={t(`${KEY}.actionLabel`)}
+          />
+        </FormRoot>
         {action === 'archive' && !busy && failed.length === 0 && (
           <p className="text-sm">{t(`${KEY}.archiveConfirm`, { count: activeItems.length })}</p>
         )}

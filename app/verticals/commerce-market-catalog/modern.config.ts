@@ -4,7 +4,6 @@ import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
-import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { createWorkspaceModernConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'commerce-market-catalog';
@@ -25,7 +24,6 @@ export default defineConfig(
         prefix: '/commerce-market-catalog-api',
         runtimeFramework: 'effect',
       },
-      builderPlugins: [pluginTailwindcss()],
       plugins: [
         tanstackRouterPlugin(),
         i18nPlugin({

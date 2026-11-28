@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { FinanceTableScroll } from './finance-table-scroll.tsx';
 import {
   dialogCloseLabel,
@@ -13,12 +13,13 @@ import {
 } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { DateTime } from 'effect';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField } from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Schema } from 'effect';
 import { useState } from 'react';
 import type { BudgetLine, Invoice } from '../../../../shared/apis/records.ts';
 import {
@@ -33,6 +34,7 @@ import { monthLabel } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { editBudgetDraft, newBudgetDraft } from './budget-draft.ts';
 import type { BudgetDraft } from './budget-draft.ts';
+import { useFormDraft } from './finance-form-draft.tsx';
 import { objectSummary } from './object-fields.tsx';
 import { BudgetEditor, OpeningBalanceEditor } from './planning-forms.tsx';
 import { PlanItemsSection } from './plan-items-section.tsx';
@@ -70,42 +72,39 @@ const PlanActualBars = ({
       {rows.map((row) => (
         <li className="grid grid-cols-1 items-center gap-100 text-sm md:grid-cols-[10rem_1fr]" key={row.label}>
           <span className="truncate">{row.label}</span>
-          <span className="flex min-w-0 flex-col gap-50">
-            <span className="grid items-center gap-100" style={{ gridTemplateColumns: 'minmax(0, 1fr) 10rem' }}>
-              <span className="min-w-0">
+          <div className="flex min-w-0 flex-col gap-50">
+            <div className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
+              <div className="min-w-0">
                 <span className="sr-only">{`Plán: ${formatMoney(row.planned)}`}</span>
-                <span
-                  className="block h-3 rounded-sm"
-                  style={{
-                    background: 'var(--color-fg-secondary)',
-                    opacity: 0.35,
-                    width: `${Math.max(0, (row.planned / max) * 100)}%`,
-                  }}
-                />
-              </span>
+                <Meter aria-hidden max={max} severity="neutral" size="md" value={row.planned} />
+              </div>
               <span className="whitespace-nowrap text-fg-secondary text-xs tabular-nums">
                 plán {wholeKc(row.planned)}
               </span>
-            </span>
-            <span className="grid items-center gap-100" style={{ gridTemplateColumns: 'minmax(0, 1fr) 10rem' }}>
-              <span className="min-w-0">
+            </div>
+            <div className="grid grid-cols-[minmax(0,1fr)_10rem] items-center gap-100">
+              <div className="min-w-0">
                 <span className="sr-only">{`Skutečnost: ${formatMoney(row.actual)}`}</span>
-                <span
-                  className="block h-3 rounded-sm"
-                  style={{
-                    background: row.over ? 'var(--color-danger)' : 'var(--color-success)',
-                    width: `${Math.max(0, (row.actual / max) * 100)}%`,
-                  }}
-                />
-              </span>
+                <Meter aria-hidden max={max} severity={row.over ? 'danger' : 'success'} size="md" value={row.actual} />
+              </div>
               <span className="whitespace-nowrap text-xs tabular-nums">skutečnost {wholeKc(row.actual)}</span>
-            </span>
-          </span>
+            </div>
+          </div>
         </li>
       ))}
     </ul>
   );
 };
+
+/** The month and the object or cost center the budget comparison shows: they filter at once, nothing is sent. */
+const budgetFilterForm = FormReact.make(
+  FormBuilder.empty.addField('month', Schema.String).addField('object', Schema.String),
+  {
+    fields: { month: SelectTemplateField, object: SelectTemplateField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
 
 const usePlanningPanel = (vm: FinanceViewModel) => {
   const state = vm.snapshot?.state;
@@ -113,12 +112,13 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
   const currentMonth = monthOf(businessDate);
   const opening = state?.cashFlowOpening;
   const months = state === undefined ? [] : cashFlowForecast(state, businessDate);
-  const [budgetMonth, setBudgetMonth] = useState(currentMonth);
+  const openedFilters: typeof budgetFilterForm.schema.Encoded = { month: currentMonth, object: 'ALL' };
+  const filters = { ...useFormDraft(budgetFilterForm, openedFilters), opened: openedFilters };
+  const { month: budgetMonth, object: objectFilter } = filters.draft;
   const [draft, setDraft] = useState<BudgetDraft>();
   const [deleteTarget, setDeleteTarget] = useState<BudgetLine>();
   const [openingOpen, setOpeningOpen] = useState(false);
   const invoices = state?.invoices ?? [];
-  const [objectFilter, setObjectFilter] = useState('ALL');
   const budgets = (state?.budgets ?? []).filter(
     (budget) =>
       budget.period === budgetMonth &&
@@ -175,18 +175,16 @@ const usePlanningPanel = (vm: FinanceViewModel) => {
     currentMonth,
     deleteTarget,
     draft,
+    filters,
     flowData,
     invoices,
     last,
     months,
-    objectFilter,
     objectFilterItems,
     opening,
     openingOpen,
-    setBudgetMonth,
     setDeleteTarget,
     setDraft,
-    setObjectFilter,
     setOpeningOpen,
     state,
     totals,
@@ -306,13 +304,25 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
         <Table appearance="line" size="sm">
           <Table.Header>
             <Table.Row>
-              <Table.ColumnHeader>Měsíc</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Příjmy uhrazené</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Výdaje uhrazené</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Očekávané příjmy</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Očekávané výdaje</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Plán (rozpočet + fin. plán)</Table.ColumnHeader>
-              <Table.ColumnHeader align="end">Odhad zůstatku</Table.ColumnHeader>
+              <Table.ColumnHeader className="whitespace-nowrap">Měsíc</Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Příjmy uhrazené
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Výdaje uhrazené
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Očekávané příjmy
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Očekávané výdaje
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Plán (rozpočet + fin. plán)
+              </Table.ColumnHeader>
+              <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                Odhad zůstatku
+              </Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
           <Table.Body>
@@ -355,59 +365,37 @@ const CashFlowForecast = (model: ReturnType<typeof usePlanningPanel>) => {
 
 const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
   const { t } = useModernI18n();
-  const {
-    budgetMonth,
-    budgetMonths,
-    budgetRows,
-    invoices,
-    objectFilter,
-    objectFilterItems,
-    setBudgetMonth,
-    setDeleteTarget,
-    setDraft,
-    setObjectFilter,
-    vm,
-  } = model;
+  const { budgetMonth, budgetMonths, budgetRows, filters, invoices, objectFilterItems, setDeleteTarget, setDraft, vm } =
+    model;
   return (
     <SectionCard
       actions={
         <>
-          <div className="w-56">
-            <SelectTemplate
-              aria-label={t('finance-billing.financeUi.planning.budgetObject')}
-              items={objectFilterItems.map((entry) => ({
-                displayValue: entry.label,
-                label: entry.label,
-                value: entry.value,
-              }))}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (next !== undefined) {
-                  setObjectFilter(next);
-                }
-              }}
-              size="sm"
-              value={[objectFilter]}
-            />
-          </div>
-          <div className="w-44">
-            <SelectTemplate
-              aria-label={t('finance-billing.financeUi.planning.budgetMonth')}
-              items={budgetMonths.map((month) => ({
-                displayValue: monthLabel(month),
-                label: monthLabel(month),
-                value: month,
-              }))}
-              onValueChange={({ value }) => {
-                const [next] = value;
-                if (next !== undefined) {
-                  setBudgetMonth(next);
-                }
-              }}
-              size="sm"
-              value={[budgetMonth]}
-            />
-          </div>
+          <FormRoot className="contents" defaultValues={filters.opened} form={budgetFilterForm} translateMessage={t}>
+            {filters.ready}
+            <div className="w-56">
+              <budgetFilterForm.object
+                aria-label={t('finance-billing.financeUi.planning.budgetObject')}
+                items={objectFilterItems.map((entry) => ({
+                  displayValue: entry.label,
+                  label: entry.label,
+                  value: entry.value,
+                }))}
+                size="sm"
+              />
+            </div>
+            <div className="w-44">
+              <budgetFilterForm.month
+                aria-label={t('finance-billing.financeUi.planning.budgetMonth')}
+                items={budgetMonths.map((month) => ({
+                  displayValue: monthLabel(month),
+                  label: monthLabel(month),
+                  value: month,
+                }))}
+                size="sm"
+              />
+            </div>
+          </FormRoot>
           {vm.canWrite && (
             <Button icon="icon-[mdi--plus]" onClick={() => setDraft(newBudgetDraft())} severity="primary" size="sm">
               Přidat položku
@@ -441,15 +429,23 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
             <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
-                  <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
-                  <Table.ColumnHeader>Objekt / středisko</Table.ColumnHeader>
-                  <Table.ColumnHeader>Typ</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Plán</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Skutečnost</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Rozdíl</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Odchylka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Vysvětlení</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end" />
+                  <Table.ColumnHeader className="whitespace-nowrap">Kategorie</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Objekt / středisko</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Typ</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Plán
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Skutečnost
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Rozdíl
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Odchylka
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Vysvětlení</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap" />
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -480,11 +476,7 @@ const BudgetComparison = (model: ReturnType<typeof usePlanningPanel>) => {
                           </span>
                         </span>
                       </Table.Cell>
-                      <Table.Cell
-                        align="end"
-                        className="tabular-nums"
-                        style={over ? { color: 'var(--color-danger)' } : undefined}
-                      >
+                      <Table.Cell align="end" className={over ? 'tabular-nums text-danger' : 'tabular-nums'}>
                         {formatMoney(variance.differenceMinor)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">

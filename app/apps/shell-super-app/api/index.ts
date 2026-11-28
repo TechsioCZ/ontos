@@ -100,8 +100,12 @@ import {
   assetMetadataRead,
   renameDisplayFilenameAction,
   uploadAssetAction,
+  tenantThemeRead,
+  saveTenantThemeAction,
+  attachTenantThemeAction,
 } from '@app/core-runtime';
 
+import { TenantThemeKitLive } from '@app/core-runtime/themes/kit';
 import {
   AccessDecisionLive,
   AccessEnforcementPortsLive,
@@ -378,6 +382,9 @@ import {
 
 // @ontos-core-read asset-metadata
 // assetMetadataRead uses the canonical @app/core-runtime import
+
+// @ontos-core-read tenant-theme
+// tenantThemeRead uses the canonical @app/core-runtime import
 // @ontos-codesmith-core-read-server-imports:end
 
 // @ontos-codesmith-core-action-server-imports:start
@@ -390,6 +397,12 @@ import {
 
 // @ontos-core-action upload-asset
 // uploadAssetAction is imported once by the host root
+
+// @ontos-core-action save-tenant-theme
+// saveTenantThemeAction is imported once by the host root
+
+// @ontos-core-action attach-tenant-theme
+// attachTenantThemeAction is imported once by the host root
 // @ontos-codesmith-core-action-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
@@ -1260,7 +1273,7 @@ const shellListReadProblem = (error: ReadCoreError) => {
 };
 
 const logShellReadFailure = (
-  operation: 'composition' | 'module_target' | 'resource' | 'search',
+  operation: 'composition' | 'module_target' | 'resource' | 'search' | 'tenant_theme',
   request: RequestWithHeaders,
   error: ReadCoreError,
   targetDiagnostics: Readonly<Record<string, LogAnnotation>> = {},
@@ -1791,6 +1804,25 @@ const documentTarget = Effect.fn('shell.composition.documentTarget')(function* d
   );
 });
 
+/** The caller as a tenant-wide principal, for a company-free operation (a tenant's theme, a reserved upload's row). */
+const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+
+/** The signed-in tenant's effective theme; none when it could not be read, which the document then reports. */
+const documentTheme = (request: RequestWithHeaders, principal: TrustedPrincipalContext) =>
+  Effect.gen(function* readDocumentTheme() {
+    const runtime = yield* ReadRuntime;
+    return yield* runtime.runRead({
+      input: {},
+      principal: withoutSelectedLegalEntity(principal),
+      registration: tenantThemeRead,
+      transport: { correlationId: correlationFromRequest(request) },
+    });
+  }).pipe(
+    Effect.tapError((failure) => logShellReadFailure('tenant_theme', request, failure)),
+    Effect.option,
+    observeGatewayPhase('document-theme'),
+  );
+
 /**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
@@ -1833,6 +1865,8 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
       }),
       onSuccess: ({ tenants: available }) => ({ state: 'available' as const, tenants: available }),
     });
+    // The tenant's theme reads beside the rest of the document, for every signed-in state.
+    const theme = yield* Effect.forkChild(documentTheme(request, context.principal), { startImmediately: true });
     // The company-switcher hint grants no composition or people access. Join it only when assembling the document.
     const { document, tenantContextAvailable } = yield* Effect.all(
       {
@@ -1976,9 +2010,11 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
       ),
     };
     // The switcher hint shows "no tenant context" when its check could not answer, and says so.
-    const result = Option.isNone(tenantContextAvailable)
+    const answered = Option.isNone(tenantContextAvailable)
       ? { ...assembled, tenantContextUnavailable: true as const }
       : assembled;
+    const themeAnswer = yield* Fiber.join(theme);
+    const result = Option.isSome(themeAnswer) ? { ...answered, theme: themeAnswer.value } : answered;
     if (Option.isNone(tenantRelease)) {
       return result;
     }
@@ -1998,7 +2034,7 @@ const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
       ),
     ),
   ),
-);
+).pipe(Layer.provide(TenantThemeKitLive));
 
 const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
   handlers
@@ -4188,10 +4224,36 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
       ),
     ),
 );
-// @ontos-codesmith-core-read-server-groups:end
 
-/** The caller as a tenant-wide principal: the byte-source Read is company-free, the ingest applies the company itself. */
-const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+// @ontos-core-read tenant-theme
+const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreReadTenantTheme', (handlers) =>
+  handlers.handle('executeTenantTheme', ({ payload, request }) =>
+    Effect.gen(function* executeTenantThemeCoreRead() {
+      const authentication = yield* AuthenticationService;
+      const resolved = yield* authentication
+        .resolveTenantContext(requestHeaders(request.headers))
+        .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+      if (resolved.state !== 'authenticated') {
+        return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+      }
+      const runtime = yield* ReadRuntime;
+      return yield* runtime
+        .runRead({
+          input: payload,
+          principal: withoutSelectedLegalEntity(resolved.principal),
+          registration: tenantThemeRead,
+          transport: { correlationId: correlationFromRequest(request) },
+        })
+        .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+    }).pipe(
+      recoverUnexpectedDefect(request, 'Unexpected Shell Core read defect', () =>
+        failIdentityProblem(shellInternalProblem()),
+      ),
+    ),
+  ),
+).pipe(Layer.provide(TenantThemeKitLive));
+// @ontos-codesmith-core-read-server-groups:end
 
 /**
  * The request-scoped evidence of the Core Media confirm route. The confirm Action decides on a verification of the
@@ -4416,6 +4478,102 @@ const coreActionUploadAssetGroupLive = HttpApiBuilder.group(
             transport: { correlationId, idempotencyKey },
           })
           .pipe(Effect.catch((error) => pipe(error, coreActionUploadAssetProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+
+// @ontos-core-action save-tenant-theme
+const coreActionSaveTenantThemeProblem = (
+  error: ActionCoreError | typeof saveTenantThemeAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(saveTenantThemeAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          TenantThemeInvalid: shellPolicyUnprocessableProblem,
+          TenantThemeUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionSaveTenantThemeGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionSaveTenantTheme',
+  (handlers) =>
+    handlers.handle('executeSaveTenantTheme', ({ headers, payload, request }) =>
+      Effect.gen(function* executeSaveTenantThemeCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* runtime
+          .runAction({
+            payload,
+            principal: withoutSelectedLegalEntity(resolved.principal),
+            registration: saveTenantThemeAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          })
+          .pipe(Effect.catch((error) => pipe(error, coreActionSaveTenantThemeProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+).pipe(Layer.provide(TenantThemeKitLive));
+
+// @ontos-core-action attach-tenant-theme
+const coreActionAttachTenantThemeProblem = (
+  error: ActionCoreError | typeof attachTenantThemeAction.descriptor.domainErrorSchema.Type,
+): IdentityProblem =>
+  Schema.is(attachTenantThemeAction.descriptor.domainErrorSchema)(error)
+    ? Match.value(error).pipe(
+        Match.tags({
+          TenantThemeNotFound: shellTargetNotFoundProblem,
+          TenantThemeUnavailable: shellCapabilityUnavailableProblem,
+        }),
+        Match.exhaustive,
+      )
+    : identityProblem(error);
+
+const coreActionAttachTenantThemeGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreActionAttachTenantTheme',
+  (handlers) =>
+    handlers.handle('executeAttachTenantTheme', ({ headers, payload, request }) =>
+      Effect.gen(function* executeAttachTenantThemeCoreAction() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const idempotencyKey = yield* requiredIdempotencyKey(headers);
+        const correlationId = correlationFromRequest(request);
+        const runtime = yield* ActionRuntime;
+        return yield* runtime
+          .runAction({
+            payload,
+            principal: withoutSelectedLegalEntity(resolved.principal),
+            registration: attachTenantThemeAction,
+            savedReply: 'answer',
+            transport: { correlationId, idempotencyKey },
+          })
+          .pipe(Effect.catch((error) => pipe(error, coreActionAttachTenantThemeProblem, failIdentityProblem)));
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected Shell Core Action defect', () =>
           failIdentityProblem(shellInternalProblem()),
@@ -5491,6 +5649,9 @@ export const makeShellAuthenticationApiRuntime = (
 
     // @ontos-core-read asset-metadata
     coreReadAssetMetadataGroupLive,
+
+    // @ontos-core-read tenant-theme
+    coreReadTenantThemeGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
 
     // @ontos-codesmith-core-action-server-layers:start
@@ -5503,6 +5664,12 @@ export const makeShellAuthenticationApiRuntime = (
 
     // @ontos-core-action upload-asset
     coreActionUploadAssetHandlersLive,
+
+    // @ontos-core-action save-tenant-theme
+    coreActionSaveTenantThemeGroupLive,
+
+    // @ontos-core-action attach-tenant-theme
+    coreActionAttachTenantThemeGroupLive,
     // @ontos-codesmith-core-action-server-layers:end
     coreMediaDownloadHandlersLive,
     coreMediaUploadHandlersLive,

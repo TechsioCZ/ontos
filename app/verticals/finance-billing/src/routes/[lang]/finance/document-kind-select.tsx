@@ -2,13 +2,20 @@
 // its confirm button sends SetInvoiceDetails, once. Until then the picker keeps showing the saved kind.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { dialogCloseLabel } from '@app/admin-ui';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SelectTemplateField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
 import type { Invoice } from '../../../../shared/apis/records.ts';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import type { FinanceViewModel } from './finance-ui.tsx';
 
 type DocumentKind = NonNullable<Invoice['documentKind']>;
@@ -16,6 +23,41 @@ type DocumentKind = NonNullable<Invoice['documentKind']>;
 const P = 'finance-billing.financeUi.documentKind';
 /** Every kind, in the order the picker lists them. */
 const KINDS: readonly DocumentKind[] = ['ADVANCE', 'FINAL', 'PARTIAL', 'RECURRING', 'STANDARD'];
+
+/**
+ * The picker of the one invoice detail on screen. It only asks: a picked kind opens the confirmation and the picker
+ * goes back to the saved kind.
+ */
+const documentKindForm = FormReact.make(FormBuilder.empty.addField('kind', Schema.String), {
+  fields: { kind: SelectTemplateField },
+  onSubmit: () => Effect.void,
+  runtime: financeBrowserAtomRuntime,
+});
+const pickedKind = documentKindForm.getFieldAtoms(documentKindForm.fields.kind);
+
+/** Hands a kind other than the saved one to the confirmation and shows the saved kind again. */
+const KindPicked = ({
+  current,
+  onPicked,
+}: {
+  readonly current: DocumentKind;
+  readonly onPicked: (kind: DocumentKind) => void;
+}) => {
+  const setKind = useAtomSet(pickedKind.setValue);
+  useAtomSubscribe(
+    pickedKind.value,
+    (value) => {
+      const next = KINDS.find((kind) => Option.contains(value, kind));
+      if (next !== undefined && next !== current) {
+        onPicked(next);
+        setKind(current);
+      }
+    },
+    // Immediate: a subscription that does not read the value first never hears a change of a value not read yet.
+    { immediate: true },
+  );
+  return null;
+};
 
 export interface DocumentKindSelectProps {
   readonly disabled: boolean;
@@ -50,22 +92,19 @@ export const DocumentKindSelect = ({ disabled, invoice, kinds, vm }: DocumentKin
         ),
     );
   };
+  // A newly saved kind starts the picker afresh.
   return (
     <>
-      <SelectTemplate
-        disabled={disabled}
-        items={KINDS.map((kind) => ({ displayValue: kinds[kind], label: kinds[kind], value: kind }))}
-        label={t('finance-billing.financeUi.common.documentKind')}
-        labelProps={{ className: 'font-label text-label-sm' }}
-        onValueChange={({ value }) => {
-          const next = KINDS.find((kind) => kind === value[0]);
-          if (next !== undefined && next !== current) {
-            setPicked(next);
-          }
-        }}
-        size="sm"
-        value={[current]}
-      />
+      <FormRoot defaultValues={{ kind: current }} form={documentKindForm} key={current} translateMessage={t}>
+        <KindPicked current={current} onPicked={setPicked} />
+        <documentKindForm.kind
+          disabled={disabled}
+          items={KINDS.map((kind) => ({ displayValue: kinds[kind], label: kinds[kind], value: kind }))}
+          label={t('finance-billing.financeUi.common.documentKind')}
+          labelProps={{ className: 'font-label text-label-sm' }}
+          size="sm"
+        />
+      </FormRoot>
       <Dialog
         actions={
           <>

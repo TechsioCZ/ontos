@@ -163,30 +163,34 @@ export const InventoryTab = ({
           const summary = counts(inventory);
           const isSelected = inventory.id === selected?.id;
           return (
-            <button
-              className={`flex flex-col gap-50 rounded-lg border p-200 text-left transition-colors ${isSelected ? 'border-primary bg-surface' : 'border-border-primary bg-surface hover:bg-fill-hover'}`}
+            <Button
+              className={`block rounded-lg border p-200 text-left transition-colors ${isSelected ? 'border-primary bg-surface' : 'border-border-primary bg-surface hover:bg-fill-hover'}`}
+              composition
               key={inventory.id}
               onClick={() => setSelectedId(inventory.id)}
-              type="button"
+              size="current"
+              unstyled
             >
-              <span className="flex items-center justify-between gap-100">
-                <span className="font-medium text-sm">{inventory.title}</span>
-                <Badge severity={inventory.status === 'open' ? 'info' : 'neutral'} size="sm">
-                  {k(`inventory.status.${inventory.status}`)}
-                </Badge>
+              <span className="flex flex-col gap-50">
+                <span className="flex items-center justify-between gap-100">
+                  <span className="font-medium text-sm">{inventory.title}</span>
+                  <Badge severity={inventory.status === 'open' ? 'info' : 'neutral'} size="sm">
+                    {k(`inventory.status.${inventory.status}`)}
+                  </Badge>
+                </span>
+                <span className="text-fg-secondary text-xs">
+                  {isoDateLabel(inventory.date)} · {inventory.scope?.label ?? k('inventory.wholeCompany')}
+                </span>
+                <span className="text-xs tabular-nums">
+                  {k('inventory.progress', { checked: summary.total - summary.pending, total: summary.total })}
+                  {summary.differences > 0 && (
+                    <span className="ml-100 text-danger">
+                      {k('inventory.differencesCount', { count: summary.differences })}
+                    </span>
+                  )}
+                </span>
               </span>
-              <span className="text-fg-secondary text-xs">
-                {isoDateLabel(inventory.date)} · {inventory.scope?.label ?? k('inventory.wholeCompany')}
-              </span>
-              <span className="text-xs tabular-nums">
-                {k('inventory.progress', { checked: summary.total - summary.pending, total: summary.total })}
-                {summary.differences > 0 && (
-                  <span className="ml-100 text-danger">
-                    {k('inventory.differencesCount', { count: summary.differences })}
-                  </span>
-                )}
-              </span>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -257,22 +261,24 @@ export const InventoryTab = ({
                 return (
                   <Table.Row key={item.assetId}>
                     <Table.Cell>
-                      <button
-                        className="flex flex-col text-left hover:underline"
+                      <Button
+                        className="block text-left hover:underline"
+                        composition
                         disabled={asset === undefined}
                         onClick={() => {
                           if (asset !== undefined) {
                             onOpenAsset(asset);
                           }
                         }}
-                        type="button"
+                        size="current"
+                        unstyled
                       >
-                        <span className="font-medium">{item.name}</span>
-                        <span className="text-fg-secondary text-xs tabular-nums">
+                        <span className="block font-medium">{item.name}</span>
+                        <span className="block text-fg-secondary text-xs tabular-nums">
                           {item.inventoryNumber}
                           {asset?.location === undefined ? '' : ` · ${asset.location.label.split(' › ').at(-1) ?? ''}`}
                         </span>
-                      </button>
+                      </Button>
                     </Table.Cell>
                     <Table.Cell>
                       <span className="flex flex-col items-start gap-50">

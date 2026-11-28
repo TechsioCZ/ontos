@@ -1,11 +1,15 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { dialogCloseLabel, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Label } from '@techsio/ui-kit/atoms/label';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { DateTime, Effect, Option, Result } from 'effect';
+import { FileField, FormBuilder, FormReact, FormRoot, useAtomSubscribe, useAtomValue } from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useState } from 'react';
 import type { Invoice, AccountingExportStatus } from '../../../../shared/apis/records.ts';
 import { isTestReminderRecipient, paymentEvents } from '../../../../shared/domain/finance-planning.ts';
@@ -105,6 +109,21 @@ const invoiceDocumentsUploadProgram = Effect.fn('Finance.upload')(function* invo
   }
 });
 
+/** The file picked for upload; picking one uploads it at once. */
+const documentUploadForm = FormReact.make(
+  FormBuilder.empty.addField('file', Schema.OptionFromNullOr(Schema.instanceOf(File))),
+  {
+    fields: { file: FileField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+/** The picked file; it changes only when another file is picked. */
+const pickedFile = documentUploadForm
+  .getFieldAtoms(documentUploadForm.fields.file)
+  .value.pipe(Atom.map(Option.getOrElse(() => null)));
+
 const useInvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const documents = (vm.snapshot?.state.documents ?? []).filter(
     (document) => document.invoiceResourceId === invoice.ref.resourceId,
@@ -121,12 +140,15 @@ const useInvoiceDocuments = ({ invoice, vm }: { readonly invoice: Invoice; reado
   const upload = (file: File | undefined): void => {
     void financeBrowserRuntime.runPromise(invoiceDocumentsUploadProgram({ invoice, setError, setUploading, vm }, file));
   };
-  return { documents, error, invoice, load, preview, setError, setPreview, setUploading, upload, uploading, vm };
+  // Reading the picked file links it to the form's state, so the subscription below hears every pick.
+  useAtomValue(pickedFile);
+  useAtomSubscribe(pickedFile, (file) => upload(file ?? undefined), { immediate: false });
+  return { documents, error, invoice, load, preview, setError, setPreview, setUploading, uploading, vm };
 };
 
 export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm: FinanceViewModel }) => {
   const { t } = useModernI18n();
-  const { documents, error, invoice, load, preview, setPreview, upload, uploading, vm } = useInvoiceDocuments(props);
+  const { documents, error, invoice, load, preview, setPreview, uploading, vm } = useInvoiceDocuments(props);
   return (
     <SectionCard title={t('finance-billing.financeUi.documents.title')}>
       <div className="flex flex-col gap-150">
@@ -143,7 +165,7 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
               <li className="flex items-center gap-150 py-100" key={document.id}>
                 <span
                   aria-hidden
-                  className={`size-6 shrink-0 text-fg-secondary ${document.mimeType === 'application/pdf' ? 'icon-[mdi--file-pdf-box]' : 'icon-[mdi--file-image-outline]'}`}
+                  className={`size-6 shrink-0 text-fg-secondary ${document.mimeType === 'application/pdf' ? 'icon-[mdi--file-pdf-box]' : 'token-icon-file-upload-image'}`}
                 />
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate font-medium text-sm">{document.fileName}</span>
@@ -178,23 +200,25 @@ export const InvoiceDocuments = (props: { readonly invoice: Invoice; readonly vm
           </ul>
         )}
         {vm.canWrite && (
-          <label
-            className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-fill-hover print:hidden"
-            htmlFor={`attach-${invoice.ref.resourceId}`}
+          <FormRoot
+            className="flex self-start"
+            defaultValues={{ file: null }}
+            form={documentUploadForm}
+            translateMessage={t}
           >
-            <span aria-hidden className="icon-[mdi--paperclip] size-4" />
-            {uploading ? 'Nahrávám…' : 'Nahrát soubor'}
-            <input
-              accept={ACCEPTED_DOCUMENT_TYPES.join(',')}
-              className="sr-only"
-              disabled={uploading}
-              id={`attach-${invoice.ref.resourceId}`}
-              onChange={(event) => {
-                upload(event.target.files?.[0]);
-              }}
-              type="file"
-            />
-          </label>
+            <Label
+              className="flex cursor-pointer items-center gap-100 self-start rounded-md border border-border-primary px-200 py-100 text-sm hover:bg-fill-hover print:hidden"
+              htmlFor={`attach-${invoice.ref.resourceId}`}
+            >
+              <documentUploadForm.file
+                accept={ACCEPTED_DOCUMENT_TYPES.join(',')}
+                disabled={uploading}
+                id={`attach-${invoice.ref.resourceId}`}
+              />
+              <span aria-hidden className="icon-[mdi--paperclip] size-4" />
+              {uploading ? 'Nahrávám…' : 'Nahrát soubor'}
+            </Label>
+          </FormRoot>
         )}
       </div>
       <Dialog
@@ -299,12 +323,7 @@ export const InvoicePayments = (props: { readonly invoice: Invoice; readonly vm:
             Zbývá <strong className="tabular-nums">{formatMoney(remaining)}</strong>
           </span>
         </div>
-        <div aria-hidden className="h-2 overflow-hidden rounded-full bg-surface-secondary">
-          <div
-            className="h-full rounded-full bg-(--color-chart-series-1)"
-            style={{ width: `${Math.min(100, (invoice.paidMinor / Math.max(1, invoice.totalMinor)) * 100)}%` }}
-          />
-        </div>
+        <Meter aria-hidden max={Math.max(1, invoice.totalMinor)} severity="info" value={invoice.paidMinor} />
         {events.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím nebyla potvrzena žádná úhrada.</p>
         ) : (
@@ -517,7 +536,7 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
             {EXPORT_STATUS[latest.status].label}
           </Badge>
           {latest.status === 'FAILED' && latest.failureReason !== undefined && (
-            <span className="break-words text-xs" style={{ color: 'var(--color-danger)' }}>
+            <span className="break-words text-danger text-xs">
               Chyba: {latest.failureReason}. Doklad lze zařadit do nového balíčku.
             </span>
           )}
@@ -584,7 +603,7 @@ export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice
       <div className="flex flex-col gap-100 text-sm">
         <span>
           {confirmedDocumentsLabel(related.length)} · uhrazeno {paid} · po splatnosti{' '}
-          <strong style={overdue > 0 ? { color: 'var(--color-danger)' } : undefined}>{overdue}</strong>
+          <strong className={overdue > 0 ? 'text-danger' : undefined}>{overdue}</strong>
         </span>
         <span>
           Celkem neuhrazeno <strong className="tabular-nums">{formatMoney(outstanding)}</strong>

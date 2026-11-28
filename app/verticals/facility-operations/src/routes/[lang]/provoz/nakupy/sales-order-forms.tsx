@@ -1,21 +1,65 @@
 // The forms of one sales order: record a delivery, close with a remainder, create the invoice draft. Each keeps its
-// own draft and sends it on the shared Uložit only; leaving with typed input asks first.
+// own values in an effect-form form and sends them on the shared Uložit only; leaving with typed input asks first.
 import { SectionCard } from '@app/admin-ui';
+import { EntryTextField, FormBuilder, FormReact, FormRoot, TextAreaField, TextField } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { useState } from 'react';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { salesRemainder } from '../../../../../shared/commands/sales.ts';
 import type { SalesOrder } from '../../../../../shared/domain/purchasing.ts';
 import { FormSaveFooter, refusedOutcome, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import { addDays } from '../../../../ui/ops-agenda/deadlines.ts';
 import { failureKey, parsePositiveInt, todayIso, usePurchasingT } from './purchasing-model.ts';
 import type { RunCommand } from './purchasing-model.ts';
 
 const cancelLabelKey = 'facility-operations.common.cancel';
+
+// Each form only holds its values: Uložit sends them through the form save, so Enter sends nothing. The panel shows one
+// of them at a time, so each form is mounted once.
+
+/** The delivery: its date and the quantity typed per order line. */
+const deliverForm = FormReact.make(
+  FormBuilder.empty
+    .addField('deliveryDate', Schema.String)
+    .addField('quantities', Schema.Record(Schema.String, Schema.String)),
+  {
+    fields: { deliveryDate: TextField, quantities: EntryTextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** The reason an order is closed with its remainder. */
+const closeForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: TextAreaField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+/** The dates of the invoice draft. */
+const invoiceForm = FormReact.make(
+  FormBuilder.empty.addField('dueDate', Schema.String).addField('issueDate', Schema.String),
+  {
+    fields: { dueDate: TextField, issueDate: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+const formClassName = 'flex flex-col gap-200';
+
+/** A delivery opens dated today with nothing typed. */
+const openedDelivery = (): typeof deliverForm.schema.Encoded => ({ deliveryDate: todayIso(), quantities: {} });
+const openedClose = { reason: '' };
+/** The invoice draft opens issued today, due in 14 days. */
+const openedInvoice = (): typeof invoiceForm.schema.Encoded => ({
+  dueDate: addDays(todayIso(), 14),
+  issueDate: todayIso(),
+});
 
 /** What every sales-order form gets from the panel. */
 export interface SalesOrderFormProps {
@@ -57,8 +101,9 @@ export const SalesDeliverForm = ({
 }: SalesOrderFormProps & { readonly remainder: ReturnType<typeof salesRemainder> }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
-  const [deliveryDate, setDeliveryDate] = useState(todayIso);
-  const [quantities, setQuantities] = useState<Readonly<Record<string, string>>>({});
+  const opened = openedDelivery();
+  const shown = useFormValues(deliverForm, opened);
+  const { deliveryDate, quantities } = shown.values;
   const { error, send, setError } = useOrderCommand({ onDone, run });
   // The delivery is recorded on Uložit only.
   const form = useFormSave({
@@ -79,24 +124,26 @@ export const SalesDeliverForm = ({
   });
   return (
     <SectionCard title={k('sales.actions.deliver')}>
-      <FormInput
-        id="sales-delivery-date"
-        label={k('sales.fields.deliveryDate')}
-        onChange={(event) => setDeliveryDate(event.target.value)}
-        type="date"
-        value={deliveryDate}
-      />
-      {remainder.map(({ line, remaining }) => (
-        <FormInput
-          helpText={k('sales.form.remainingHelp', { count: remaining })}
-          id={`sales-deliver-${line.id}`}
-          inputMode="numeric"
-          key={line.id}
-          label={line.description}
-          onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))}
-          value={quantities[line.id] ?? ''}
-        />
-      ))}
+      <FormRoot
+        className={formClassName}
+        defaultValues={opened}
+        form={deliverForm}
+        key={order.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <deliverForm.deliveryDate id="sales-delivery-date" label={k('sales.fields.deliveryDate')} type="date" />
+        {remainder.map(({ line, remaining }) => (
+          <deliverForm.quantities
+            entry={line.id}
+            helpText={k('sales.form.remainingHelp', { count: remaining })}
+            id={`sales-deliver-${line.id}`}
+            inputMode="numeric"
+            key={line.id}
+            label={line.description}
+          />
+        ))}
+      </FormRoot>
       <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>
   );
@@ -110,7 +157,7 @@ export const SalesCloseForm = ({
 }: SalesOrderFormProps & { readonly closeLabel: string }) => {
   const k = usePurchasingT();
   const { t } = useModernI18n();
-  const [reason, setReason] = useState('');
+  const shown = useFormValues(closeForm, openedClose);
   const { error, send } = useOrderCommand({ onDone, run });
   // The order is closed with its remainder on Uložit only; the reason is required.
   const form = useFormSave({
@@ -120,17 +167,20 @@ export const SalesCloseForm = ({
         { _tag: 'SalesOrderTransition', note: value.trim(), orderId: order.id, to: 'completed' },
         'sales.messages.closed',
       ),
-    value: reason,
+    value: shown.values.reason,
   });
   return (
     <SectionCard title={closeLabel}>
-      <FormTextarea
-        id="sales-close-reason"
-        label={k('sales.fields.closeReason')}
-        onChange={(event) => setReason(event.target.value)}
-        rows={2}
-        value={reason}
-      />
+      <FormRoot
+        className={formClassName}
+        defaultValues={openedClose}
+        form={closeForm}
+        key={order.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <closeForm.reason id="sales-close-reason" label={k('sales.fields.closeReason')} rows={2} />
+      </FormRoot>
       <FormSaveFooter cancelLabel={t(cancelLabelKey)} error={error} form={form} onCancel={onDone} />
     </SectionCard>
   );
@@ -169,8 +219,9 @@ export const SalesInvoiceForm = ({
   const k = usePurchasingT();
   const { t } = useModernI18n();
   const toast = useToast();
-  const [issueDate, setIssueDate] = useState(todayIso);
-  const [dueDate, setDueDate] = useState(() => addDays(todayIso(), 14));
+  const opened = openedInvoice();
+  const shown = useFormValues(invoiceForm, opened);
+  const { dueDate, issueDate } = shown.values;
   const [error, setError] = useState<string>();
   // The invoice draft is created on Uložit only; the dates it opens with can be used as they are.
   const form = useFormSave({
@@ -201,22 +252,17 @@ export const SalesInvoiceForm = ({
       {retainedNumber === undefined ? (
         <>
           <p className="text-fg-secondary text-sm">{k('sales.form.invoiceIntro', { customer: order.customer.name })}</p>
-          <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-            <FormInput
-              id="sales-invoice-issue"
-              label={k('sales.fields.issueDate')}
-              onChange={(event) => setIssueDate(event.target.value)}
-              type="date"
-              value={issueDate}
-            />
-            <FormInput
-              id="sales-invoice-due"
-              label={k('sales.fields.dueDate')}
-              onChange={(event) => setDueDate(event.target.value)}
-              type="date"
-              value={dueDate}
-            />
-          </div>
+          <FormRoot
+            className="grid grid-cols-1 gap-200 sm:grid-cols-2"
+            defaultValues={opened}
+            form={invoiceForm}
+            key={order.id}
+            translateMessage={(message) => t(message)}
+          >
+            {shown.ready}
+            <invoiceForm.issueDate id="sales-invoice-issue" label={k('sales.fields.issueDate')} type="date" />
+            <invoiceForm.dueDate id="sales-invoice-due" label={k('sales.fields.dueDate')} type="date" />
+          </FormRoot>
         </>
       ) : (
         <p className="text-fg-secondary text-sm">{k('sales.form.invoiceRetained', { number: retainedNumber })}</p>

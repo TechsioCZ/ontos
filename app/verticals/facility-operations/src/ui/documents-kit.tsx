@@ -3,6 +3,7 @@
 import { formatDateTime } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import { Effect, Schema, DateTime as DateTimeModule } from 'effect';
 import { FileIdSchema } from '../../shared/domain/common.ts';
 import type { DocumentRecord, SubjectRef } from '../../shared/domain/documents.ts';
@@ -137,14 +138,16 @@ export const SubjectChip = ({
       <span className="text-fg-secondary">{kindLabel(subject.kind)}</span>
       <span className="truncate font-medium">{subject.label}</span>
       {onRemove !== undefined && (
-        <button
+        <Button
           aria-label={removeLabel}
           className="ml-50 rounded-full px-50 text-fg-secondary hover:text-fg-primary"
+          composition
           onClick={onRemove}
-          type="button"
+          size="current"
+          unstyled
         >
           ×
-        </button>
+        </Button>
       )}
     </span>
   );

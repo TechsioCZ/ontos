@@ -1,14 +1,16 @@
-import { UnsavedChangesDialog, saveLabelsFor, useUnsavedChangesGuard } from '@app/admin-ui';
+import { UnsavedChangesDialog, requiredLabelFor, saveLabelsFor, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SavableDraft, SaveState } from '@app/admin-ui';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomSet, useAtomValue } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@app/admin-ui/form-controls';
+import { Effect, Option, Schema } from 'effect';
 import { useId, useState } from 'react';
 
+import { browserAtomRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { PeopleEditor } from './people-editor.tsx';
 import type { PendingReview, PeopleReview } from './people-form-save.ts';
 import type {
@@ -22,6 +24,14 @@ import type {
 const prefix = 'shell.accessAdmin.people';
 const emptyLabel = 'shell.accessAdmin.common.none';
 const END_MEMBERSHIP = 'end-membership';
+
+/** The reason typed to end a membership. Only Potvrdit sends the end, so Enter submits nothing. */
+const endMembershipForm = FormReact.make(FormBuilder.empty.addField('reason', Schema.String), {
+  fields: { reason: TextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const reasonField = endMembershipForm.getFieldAtoms(endMembershipForm.fields.reason);
 
 const PersonDetails = ({
   busy,
@@ -271,10 +281,8 @@ interface ReviewDialogProps {
   readonly blocked: boolean;
   readonly busy: boolean;
   readonly onCancel: () => void;
-  readonly onConfirm: () => void;
-  readonly onReason: (reason: string) => void;
+  readonly onConfirm: (command: PeopleCommand) => void;
   readonly pending: PeoplePendingChange | null;
-  readonly reason: string;
   readonly stale: boolean;
 }
 
@@ -296,7 +304,15 @@ const ConfirmDialog = ({ blocked, busy, onCancel, onConfirm, pending, stale }: R
           <Button disabled={busy} onClick={onCancel} severity="secondary" type="button">
             {t('shell.accessAdmin.common.cancel')}
           </Button>
-          <Button disabled={blocked} onClick={onConfirm} type="button">
+          <Button
+            disabled={blocked}
+            onClick={() => {
+              if (pending !== null) {
+                onConfirm(pending.command);
+              }
+            }}
+            type="button"
+          >
             {t('shell.accessAdmin.common.confirm')}
           </Button>
         </>
@@ -324,25 +340,25 @@ const ConfirmDialog = ({ blocked, busy, onCancel, onConfirm, pending, stale }: R
  * Potvrdit sends it. A typed reason is input, so closing with one asks the shared leave question; its Uložit sends the
  * same reviewed end and is offered only when Potvrdit would be.
  */
-const EndMembershipDialog = ({
-  blocked,
-  busy,
-  onCancel,
-  onConfirm,
-  onReason,
-  pending,
-  reason,
-  stale,
-}: ReviewDialogProps) => {
+const EndMembershipDialog = ({ blocked, busy, onCancel, onConfirm, pending, stale }: ReviewDialogProps) => {
   const { language, t } = useModernI18n();
   const reasonId = useId();
-  const status: SaveState = blocked ? 'invalid' : 'dirty';
+  const reason = Option.getOrElse(useAtomValue(reasonField.value), () => '');
+  const setReason = useAtomSet(reasonField.setValue);
+  const command = pending === null ? null : confirmedCommand(pending.command, reason);
+  const unsendable = blocked || command === null;
+  const confirm = () => {
+    if (command !== null && !unsendable) {
+      onConfirm(command);
+    }
+  };
+  const status: SaveState = unsendable ? 'invalid' : 'dirty';
   const draft: SavableDraft = {
     // The end is sent at once: the question closes the review once it went out and stays when it could not.
-    afterSave: (done) => done(blocked ? status : 'saved'),
-    canSave: !blocked,
+    afterSave: (done) => done(unsendable ? status : 'saved'),
+    canSave: !unsendable,
     dirty: reason.length > 0,
-    save: onConfirm,
+    save: confirm,
     status,
   };
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => draft.dirty, withResolver: true });
@@ -350,7 +366,7 @@ const EndMembershipDialog = ({
     draft,
     navigation: blocker,
     onDiscard: () => {
-      onReason('');
+      setReason('');
       onCancel();
     },
   });
@@ -364,7 +380,7 @@ const EndMembershipDialog = ({
             <Button disabled={busy} onClick={close} severity="secondary" type="button">
               {t('shell.accessAdmin.common.cancel')}
             </Button>
-            <Button disabled={blocked} onClick={onConfirm} type="button">
+            <Button disabled={unsendable} onClick={confirm} type="button">
               {t('shell.accessAdmin.common.confirm')}
             </Button>
           </>
@@ -381,25 +397,20 @@ const EndMembershipDialog = ({
         open
         title={t(pending?.titleKey ?? `${prefix}.title`)}
       >
-        <form
-          className="shell:grid shell:gap-4"
-          onSubmit={(event) => {
-            // Enter never ends the membership: only Potvrdit does.
-            event.preventDefault();
-          }}
-        >
+        <div className="grid gap-4">
           <PendingFacts pending={pending} />
-          <FormInput
-            disabled={busy}
-            id={`${reasonId}-reason`}
-            label={t(`${prefix}.endMembershipReason`)}
-            maxLength={500}
-            onChange={(event) => onReason(event.target.value)}
-            required
-            value={reason}
-          />
+          <FormRoot defaultValues={{ reason: '' }} form={endMembershipForm} translateMessage={(message) => t(message)}>
+            <endMembershipForm.reason
+              disabled={busy}
+              id={`${reasonId}-reason`}
+              label={t(`${prefix}.endMembershipReason`)}
+              maxLength={500}
+              required
+              requiredLabel={requiredLabelFor(language)}
+            />
+          </FormRoot>
           {stale ? <StatusText status="warning">{t('shell.accessAdmin.common.stalePreview')}</StatusText> : null}
-        </form>
+        </div>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -421,22 +432,18 @@ export const PeopleView = ({
 }) => {
   const { t } = useModernI18n();
   const [pending, setPending] = useState<PendingReview | null>(null);
-  const [reason, setReason] = useState('');
   const busy = feedback === 'saving';
   const writesAvailable = anyWriteAvailable(model);
   const preview = (change: PeoplePendingChange) => {
-    setReason('');
     setPending({ ...change, revision: model.revision });
   };
   const review: PeopleReview = (change, onConfirmed) => {
-    setReason('');
     setPending({ ...change, onConfirmed, revision: model.revision });
   };
   const stale = pending !== null && pending.revision !== model.revision;
-  const command = pending === null ? null : confirmedCommand(pending.command, reason);
-  const blocked = busy || stale || command === null || !writesAvailable || feedback === 'conflict';
-  const confirm = () => {
-    if (pending !== null && command !== null && !blocked) {
+  const blocked = busy || stale || pending === null || !writesAvailable || feedback === 'conflict';
+  const confirm = (command: PeopleCommand) => {
+    if (pending !== null && !blocked) {
       onCommand(command, pending.revision);
       pending.onConfirmed?.();
       setPending(null);
@@ -447,9 +454,7 @@ export const PeopleView = ({
     busy,
     onCancel: () => setPending(null),
     onConfirm: confirm,
-    onReason: setReason,
     pending,
-    reason,
     stale,
   };
   return (

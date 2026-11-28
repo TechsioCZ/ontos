@@ -1,0 +1,3 @@
+/* a precompiled kit stylesheet, minified like the published one */
+@layer utilities{.grid{display:grid}.gap-200{gap:var(--spacing-200)}.text-fg-secondary{color:var(--color-fg-secondary)}.hover\:bg-surface:hover{background:var(--color-surface)}@media (width>=40rem){.sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}}.w-1\/2{width:50%}.\[\&_svg\]\:size-4 svg{width:1rem}.p-400{padding:calc(var(--spacing)*4) url(./x.5png)}.\32xl\:hidden{display:none}}
+.dark .bg-surface{background:var(--color-surface)}

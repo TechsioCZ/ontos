@@ -9,16 +9,38 @@ import {
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Option } from 'effect';
+import { FormBuilder, FormReact, FormRoot, TextField } from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { failureReasonOf, revisionedResultOf } from './agreements-command.ts';
 import type { AgreementOutcome } from './agreements-command.ts';
 import { periodDraftOf, samePeriodDraft, validPeriod } from './agreement-draft.ts';
 import type { PeriodDraft } from './agreement-draft.ts';
+import { useRecordDraftForm } from './form-draft.tsx';
+import type { DraftFields } from './form-draft.tsx';
+
+/**
+ * The period of the draft contract as typed. Uložit sends the draft through the save bar, so the form only holds it
+ * and Enter submits nothing. The page opens one period panel at a time.
+ */
+const periodForm = FormReact.make(
+  FormBuilder.empty.addField('endDate', Schema.String).addField('startDate', Schema.String),
+  {
+    fields: { endDate: TextField, startDate: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type PeriodValues = typeof periodForm.schema.Encoded;
+
+const periodFields: DraftFields<PeriodDraft, PeriodValues> = {
+  valuesOf: (draft) => ({ endDate: draft.endDate, startDate: draft.startDate }),
+  withValues: (draft, values) => ({ ...draft, endDate: values.endDate, startDate: values.startDate }),
+};
 
 export interface ContractPeriodPanelProps {
   /** The draft contract as the page reads it now. */
@@ -70,7 +92,7 @@ export const ContractPeriodPanel = ({
   });
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
-  const { draft } = record;
+  const gate = useRecordDraftForm(periodForm, record, periodFields);
   const requestClose = () => {
     guard.request(onClose);
   };
@@ -108,32 +130,19 @@ export const ContractPeriodPanel = ({
       size="lg"
       title={t('legal-agreements.demo.editDraft')}
     >
-      <form
-        className="legalagreements:space-y-4 legalagreements:py-2"
-        noValidate
-        onSubmit={(event) => {
-          // Enter never saves: only Uložit in the panel footer sends the draft.
-          event.preventDefault();
-        }}
+      <FormRoot
+        className="space-y-4 py-2"
+        defaultValues={periodFields.valuesOf(record.draft)}
+        form={periodForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
       >
+        {gate}
         <p>{label}</p>
-        <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
-          <FormInput
-            id="contract-start-date"
-            label={t('legal-agreements.demo.startDate')}
-            onChange={(event) => record.setDraft((current) => ({ ...current, startDate: event.target.value }))}
-            type="date"
-            value={draft.startDate}
-          />
-          <FormInput
-            id="contract-end-date"
-            label={t('legal-agreements.demo.endDate')}
-            onChange={(event) => record.setDraft((current) => ({ ...current, endDate: event.target.value }))}
-            type="date"
-            value={draft.endDate}
-          />
+        <div className="grid gap-4 md:grid-cols-2">
+          <periodForm.startDate id="contract-start-date" label={t('legal-agreements.demo.startDate')} type="date" />
+          <periodForm.endDate id="contract-end-date" label={t('legal-agreements.demo.endDate')} type="date" />
         </div>
-      </form>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );

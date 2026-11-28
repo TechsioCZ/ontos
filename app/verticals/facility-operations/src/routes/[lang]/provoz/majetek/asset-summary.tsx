@@ -255,7 +255,7 @@ export const AssetSummary = ({
                     <Table.Cell className="text-right tabular-nums">
                       {asset.disposal?.proceedsMinor === undefined ? '—' : formatMoney(asset.disposal.proceedsMinor)}
                     </Table.Cell>
-                    <Table.Cell className="max-w-[20rem] text-sm">{asset.disposal?.reason ?? ''}</Table.Cell>
+                    <Table.Cell className="max-w-80 text-sm">{asset.disposal?.reason ?? ''}</Table.Cell>
                   </Table.Row>
                 ))}
               </Table.Body>

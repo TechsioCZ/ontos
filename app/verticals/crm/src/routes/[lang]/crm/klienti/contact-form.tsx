@@ -1,19 +1,68 @@
-// Inline form of one contact person on the client card (add or edit). Typing changes only the draft; the shared
+// Inline form of one contact person on the client card (add or edit). Typing changes only the form; the shared
 // Save button ("Uložit", last in the footer) sends one AddContactPerson / UpdateContactPerson command, and leaving
 // with unsaved input asks Uložit / Zahodit změny / Zůstat.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { surfaceTileClassName } from '@app/admin-ui';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { Option } from 'effect';
-import { useState } from 'react';
-import type { ComponentProps } from 'react';
+import { requiredLabelFor, surfaceTileClassName } from '@app/admin-ui';
+import {
+  CheckboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
+import { useEffect, useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { ContactPerson } from '../../../../../shared/domain/clients.ts';
 import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.tsx';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
-type InputHelp = Pick<ComponentProps<typeof FormInput>, 'helpText'>;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+
+/**
+ * One contact person as the form edits it; its checks are the field schemas, and their messages are i18n keys. Only
+ * one contact form is open at a time, so the form holds one state. Enter sends nothing: only Uložit does.
+ */
+const contactForm = FormReact.make(
+  FormBuilder.empty
+    .addField(
+      'email',
+      Schema.String.check(
+        Schema.makeFilter(
+          (email: string) =>
+            email.trim() === '' || EMAIL.test(email.trim()) || 'crm.ciClientsVisits.contacts.emailInvalid',
+        ),
+      ),
+    )
+    .addField(
+      'name',
+      Schema.String.check(
+        Schema.makeFilter((name: string) => name.trim() !== '' || 'crm.ciClientsVisits.contacts.nameRequired'),
+      ),
+    )
+    .addField('note', Schema.String)
+    .addField('phone', Schema.String)
+    .addField('primary', Schema.Boolean)
+    .addField('role', Schema.String),
+  {
+    fields: {
+      email: TextField,
+      name: TextField,
+      note: TextAreaField,
+      phone: TextField,
+      primary: CheckboxField,
+      role: TextField,
+    },
+    mode: { validation: 'onChange' },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
 
 export interface ContactDraft {
   readonly email: string;
@@ -24,7 +73,8 @@ export interface ContactDraft {
   readonly role: string;
 }
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+const completeContact = Schema.is(contactForm.schema);
+const nameField = contactForm.getFieldAtoms(contactForm.fields.name);
 
 const draftOf = (contact: ContactPerson | undefined, primary: boolean): ContactDraft => ({
   email: contact?.email ?? '',
@@ -34,8 +84,6 @@ const draftOf = (contact: ContactPerson | undefined, primary: boolean): ContactD
   primary: contact?.primary ?? primary,
   role: contact?.role ?? '',
 });
-
-const emailValid = (draft: ContactDraft): boolean => draft.email.trim() === '' || EMAIL.test(draft.email.trim());
 
 /** Only changed fields; `''` clears a field on the server. */
 const contactPatch = (draft: ContactDraft, contact: ContactPerson) => {
@@ -63,13 +111,13 @@ const optionalText = (draft: ContactDraft) => {
   return fields;
 };
 
-/** The command that saves `draft`; none while it is incomplete or changes nothing. */
+/** The command that saves `draft`; none while it fails the form's checks or changes nothing. */
 const contactCommand = (
   clientId: string,
   contact: ContactPerson | undefined,
   draft: ContactDraft,
 ): Option.Option<CrmCommandInput> => {
-  if (draft.name.trim() === '' || !emailValid(draft)) {
+  if (!completeContact(draft)) {
     return Option.none();
   }
   if (contact === undefined) {
@@ -85,6 +133,15 @@ const contactCommand = (
   return Object.keys(patch).length === 0
     ? Option.none()
     : Option.some({ _tag: 'UpdateContactPerson', contactId: contact.id, patch });
+};
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what the contact form open before it left, so its values are read only after this.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
 };
 
 export const ContactForm = ({
@@ -104,8 +161,14 @@ export const ContactForm = ({
   readonly onSaved: (draft: ContactDraft) => void;
   readonly submit: CrmCommandSubmit;
 }) => {
-  const { t } = useModernI18n();
-  const [draft, setDraft] = useState<ContactDraft>(() => draftOf(contact, isFirst));
+  const { language, t } = useModernI18n();
+  // The values the form opens with; it reads them once, when it starts.
+  const opened = draftOf(contact, isFirst);
+  const [ready, setReady] = useState(false);
+  const draft = Option.getOrElse(
+    Option.filter(useAtomValue(contactForm.values), () => ready),
+    () => opened,
+  );
   const form = useCrmFormSave<ContactDraft>({
     command: (value) => contactCommand(clientId, contact, value),
     failureText: (message) => message ?? t('crm.ciClientsVisits.contacts.saveFailed'),
@@ -116,85 +179,78 @@ export const ContactForm = ({
     submit,
     value: draft,
   });
-  const patch = (next: Partial<ContactDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const validateName = useAtomSet(nameField.validate);
+  const reset = useAtomSet(contactForm.reset);
+  // The name's message shows once the draft is changed and cannot be saved, the moment the save bar says so.
+  const invalid = form.record.status === 'invalid';
+  useEffect(() => {
+    if (invalid) {
+      validateName();
+    }
+  }, [invalid, validateName]);
+  // Back at the values it opened with, the form shows no messages.
+  useAtomSubscribe(
+    contactForm.isDirty,
+    (dirty) => {
+      if (!dirty) {
+        reset();
+      }
+    },
+    { immediate: false },
+  );
   const prefix = contact?.id ?? 'new';
-  const nameError =
-    form.record.status === 'invalid' && draft.name.trim() === ''
-      ? t('crm.ciClientsVisits.contacts.nameRequired')
-      : undefined;
-  const emailError = emailValid(draft) ? undefined : t('crm.ciClientsVisits.contacts.emailInvalid');
-  const nameHelp: InputHelp = {};
-  if (nameError !== undefined) {
-    nameHelp.helpText = nameError;
-  }
-  const emailHelp: InputHelp = {};
-  if (emailError !== undefined) {
-    emailHelp.helpText = emailError;
-  }
+  const requiredLabel = requiredLabelFor(language);
   return (
     <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`} data-testid={`crm-contact-${prefix}-form`}>
-      <form className="flex flex-col gap-150" onSubmit={(event) => event.preventDefault()}>
+      <FormRoot
+        className="flex flex-col gap-150"
+        defaultValues={opened}
+        form={contactForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
+      >
+        <FormReady onReady={setReady} />
         <h4 className="font-semibold text-sm">
           {contact === undefined
             ? t('crm.ciClientsVisits.contacts.newTitle')
             : `${t('crm.ciClientsVisits.contacts.editTitle')}: ${contact.name}`}
         </h4>
         <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
-          <FormInput
+          <contactForm.name
             autoComplete="off"
             id={`crm-contact-${prefix}-name`}
             label={t('crm.ciClientsVisits.fields.fullName')}
-            onChange={(event) => patch({ name: event.target.value })}
             required
-            validateStatus={nameError === undefined ? 'default' : 'error'}
-            {...nameHelp}
-            value={draft.name}
+            requiredLabel={requiredLabel}
           />
-          <FormInput
+          <contactForm.role
             autoComplete="off"
             id={`crm-contact-${prefix}-role`}
             label={t('crm.ciClientsVisits.fields.jobRole')}
-            onChange={(event) => patch({ role: event.target.value })}
             placeholder={t('crm.ciClientsVisits.contacts.rolesExample')}
-            value={draft.role}
           />
-          <FormInput
+          <contactForm.phone
             autoComplete="off"
             id={`crm-contact-${prefix}-phone`}
             label={t('crm.ciClientsVisits.fields.phone')}
-            onChange={(event) => patch({ phone: event.target.value })}
             type="tel"
-            value={draft.phone}
           />
-          <FormInput
+          <contactForm.email
             autoComplete="off"
             id={`crm-contact-${prefix}-email`}
             label={t('crm.ciClientsVisits.fields.email')}
-            onChange={(event) => patch({ email: event.target.value })}
             type="email"
-            validateStatus={emailError === undefined ? 'default' : 'error'}
-            {...emailHelp}
-            value={draft.email}
           />
           <div className="sm:col-span-2">
-            <FormTextarea
+            <contactForm.note
               id={`crm-contact-${prefix}-note`}
               label={t('crm.ciClientsVisits.fields.note')}
               maxLength={4000}
-              onChange={(event) => patch({ note: event.target.value })}
               rows={2}
-              value={draft.note}
             />
           </div>
         </div>
-        <FormCheckbox
-          checked={draft.primary}
-          id={`crm-contact-${prefix}-primary`}
-          label={t('crm.ciClientsVisits.contacts.primary')}
-          onCheckedChange={(checked) => patch({ primary: checked })}
-          size="sm"
-        />
-      </form>
+        <contactForm.primary id={`crm-contact-${prefix}-primary`} label={t('crm.ciClientsVisits.contacts.primary')} />
+      </FormRoot>
       <div className="flex flex-wrap items-center justify-end gap-100">
         <CrmFormSaveActions form={form} onCancel={onClose} />
       </div>

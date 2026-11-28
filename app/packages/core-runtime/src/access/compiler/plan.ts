@@ -1,5 +1,6 @@
 import { DateTime, Match, Option, Result } from 'effect';
 
+import { retiredByLineage } from '../catalog/release-ordering.ts';
 import { delegationCellIssue } from '../lifecycle/delegation.ts';
 import type { DelegatedCellRequest } from '../lifecycle/delegation.ts';
 import type {
@@ -429,6 +430,9 @@ const resolvePinnedRevisions = (
     }
   }
   const revisionByRole = new Map<string, RoleRevision>();
+  // A capability the pinned releases retired along declared lineage stays in the revisions that held it (a release
+  // follow keeps every cell) and is inert: it is neither refused nor projected (AUTHORIZATION.md, "Releases").
+  const retired = retiredByLineage([...entries.values()]);
   for (const [roleId, revisionIds] of pinned) {
     const [revisionId] = [...revisionIds];
     const revision = revisionId === undefined ? undefined : revisionById.get(revisionId);
@@ -438,7 +442,8 @@ const resolvePinnedRevisions = (
         'The live assignments of one role pin different revisions, so its shared cells would widen',
       );
     } else if (revision !== undefined) {
-      revisionByRole.set(roleId, revision);
+      const live = revision.cells.filter((cell) => !retired.has(cell.capabilityKey));
+      revisionByRole.set(roleId, live.length === revision.cells.length ? revision : { ...revision, cells: live });
       const slots = revision.cells.map((cell) => `${cell.capabilityKey} ${cell.mode} ${capabilitySlot(cell)}`);
       if (new Set(slots).size !== slots.length) {
         fail(
@@ -446,7 +451,7 @@ const resolvePinnedRevisions = (
           'A role revision fills one capability slot twice, which the engine would read as a union',
         );
       }
-      for (const cell of revision.cells) {
+      for (const cell of live) {
         validateCellDeclaration(cell, entries, fail);
       }
     }

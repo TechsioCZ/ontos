@@ -93,7 +93,7 @@ const mount = () =>
     />,
     { url: '/cs/provoz/nakupy' },
   );
-const customersLoaded = () => document.querySelector('select[name="sales-customer"]') !== null;
+const customersLoaded = () => document.querySelector('select[name="customerId"]') !== null;
 const click = (name: string) => acted(() => Option.getOrThrow(Option.fromUndefinedOr(buttons(name)[0])).click());
 const typeInto = (selector: string, value: string) =>
   acted(() => {
@@ -132,7 +132,7 @@ describe('new sales quote', () => {
       yield* pinTestDocument;
       yield* mount();
       yield* waitUntil(customersLoaded);
-      yield* pick('sales-customer', customerId);
+      yield* pick('customerId', customerId);
       yield* typeInto('[id$="-0-description"]', 'Servis vzduchotechniky');
       yield* typeInto('[id$="-0-price"]', '4 500');
       yield* saveSent();
@@ -152,10 +152,10 @@ describe('new sales quote', () => {
       yield* pinTestDocument;
       yield* mount();
       yield* waitUntil(customersLoaded);
-      yield* pick('sales-customer', customerId);
+      yield* pick('customerId', customerId);
       yield* typeInto('[id$="-0-description"]', 'Servis');
       yield* typeInto('[id$="-0-price"]', '100');
-      yield* pick('sales-quote-status', 'draft');
+      yield* pick('status', 'draft');
       yield* saveSent();
       expect(sent).toEqual([expect.objectContaining({ _tag: 'SalesQuoteCreate', status: 'draft' })]);
     }).pipe(Effect.provide(network)),

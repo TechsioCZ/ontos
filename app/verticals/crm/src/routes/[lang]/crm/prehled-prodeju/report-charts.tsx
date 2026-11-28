@@ -2,6 +2,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 // One series per chart: counts or one currency, never mixed currencies or filter-dependent series colors.
 import { EmptyState, SectionCard, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { DateTime } from 'effect';
 import { Component, useState } from 'react';
@@ -172,57 +173,64 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
           )}
         </SectionCard>
       </div>
-      <details className={`${surfaceTileClassName} p-200`}>
-        <summary className="cursor-pointer font-medium text-sm">{t(`${k}.tableToggle`)}</summary>
-        <div className="overflow-x-auto pt-150">
-          <table className="w-full border-collapse text-sm">
-            <caption className="sr-only">{t(`${k}.tableCaption`)}</caption>
-            <thead>
-              <tr className="border-border-primary border-b text-left">
-                <th className="py-100 pr-200" scope="col">
-                  {t(`${k}.month`)}
-                </th>
-                <th className="py-100 pr-200" scope="col">
-                  {t(`${k}.orders`)}
-                </th>
-                {meanings.map((meaning) => (
-                  <th className="py-100 pr-200" key={meaning.key} scope="col">
-                    {meaning.label}
-                  </th>
-                ))}
-                {report.currencies.map((entry) => (
-                  <th className="py-100 pr-200" key={entry} scope="col">
-                    {t(`${k}.valueIn`, { currency: entry })}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {report.byMonth.map((month) => (
-                <tr className="border-border-primary border-b" key={month.key}>
-                  <th className="py-100 pr-200 text-left font-normal" scope="row">
-                    {longMonth(month.key, language)}
-                  </th>
-                  <td className="py-100 pr-200 tabular-nums">{formatNumber(month.count)}</td>
-                  {meanings.map((meaning) => (
-                    <td className="py-100 pr-200 tabular-nums" key={meaning.key}>
-                      {formatNumber(counts.get(`${month.key}|${meaning.key}`) ?? 0)}
-                    </td>
+      <Accordion className={`${surfaceTileClassName} p-200`} collapsible>
+        <Accordion.Item value="table">
+          <Accordion.Header>
+            <Accordion.Title className="font-medium text-sm">{t(`${k}.tableToggle`)}</Accordion.Title>
+            <Accordion.Indicator />
+          </Accordion.Header>
+          <Accordion.Content>
+            <div className="overflow-x-auto pt-150">
+              <table className="w-full border-collapse text-sm">
+                <caption className="sr-only">{t(`${k}.tableCaption`)}</caption>
+                <thead>
+                  <tr className="border-border-primary border-b text-left">
+                    <th className="py-100 pr-200" scope="col">
+                      {t(`${k}.month`)}
+                    </th>
+                    <th className="py-100 pr-200" scope="col">
+                      {t(`${k}.orders`)}
+                    </th>
+                    {meanings.map((meaning) => (
+                      <th className="py-100 pr-200" key={meaning.key} scope="col">
+                        {meaning.label}
+                      </th>
+                    ))}
+                    {report.currencies.map((entry) => (
+                      <th className="py-100 pr-200" key={entry} scope="col">
+                        {t(`${k}.valueIn`, { currency: entry })}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.byMonth.map((month) => (
+                    <tr className="border-border-primary border-b" key={month.key}>
+                      <th className="py-100 pr-200 text-left font-normal" scope="row">
+                        {longMonth(month.key, language)}
+                      </th>
+                      <td className="py-100 pr-200 tabular-nums">{formatNumber(month.count)}</td>
+                      {meanings.map((meaning) => (
+                        <td className="py-100 pr-200 tabular-nums" key={meaning.key}>
+                          {formatNumber(counts.get(`${month.key}|${meaning.key}`) ?? 0)}
+                        </td>
+                      ))}
+                      {report.currencies.map((entry) => {
+                        const total = totalIn(month.totals, entry);
+                        return (
+                          <td className="py-100 pr-200 tabular-nums" key={entry}>
+                            {total === undefined ? '—' : formatDecimalMoney(total.amount, entry)}
+                          </td>
+                        );
+                      })}
+                    </tr>
                   ))}
-                  {report.currencies.map((entry) => {
-                    const total = totalIn(month.totals, entry);
-                    return (
-                      <td className="py-100 pr-200 tabular-nums" key={entry}>
-                        {total === undefined ? '—' : formatDecimalMoney(total.amount, entry)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
+                </tbody>
+              </table>
+            </div>
+          </Accordion.Content>
+        </Accordion.Item>
+      </Accordion>
     </section>
   );
 };

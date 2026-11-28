@@ -1,14 +1,28 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { DetailList, SaveBar, UnsavedChangesDialog, formatDate, saveLabelsFor } from '@app/admin-ui';
+import { DetailList, SaveBar, UnsavedChangesDialog, formatDate, requiredLabelFor, saveLabelsFor } from '@app/admin-ui';
+import {
+  EntryTextField,
+  FormReact,
+  FormRoot,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { Option } from 'effect';
+import { Effect, Option, Schema, Struct } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
+import { EndContactPointPayloadSchema } from '../../../../../shared/actions/end-contact-point.ts';
+import { UpdatePartyPayloadSchema } from '../../../../../shared/actions/update-party.ts';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { NAME_KEY, contactDraftKey, contactFieldNames, identifierDraftKey } from './customer-detail-draft.ts';
 import type { CustomerDetailSnapshot, useCustomerDetail } from './customers-data.ts';
 import {
@@ -22,6 +36,36 @@ import {
 
 export const CUSTOMER_DETAIL_KEY = 'party-registry.pages.customers.detail';
 const STATUS_KEY = 'party-registry.pages.customers.status';
+
+/**
+ * The editable customer detail: the change basis every save records (the reason and evidence the fact Actions take)
+ * and the text of every editable fact, keyed like the detail's one draft. The detail's Uložit and its one-click
+ * commands send them, so the form itself is never submitted.
+ */
+const customerDetailForm = FormReact.make(
+  fromPayload(EndContactPointPayloadSchema.mapFields(Struct.pick(['reason'])))
+    .addField('evidence', UpdatePartyPayloadSchema.fields.provenanceSource)
+    .addField('facts', Schema.Record(Schema.String, Schema.String)),
+  {
+    fields: { evidence: TextField, facts: EntryTextField, reason: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** A detail opens with no change basis; its facts come from the record. */
+const emptyCustomerDetailValues = { evidence: '', facts: {}, reason: '' };
+
+/** The change basis typed in the detail: the evidence and reason every save and one-click command records. */
+export const customerDetailBasis: Atom.Atom<{ readonly evidence: string; readonly reason: string }> =
+  customerDetailForm.values.pipe(
+    Atom.map(
+      Option.match({
+        onNone: () => emptyCustomerDetailValues,
+        onSome: ({ evidence, reason }) => ({ evidence, reason }),
+      }),
+    ),
+  );
 
 export type CustomerDetailModel = ReturnType<typeof useCustomerDetail>;
 
@@ -76,14 +120,13 @@ const CustomerIdentityNotice = ({ forbidden }: { readonly forbidden: boolean }) 
 
 interface CustomerChangeBasisProps {
   readonly evidence: string;
-  readonly onEvidenceChange: (next: string) => void;
-  readonly onReasonChange: (next: string) => void;
   readonly reason: string;
 }
 
 /** Evidence and reason every save of the panel records. */
-const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reason }: CustomerChangeBasisProps) => {
-  const { t } = useModernI18n();
+const CustomerChangeBasis = ({ evidence, reason }: CustomerChangeBasisProps) => {
+  const { language, t } = useModernI18n();
+  const requiredLabel = requiredLabelFor(language);
   const filled = evidence.trim() !== '' && reason.trim() !== '';
   return (
     <>
@@ -93,32 +136,92 @@ const CustomerChangeBasis = ({ evidence, onEvidenceChange, onReasonChange, reaso
           {t(`${CUSTOMER_DETAIL_KEY}.basisRequired`)}
         </StatusText>
       )}
-      <FormInput
+      <customerDetailForm.evidence
         id="customer-evidence"
         label={t(`${CUSTOMER_DETAIL_KEY}.evidence`)}
         maxLength={200}
-        onChange={(event) => onEvidenceChange(event.target.value)}
         required
-        value={evidence}
+        requiredLabel={requiredLabel}
       />
-      <FormInput
+      <customerDetailForm.reason
         id="customer-reason"
         label={t(`${CUSTOMER_DETAIL_KEY}.reason`)}
         maxLength={500}
-        onChange={(event) => onReasonChange(event.target.value)}
         required
-        value={reason}
+        requiredLabel={requiredLabel}
       />
     </>
   );
 };
 
+type ShownFacts = Readonly<Record<string, string>>;
+
+/** What every fact field shows: the draft's text where the draft holds the field, the record's value elsewhere. */
+const shownFactsOf = (detail: CustomerDetailModel, name: string) => ({
+  [NAME_KEY]: name,
+  ...Object.fromEntries(
+    detail.identifierRows.map(({ existing, id }) => [identifierDraftKey(id), existing?.normalizedValue ?? '']),
+  ),
+  ...Object.fromEntries(
+    detail.contactRows.flatMap(({ existing, id, type }) => {
+      const fields = existing === undefined ? emptyCustomerContactFields(type) : customerContactFields(existing);
+      return contactFieldNames(type).map((field) => [contactDraftKey(id, field), fields[field] ?? '']);
+    }),
+  ),
+  ...detail.record.draft.fields,
+});
+
+const sameFacts = (left: ShownFacts, right: ShownFacts) =>
+  [...new Set([...Object.keys(left), ...Object.keys(right)])].every((key) => left[key] === right[key]);
+
+const factsField = customerDetailForm.getFieldAtoms(customerDetailForm.fields.facts);
+
+/**
+ * The fact fields and the detail's one draft move together: typing changes the draft, and a draft that changed
+ * without typing (the record's newer version, Zahodit změny, the latest version) shows in the fields.
+ */
+const FactsFollowDraft = ({ detail, shown }: { readonly detail: CustomerDetailModel; readonly shown: ShownFacts }) => {
+  const facts = useAtomValue(factsField.value);
+  const setFacts = useAtomSet(factsField.setValue);
+  const { setDraft } = detail.record;
+  useAtomSubscribe(
+    factsField.value,
+    (next) => {
+      if (Option.isNone(next)) {
+        return;
+      }
+      const typed = next.value;
+      // Only the fields the draft holds are editable; the others show the record's value.
+      setDraft((current) => {
+        const fields = Object.fromEntries(
+          Object.entries(current.fields).map(([key, text]) => [key, typed[key] ?? text]),
+        );
+        return sameFacts(fields, current.fields) ? current : { ...current, fields };
+      });
+    },
+    { immediate: false },
+  );
+  const pushed = useRef<ShownFacts | null>(null);
+  useEffect(() => {
+    if (pushed.current !== null && sameFacts(pushed.current, shown)) {
+      return;
+    }
+    pushed.current = shown;
+    if (Option.exists(facts, (current) => !sameFacts(current, shown))) {
+      setFacts(shown);
+    }
+  }, [facts, setFacts, shown]);
+  return null;
+};
+
 /** The identity's facts below the name: official identifiers and contact points, all part of the one draft. */
 const CustomerFacts = ({
   detail,
+  shown,
   snapshot,
 }: {
   readonly detail: CustomerDetailModel;
+  readonly shown: ShownFacts;
   readonly snapshot: CustomerDetailSnapshot;
 }) => {
   const { t } = useModernI18n();
@@ -131,12 +234,11 @@ const CustomerFacts = ({
           const key = identifierDraftKey(id);
           return (
             <div className="flex flex-col gap-150" key={key}>
-              <FormInput
+              <customerDetailForm.facts
                 disabled={!hasParty}
+                entry={key}
                 id={key}
                 label={t(`${CUSTOMER_DETAIL_KEY}.${type === 'ICO' ? 'companyId' : 'vatId'}`)}
-                onChange={(event) => detail.changeDraft(key, event.target.value)}
-                value={detail.value(key, existing?.normalizedValue ?? '')}
               />
               {existing !== undefined && (
                 <Button
@@ -157,13 +259,10 @@ const CustomerFacts = ({
       <h3 className="font-semibold">{t(`${CUSTOMER_DETAIL_KEY}.contacts`)}</h3>
       {snapshot.contacts.status === 'ready' ? (
         detail.contactRows.map(({ existing, id, type }) => {
-          const fields = existing === undefined ? emptyCustomerContactFields(type) : customerContactFields(existing);
           const names = contactFieldNames(type);
           const keys = names.map((field) => contactDraftKey(id, field));
           const editable = customerContactEditable(existing, hasParty);
-          const values = Object.fromEntries(
-            names.map((field) => [field, detail.value(contactDraftKey(id, field), fields[field] ?? '')]),
-          );
+          const values = Object.fromEntries(names.map((field) => [field, shown[contactDraftKey(id, field)] ?? '']));
           const emailInvalid =
             editable &&
             type === 'EMAIL' &&
@@ -177,14 +276,13 @@ const CustomerFacts = ({
               </p>
               <div className="grid grid-cols-1 gap-150 md:grid-cols-2">
                 {names.map((field) => (
-                  <FormInput
+                  <customerDetailForm.facts
                     disabled={!editable}
+                    entry={contactDraftKey(id, field)}
                     helpText={emailInvalid && field === 'value' ? t(`${CUSTOMER_DETAIL_KEY}.invalidEmail`) : undefined}
                     id={contactDraftKey(id, field)}
                     key={field}
                     label={t(customerContactFieldLabel(type, field))}
-                    onChange={(event) => detail.changeDraft(contactDraftKey(id, field), event.target.value)}
-                    value={values[field] ?? ''}
                   />
                 ))}
               </div>
@@ -257,8 +355,6 @@ export const CustomerDetailContent = ({
     refresh,
     requestNavigation,
     runCommand,
-    setEvidence,
-    setReason,
     snapshot,
     stale,
   } = detail;
@@ -267,6 +363,7 @@ export const CustomerDetailContent = ({
   const name = partyName ?? subject.displayName ?? '';
   const archived = party === undefined ? subject.status === 'ARCHIVED' : Option.isSome(party.archivedAt);
   const status = archived ? 'ARCHIVED' : 'ACTIVE';
+  const shown = shownFactsOf(detail, name);
   /** The same related-link contract the list uses, built from the validated subject instead of a list row. */
   const relatedHref = (path: string, invoices: boolean): string => {
     const params = new URLSearchParams({ partyId: subject.partyId });
@@ -279,7 +376,14 @@ export const CustomerDetailContent = ({
 
   return (
     <>
-      <div className="flex flex-col gap-250 py-200">
+      {/* The form has no submit button, so Enter sends nothing: only Uložit and the one-click commands write. */}
+      <FormRoot
+        className="flex flex-col gap-250 py-200"
+        defaultValues={{ ...emptyCustomerDetailValues, facts: shown }}
+        form={customerDetailForm}
+        translateMessage={(message) => t(message)}
+      >
+        <FactsFollowDraft detail={detail} shown={shown} />
         {notice !== null && (
           <StatusText showIcon status="error">
             {notice}
@@ -298,14 +402,7 @@ export const CustomerDetailContent = ({
         {snapshot !== undefined && (
           <>
             {/* Every save needs the identity; without it (a refused or unavailable read) the panel is read-only. */}
-            {party !== undefined && (
-              <CustomerChangeBasis
-                evidence={evidence}
-                onEvidenceChange={setEvidence}
-                onReasonChange={setReason}
-                reason={reason}
-              />
-            )}
+            {party !== undefined && <CustomerChangeBasis evidence={evidence} reason={reason} />}
             {stale && (
               <Button disabled={busy} onClick={refresh} severity="secondary">
                 {t(`${CUSTOMER_DETAIL_KEY}.reload`)}
@@ -315,12 +412,12 @@ export const CustomerDetailContent = ({
               <CustomerIdentityNotice forbidden={identity?.status === 'forbidden'} />
             ) : (
               <>
-                <FormInput
+                <customerDetailForm.facts
+                  entry={NAME_KEY}
                   id="customer-rename"
                   label={t(`${CUSTOMER_DETAIL_KEY}.rename`)}
-                  onChange={(event) => detail.changeDraft(NAME_KEY, event.target.value)}
                   required
-                  value={detail.value(NAME_KEY, name)}
+                  requiredLabel={requiredLabelFor(i18nLanguage)}
                 />
                 <p className="text-fg-secondary text-sm">{t(`${CUSTOMER_DETAIL_KEY}.sharedIdentity`)}</p>
                 <Button
@@ -333,7 +430,7 @@ export const CustomerDetailContent = ({
                 </Button>
               </>
             )}
-            <CustomerFacts detail={detail} snapshot={snapshot} />
+            <CustomerFacts detail={detail} shown={shown} snapshot={snapshot} />
             {saveBar}
             {/* A dated list only: with no ended fact the panel and the page render no empty section title. */}
             {history.length > 0 && (
@@ -384,7 +481,7 @@ export const CustomerDetailContent = ({
             </div>
           </>
         )}
-      </div>
+      </FormRoot>
       <UnsavedChangesDialog labels={saveLabelsFor(i18nLanguage)} prompt={guard.prompt} />
     </>
   );

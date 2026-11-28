@@ -1,15 +1,25 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { EntityIdSchema } from '../../../../../shared/domain/common.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { Effect } from 'effect';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Effect, Option, Schema, pipe } from 'effect';
+import { AsyncResult, Atom } from 'effect/reactivity';
 // AREA: imports — owned by the crm-imports lane. CSV import: choose / drop / paste a file or take a sample, see a
 // row-by-row preview computed by the same engine the server runs, then import (C03).
 import { SidePanel, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
+import {
+  FileField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { CsvProblem, ImportRowOutcome } from '../../../../../shared/domain/imports.ts';
 import { parseOrdersCsv } from '../../../../../shared/imports/csv.ts';
@@ -20,10 +30,51 @@ import { RESIZE_LABEL, importRowsLabel, outcomeMeta } from './order-model.ts';
 
 const MAX_BYTES = 350_000;
 
+/** The file an import previews and sends: from the device, a sample, or pasted text. */
 export interface ImportDraft {
   readonly csv: string;
   readonly fileName: string;
 }
+
+/** A picked file the import cannot use; `reason` is the Czech copy shown under the drop zone. */
+class ImportFileUnusable extends Schema.TaggedError<ImportFileUnusable>()('ImportFileUnusable', {
+  cause: Schema.optional(Schema.Unknown),
+  reason: Schema.String,
+}) {}
+
+/** Reads a picked file as the import's draft: too large a file, or one that cannot be read, is refused. */
+const readImportFile = Effect.fn('CrmImport.readFile')(function* readImportFile(file: File) {
+  if (file.size > MAX_BYTES) {
+    return yield* new ImportFileUnusable({ reason: 'Soubor je pro demo import příliš velký (max. 350 kB).' });
+  }
+  const csv = yield* Effect.tryPromise(file.text.bind(file)).pipe(
+    Effect.timeout('10 seconds'),
+    Effect.tapError((cause) => Effect.logWarning('CRM import file read failed', cause)),
+    Effect.mapError((cause) => new ImportFileUnusable({ cause, reason: 'Soubor se nepodařilo přečíst.' })),
+  );
+  return { csv, fileName: file.name } satisfies ImportDraft;
+});
+
+/** The draft the import shows: the last picked file once read, or a sample or pasted text taken as it is. */
+const importDraft = browserAtomRuntime.fn(
+  (source: { readonly file: File } | { readonly text: ImportDraft }): Effect.Effect<ImportDraft, ImportFileUnusable> =>
+    'file' in source ? readImportFile(source.file) : Effect.succeed(source.text),
+);
+
+/** The file picked from the device (the latest pick) and the text being pasted; their draft is `importDraft`. */
+const importForm = FormReact.make(
+  FormBuilder.empty.addField('file', Schema.OptionFromNullOr(Schema.instanceOf(File))).addField('paste', Schema.String),
+  {
+    fields: { file: FileField, paste: TextAreaField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+/** The picked file itself, so following it reads a file once per pick, not once per change of the form. */
+const pickedFile = importForm
+  .getFieldAtoms(importForm.fields.file)
+  .value.pipe(Atom.map((file) => pipe(file, Option.flatMap(Option.fromNullishOr), Option.getOrUndefined)));
+const noInput: typeof importForm.schema.Encoded = { file: null, paste: '' };
 
 const SummaryChip = ({ count, outcome }: { readonly count: number; readonly outcome: ImportRowOutcome }) => (
   <div className={`${surfaceTileClassName} flex min-w-28 flex-col gap-50 p-150`}>
@@ -104,37 +155,34 @@ const useImportPanel = ({
   readonly submit: CrmCommandSubmit;
 }) => {
   const toaster = useToast();
-  const [draft, setDraft] = useState<ImportDraft | undefined>(initial);
+  const read = useAtomSet(importDraft);
+  const result = useAtomValue(importDraft);
+  const setFile = useAtomSet(importForm.getFieldAtoms(importForm.fields.file).setValue);
+  const { paste } = Option.getOrElse(useAtomValue(importForm.values), () => noInput);
   const [pasteOpen, setPasteOpen] = useState(false);
-  const [paste, setPaste] = useState('');
   const [dragging, setDragging] = useState(false);
-  const [fileError, setFileError] = useState<string | undefined>();
-  const inputRef = useRef<HTMLInputElement>(null);
+  // Every pick, from the dialog or a drop, is read once.
+  useAtomSubscribe(
+    pickedFile,
+    (file) => {
+      if (file !== undefined) {
+        read({ file });
+      }
+    },
+    { immediate: false },
+  );
+  const draft = AsyncResult.match(result, {
+    onFailure: (): ImportDraft | undefined => undefined,
+    onInitial: () => initial,
+    onSuccess: ({ value }) => value,
+  });
+  const fileError =
+    AsyncResult.isFailure(result) && !result.waiting
+      ? Option.getOrUndefined(Option.map(AsyncResult.error(result), (unusable) => unusable.reason))
+      : undefined;
+  const takeText = (text: ImportDraft) => read({ text });
 
   const preview = previewImport(draft, records);
-
-  const readFile = (file: File) => {
-    setFileError(undefined);
-    if (file.size > MAX_BYTES) {
-      setDraft(undefined);
-      setFileError('Soubor je pro demo import příliš velký (max. 350 kB).');
-      return;
-    }
-    const onReadFailure = () => {
-      setDraft(undefined);
-      setFileError('Soubor se nepodařilo přečíst.');
-    };
-    browserRuntime.runFork(
-      Effect.tryPromise(file.text.bind(file)).pipe(
-        Effect.timeout('10 seconds'),
-        Effect.matchEffect({
-          onFailure: (cause) =>
-            Effect.logWarning('CRM import file read failed', cause).pipe(Effect.tap(() => Effect.sync(onReadFailure))),
-          onSuccess: (text) => Effect.sync(() => setDraft({ csv: text, fileName: file.name })),
-        }),
-      ),
-    );
-  };
 
   const confirm = () => {
     if (draft === undefined) {
@@ -174,18 +222,16 @@ const useImportPanel = ({
     draft,
     dragging,
     fileError,
-    inputRef,
     okRows,
     onClose,
     paste,
     pasteOpen,
     preview,
-    readFile,
     records,
-    setDraft,
     setDragging,
-    setPaste,
+    setFile,
     setPasteOpen,
+    takeText,
   };
 };
 
@@ -199,18 +245,16 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
     draft,
     dragging,
     fileError,
-    inputRef,
     okRows,
     onClose,
     paste,
     pasteOpen,
     preview,
-    readFile,
     records,
-    setDraft,
     setDragging,
-    setPaste,
+    setFile,
     setPasteOpen,
+    takeText,
   } = useImportPanel(props);
 
   return (
@@ -244,7 +288,12 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
       size="xl"
       title={t('crm.ciWorkflow.csvImport')}
     >
-      <div className="flex flex-col gap-250">
+      <FormRoot
+        className="flex flex-col gap-250"
+        defaultValues={noInput}
+        form={importForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
+      >
         <div
           className={`flex flex-col items-center gap-150 rounded-lg border-2 border-dashed text-center ${draft === undefined ? 'p-300' : 'p-150'} ${dragging ? 'border-primary bg-base' : 'border-border-primary'}`}
           onDragLeave={() => setDragging(false)}
@@ -255,9 +304,9 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
           onDrop={(event) => {
             event.preventDefault();
             setDragging(false);
-            const [file] = event.dataTransfer.files;
-            if (file !== undefined) {
-              readFile(file);
+            const dropped = Option.fromNullishOr(event.dataTransfer.files.item(0));
+            if (Option.isSome(dropped)) {
+              setFile(dropped.value);
             }
           }}
         >
@@ -268,14 +317,24 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
             {draft === undefined ? 'Přetáhněte sem soubor CSV' : `Načteno: ${draft.fileName}`}
           </span>
           <div className="flex flex-wrap justify-center gap-100">
-            <Button
-              icon="icon-[mdi--folder-open-outline]"
-              onClick={() => inputRef.current?.click()}
-              severity="secondary"
-              size="sm"
+            <importForm.file
+              accept=".csv,text/csv,text/plain"
+              aria-label={t('crm.ciWorkflow.csvFile')}
+              className="hidden"
+              data-testid="crm-import-file"
             >
-              Vybrat soubor
-            </Button>
+              {(pick) => (
+                <Button
+                  icon="icon-[mdi--folder-open-outline]"
+                  onClick={pick}
+                  severity="secondary"
+                  size="sm"
+                  type="button"
+                >
+                  Vybrat soubor
+                </Button>
+              )}
+            </importForm.file>
             <Button
               appearance="outline"
               icon="icon-[mdi--clipboard-text-outline]"
@@ -286,21 +345,6 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
               Vložit text
             </Button>
           </div>
-          <input
-            accept=".csv,text/csv,text/plain"
-            aria-label={t('crm.ciWorkflow.csvFile')}
-            className="hidden"
-            data-testid="crm-import-file"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file !== undefined) {
-                readFile(file);
-              }
-              event.target.value = '';
-            }}
-            ref={inputRef}
-            type="file"
-          />
           {fileError !== undefined && <span className="text-danger text-sm">{fileError}</span>}
         </div>
         <div className="flex flex-col gap-100">
@@ -310,7 +354,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
               <Button
                 appearance={draft?.fileName === sample.fileName ? 'solid' : 'outline'}
                 key={sample.key}
-                onClick={() => setDraft({ csv: sample.csv, fileName: sample.fileName })}
+                onClick={() => takeText({ csv: sample.csv, fileName: sample.fileName })}
                 severity="secondary"
                 size="sm"
               >
@@ -321,21 +365,19 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
         </div>
         {pasteOpen && (
           <div className="flex flex-col gap-100">
-            <FormTextarea
+            <importForm.paste
               className="font-mono"
               id="crm-import-paste"
               label={t('crm.ciWorkflow.csvContents')}
               maxLength={MAX_BYTES}
-              onChange={(event) => setPaste(event.target.value)}
               rows={6}
               size="sm"
-              value={paste}
             />
             <div className="flex justify-end">
               <Button
                 disabled={paste.trim() === ''}
                 onClick={() => {
-                  setDraft({ csv: paste, fileName: 'vlozeny-text.csv' });
+                  takeText({ csv: paste, fileName: 'vlozeny-text.csv' });
                   setPasteOpen(false);
                 }}
                 severity="secondary"
@@ -382,7 +424,7 @@ export const ImportPanel = (props: Parameters<typeof useImportPanel>[0]) => {
             )}
           </div>
         )}
-      </div>
+      </FormRoot>
     </SidePanel>
   );
 };

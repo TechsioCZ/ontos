@@ -1,6 +1,8 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 import { Effect } from 'effect';
 import { useState } from 'react';
 
@@ -132,13 +134,20 @@ export const ConnectedAppsGuide = ({
               key={client.prompt}
               value={client.prompt}
             />
-            <details className="min-w-0 text-sm">
-              <summary className="cursor-pointer text-fg-secondary">{text('showPrompt')}</summary>
-              <p className="mt-100 whitespace-pre-wrap break-words rounded-md bg-overlay p-150">{client.prompt}</p>
-            </details>
-            <a className="w-fit text-sm underline" href={client.docs} rel="noreferrer" target="_blank">
+            <Accordion appearance="ghost" size="sm">
+              <Accordion.Item value="prompt">
+                <Accordion.Header>
+                  <Accordion.Title className="text-fg-secondary">{text('showPrompt')}</Accordion.Title>
+                  <Accordion.Indicator />
+                </Accordion.Header>
+                <Accordion.Content>
+                  <p className="whitespace-pre-wrap break-words rounded-md bg-overlay p-150">{client.prompt}</p>
+                </Accordion.Content>
+              </Accordion.Item>
+            </Accordion>
+            <Link className="w-fit" external href={client.docs} size="sm">
               {text('officialDocs')}
-            </a>
+            </Link>
           </section>
         ))}
       </div>

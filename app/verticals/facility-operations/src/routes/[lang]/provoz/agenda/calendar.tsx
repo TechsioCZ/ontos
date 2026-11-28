@@ -1,16 +1,18 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // S13 shared calendar: month / week / list over deadlines READ from their sources. Owned by the ops-agenda lane.
 import { EmptyState, foldSearchText } from '@app/admin-ui';
+import { BareTextField, FormBuilder, FormReact, FormRoot } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useState, useSyncExternalStore } from 'react';
-import { DateTime, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import type { Tone } from '../../../../ui/ops-agenda/model.ts';
 import { addDays, daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline, SourceId } from '../../../../../shared/domain/ops-overview.ts';
 import { sourceKeys } from '../../../../ui/ops-agenda/sources.ts';
 import type { RentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import {
   Dot,
   Icon,
@@ -24,10 +26,17 @@ import {
 } from '../../../../ui/ops-agenda/ui-bits.tsx';
 
 const k = 'facility-operations.agenda';
-const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 
 export const CalendarModeSchema = Schema.Literals(['mesic', 'tyden', 'seznam']);
 export type CalendarMode = typeof CalendarModeSchema.Type;
+
+/** The text filter over the calendar's entries: it narrows what the calendar shows and is never submitted. */
+const calendarSearchForm = FormReact.make(FormBuilder.empty.addField('query', Schema.String), {
+  fields: { query: BareTextField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const noSearch = { query: '' };
 
 const calendarSources: readonly SourceId[] = ['agreements', 'occupancy', 'work', 'finance', 'property', 'ops'];
 
@@ -66,11 +75,13 @@ const sourceTone = (status: RentalOverviewSources[SourceId]['status']): Tone => 
   return status === 'loading' || status === 'forbidden' ? 'neutral' : 'danger';
 };
 
-const cellBackground = (outside: boolean, weekend: boolean) => {
-  if (outside) {
-    return '#f4f5f7';
+const cellBackground = (outside: boolean) => (outside ? 'bg-surface' : 'bg-base');
+
+const dayNumberColour = (isToday: boolean, outside: boolean) => {
+  if (isToday) {
+    return `${toneColors('primary').accent} text-fg-reverse`;
   }
-  return weekend ? '#fafafb' : '#ffffff';
+  return outside ? 'text-fg-secondary' : '';
 };
 
 const relativeDayLabel = (days: number, t: ReturnType<typeof useModernI18n>['t']) => {
@@ -89,20 +100,24 @@ const Toggle = ({
   readonly label: string;
   readonly onToggle: () => void;
 }) => (
-  <button
+  <Button
     aria-pressed={active}
-    className="facilityoperations:inline-flex facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-1 facilityoperations:rounded-full facilityoperations:px-3 facilityoperations:py-1 facilityoperations:text-xs facilityoperations:font-medium"
+    className={[
+      'rounded-full border px-3 py-1 text-xs font-medium',
+      ...(active
+        ? [toneColors('primary').border, toneColors('primary').tint, toneColors('primary').fg]
+        : ['border-border-primary bg-transparent text-inherit']),
+    ].join(' ')}
+    composition
     onClick={onToggle}
-    style={{
-      background: active ? toneColors('primary').bg : 'transparent',
-      border: `1px solid ${active ? toneColors('primary').accent : 'var(--color-border-primary, #d1d5db)'}`,
-      color: active ? toneColors('primary').fg : 'inherit',
-    }}
-    type="button"
+    size="current"
+    unstyled
   >
-    {active && <Icon name="check" size={12} />}
-    {label}
-  </button>
+    <span className="inline-flex items-center gap-1">
+      {active && <Icon name="check" size={12} />}
+      {label}
+    </span>
+  </Button>
 );
 
 const EventChip = ({
@@ -121,21 +136,16 @@ const EventChip = ({
   const categoryLabel = t(`${k}.category.${row.category}`);
   return (
     <Tooltip content={`${categoryLabel}: ${row.title}`}>
-      <button
-        className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-1 facilityoperations:truncate facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-1.5 facilityoperations:py-0.5 facilityoperations:text-left facilityoperations:text-[11px] facilityoperations:font-medium"
+      <Button
+        className={`flex w-full justify-start truncate rounded-md border-0 border-l-2 px-1.5 py-0.5 text-left text-[11px] font-medium ${colors.tint} ${colors.fg} ${overdue ? toneColors('danger').border : colors.border}${row.done ? ' line-through opacity-60' : ''}`}
+        composition
         data-key={row.key}
         onClick={() => onOpen(row)}
-        style={{
-          background: colors.bg,
-          borderLeft: `3px solid ${overdue ? toneColors('danger').accent : colors.accent}`,
-          color: colors.fg,
-          opacity: row.done ? 0.55 : 1,
-          textDecoration: row.done ? 'line-through' : 'none',
-        }}
-        type="button"
+        size="current"
+        unstyled
       >
-        <span className="facilityoperations:truncate">{row.title}</span>
-      </button>
+        <span className="truncate">{row.title}</span>
+      </Button>
     </Tooltip>
   );
 };
@@ -162,47 +172,28 @@ const MonthGrid = ({
   const month = cursor.slice(0, 7);
   const days = Array.from({ length: 42 }, (_, index) => addDays(start, index));
   return (
-    <div
-      className="facilityoperations:overflow-hidden facilityoperations:rounded-2xl"
-      data-testid="calendar-month"
-      style={{ border: '1px solid var(--color-border-primary, #e5e7eb)' }}
-    >
-      <div className="facilityoperations:grid facilityoperations:grid-cols-7" style={{ background: '#f4f5f7' }}>
+    <div className="overflow-hidden rounded-lg border border-border-primary" data-testid="calendar-month">
+      <div className="grid grid-cols-7 bg-surface">
         {weekdayHeaders(lang, start).map((label) => (
-          <div
-            className="facilityoperations:px-2 facilityoperations:py-2 facilityoperations:text-xs facilityoperations:font-semibold facilityoperations:uppercase"
-            key={label}
-            style={muted}
-          >
+          <div className="px-2 py-2 text-xs font-semibold uppercase text-fg-secondary" key={label}>
             {label}
           </div>
         ))}
       </div>
-      <div className="facilityoperations:grid facilityoperations:grid-cols-7">
+      <div className="grid grid-cols-7">
         {days.map((date) => {
           const rows = byDate.get(date) ?? [];
           const more = rows.at(3);
           const isToday = date === today;
           const outside = date.slice(0, 7) !== month;
-          const weekend = [5, 6].includes(mondayWeekday(date));
           return (
             <div
-              className="facilityoperations:flex facilityoperations:min-h-[112px] facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:p-1.5"
+              className={`flex min-h-28 flex-col gap-1 border-l border-t border-border-primary/60 p-1.5 ${cellBackground(outside)}`}
               data-date={date}
               key={date}
-              style={{
-                background: cellBackground(outside, weekend),
-                borderLeft: '1px solid var(--color-border-muted, #eef0f3)',
-                borderTop: '1px solid var(--color-border-muted, #eef0f3)',
-              }}
             >
               <span
-                className="facilityoperations:inline-flex facilityoperations:h-6 facilityoperations:w-6 facilityoperations:items-center facilityoperations:justify-center facilityoperations:self-end facilityoperations:rounded-full facilityoperations:text-xs facilityoperations:font-semibold"
-                style={
-                  isToday
-                    ? { background: toneColors('primary').accent, color: '#fff' }
-                    : { color: outside ? 'var(--color-fg-secondary, #9ca3af)' : 'inherit' }
-                }
+                className={`inline-flex h-6 w-6 items-center justify-center self-end rounded-full text-xs font-semibold ${dayNumberColour(isToday, outside)}`}
               >
                 {Number(date.slice(8, 10))}
               </span>
@@ -210,14 +201,15 @@ const MonthGrid = ({
                 <EventChip key={row.key} onOpen={onOpen} row={row} today={today} />
               ))}
               {rows.length > 3 && more !== undefined && (
-                <button
-                  className="facilityoperations:cursor-pointer facilityoperations:border-0 facilityoperations:bg-transparent facilityoperations:px-1 facilityoperations:text-left facilityoperations:text-[11px] facilityoperations:font-medium"
+                <Button
+                  className="justify-start border-0 bg-transparent px-1 text-left text-[11px] font-medium text-fg-secondary"
+                  composition
                   onClick={() => onOpen(more)}
-                  style={muted}
-                  type="button"
+                  size="current"
+                  unstyled
                 >
                   {t(`${k}.calendar.more`, { count: rows.length - 3 })}
-                </button>
+                </Button>
               )}
             </div>
           );
@@ -243,39 +235,27 @@ const WeekGrid = ({
   const { t } = useModernI18n();
   const days = Array.from({ length: 7 }, (_, index) => addDays(start, index));
   return (
-    <div
-      className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-2 facilityoperations:md:grid-cols-7"
-      data-testid="calendar-week"
-    >
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-7" data-testid="calendar-week">
       {days.map((date) => {
         const rows = byDate.get(date) ?? [];
         const isToday = date === today;
         return (
           <div
-            className="facilityoperations:flex facilityoperations:min-h-[260px] facilityoperations:flex-col facilityoperations:gap-1.5 facilityoperations:rounded-xl facilityoperations:p-2"
+            className={[
+              'flex min-h-[260px] flex-col gap-1.5 rounded-lg border bg-surface p-2',
+              ...(isToday
+                ? ['ring-2', toneColors('primary').border, toneColors('primary').ring]
+                : ['border-transparent']),
+            ].join(' ')}
             data-date={date}
             key={date}
-            style={{
-              background: 'var(--color-surface)',
-              border: `1px solid ${isToday ? toneColors('primary').accent : 'transparent'}`,
-              boxShadow: isToday ? `0 0 0 2px ${toneColors('primary').ring}` : 'none',
-            }}
           >
-            <div className="facilityoperations:flex facilityoperations:items-baseline facilityoperations:justify-between">
-              <span
-                className="facilityoperations:text-xs facilityoperations:font-semibold facilityoperations:uppercase"
-                style={muted}
-              >
-                {fmt.weekday(lang, date)}
-              </span>
-              <span className="facilityoperations:text-lg facilityoperations:font-semibold">
-                {fmt.dayMonth(lang, date)}
-              </span>
+            <div className="flex items-baseline justify-between">
+              <span className="text-xs font-semibold uppercase text-fg-secondary">{fmt.weekday(lang, date)}</span>
+              <span className="text-lg font-semibold">{fmt.dayMonth(lang, date)}</span>
             </div>
             {rows.length === 0 ? (
-              <span className="facilityoperations:text-xs" style={muted}>
-                {t(`${k}.calendar.free`)}
-              </span>
+              <span className="text-xs text-fg-secondary">{t(`${k}.calendar.free`)}</span>
             ) : (
               rows.map((row) => <EventChip key={row.key} onOpen={onOpen} row={row} today={today} />)
             )}
@@ -306,48 +286,40 @@ const ListView = ({
     groups.set(row.date, [...(groups.get(row.date) ?? []), row]);
   }
   return (
-    <div
-      className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4"
-      data-testid="calendar-list"
-    >
+    <div className="flex flex-col gap-4" data-testid="calendar-list">
       {[...groups.entries()].map(([date, items]) => {
         const days = daysUntil(date, today);
         return (
-          <section
-            className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1.5"
-            key={date}
-          >
-            <h3 className="facilityoperations:m-0 facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-sm facilityoperations:font-semibold facilityoperations:first-letter:uppercase">
+          <section className="flex flex-col gap-1.5" key={date}>
+            <h3 className="m-0 flex items-center gap-2 text-sm font-semibold first-letter:uppercase">
               {fmt.long(lang, date)}
-              <span className="facilityoperations:text-xs facilityoperations:font-normal" style={muted}>
-                {relativeDayLabel(days, t)}
-              </span>
+              <span className="text-xs font-normal text-fg-secondary">{relativeDayLabel(days, t)}</span>
             </h3>
             {items.map((row) => {
               const urgency = urgencyOf(row, today);
               return (
-                <button
-                  className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-3 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:text-left facilityoperations:hover:shadow-md"
+                <Button
+                  className="block w-full rounded-lg border-0 bg-surface px-3 py-2.5 text-left text-inherit hover:shadow-md"
+                  composition
                   data-key={row.key}
                   key={row.key}
                   onClick={() => onOpen(row)}
-                  style={{ background: 'var(--color-surface)', border: 0, color: 'inherit', font: 'inherit' }}
-                  type="button"
+                  size="current"
+                  unstyled
                 >
-                  <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
-                  <span className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col">
-                    <span
-                      className="facilityoperations:truncate facilityoperations:font-medium"
-                      style={{ textDecoration: row.done ? 'line-through' : 'none' }}
-                    >
-                      {row.title}
+                  <span className="flex flex-wrap items-center gap-3">
+                    <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className={`truncate font-medium${row.done ? ' line-through' : ''}`}>{row.title}</span>
+                      <span className="truncate text-xs text-fg-secondary">
+                        {[t(`${k}.sources.${row.source}`), row.location]
+                          .filter((part) => part !== undefined)
+                          .join(' · ')}
+                      </span>
                     </span>
-                    <span className="facilityoperations:truncate facilityoperations:text-xs" style={muted}>
-                      {[t(`${k}.sources.${row.source}`), row.location].filter((part) => part !== undefined).join(' · ')}
-                    </span>
+                    <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
                   </span>
-                  <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
-                </button>
+                </Button>
               );
             })}
           </section>
@@ -459,7 +431,8 @@ export const CalendarView = ({
   const [mineOnly, setMineOnly] = useState(false);
   const [overdueOnly, setOverdueOnly] = useState(initialOverdue);
   const [showDone, setShowDone] = useState(false);
-  const [query, setQuery] = useState('');
+  const search = useFormValues(calendarSearchForm, noSearch);
+  const { query } = search.values;
 
   const range = calendarRange(mode, cursor);
 
@@ -554,9 +527,9 @@ export const CalendarView = ({
   );
 
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3">
-      <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:justify-between facilityoperations:gap-3">
-        <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
           <Button
             appearance="outline"
             aria-label={t(`${k}.calendar.previous`)}
@@ -578,34 +551,25 @@ export const CalendarView = ({
           >
             <Icon name="chevronRight" size={18} />
           </Button>
-          <h2
-            className="facilityoperations:m-0 facilityoperations:ml-2 facilityoperations:text-lg facilityoperations:font-semibold facilityoperations:first-letter:uppercase"
-            data-testid="calendar-period"
-          >
+          <h2 className="m-0 ml-2 text-lg font-semibold first-letter:uppercase" data-testid="calendar-period">
             {overdueOnly ? t(`${k}.calendar.overduePeriod`) : periodLabel}
           </h2>
         </div>
-        <div className="facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2">
-          <fieldset
-            className="facilityoperations:inline-flex facilityoperations:rounded-lg facilityoperations:p-0.5"
-            style={{ background: 'var(--color-surface-subtle, #f1f5f9)', border: 0, margin: 0, minWidth: 0 }}
-          >
+        <div className="flex items-center gap-2">
+          <fieldset className="m-0 inline-flex min-w-0 rounded-lg border-0 bg-surface p-0.5">
             {(['mesic', 'tyden', 'seznam'] as const).map((value) => (
-              <button
+              <Button
                 aria-pressed={mode === value}
-                className="facilityoperations:cursor-pointer facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium"
+                className={`rounded-md border-0 px-3 py-1.5 text-sm font-medium text-inherit ${mode === value ? 'bg-base shadow-sm' : 'bg-transparent'}`}
+                composition
                 data-mode={value}
                 key={value}
                 onClick={() => setChosenMode(value)}
-                style={{
-                  background: mode === value ? '#ffffff' : 'transparent',
-                  boxShadow: mode === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
-                  color: 'inherit',
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
                 {t(`${k}.calendar.mode.${value}`)}
-              </button>
+              </Button>
             ))}
           </fieldset>
           <Button appearance="outline" onClick={csv} severity="secondary" size="sm">
@@ -614,15 +578,16 @@ export const CalendarView = ({
         </div>
       </div>
 
-      <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {calendarSources.map((source) => {
           const off = hidden.has(source);
           const { status } = sources[source];
           return (
             <Tooltip content={t(`${k}.state.${status}`)} key={source}>
-              <button
+              <Button
                 aria-pressed={!off}
-                className="facilityoperations:inline-flex facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-1.5 facilityoperations:rounded-full facilityoperations:px-3 facilityoperations:py-1 facilityoperations:text-xs facilityoperations:font-medium"
+                className={`rounded-full border border-border-primary px-3 py-1 text-xs font-medium text-inherit ${off ? 'bg-transparent opacity-50' : 'bg-base'}`}
+                composition
                 data-source={source}
                 onClick={() =>
                   setHidden((current) => {
@@ -635,25 +600,19 @@ export const CalendarView = ({
                     return next;
                   })
                 }
-                style={{
-                  background: off ? 'transparent' : '#ffffff',
-                  border: '1px solid var(--color-border-primary, #d1d5db)',
-                  color: 'inherit',
-                  opacity: off ? 0.5 : 1,
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
-                <Dot tone={sourceTone(status)} />
-                {t(`${k}.sources.${source}`)}
-                {status === 'forbidden' && <Icon name="lock" size={12} />}
-              </button>
+                <span className="inline-flex items-center gap-1.5">
+                  <Dot tone={sourceTone(status)} />
+                  {t(`${k}.sources.${source}`)}
+                  {status === 'forbidden' && <Icon name="lock" size={12} />}
+                </span>
+              </Button>
             </Tooltip>
           );
         })}
-        <span
-          className="facilityoperations:mx-1 facilityoperations:h-5 facilityoperations:w-px"
-          style={{ background: 'var(--color-border-primary, #d1d5db)' }}
-        />
+        <span className="mx-1 h-5 w-px bg-border-primary" />
         <Toggle active={mineOnly} label={t(`${k}.calendar.mineOnly`)} onToggle={() => setMineOnly((value) => !value)} />
         <Toggle
           active={overdueOnly}
@@ -661,22 +620,25 @@ export const CalendarView = ({
           onToggle={() => setOverdueOnly((value) => !value)}
         />
         <Toggle active={showDone} label={t(`${k}.calendar.showDone`)} onToggle={() => setShowDone((value) => !value)} />
-        <input
-          aria-label={t(`${k}.calendar.filter`)}
-          className="facilityoperations:ml-auto facilityoperations:min-w-[200px] facilityoperations:rounded-lg facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm"
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={t(`${k}.calendar.filter`)}
-          style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #d1d5db)' }}
-          type="search"
-          value={query}
-        />
+        <FormRoot
+          className="ml-auto"
+          defaultValues={noSearch}
+          form={calendarSearchForm}
+          translateMessage={(message) => t(message)}
+        >
+          {search.ready}
+          <calendarSearchForm.query
+            aria-label={t(`${k}.calendar.filter`)}
+            className="h-auto w-auto min-w-[200px] rounded-lg px-3 py-1.5 text-sm"
+            placeholder={t(`${k}.calendar.filter`)}
+            size="sm"
+            type="search"
+          />
+        </FormRoot>
       </div>
 
       {missing.length > 0 && (
-        <p
-          className="facilityoperations:m-0 facilityoperations:flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-xs"
-          style={muted}
-        >
+        <p className="m-0 flex items-center gap-2 text-xs text-fg-secondary">
           <Icon name="info" size={14} />
           {t(`${k}.calendar.missingSources`, {
             sources: missing
@@ -691,9 +653,7 @@ export const CalendarView = ({
       )}
 
       {renderCalendarGrid(mode, overdueOnly, { byDate, cursor, lang, onOpen, range, rows: inRange, today })}
-      <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
-        {t(`${k}.calendar.readOnlyNote`)}
-      </p>
+      <p className="m-0 text-xs text-fg-secondary">{t(`${k}.calendar.readOnlyNote`)}</p>
     </div>
   );
 };

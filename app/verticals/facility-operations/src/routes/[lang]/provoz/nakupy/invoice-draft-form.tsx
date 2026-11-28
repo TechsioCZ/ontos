@@ -1,20 +1,30 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { IsoDate } from '../../../../../shared/domain/common.ts';
 // Real Finance draft; supplier and immutable line prices are copied from the purchase order.
-import { SectionCard } from '@app/admin-ui';
+import { SectionCard, requiredLabelFor } from '@app/admin-ui';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RuledTextField,
+  TemplateChoiceField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect, Option, Random } from 'effect';
+import { Effect, Option, Random, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useEffect, useRef, useState } from 'react';
 import type { PurchaseOrder, Supplier } from '../../../../../shared/domain/purchasing.ts';
 import { executeApplyCommand as applyFinanceCommand } from '@app/finance-billing/clients/apply-command';
 import { readFinance, readFinanceVatChoices } from '../../../../ui/finance-reads.ts';
 import type { FinanceVatChoices } from '../../../../ui/finance-reads.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { incomingVatOptions } from './invoice-vat.ts';
 import type { InvoiceVat } from './invoice-vat.ts';
 import { FormSaveFooter, submitDone, useFormSave } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 import { formatAmount, todayIso } from './purchasing-model.ts';
 import { purchaseInvoiceCommandOf } from './purchase-invoice-command.ts';
 
@@ -33,6 +43,36 @@ interface FieldHint {
   readonly validateStatus?: 'error';
 }
 const noHint: FieldHint = {};
+
+/**
+ * The values of the incoming invoice draft. Uložit sends them through the form save, so the form only holds them and
+ * Enter sends nothing. The order panel shows one draft form at a time.
+ */
+const draftForm = FormReact.make(
+  FormBuilder.empty
+    .addField('documentNumber', Schema.String)
+    .addField('dueDate', Schema.String)
+    .addField('issueDate', Schema.String)
+    .addField('vatKey', Schema.String),
+  {
+    fields: { documentNumber: RuledTextField, dueDate: TextField, issueDate: TextField, vatKey: TemplateChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** The draft opens issued and due today, with nothing typed or picked. */
+const openedDraft = (): typeof draftForm.schema.Encoded => ({
+  documentNumber: '',
+  dueDate: todayIso(),
+  issueDate: todayIso(),
+  vatKey: '',
+});
+
+/** The typed issue date as a plain string, which changes only when the date does. */
+const draftIssueDate = draftForm
+  .getFieldAtoms(draftForm.fields.issueDate)
+  .value.pipe(Atom.map(Option.getOrElse(() => '')));
 
 /** What the VAT field says under itself: still reading, the read failed, or a choice is still missing. */
 const vatHint = (input: {
@@ -150,11 +190,21 @@ export const InvoiceDraftForm = ({
   readonly order: PurchaseOrder;
   readonly supplier: Supplier;
 }) => {
-  const { t } = useModernI18n();
-  const [issueDate, setIssueDate] = useState(todayIso);
-  const [documentNumber, setDocumentNumber] = useState('');
-  const [dueDate, setDueDate] = useState(todayIso);
-  const [vatKey, setVatKey] = useState('');
+  const { language, t } = useModernI18n();
+  const opened = openedDraft();
+  const shown = useFormValues(draftForm, opened);
+  const { documentNumber, dueDate, issueDate, vatKey } = shown.values;
+  const setVatKey = useAtomSet(draftForm.getFieldAtoms(draftForm.fields.vatKey).setValue);
+  // Another issue date has other VAT choices: the rate picked for the previous date is picked again.
+  useAtomSubscribe(
+    draftIssueDate,
+    () => {
+      if (shown.initialized) {
+        setVatKey('');
+      }
+    },
+    { immediate: false },
+  );
   // The VAT choices Finance published for one issue date; a read for an older date is never shown for a newer one.
   const [vatRead, setVatRead] = useState<VatRead>();
   useEffect(() => {
@@ -209,10 +259,9 @@ export const InvoiceDraftForm = ({
   });
   // Uložit stays held back until both are filled in; the save bar then points at the fields that say what is missing.
   const missing = form.draft.status === 'invalid';
-  const documentNumberHint: FieldHint =
-    missing && documentNumber.trim() === ''
-      ? { helpText: t('facility-operations.ui.supplierDocumentNumberRequired'), validateStatus: 'error' }
-      : noHint;
+  const documentNumberMissing = missing && documentNumber.trim() === '';
+  const vatFieldHint = vatHint({ issueDate, missing: missing && vat === undefined, read: currentRead, t });
+  const requiredLabel = requiredLabelFor(language);
   return (
     <SectionCard title={t('facility-operations.ui.prepareIncomingInvoice')}>
       <p className="text-fg-secondary text-sm">
@@ -224,59 +273,60 @@ export const InvoiceDraftForm = ({
           {error}
         </StatusText>
       )}
-      <FormInput
-        id="draft-invoice-number"
-        label={t('facility-operations.ui.supplierDocumentNumber')}
-        onChange={(event) => setDocumentNumber(event.target.value)}
-        required
-        value={documentNumber}
-        {...documentNumberHint}
-      />
-      <div className="flex flex-col gap-100">
-        {order.lines.map((line) => (
-          <div className="rounded-md bg-surface-secondary p-150 text-sm" key={line.id}>
-            <span className="font-medium">{line.description}</span>
-            <div>
-              {line.quantity} × {formatAmount(line.unitPriceMinor)} bez DPH
+      <FormRoot
+        className="flex flex-col gap-200"
+        defaultValues={opened}
+        form={draftForm}
+        key={order.id}
+        translateMessage={(message) => t(message)}
+      >
+        {shown.ready}
+        <draftForm.documentNumber
+          id="draft-invoice-number"
+          invalid={documentNumberMissing}
+          label={t('facility-operations.ui.supplierDocumentNumber')}
+          required
+          requiredLabel={requiredLabel}
+          {...(documentNumberMissing ? { helpText: t('facility-operations.ui.supplierDocumentNumberRequired') } : {})}
+        />
+        <div className="flex flex-col gap-100">
+          {order.lines.map((line) => (
+            <div className="rounded-md p-150 text-sm" key={line.id}>
+              <span className="font-medium">{line.description}</span>
+              <div>
+                {line.quantity} × {formatAmount(line.unitPriceMinor)} bez DPH
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          id="draft-invoice-issue"
-          label={t('facility-operations.ui.issueDate')}
-          onChange={(event) => {
-            setIssueDate(event.target.value);
-            setVatKey('');
-          }}
-          required
-          type="date"
-          value={issueDate}
+          ))}
+        </div>
+        <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
+          <draftForm.issueDate
+            id="draft-invoice-issue"
+            label={t('facility-operations.ui.issueDate')}
+            required
+            requiredLabel={requiredLabel}
+            type="date"
+          />
+          <draftForm.dueDate
+            id="draft-invoice-due"
+            label={t('facility-operations.ui.dueDate')}
+            required
+            requiredLabel={requiredLabel}
+            type="date"
+          />
+        </div>
+        <draftForm.vatKey
+          disabled={issueDate !== '' && currentRead === undefined}
+          invalid={vatFieldHint.validateStatus === 'error'}
+          items={vatOptions.map((option) => ({
+            label: t(option.labelKey, { rate: option.vat.vatRate }),
+            value: option.key,
+          }))}
+          label={t('facility-operations.ui.supplierDocumentVat')}
+          placeholder={t('facility-operations.ui.selectVatRate')}
+          {...(vatFieldHint.helpText === undefined ? {} : { helpText: vatFieldHint.helpText })}
         />
-        <FormInput
-          id="draft-invoice-due"
-          label={t('facility-operations.ui.dueDate')}
-          onChange={(event) => setDueDate(event.target.value)}
-          required
-          type="date"
-          value={dueDate}
-        />
-      </div>
-      <Select
-        disabled={issueDate !== '' && currentRead === undefined}
-        items={vatOptions.map((option) => ({
-          displayValue: t(option.labelKey, { rate: option.vat.vatRate }),
-          label: t(option.labelKey, { rate: option.vat.vatRate }),
-          value: option.key,
-        }))}
-        label={t('facility-operations.ui.supplierDocumentVat')}
-        name="invoice-vat-rate"
-        onValueChange={({ value }) => setVatKey(value[0] ?? '')}
-        placeholder={t('facility-operations.ui.selectVatRate')}
-        value={vatKey === '' ? [] : [vatKey]}
-        {...vatHint({ issueDate, missing: missing && vat === undefined, read: currentRead, t })}
-      />
+      </FormRoot>
       <p className="text-fg-secondary text-xs">
         Ceny objednávky se přebírají beze změny jako základ bez DPH. Zvolená sazba se použije pro všechny řádky; ověřte
         ji podle skutečného dokladu dodavatele.

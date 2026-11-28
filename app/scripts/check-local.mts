@@ -13,7 +13,7 @@ const localValidationScripts = {
   'lint-rules': ['typecheck:lint-rules', 'test:lint-rules', 'lint:repository-policy'],
   quality: ['quality:audit:test'],
   scripts: ['test:scripts'],
-  tooling: ['shell:ui-candidates', 'test:scripts', 'module-entrypoints:check', 'test:generation'],
+  tooling: ['test:scripts', 'module-entrypoints:check', 'test:generation'],
   unit: ['test:unit'],
 } as const;
 

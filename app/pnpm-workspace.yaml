@@ -1,8 +1,10 @@
 catalog:
   '@app/commerce-customer-context': workspace:*
+  '@app/core-runtime': workspace:*
   '@app/shared-contracts': workspace:*
   '@app/work-tasks': workspace:*
-  '@techsio/ui-kit': 0.67.0
+  '@lucas-barake/effect-form': 1.1.1
+  '@techsio/ui-kit': 0.70.1
 catalogMode: strict
 
 catalogs:

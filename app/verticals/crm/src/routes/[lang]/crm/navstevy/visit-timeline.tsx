@@ -1,5 +1,6 @@
 // AREA: visits — owned by the crm-visits lane. Chronological timeline of visits (C02), grouped by month.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Visit } from '../../../../../shared/domain/visits.ts';
 import {
@@ -46,10 +47,12 @@ const TimelineEntry = ({
     <li className="relative flex gap-200 pb-300 last:pb-0">
       <span aria-hidden="true" className="absolute top-450 bottom-0 left-200 w-px bg-border-primary" />
       <VisitKindIcon kind={visit.kind} />
-      <button
+      <Button
         className="flex min-w-0 flex-1 cursor-pointer flex-col gap-50 rounded-md p-100 text-start hover:bg-fill-hover focus-visible:outline-2 focus-visible:outline-ring"
+        composition
         onClick={() => onOpen(visit)}
-        type="button"
+        size="current"
+        unstyled
       >
         <span className="flex flex-wrap items-center gap-x-150 gap-y-50 text-fg-secondary text-xs">
           <span className="font-medium text-fg-primary">
@@ -82,7 +85,7 @@ const TimelineEntry = ({
         )}
         {records.state.salespeople.find((person) => person.id === visit.salespersonId)?.principalId !==
           visit.authorPrincipalId && <span className="text-fg-secondary text-xs">{`Zapsal(a): ${author}`}</span>}
-      </button>
+      </Button>
     </li>
   );
 };

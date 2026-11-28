@@ -238,6 +238,9 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
 
   // @ontos-core-read asset-metadata
   .add(ShellBrowserApi.groups.coreReadAssetMetadata)
+
+  // @ontos-core-read tenant-theme
+  .add(ShellBrowserApi.groups.coreReadTenantTheme)
   // @ontos-codesmith-core-read-server-api-groups:end
 
   // @ontos-codesmith-core-action-server-api-groups:start
@@ -250,6 +253,12 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
 
   // @ontos-core-action upload-asset
   .add(ShellBrowserApi.groups.coreActionUploadAsset)
+
+  // @ontos-core-action save-tenant-theme
+  .add(ShellBrowserApi.groups.coreActionSaveTenantTheme)
+
+  // @ontos-core-action attach-tenant-theme
+  .add(ShellBrowserApi.groups.coreActionAttachTenantTheme)
   // @ontos-codesmith-core-action-server-api-groups:end
   .add(ShellBrowserApi.groups.coreMediaDownload)
   .add(ShellBrowserApi.groups.coreHostedOperations)

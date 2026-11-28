@@ -2,6 +2,7 @@
 // flight. Nothing technical (addresses, paths, identifiers) is ever shown.
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { DragEvent } from 'react';
@@ -171,16 +172,18 @@ export const UploadTile = ({
         <div className="absolute inset-x-100 bottom-100 flex flex-col gap-50">
           <span className="truncate rounded-sm bg-base/90 px-50 text-xs">{upload.name}</span>
           {upload.phase !== 'failed' && (
-            <progress
+            <Meter
               aria-label={`${upload.name}: ${phase}`}
-              className="h-1 w-full accent-primary"
+              className="h-1"
               max={3}
+              severity="primary"
+              size="sm"
               value={phaseStep[upload.phase]}
             />
           )}
         </div>
       </div>
-      <span className={`text-xs ${upload.phase === 'failed' ? 'text-fg-danger' : 'text-fg-secondary'}`}>
+      <span className={`text-xs ${upload.phase === 'failed' ? 'text-danger' : 'text-fg-secondary'}`}>
         {upload.phase === 'failed' ? (upload.message ?? phase) : phase}
       </span>
       {upload.phase === 'failed' && (

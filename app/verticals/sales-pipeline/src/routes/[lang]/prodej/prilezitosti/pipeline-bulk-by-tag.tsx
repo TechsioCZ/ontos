@@ -7,30 +7,42 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { TagFilter } from '@app/tagging/components/tag-controls';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { TagIdSchema } from '@app/tagging/contracts/records';
 import type { TagId } from '@app/tagging/contracts/records';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Effect, Match, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
+import { Atom } from 'effect/reactivity';
 import { useRef, useState } from 'react';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
 import {
+  ActionSchema,
   BULK_LIMIT,
   BulkByTagPreview,
-  BulkByTagValueFields,
   K,
   KindSchema,
+  NONE,
   SELECT_PLACEHOLDER,
   patchOf,
   previewOf,
 } from './pipeline-bulk-by-tag-fields.tsx';
 import type { Action, BulkByTagResult, Kind } from './pipeline-bulk-by-tag-fields.tsx';
-import { pipelineConflictKey, skipTally } from './pipeline-model.ts';
+import { TagChoice } from './pipeline-filters.tsx';
+import { isOpportunityStage, opportunityStages, pipelineConflictKey, skipTally } from './pipeline-model.ts';
 import type { OpportunityStage } from './pipeline-model.ts';
 import { useAllOpportunities, useSubjectIdsWithTag } from './pipeline-references.ts';
 import type { EmployeeOption } from './pipeline-references.ts';
@@ -45,6 +57,40 @@ interface BulkByTagDialogProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
+interface BulkSend {
+  readonly command: PipelineCommand;
+  readonly requested: number;
+  readonly revision: number;
+}
+
+/**
+ * The bulk change by tag: which tag picks the opportunities and what changes on them. Uložit sends it through the
+ * dialog's draft save, so the form itself is never submitted.
+ */
+const bulkByTagForm = FormReact.make(
+  FormBuilder.empty
+    .addField('bulkAction', Schema.String)
+    .addField('owner', Schema.String)
+    .addField('stage', Schema.String)
+    .addField('tagId', Schema.OptionFromNullOr(Schema.toType(TagIdSchema)))
+    .addField('tagKind', Schema.String),
+  {
+    fields: { bulkAction: ChoiceField, owner: ChoiceField, stage: ChoiceField, tagId: TagChoice, tagKind: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type BulkByTagValues = typeof bulkByTagForm.schema.Encoded;
+
+const emptyBulkValues: BulkByTagValues = {
+  bulkAction: 'stage',
+  owner: '',
+  stage: '',
+  tagId: null,
+  tagKind: 'customer',
+};
+
 interface BulkByTagDraft {
   readonly action: Action;
   readonly kind: Kind;
@@ -53,13 +99,67 @@ interface BulkByTagDraft {
   readonly tagId: TagId | null;
 }
 
-interface BulkSend {
-  readonly command: PipelineCommand;
-  readonly requested: number;
-  readonly revision: number;
+/** The choice the form shows; anything it does not offer reads as its default. */
+const bulkDraftOf = (values: BulkByTagValues): BulkByTagDraft => ({
+  action: Schema.is(ActionSchema)(values.bulkAction) ? values.bulkAction : 'stage',
+  kind: Schema.is(KindSchema)(values.tagKind) ? values.tagKind : 'customer',
+  owner: values.owner,
+  stage: isOpportunityStage(values.stage) ? values.stage : '',
+  tagId: values.tagId,
+});
+
+interface BulkByTagValueProps {
+  readonly action: Action;
+  readonly activeEmployees: readonly EmployeeOption[];
+  readonly valueMissing: boolean;
 }
 
-const emptyBulkDraft: BulkByTagDraft = { action: 'stage', kind: 'customer', owner: '', stage: '', tagId: null };
+/** Action choice and the value for it: a stage or an owner (`Nepřiřazeno` clears it). */
+const BulkByTagValueFields = ({ action, activeEmployees, valueMissing }: BulkByTagValueProps) => {
+  const { t } = useModernI18n();
+  const actionItems = [
+    { label: t(`${K}.bulkByTag.actions.stage`), value: 'stage' },
+    { label: t(`${K}.bulkByTag.actions.owner`), value: 'owner' },
+  ];
+  const stageItems = opportunityStages.map((candidate) => ({
+    label: t(`sales-pipeline.status.opportunity.${candidate}`),
+    value: candidate,
+  }));
+  const ownerItems = [
+    { label: t(`${K}.owner.none`), value: NONE },
+    ...activeEmployees.map((employee) => ({ label: employee.fullName, value: employee.id })),
+  ];
+
+  return (
+    <>
+      <bulkByTagForm.bulkAction
+        items={actionItems}
+        label={t(`${K}.bulkByTag.action`)}
+        placeholder={t(SELECT_PLACEHOLDER)}
+      />
+      {action === 'stage' ? (
+        <bulkByTagForm.stage items={stageItems} label={t(`${K}.bulkByTag.stage`)} placeholder={t(SELECT_PLACEHOLDER)} />
+      ) : (
+        <bulkByTagForm.owner items={ownerItems} label={t(`${K}.bulkByTag.owner`)} placeholder={t(SELECT_PLACEHOLDER)} />
+      )}
+      {valueMissing && (
+        <StatusText showIcon status="error">
+          {t(`${K}.bulkByTag.valueRequired`)}
+        </StatusText>
+      )}
+    </>
+  );
+};
+
+const emptyBulkDraft = bulkDraftOf(emptyBulkValues);
+const tagField = bulkByTagForm.getFieldAtoms(bulkByTagForm.fields.tagId);
+/**
+ * The kind as plain text. It changes only when the kind does: the field's own value atom reports every change of the
+ * form, so dropping the tag on it would drop every tag picked.
+ */
+const shownKind = bulkByTagForm
+  .getFieldAtoms(bulkByTagForm.fields.tagKind)
+  .value.pipe(Atom.map(Option.getOrElse(() => '')));
 
 /**
  * Bulk change of open opportunities selected by a tag. The preview lists exactly what will change, and the
@@ -69,13 +169,15 @@ const emptyBulkDraft: BulkByTagDraft = { action: 'stage', kind: 'customer', owne
 export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpenChange }: BulkByTagDialogProps) => {
   const { language, t } = useModernI18n();
   const population = useAllOpportunities();
-  const [draft, setDraft] = useState<BulkByTagDraft>(emptyBulkDraft);
+  const draft = Option.match(useAtomValue(bulkByTagForm.values), { onNone: () => emptyBulkDraft, onSome: bulkDraftOf });
   const { action, kind, owner, stage, tagId } = draft;
+  const setTag = useAtomSet(tagField.setValue);
+  // Tags belong to a kind: another kind starts without a tag.
+  useAtomSubscribe(shownKind, () => setTag(null), { immediate: false });
   const [submitError, setSubmitError] = useState<string>();
   /** What the last save changed, for `onDone` once the save bar reports it saved. */
   const done = useRef<BulkByTagResult | null>(null);
   const members = useSubjectIdsWithTag(kind, tagId, 0);
-  const patchDraft = (next: Partial<BulkByTagDraft>) => setDraft((current) => ({ ...current, ...next }));
 
   const preview = previewOf(population, members, kind);
   const tooMany = preview.length > BULK_LIMIT;
@@ -173,20 +275,19 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
         size="lg"
         title={t(`${K}.bulkByTag.title`)}
       >
-        {/* Enter never runs the change: only Uložit does. */}
-        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
-          <SelectTemplate
+        {/* The form submits nothing: only Uložit runs the change. */}
+        <FormRoot
+          className="flex flex-col gap-200 py-200"
+          defaultValues={emptyBulkValues}
+          form={bulkByTagForm}
+          translateMessage={(message) => t(message, { defaultValue: message })}
+        >
+          <bulkByTagForm.tagKind
             items={kindItems}
             label={t(`${K}.bulkByTag.kind`)}
-            name="tagKind"
-            onValueChange={({ value: [next] }) =>
-              patchDraft({ kind: Schema.is(KindSchema)(next) ? next : 'customer', tagId: null })
-            }
             placeholder={t(SELECT_PLACEHOLDER)}
-            size="md"
-            value={[kind]}
           />
-          <TagFilter kind={kind} onChange={(next) => patchDraft({ tagId: next })} value={tagId} />
+          <bulkByTagForm.tagId kind={kind} />
           <BulkByTagPreview
             customerLabel={customerLabel}
             members={members}
@@ -198,14 +299,9 @@ export const BulkByTagDialog = ({ activeEmployees, customerLabel, onDone, onOpen
           <BulkByTagValueFields
             action={action}
             activeEmployees={activeEmployees}
-            onAction={(next) => patchDraft({ action: next })}
-            onOwner={(next) => patchDraft({ owner: next })}
-            onStage={(next) => patchDraft({ stage: next })}
-            owner={owner}
-            stage={stage}
             valueMissing={record.status === 'invalid' && patchOf(action, stage, owner, activeEmployees) === undefined}
           />
-        </form>
+        </FormRoot>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

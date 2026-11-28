@@ -1,11 +1,9 @@
 import { ScrollRegion } from '@app/admin-ui';
 import type { ReactNode } from 'react';
 
-const financeTableViewport = { maxWidth: '100%', minWidth: 0, overflowX: 'auto', width: '100%' } as const;
-
 /** Keep wide finance tables reachable inside the shell's clipped mobile content. */
 export const FinanceTableScroll = ({ children, label }: { readonly children: ReactNode; readonly label: string }) => (
-  <ScrollRegion className="finance-table-scroll" label={label} style={financeTableViewport}>
+  <ScrollRegion className="w-full min-w-0 max-w-full overflow-x-auto" label={label}>
     {children}
   </ScrollRegion>
 );

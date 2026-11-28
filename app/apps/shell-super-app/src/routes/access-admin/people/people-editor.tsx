@@ -267,12 +267,12 @@ const DelegationEditor = ({
   return (
     <FormRoot
       aria-label={t(`${prefix}.delegationCreate`)}
-      className="shell:grid shell:gap-4"
+      className="grid gap-4"
       defaultValues={emptyDelegation}
       form={delegationForm}
       translateMessage={translateWith(t)}
     >
-      <h3 className="shell:text-title-md">{t(`${prefix}.delegation`)}</h3>
+      <h3 className="">{t(`${prefix}.delegation`)}</h3>
       <p>{t(`${prefix}.delegationHelp`)}</p>
       <p>{t(`${prefix}.delegationCeiling`)}</p>
       <delegationForm.managerId
@@ -388,15 +388,15 @@ const AdmitSection = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <section aria-label={t(`${prefix}.admitSection`)} className="shell:grid shell:gap-4">
-      <h3 className="shell:text-title-md">{t(`${prefix}.admitSection`)}</h3>
+    <section aria-label={t(`${prefix}.admitSection`)} className="grid gap-4">
+      <h3 className="">{t(`${prefix}.admitSection`)}</h3>
       <p>{t(`${prefix}.admitHelp`)}</p>
       {scope.candidates.length === 0 ? (
         <StatusText>{t(`${prefix}.noCandidates`)}</StatusText>
       ) : (
-        <ul className="shell:grid shell:gap-2">
+        <ul className="grid gap-2">
           {scope.candidates.map((candidate) => (
-            <li className="shell:flex shell:flex-wrap shell:items-center shell:gap-2" key={candidate.id}>
+            <li className="flex flex-wrap items-center gap-2" key={candidate.id}>
               <span>{candidate.label}</span>
               <Button
                 aria-label={t(`${prefix}.admitMemberNamed`, { person: candidate.label })}

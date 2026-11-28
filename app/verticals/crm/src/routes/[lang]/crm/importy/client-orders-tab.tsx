@@ -146,7 +146,7 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                       <span className="flex items-center gap-50 whitespace-nowrap">
                         <span
                           aria-hidden="true"
-                          className={`size-200 text-fg-secondary ${open ? 'icon-[mdi--chevron-down]' : 'icon-[mdi--chevron-right]'}`}
+                          className={`size-200 text-fg-secondary ${open ? 'token-icon-accordion-chevron' : 'token-icon-breadcrumb-separator'}`}
                         />
                         <span className="font-medium">{orderTitle(order)}</span>
                         {order.duplicateOf !== undefined && (

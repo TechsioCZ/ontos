@@ -1,16 +1,24 @@
 // S15 plán budoucích investic: description, planned amount, date, priority; actual amount and difference.
 // Stored in the `assets` agenda (AssetInvestmentCreate / AssetInvestmentUpdate); every change is in Historie změn.
 import { SectionCard, StatCard, StatRow, formatMoney, formatNumber } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  TextField,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Option, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import type { TOptions } from 'i18next';
 import { useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
-  AssetId,
   AssetsState,
   Investment,
   InvestmentPriority,
@@ -27,8 +35,9 @@ import { optionalField } from '../../../../../shared/domain/common.ts';
 import { ChangeHistory } from '../../../../ui/change-history.tsx';
 import { isoDateLabel, parseCzk } from './assets-model.ts';
 import type { Translate } from './assets-model.ts';
-import { AreaField, ErrorLine, FormGrid, PanelForm, SelectField, TextField, optional } from './form-kit.tsx';
+import { ErrorLine, FormGrid, PanelForm, optional, textArea, textInput, useRequired } from './form-kit.tsx';
 import type { AssetSubmit, PanelFormEdit } from './form-kit.tsx';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { locationItems, owningPropertyId, usePropertyTree } from './property-tree.ts';
 
@@ -66,6 +75,125 @@ interface InvestmentFormProps {
   readonly state: AssetsState;
 }
 
+/** One investment's values; Uložit sends them through the panel's form save, so Enter sends nothing. */
+const investmentForm = FormReact.make(
+  FormBuilder.empty
+    .addField('actual', Schema.String)
+    .addField('actualDate', Schema.String)
+    .addField('assetId', Schema.String)
+    .addField('description', Schema.String)
+    .addField('location', Schema.String)
+    .addField('planned', Schema.String)
+    .addField('plannedDate', Schema.String)
+    .addField('priority', Schema.String)
+    .addField('responsible', Schema.String)
+    .addField('status', Schema.String)
+    .addField('title', Schema.String),
+  {
+    fields: {
+      actual: TextField,
+      actualDate: TextField,
+      assetId: ChoiceField,
+      description: TextAreaField,
+      location: ChoiceField,
+      planned: TextField,
+      plannedDate: TextField,
+      priority: ChoiceField,
+      responsible: TextField,
+      status: ChoiceField,
+      title: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+/** A new investment: planned, of medium priority, with nothing filled in. */
+const newInvestmentValues = {
+  actual: '',
+  actualDate: '',
+  assetId: NONE,
+  description: '',
+  location: NONE,
+  planned: '',
+  plannedDate: '',
+  priority: 'medium',
+  responsible: '',
+  status: 'planned',
+  title: '',
+};
+
+const investmentValuesOf = (investment: Investment | undefined): typeof investmentForm.schema.Encoded =>
+  investment === undefined
+    ? newInvestmentValues
+    : {
+        actual: amountInput(investment.actualAmountMinor),
+        actualDate: investment.actualDate ?? '',
+        assetId: investment.assetId ?? NONE,
+        description: investment.description ?? '',
+        location: investment.location === undefined ? NONE : `${investment.location.kind}:${investment.location.id}`,
+        planned: amountInput(investment.plannedAmountMinor),
+        plannedDate: investment.plannedDate,
+        priority: investment.priority,
+        responsible: investment.responsible ?? '',
+        status: investment.status,
+        title: investment.title,
+      };
+
+type InvestmentValues = typeof investmentForm.schema.Encoded;
+
+/** The picks of the form as the command takes them; an empty pick is the default one. */
+const investmentChoicesOf = (values: InvestmentValues) => ({
+  assetId: Option.getOrElse(
+    Schema.decodeOption(AssetIdSchema)(values.assetId === '' ? NONE : values.assetId),
+    (): typeof NONE => NONE,
+  ),
+  location: values.location === '' ? NONE : values.location,
+  priority: investmentPriorities.find((entry) => entry === values.priority) ?? 'medium',
+  status: investmentStatuses.find((entry) => entry === values.status) ?? 'planned',
+});
+type InvestmentChoices = ReturnType<typeof investmentChoicesOf>;
+
+/** The typed amounts, or the message key of what is missing or wrong. */
+const investmentAmountsOf = (
+  { actual, planned, plannedDate, title }: InvestmentValues,
+  status: InvestmentStatus,
+): { readonly problem: string } | { readonly actualMinor: number | undefined; readonly plannedMinor: number } => {
+  if (title.trim() === '' || plannedDate === '' || planned.trim() === '') {
+    return { problem: 'form.required' };
+  }
+  const plannedMinor = parseCzk(planned);
+  const actualMinor = parseCzk(actual);
+  if (plannedMinor === null || plannedMinor === undefined || actualMinor === null) {
+    return { problem: 'form.invalidAmount' };
+  }
+  if (status === 'done' && actualMinor === undefined) {
+    return { problem: 'investments.form.actualRequired' };
+  }
+  return { actualMinor, plannedMinor };
+};
+
+/** The fields a create and an update of an investment both carry. */
+const investmentFieldsOf = (
+  { actualDate, description, plannedDate, responsible, title }: InvestmentValues,
+  { assetId, priority, status }: InvestmentChoices,
+  { actualMinor, plannedMinor }: { readonly actualMinor: number | undefined; readonly plannedMinor: number },
+  place: { readonly picked: Investment['location']; readonly propertyId: Investment['propertyId'] },
+) => ({
+  plannedAmountMinor: plannedMinor,
+  plannedDate,
+  priority,
+  status,
+  title: title.trim(),
+  ...optional('description', description),
+  ...optional('responsible', responsible),
+  ...optionalField('actualAmountMinor', actualMinor),
+  ...optionalField('actualDate', actualDate === '' ? undefined : actualDate),
+  ...optionalField('location', place.picked),
+  ...optionalField('propertyId', place.propertyId),
+  ...optionalField('assetId', assetId === NONE ? undefined : assetId),
+});
+
 const InvestmentFields = ({
   edit,
   investment,
@@ -74,58 +202,25 @@ const InvestmentFields = ({
 }: InvestmentFormProps & { readonly edit: PanelFormEdit | undefined }) => {
   const { t } = useModernI18n();
   const k = (key: string, options?: TOptions) => t(`facility-operations.assets.${key}`, options);
+  const required = useRequired();
   const tree = usePropertyTree();
-  const [title, setTitle] = useState(() => investment?.title ?? '');
-  const [description, setDescription] = useState(() => investment?.description ?? '');
-  const [planned, setPlanned] = useState(() => amountInput(investment?.plannedAmountMinor));
-  const [plannedDate, setPlannedDate] = useState(() => investment?.plannedDate ?? '');
-  const [priority, setPriority] = useState<InvestmentPriority>(() => investment?.priority ?? 'medium');
-  const [status, setStatus] = useState<InvestmentStatus>(() => investment?.status ?? 'planned');
-  const [actual, setActual] = useState(() => amountInput(investment?.actualAmountMinor));
-  const [actualDate, setActualDate] = useState(() => investment?.actualDate ?? '');
-  const [responsible, setResponsible] = useState(() => investment?.responsible ?? '');
-  const [location, setLocation] = useState(() =>
-    investment?.location === undefined ? NONE : `${investment.location.kind}:${investment.location.id}`,
-  );
-  const [assetId, setAssetId] = useState<AssetId | typeof NONE>(() => investment?.assetId ?? NONE);
   const [error, setError] = useState<string | undefined>();
 
-  const command = (): OpsCommand | undefined => {
-    if (title.trim() === '' || plannedDate === '' || planned.trim() === '') {
-      setError(k('form.required'));
-      return undefined;
-    }
-    const plannedMinor = parseCzk(planned);
-    const actualMinor = parseCzk(actual);
-    if (plannedMinor === null || plannedMinor === undefined || actualMinor === null) {
-      setError(k('form.invalidAmount'));
-      return undefined;
-    }
-    if (status === 'done' && actualMinor === undefined) {
-      setError(k('investments.form.actualRequired'));
+  const command = (values: InvestmentValues): OpsCommand | undefined => {
+    const choices = investmentChoicesOf(values);
+    const amounts = investmentAmountsOf(values, choices.status);
+    if ('problem' in amounts) {
+      setError(k(amounts.problem));
       return undefined;
     }
     setError(undefined);
     const picked =
-      location === NONE
+      choices.location === NONE
         ? undefined
-        : (locationItems(tree).find((item) => item.value === location)?.ref ?? investment?.location);
+        : (locationItems(tree).find((item) => item.value === choices.location)?.ref ?? investment?.location);
     const propertyId =
       owningPropertyId(tree, picked) ?? (picked === investment?.location ? investment?.propertyId : undefined);
-    const fields = {
-      plannedAmountMinor: plannedMinor,
-      plannedDate,
-      priority,
-      status,
-      title: title.trim(),
-      ...optional('description', description),
-      ...optional('responsible', responsible),
-      ...optionalField('actualAmountMinor', actualMinor),
-      ...optionalField('actualDate', actualDate === '' ? undefined : actualDate),
-      ...optionalField('location', picked),
-      ...optionalField('propertyId', propertyId),
-      ...optionalField('assetId', assetId === NONE ? undefined : assetId),
-    };
+    const fields = investmentFieldsOf(values, choices, amounts, { picked, propertyId });
     return investment === undefined
       ? { _tag: 'AssetInvestmentCreate', ...fields }
       : { _tag: 'AssetInvestmentUpdate', investmentId: investment.id, ...fields };
@@ -137,117 +232,74 @@ const InvestmentFields = ({
       command={command}
       edit={edit}
       error={error}
+      form={investmentForm}
       onSubmit={onSubmit}
-      value={{
-        actual,
-        actualDate,
-        assetId,
-        description,
-        location,
-        planned,
-        plannedDate,
-        priority,
-        responsible,
-        status,
-        title,
-      }}
+      opened={investmentValuesOf(investment)}
     >
       <ErrorLine message={error} />
-      <TextField
-        id="investment-title"
-        label={k('investments.fields.title')}
-        onChange={setTitle}
-        required
-        value={title}
-      />
-      <AreaField
+      <investmentForm.title {...textInput} {...required} id="investment-title" label={k('investments.fields.title')} />
+      <investmentForm.description
+        {...textArea}
         id="investment-description"
         label={k('investments.fields.description')}
-        onChange={setDescription}
-        value={description}
       />
       <FormGrid>
-        <TextField
+        <investmentForm.planned
+          {...textInput}
+          {...required}
           id="investment-planned"
           inputMode="decimal"
           label={k('investments.fields.planned')}
-          onChange={setPlanned}
           placeholder="250 000"
-          required
-          value={planned}
         />
-        <TextField
+        <investmentForm.plannedDate
+          {...textInput}
+          {...required}
           id="investment-planned-date"
           label={k('investments.fields.plannedDate')}
-          onChange={setPlannedDate}
-          required
           type="date"
-          value={plannedDate}
         />
       </FormGrid>
       <FormGrid>
-        <SelectField
+        <investmentForm.priority
+          items={investmentPriorities.map((entry) => ({ label: k(`investments.priority.${entry}`), value: entry }))}
           label={k(PRIORITY_LABEL)}
-          name="investment-priority"
-          onChange={(value) => setPriority(investmentPriorities.find((entry) => entry === value) ?? 'medium')}
-          options={investmentPriorities.map((entry) => ({ label: k(`investments.priority.${entry}`), value: entry }))}
-          value={priority}
         />
-        <SelectField
+        <investmentForm.status
+          items={investmentStatuses.map((entry) => ({ label: k(`investments.status.${entry}`), value: entry }))}
           label={k(STATUS_LABEL)}
-          name="investment-status"
-          onChange={(value) => setStatus(investmentStatuses.find((entry) => entry === value) ?? 'planned')}
-          options={investmentStatuses.map((entry) => ({ label: k(`investments.status.${entry}`), value: entry }))}
-          value={status}
         />
       </FormGrid>
       <FormGrid>
-        <TextField
+        <investmentForm.actual
+          {...textInput}
           helpText={k('investments.form.actualHelp')}
           id="investment-actual"
           inputMode="decimal"
           label={k('investments.fields.actual')}
-          onChange={setActual}
-          value={actual}
         />
-        <TextField
+        <investmentForm.actualDate
+          {...textInput}
           id="investment-actual-date"
           label={k('investments.fields.actualDate')}
-          onChange={setActualDate}
           type="date"
-          value={actualDate}
         />
       </FormGrid>
-      <SelectField
-        label={k('investments.fields.location')}
-        name="investment-location"
-        onChange={(value) => setLocation(value === '' ? NONE : value)}
-        options={[
+      <investmentForm.location
+        items={[
           { label: k('form.noLocation'), value: NONE },
           ...locationItems(tree).map((item) => ({ label: item.label, value: item.value })),
         ]}
-        value={location}
+        label={k('investments.fields.location')}
       />
-      <SelectField
-        label={k('investments.fields.asset')}
-        name="investment-asset"
-        onChange={(value) =>
-          setAssetId(
-            Option.getOrElse(Schema.decodeOption(AssetIdSchema)(value === '' ? NONE : value), (): typeof NONE => NONE),
-          )
-        }
-        options={[
+      <investmentForm.assetId
+        items={[
           { label: k('investments.form.noAsset'), value: NONE },
           ...assets.map((asset) => ({ label: `${asset.inventoryNumber} · ${asset.name}`, value: asset.id })),
         ]}
-        value={assetId}
+        label={k('investments.fields.asset')}
       />
-      <TextField
-        id="investment-responsible"
-        label={k('fields.responsible')}
-        onChange={setResponsible}
-        value={responsible}
-      />
+      <investmentForm.responsible {...textInput} id="investment-responsible" label={k('fields.responsible')} />
       {investment !== undefined && <ChangeHistory entityId={investment.id} refreshKey={investment.updatedAt} />}
     </PanelForm>
   );
@@ -279,6 +331,13 @@ export const InvestmentForm = ({ investment, onSubmit, state }: InvestmentFormPr
   return <InvestmentFields edit={edit} investment={opened} key={generation} onSubmit={onSubmit} state={state} />;
 };
 
+/** The filters over the investment plan; they act as they change, so Enter sends nothing. */
+const investmentFilterForm = FormReact.make(
+  FormBuilder.empty.addField('priority', Schema.String).addField('status', Schema.String),
+  { fields: { priority: ChoiceField, status: ChoiceField }, onSubmit: () => Effect.void, runtime: browserAtomRuntime },
+);
+const noInvestmentFilters = { priority: ALL, status: ALL };
+
 export const InvestmentPlan = ({
   canWrite,
   k,
@@ -296,8 +355,10 @@ export const InvestmentPlan = ({
   readonly state: AssetsState;
   readonly today: string;
 }) => {
-  const [statusFilter, setStatusFilter] = useState(ALL);
-  const [priorityFilter, setPriorityFilter] = useState(ALL);
+  const { t } = useModernI18n();
+  const filters = Option.getOrElse(useAtomValue(investmentFilterForm.values), () => noInvestmentFilters);
+  const statusFilter = filters.status === '' ? ALL : filters.status;
+  const priorityFilter = filters.priority === '' ? ALL : filters.priority;
   const all = (state.investments ?? []).filter(
     (investment) => propertyFilter === ALL || investment.propertyId === propertyFilter,
   );
@@ -354,33 +415,32 @@ export const InvestmentPlan = ({
           value={withActual.length === 0 ? k('notProvided') : signedMoney(actualTotal - plannedOfActual)}
         />
       </StatRow>
-      <div className="flex flex-wrap items-end gap-150">
-        <div className="w-[12rem]">
-          <SelectField
-            label={k(STATUS_LABEL)}
-            name="investment-status-filter"
-            onChange={(value) => setStatusFilter(value === '' ? ALL : value)}
-            options={[
+      <FormRoot
+        className="flex flex-wrap items-end gap-150"
+        defaultValues={noInvestmentFilters}
+        form={investmentFilterForm}
+        translateMessage={(message) => t(message)}
+      >
+        <div className="w-48">
+          <investmentFilterForm.status
+            items={[
               { label: k('filters.allStatuses'), value: ALL },
               { label: k('investments.filters.open'), value: 'open' },
               ...investmentStatuses.map((entry) => ({ label: k(`investments.status.${entry}`), value: entry })),
             ]}
-            value={statusFilter}
+            label={k(STATUS_LABEL)}
           />
         </div>
-        <div className="w-[14rem]">
-          <SelectField
-            label={k(PRIORITY_LABEL)}
-            name="investment-priority-filter"
-            onChange={(value) => setPriorityFilter(value === '' ? ALL : value)}
-            options={[
+        <div className="w-56">
+          <investmentFilterForm.priority
+            items={[
               { label: k('investments.filters.allPriorities'), value: ALL },
               ...investmentPriorities.map((entry) => ({ label: k(`investments.priority.${entry}`), value: entry })),
             ]}
-            value={priorityFilter}
+            label={k(PRIORITY_LABEL)}
           />
         </div>
-      </div>
+      </FormRoot>
       <SectionCard flush>
         {rows.length === 0 ? (
           <p className="p-250 text-fg-secondary text-sm">{k('investments.empty')}</p>
@@ -408,7 +468,7 @@ export const InvestmentPlan = ({
                       onClick={() => onEdit(investment)}
                     >
                       <Table.Cell>
-                        <span className="flex min-w-[14rem] flex-col">
+                        <span className="flex min-w-56 flex-col">
                           <span className="font-medium">{investment.title}</span>
                           <span className="text-fg-secondary text-xs">
                             {investment.location?.label.replace(/ \([^)]*\)$/u, '') ?? k('notProvided')}

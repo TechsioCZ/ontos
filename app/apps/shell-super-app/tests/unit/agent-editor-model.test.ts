@@ -1,11 +1,11 @@
 import { AgentPrincipalIdSchema } from '@app/shared-contracts/agent-proposals';
-import { Option, Schema } from 'effect';
+import { Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { AgentEntitySchema, ManageAgentEntityRequestSchema } from '@app/shared-contracts/agent-access';
 import {
+  AgentDraftSchema,
   configureRequest,
   createRequest,
-  draftErrors,
   draftFromAgent,
   emptyAgentDraft,
 } from '../../src/routes/people/agent-editor-model.ts';
@@ -33,16 +33,23 @@ it('maps an agent onto the draft', () => {
 });
 
 it('reports missing name and owner in order; rights are never a draft field, they come from roles', () => {
-  expect(draftErrors(emptyAgentDraft)).toEqual(['nameRequired', 'ownerRequired']);
+  const issues = Schema.decodeUnknownResult(AgentDraftSchema)(emptyAgentDraft, { errors: 'all' });
+  if (Result.isSuccess(issues)) {
+    expect.unreachable('Expected the empty draft to be refused');
+  }
+  expect(String(issues.failure)).toMatch(/nameRequired[\s\S]*ownerRequired/u);
+  expect(Schema.is(AgentDraftSchema)({ ...emptyAgentDraft, displayName: 'Asistent', ownerPrincipalId: 'p2' })).toBe(
+    true,
+  );
 });
 
 it('trims the name and turns a blank description into null, with no module list in any request', () => {
-  const draft = {
+  const draft = Schema.decodeUnknownSync(AgentDraftSchema)({
     ...emptyAgentDraft,
     description: '   ',
     displayName: '  Asistent  ',
-    ownerPrincipalId: AgentPrincipalIdSchema.make('p2'),
-  };
+    ownerPrincipalId: 'p2',
+  });
   const request = createRequest(draft);
   if (request.operation !== 'create') {
     throw new Error('Expected the create command');
@@ -63,5 +70,5 @@ it('trims the name and turns a blank description into null, with no module list 
 it('starts an unprofiled agent with an explicit new-draft policy instead of a reported fallback', () => {
   const draft = draftFromAgent({ ...agent, hasProfile: false, owner: Option.none(), writePolicy: 'read_only' });
   expect(draft.writePolicy).toBe('approval');
-  expect(draft.ownerPrincipalId).toBeNull();
+  expect(draft.ownerPrincipalId).toBe('');
 });

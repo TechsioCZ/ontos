@@ -112,7 +112,7 @@ it('keeps all three sections and headings when no tab section is requested', () 
   for (const label of ['leases', 'contracts', 'tasks']) {
     expect(html).toContain(`aria-label="${K}.${label}"`);
   }
-  expect(html).toContain('propertyportfolio:lg:grid-cols-3');
+  expect(html).toContain('lg:grid-cols-3');
 });
 
 it.each([

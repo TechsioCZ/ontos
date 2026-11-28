@@ -15,12 +15,12 @@ const SalesPipelineRouteContent = () => {
 
   return (
     <section
-      className="salespipeline:rounded-2xl salespipeline:bg-white/90 salespipeline:p-5 salespipeline:shadow-xl salespipeline:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalSalesPipeline"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="salespipeline:text-2xl salespipeline:font-black">{t('sales-pipeline.title')}</h2>
-      <p className="salespipeline:mt-2 salespipeline:text-stone-600">{t('sales-pipeline.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('sales-pipeline.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('sales-pipeline.routeSurface')}</p>
     </section>
   );
 };

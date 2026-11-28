@@ -1,5 +1,6 @@
 // Approved counted filters, composed from the existing admin-ui panel and design tokens.
 import { SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { Button } from '@techsio/ui-kit/atoms/button';
 import type { ReactNode } from 'react';
 import type { ClientEntity, ClientMetric } from './client-filters.ts';
 
@@ -41,15 +42,17 @@ interface MetricChipProps {
 
 /** One counted chip. The whole chip is the click target and the only control of its metric, count included. */
 const MetricChip = ({ active, metric, onSelect }: MetricChipProps) => (
-  <button
+  <Button
     aria-pressed={active}
     className={active ? `${chipClassName} ${chipActiveClassName}` : chipClassName}
+    composition
     onClick={() => onSelect(metric.metricId)}
-    type="button"
+    size="current"
+    unstyled
   >
     <span>{metric.label}</span>
     <span className={chipCountClassName}>{metric.countLabel}</span>
-  </button>
+  </Button>
 );
 
 const ClientFilterPanel = ({ children, groups, label, onOpenMetric, selectedMetric }: ClientFilterPanelProps) => (

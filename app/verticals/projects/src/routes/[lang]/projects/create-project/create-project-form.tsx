@@ -388,7 +388,7 @@ export const CreateProjectForm = () => {
   return (
     <FormRoot
       blocked={uncertain || lookingUp}
-      className="projects:mt-6 projects:grid projects:gap-4"
+      className="mt-6 grid gap-4"
       defaultValues={emptyValues}
       form={createProjectForm}
       translateMessage={translate}

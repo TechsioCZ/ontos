@@ -10,6 +10,7 @@ import {
   StatusBadge,
 } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { DateTime, Effect, Option, Result, Schema } from 'effect';
@@ -242,9 +243,9 @@ const DocumentMetadata = ({
     linkedValue = t(`${ns}.invoiceUnavailable`);
   } else if (link.kind === 'linked' && number !== undefined) {
     linkedValue = (
-      <a className="font-medium underline" href={invoiceDetailHref(link.invoice.ref.resourceId)}>
+      <Link className="font-medium" href={invoiceDetailHref(link.invoice.ref.resourceId)} size="current">
         {number}
-      </a>
+      </Link>
     );
   }
   return (
@@ -288,9 +289,9 @@ const LinkedInvoice = ({ link, vm }: { readonly link: FinanceDocumentInvoiceLink
   return (
     <SectionCard
       actions={
-        <a className="text-sm underline" href={href}>
+        <Link className="text-sm" href={href}>
           {t(`${ns}.openInvoice`)}
-        </a>
+        </Link>
       }
       title={t(`${ns}.linkedInvoice`)}
     >
@@ -299,9 +300,9 @@ const LinkedInvoice = ({ link, vm }: { readonly link: FinanceDocumentInvoiceLink
           {
             label: t(`${ns}.invoiceNumber`),
             value: (
-              <a className="font-medium underline" href={href}>
+              <Link className="font-medium" href={href} size="current">
                 {number}
-              </a>
+              </Link>
             ),
           },
           {
@@ -342,9 +343,9 @@ const DocumentHistory = ({
           {linkedInvoice === undefined || number === undefined ? null : (
             <li>
               {t(`${ns}.linkedEvent`)}{' '}
-              <a className="underline" href={invoiceDetailHref(linkedInvoice.ref.resourceId)}>
+              <Link href={invoiceDetailHref(linkedInvoice.ref.resourceId)} size="current">
                 {number}
-              </a>
+              </Link>
             </li>
           )}
         </ol>

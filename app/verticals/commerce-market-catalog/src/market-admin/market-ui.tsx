@@ -40,16 +40,21 @@ export const MarketChipButton = ({ chip, onOpen }: { readonly chip: MarketChip; 
   const { text } = useMarketText();
   const details = chipDetails(chip, text('market.noPriceList'));
   return (
-    <button
+    <Button
       aria-label={text('market.chipLabel', { code: chip.code, details })}
-      className="flex items-center gap-100 rounded-full border border-border-primary/60 bg-base px-150 py-50 text-sm hover:bg-surface"
+      className="flex rounded-full border border-border-primary/60 bg-base px-150 py-50 text-sm hover:bg-surface"
+      composition
       onClick={onOpen}
+      size="current"
       type="button"
+      unstyled
     >
-      <span className="font-semibold">{chip.code}</span>
-      <span className="text-fg-secondary">{details}</span>
-      <LifecycleBadge lifecycle={chip.lifecycle} />
-    </button>
+      <span className="flex items-center gap-100">
+        <span className="font-semibold">{chip.code}</span>
+        <span className="text-fg-secondary">{details}</span>
+        <LifecycleBadge lifecycle={chip.lifecycle} />
+      </span>
+    </Button>
   );
 };
 

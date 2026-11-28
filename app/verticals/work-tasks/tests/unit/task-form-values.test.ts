@@ -56,7 +56,7 @@ const task = Schema.decodeUnknownSync(TaskSchema)({
 });
 
 const decoded = (values: FormValues): Decoded => ({
-  dueDate: values.dueDate,
+  dueDate: values.dueDate === '' ? undefined : values.dueDate,
   opportunityId: Option.getOrUndefined(Schema.decodeUnknownOption(OpportunityIdSchema)(values.opportunityId)),
   ownerPrincipalRef: selectedPrincipal([{ displayName: 'Saved owner', principalRef: principal }], values.assigneeId),
   partyId: Option.getOrUndefined(Schema.decodeUnknownOption(PartyIdSchema)(values.partyId)),
@@ -67,7 +67,7 @@ it('initializes a new draft with the existing empty controls and normal priority
   expect(values.assigneeId).toBe('');
   expect(values.contextRefs).toEqual([]);
   expect(values.description).toBe('');
-  expect(values.dueDate).toBeUndefined();
+  expect(values.dueDate).toBe('');
   expect(values.opportunityId).toBe('');
   expect(values.partyId).toBe('');
   expect(values.plannedHours).toBe('');

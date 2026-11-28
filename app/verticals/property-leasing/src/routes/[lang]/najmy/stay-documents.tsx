@@ -6,13 +6,22 @@ import { Option } from 'effect';
 import type { Effect, PlatformError } from 'effect';
 import { useState } from 'react';
 import type { OccupancyHistoryEntry, PreparedNotice, RegistrationSheet } from '../../../../shared/apis/records.ts';
+import {
+  dossierActionsClass,
+  dossierEventClass,
+  dossierHeadingClass,
+  dossierMutedClass,
+  dossierSectionClass,
+  dossierTileClass,
+  dossierTitleClass,
+  noticeBodyClass,
+} from './dossier-classes.ts';
 import { RegistrationSheetForm } from './registration-sheet-form.tsx';
 import type { AdditionSave } from './occupancy-command.ts';
 import { templatesFor } from './notice-templates.ts';
 import type { NoticeContext } from './notice-templates.ts';
 import { NoticeEditor } from './notice-editor.tsx';
 import { formatInstant, principalLabel } from './principal-labels.ts';
-import './tenant-dossier.css';
 import { timelineEntries } from './timeline-entries.ts';
 
 const historyLabels = {
@@ -32,20 +41,20 @@ const historyLabels = {
 export const OccupancyHistoryCard = ({ entries }: { readonly entries: readonly OccupancyHistoryEntry[] }) => {
   const { t } = useModernI18n();
   return (
-    <div className="sp-tenant">
+    <div className={dossierSectionClass}>
       <SectionCard title={t('property-leasing.documents.historyTitle')}>
         {entries.length === 0 ? (
-          <p className="sp-tenant-muted">
+          <p className={dossierMutedClass}>
             Záznam vznikl před zavedením historie změn. Další změny stavu se zde zobrazí s autorem a časem.
           </p>
         ) : (
           timelineEntries(entries).map(({ entry, key }) => (
-            <article className="sp-tenant-event" key={key}>
-              <div className="sp-tenant-heading">
+            <article className={dossierEventClass} key={key}>
+              <div className={dossierHeadingClass}>
                 <Badge severity={entry.kind === 'CANCELLED' ? 'danger' : 'neutral'} size="sm">
                   {historyLabels[entry.kind]}
                 </Badge>
-                <span className="sp-tenant-muted">
+                <span className={dossierMutedClass}>
                   {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
                 </span>
               </div>
@@ -76,7 +85,7 @@ const printSheet = (sheet: RegistrationSheet, context: NoticeContext) => {
     .join('');
   const html = `<!doctype html><html lang="cs"><head><meta charset="utf-8"><title>Evidenční list ${escapeHtml(
     sheet.number,
-  )}</title><style>body{font:13px system-ui,sans-serif;margin:32px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #999;padding:6px;text-align:left}h1{font-size:20px}dl{display:grid;grid-template-columns:12rem 1fr;gap:4px 12px}</style></head><body><h1>Evidenční list ${escapeHtml(
+  )}</title><style>body{font:13px system-ui,sans-serif;margin:32px}table{border-collapse:collapse;width:100%}td,th{border:1px solid darkgray;padding:6px;text-align:left}h1{font-size:20px}dl{display:grid;grid-template-columns:12rem 1fr;gap:4px 12px}</style></head><body><h1>Evidenční list ${escapeHtml(
     sheet.number,
   )}</h1><dl><dt>Ubytovatel</dt><dd>Nájempark</dd><dt>Jednotka</dt><dd>${escapeHtml(
     [context.unitLabel, context.propertyLabel, context.propertyAddress].filter((part) => part !== '').join(', '),
@@ -118,7 +127,7 @@ export const RegistrationSheetCard = ({
   const [open, setOpen] = useState(false);
   const allowed = record.state !== 'DRAFT' && record.state !== 'CANCELLED';
   return (
-    <div className="sp-tenant">
+    <div className={dossierSectionClass}>
       <SectionCard
         actions={
           canWrite && allowed && !open ? (
@@ -129,22 +138,24 @@ export const RegistrationSheetCard = ({
         }
         title={t('property-leasing.registration.title')}
       >
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Evidenční list přebírá jednotku, období a počet osob z této{' '}
           {record.kind === 'SHORT_STAY' ? 'rezervace' : 'smlouvy'}; doplníte údaje skutečně ubytovaných osob. Uložený
           list se pozdější změnou rezervace nepřepíše.
         </p>
         {!allowed && (
-          <p className="sp-tenant-muted">
+          <p className={dossierMutedClass}>
             {record.state === 'DRAFT'
               ? 'Evidenční list lze založit po potvrzení rezervace nebo nájmu.'
               : 'Ke zrušené rezervaci se evidenční list nezakládá.'}
           </p>
         )}
-        {sheets.length === 0 && allowed && <p className="sp-tenant-muted">Zatím nebyl založen žádný evidenční list.</p>}
+        {sheets.length === 0 && allowed && (
+          <p className={dossierMutedClass}>Zatím nebyl založen žádný evidenční list.</p>
+        )}
         {sheets.toReversed().map((sheet) => (
-          <article className="sp-tenant-contact" key={sheet.sheetId}>
-            <div className="sp-tenant-heading">
+          <article className={dossierTileClass} key={sheet.sheetId}>
+            <div className={dossierHeadingClass}>
               <strong>{sheet.number}</strong>
               <Button appearance="outline" onClick={() => printSheet(sheet, context)} severity="secondary" size="sm">
                 Vytisknout
@@ -194,9 +205,9 @@ export const NoticeCard = ({
   const { t } = useModernI18n();
   const templates = templatesFor(context.record.kind);
   return (
-    <div className="sp-tenant">
+    <div className={dossierSectionClass}>
       <SectionCard title={t('property-leasing.notices.title')}>
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Text připravíte ze šablony a upravíte. Uložený text zůstane u záznamu s autorem a časem. Nic se odsud
           automaticky neodesílá; SMS lze odesílat až po napojení potvrzeného poskytovatele.
         </p>
@@ -209,12 +220,12 @@ export const NoticeCard = ({
             onSave={onSave}
           />
         )}
-        <h3>Připravená oznámení</h3>
-        {notices.length === 0 && <p className="sp-tenant-muted">Zatím nebylo připraveno žádné oznámení.</p>}
+        <h3 className={dossierTitleClass}>Připravená oznámení</h3>
+        {notices.length === 0 && <p className={dossierMutedClass}>Zatím nebylo připraveno žádné oznámení.</p>}
         {notices.toReversed().map((notice) => (
-          <article className="sp-tenant-event" key={notice.noticeId}>
-            <div className="sp-tenant-heading">
-              <span className="sp-tenant-actions">
+          <article className={dossierEventClass} key={notice.noticeId}>
+            <div className={dossierHeadingClass}>
+              <span className={dossierActionsClass}>
                 <Badge appearance="outline" severity="neutral" size="sm">
                   {channelLabels[notice.channel]}
                 </Badge>
@@ -222,16 +233,16 @@ export const NoticeCard = ({
                   Neodesláno
                 </Badge>
               </span>
-              <span className="sp-tenant-muted">
+              <span className={dossierMutedClass}>
                 {principalLabel(notice.authorPrincipalId)} · {formatInstant(notice.preparedAt)}
               </span>
             </div>
-            <p className="sp-tenant-muted">
+            <p className={dossierMutedClass}>
               {templates.find((item) => item.key === notice.templateKey)?.label ?? 'Šablona'} · příjemce{' '}
               {notice.recipient === '' ? 'neuveden' : notice.recipient}
             </p>
             {notice.subject !== '' && <strong>{notice.subject}</strong>}
-            <p className="sp-notice-body">{notice.body}</p>
+            <p className={noticeBodyClass}>{notice.body}</p>
           </article>
         ))}
       </SectionCard>

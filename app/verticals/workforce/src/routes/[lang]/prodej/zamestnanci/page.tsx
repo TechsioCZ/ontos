@@ -20,29 +20,36 @@ import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Accordion } from '@techsio/ui-kit/molecules/accordion';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  SwitchField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Effect, Fiber, Match, Option, Predicate, Schema } from 'effect';
 import { createContext, use, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeUpdateEmployee } from '../../../../api/update-employee-action-client.ts';
 import { committedResult, pendingProposalMessage } from '../../../../api/action-result.ts';
 import { executeFreshRecords } from './employee-records.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
 import type { WorkforceCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Employee, EmployeeId, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import { AiActivityCard } from './ai-activity-card.tsx';
 import { aiActivityData, employeeTagsData, employeesData, tagsFailureStatus, tagsReadable } from './employees-data.ts';
 import type { EmployeeTags, EmployeesLoadError } from './employees-data.ts';
@@ -57,7 +64,8 @@ import {
   employeeTargetNotice,
   employeeTargetRequestKey,
   employeeTargetScopeKey,
-  selectLabelProps,
+  FormReady,
+  selectLabel,
 } from './employee-dialogs.tsx';
 import type {
   EditCommitCommand,
@@ -68,18 +76,17 @@ import type {
   EmployeeTargetState,
   ShownEdit,
 } from './employee-dialogs.tsx';
-import type { CommitOutcome, EditCommitResult, EmployeeFilters } from './employee-model.ts';
+import type { CommitOutcome, EditCommitResult, EmployeeFilterValues } from './employee-model.ts';
 import {
   allOption,
   bulkCommand,
-  departmentFromValue,
   departmentsOf,
   employeeRoles,
   filterEmployees,
+  filtersOfValues,
   hasActiveFilters,
   newRequestToken,
-  noFilters,
-  roleFromValue,
+  noFilterValues,
   sortEmployees,
 } from './employee-model.ts';
 
@@ -349,66 +356,78 @@ const EmployeeStats = ({
   );
 };
 
+/**
+ * The filters over the list: the search text, role, department and active switch. Each change filters at once; the
+ * form is never submitted.
+ */
+const employeeFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('activeOnly', Schema.Boolean)
+    .addField('department', Schema.String)
+    .addField('query', Schema.String)
+    .addField('role', Schema.String),
+  {
+    fields: { activeOnly: SwitchField, department: ChoiceField, query: TextField, role: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
 const EmployeeFilterBar = ({
   departments,
-  filters,
-  onChange,
+  onReady,
   onTagChange,
   tagCatalog,
   tagValue,
 }: {
   readonly departments: readonly string[];
-  readonly filters: EmployeeFilters;
-  readonly onChange: (patch: Partial<EmployeeFilters>) => void;
+  /** The filter form holds this page's values: the page reads them from then on. */
+  readonly onReady: (ready: boolean) => void;
   readonly onTagChange: (tagId: TagId | null) => void;
   readonly tagCatalog: TagCatalog;
   readonly tagValue: TagId | null;
 }) => {
   const { t } = useModernI18n();
   const roleItems = [
-    { displayValue: t(`${key}.filters.allRoles`), label: t(`${key}.filters.allRoles`), value: allOption },
-    ...employeeRoles.map((role) => {
-      const label = t(`${key}.roles.${role}`);
-      return { displayValue: label, label, value: role };
-    }),
+    { label: t(`${key}.filters.allRoles`), value: allOption },
+    ...employeeRoles.map((role) => ({ label: t(`${key}.roles.${role}`), value: role })),
   ];
   const departmentItems = [
-    { displayValue: t(`${key}.filters.allDepartments`), label: t(`${key}.filters.allDepartments`), value: allOption },
-    ...departments.map((department) => ({ displayValue: department, label: department, value: department })),
+    { label: t(`${key}.filters.allDepartments`), value: allOption },
+    ...departments.map((department) => ({ label: department, value: department })),
   ];
   return (
-    <div className="flex flex-wrap items-end gap-150">
-      <Input
-        aria-label={t(`${key}.filters.searchLabel`)}
-        className="w-64"
-        onChange={(event) => onChange({ query: event.target.value })}
-        placeholder={t(`${key}.filters.search`)}
-        size="sm"
-        type="search"
-        value={filters.query}
-      />
-      <SelectTemplate
-        className="w-48"
-        items={roleItems}
-        label={t(`${key}.filters.role`)}
-        labelProps={selectLabelProps}
-        name="roleFilter"
-        onValueChange={(details) => onChange({ role: roleFromValue(details.value[0]) })}
-        placeholder={t('workforce.selectPlaceholder')}
-        size="sm"
-        value={[filters.role ?? allOption]}
-      />
-      <SelectTemplate
-        className="w-48"
-        items={departmentItems}
-        label={t(`${key}.filters.department`)}
-        labelProps={selectLabelProps}
-        name="departmentFilter"
-        onValueChange={(details) => onChange({ department: departmentFromValue(details.value[0]) })}
-        placeholder={t('workforce.selectPlaceholder')}
-        size="sm"
-        value={[filters.department ?? allOption]}
-      />
+    <FormRoot
+      className="flex flex-wrap items-end gap-150"
+      defaultValues={noFilterValues}
+      form={employeeFilterForm}
+      translateMessage={t}
+    >
+      <FormReady onReady={onReady} />
+      <div className="w-64">
+        <employeeFilterForm.query
+          aria-label={t(`${key}.filters.searchLabel`)}
+          label={<span className="sr-only">{t(`${key}.filters.searchLabel`)}</span>}
+          name="query"
+          placeholder={t(`${key}.filters.search`)}
+          size="sm"
+          type="search"
+        />
+      </div>
+      <div className="w-48">
+        <employeeFilterForm.role
+          items={roleItems}
+          label={selectLabel(t(`${key}.filters.role`))}
+          placeholder={t('workforce.selectPlaceholder')}
+        />
+      </div>
+      <div className="w-48">
+        <employeeFilterForm.department
+          items={departmentItems}
+          label={selectLabel(t(`${key}.filters.department`))}
+          placeholder={t('workforce.selectPlaceholder')}
+        />
+      </div>
       <div className="w-48">
         <TagFilter
           catalog={tagCatalog}
@@ -418,10 +437,8 @@ const EmployeeFilterBar = ({
           value={tagValue}
         />
       </div>
-      <Switch checked={filters.activeOnly} onCheckedChange={(checked) => onChange({ activeOnly: checked })}>
-        {t(`${key}.filters.activeOnly`)}
-      </Switch>
-    </div>
+      <employeeFilterForm.activeOnly>{t(`${key}.filters.activeOnly`)}</employeeFilterForm.activeOnly>
+    </FormRoot>
   );
 };
 
@@ -915,13 +932,21 @@ const EmployeesPageContent = ({
   const toaster = useToast();
   const state = loadStateOf(usePageData(employeesData, legalEntityId));
   const tagsSnapshot = usePageData(employeeTagsData, legalEntityId);
-  const [filters, setFilters] = useState<EmployeeFilters>(noFilters);
+  const [filtersReady, setFiltersReady] = useState(false);
   const [selection, setSelection] = useState<Selection>({});
   const [form, setForm] = useState<{ readonly employee: Employee | null } | null>(null);
   const [bulk, setBulk] = useState<BulkDialogKind | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [tagFilter, setTagFilter] = useState<TagId | null>(null);
   const [tagDialogOpen, setTagDialogOpen] = useState(false);
+  const filterValues: EmployeeFilterValues = Option.getOrElse(
+    Option.filter(useAtomValue(employeeFilterForm.values), () => filtersReady),
+    () => noFilterValues,
+  );
+  const filters = filtersOfValues(filterValues);
+  const setFilterValues = useAtomSet(employeeFilterForm.setValues);
+  // Any filter change clears the selection so a bulk action never reaches rows the user cannot see.
+  useAtomSubscribe(employeeFilterForm.values, () => setSelection({}), { immediate: false });
 
   /** Re-reads the list while the current rows stay on screen. */
   const reload = () => {
@@ -990,20 +1015,15 @@ const EmployeesPageContent = ({
   });
   const visibleTargetPanel = targetDestination.panel;
 
-  /** Any filter change clears the selection so a bulk action never reaches rows the user cannot see. */
-  const updateFilters = (patch: Partial<EmployeeFilters>) => {
-    setFilters((current) => ({ ...current, ...patch }));
-    setSelection({});
-  };
-
   const changeTagFilter = (tagId: TagId | null) => {
     setTagFilter(tagId);
     setSelection({});
   };
 
   const clearFilters = () => {
-    updateFilters(noFilters);
+    setFilterValues(noFilterValues);
     setTagFilter(null);
+    setSelection({});
   };
 
   const bulkSetActive = (active: boolean) => {
@@ -1086,8 +1106,7 @@ const EmployeesPageContent = ({
 
         <EmployeeFilterBar
           departments={departmentsOf(items)}
-          filters={filters}
-          onChange={updateFilters}
+          onReady={setFiltersReady}
           onTagChange={changeTagFilter}
           tagCatalog={tagCatalog}
           tagValue={tagFilter}

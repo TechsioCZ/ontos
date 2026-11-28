@@ -14,6 +14,7 @@ import {
   StatusBadge,
 } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import type { Invoice } from '../../../../shared/apis/records.ts';
@@ -76,9 +77,9 @@ const InvoiceAnchors = ({ invoice, objects }: { readonly invoice: Invoice; reado
         {invoice.costCenter !== undefined && <li>Středisko: {invoice.costCenter}</li>}
         {links.map((link) => (
           <li key={link.label}>
-            <a className="underline" href={link.href} style={{ color: 'var(--color-link)' }}>
+            <Link href={link.href} size="current">
               {link.label}
-            </a>
+            </Link>
           </li>
         ))}
       </ul>
@@ -211,9 +212,9 @@ const InvoiceDetailHeading = (model: ReturnType<typeof useInvoiceDetailModel>) =
               ? 'Původní doklad byl stornován kvůli chybnému odběrateli. Historické údaje zůstávají zachované.'
               : 'Náhradní doklad po stornu faktury s chybným odběratelem. Částka a účtované období zůstávají stejné.'}
           </p>
-          <a className="underline" href={`?resourceId=${encodeURIComponent(correctionId)}`}>
+          <Link href={`?resourceId=${encodeURIComponent(correctionId)}`} size="current">
             {invoice.correctsInvoiceRef === undefined ? 'Otevřít náhradní doklad' : 'Otevřít původní stornovaný doklad'}
-          </a>
+          </Link>
         </SectionCard>
       )}
       {isDraft && (
@@ -247,12 +248,13 @@ const InvoiceParties = (model: ReturnType<typeof useInvoiceDetailModel>) => {
                     {
                       label: 'Zdrojová nákupní objednávka',
                       value: (
-                        <a
-                          className="font-medium text-fg-primary underline"
+                        <Link
+                          className="font-medium text-fg-primary"
                           href={`/cs/provoz/nakupy?orderId=${encodeURIComponent(invoice.sourceOrder.id)}`}
+                          size="current"
                         >
                           {invoice.sourceOrder.number}
-                        </a>
+                        </Link>
                       ),
                     },
                   ]),
@@ -302,11 +304,19 @@ const InvoiceLines = (model: ReturnType<typeof useInvoiceDetailModel>) => {
           <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>
-                <Table.ColumnHeader>{t(`${ns}.colDescription`)}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{t(`${ns}.colQuantity`)}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{t(`${ns}.colUnitPrice`)}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{t(`${ns}.colVat`)}</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">{t(`${ns}.colBase`)}</Table.ColumnHeader>
+                <Table.ColumnHeader className="whitespace-nowrap">{t(`${ns}.colDescription`)}</Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  {t(`${ns}.colQuantity`)}
+                </Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  {t(`${ns}.colUnitPrice`)}
+                </Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  {t(`${ns}.colVat`)}
+                </Table.ColumnHeader>
+                <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                  {t(`${ns}.colBase`)}
+                </Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -487,7 +497,7 @@ export const FinanceInvoiceDetail = (props: FinanceInvoiceDetailProps) => {
             <InvoiceReminders counterpartyName={counterpartyName} invoice={invoice} vm={vm} />
           </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-250 xl:sticky xl:top-[5rem]">
+        <div className="flex min-w-0 flex-col gap-250 xl:sticky xl:top-20">
           <InvoiceTotals {...model} />
           <InvoiceStatusActions {...model} />
           <div className="print:hidden">

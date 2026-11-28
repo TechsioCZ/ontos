@@ -151,7 +151,8 @@ export const useUnsavedChangesGuard = ({
 }: UnsavedChangesGuardOptions): UnsavedChangesGuard => {
   const dirty = draft.dirty || otherChanges;
   const [asked, setAsked] = useState<Asked | null>(null);
-  const [saving, setSaving] = useState(false);
+  // The save Uložit started runs: the draft's own status says so, the question only waits for its end.
+  const saving = draft.status === 'saving';
   // A blocked navigation is a leave the router holds: it is asked about like a requested one.
   const blocked = navigation?.status === 'blocked';
   const leave = blocked ? navigation.proceed : asked?.leave;
@@ -166,7 +167,7 @@ export const useUnsavedChangesGuard = ({
   // ("Načíst novou verzi a obnovit úpravy", kept-drafts.ts of @app/shared-contracts), which loses nothing.
   useEffect(() => {
     const ask = (event: BeforeUnloadEvent) => {
-      if (dirty && Reflect.get(globalThis, leavingKeepingDrafts) !== true) {
+      if (dirty && Object.getOwnPropertyDescriptor(globalThis, leavingKeepingDrafts)?.value !== true) {
         event.preventDefault();
       }
     };
@@ -215,12 +216,10 @@ export const useUnsavedChangesGuard = ({
         leave?.();
       },
       onSave: () => {
-        setSaving(true);
         draft.save();
         // A safe draft leaves; a failed save, a conflict or an invalid draft keeps the form, whose save bar says
         // why. Unsaved input the save does not cover keeps the question up.
         draft.afterSave((status) => {
-          setSaving(false);
           const end = saveEndOf(status, otherChanges);
           if (end === 'ask-again') {
             return;

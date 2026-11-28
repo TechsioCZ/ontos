@@ -24,7 +24,6 @@ import { useUnreadableSources } from '../../../../statistics/readable-sources.ts
 import { preloadStatisticsInputs, useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
 import type { StatisticsPageInput } from '../../../../statistics/use-statistics-inputs.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 
 const salesInsightsI18nResources = {
   cs: { 'sales-insights': csResource },

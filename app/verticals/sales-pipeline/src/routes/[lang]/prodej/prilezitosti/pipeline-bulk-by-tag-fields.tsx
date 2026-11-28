@@ -1,6 +1,5 @@
 // The preview and value fields of the bulk change by tag, and the rules the dialog sends by.
 import { StatusBadge, surfaceTileClassName } from '@app/admin-ui';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Option, Schema } from 'effect';
@@ -8,7 +7,7 @@ import type { BulkOpportunityPatch } from '../../../../../shared/actions/apply-c
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { isOpenStage } from '../../../../../shared/model/opportunity.ts';
-import { isOpportunityStage, opportunityCount, opportunityStages } from './pipeline-model.ts';
+import { isOpportunityStage, opportunityCount } from './pipeline-model.ts';
 import type { OpportunityStage, SkipTally } from './pipeline-model.ts';
 import type { EmployeeOption, LoadState } from './pipeline-references.ts';
 
@@ -142,82 +141,5 @@ export const BulkByTagPreview = ({
         </StatusText>
       )}
     </section>
-  );
-};
-
-interface BulkByTagValueProps {
-  readonly action: Action;
-  readonly activeEmployees: readonly EmployeeOption[];
-  readonly onAction: (action: Action) => void;
-  readonly onOwner: (owner: string) => void;
-  readonly onStage: (stage: OpportunityStage | '') => void;
-  readonly owner: string;
-  readonly stage: OpportunityStage | '';
-  readonly valueMissing: boolean;
-}
-
-/** Action choice and the value for it: a stage or an owner (`Nepřiřazeno` clears it). */
-export const BulkByTagValueFields = ({
-  action,
-  activeEmployees,
-  onAction,
-  onOwner,
-  onStage,
-  owner,
-  stage,
-  valueMissing,
-}: BulkByTagValueProps) => {
-  const { t } = useModernI18n();
-  const actionItems = [
-    { label: t(`${K}.bulkByTag.actions.stage`), value: 'stage' },
-    { label: t(`${K}.bulkByTag.actions.owner`), value: 'owner' },
-  ];
-  const stageItems = opportunityStages.map((candidate) => ({
-    label: t(`sales-pipeline.status.opportunity.${candidate}`),
-    value: candidate,
-  }));
-  const ownerItems = [
-    { label: t(`${K}.owner.none`), value: NONE },
-    ...activeEmployees.map((employee) => ({ label: employee.fullName, value: employee.id })),
-  ];
-
-  return (
-    <>
-      <SelectTemplate
-        items={actionItems}
-        label={t(`${K}.bulkByTag.action`)}
-        name="bulkAction"
-        onValueChange={({ value: [next] }) => onAction(Schema.is(ActionSchema)(next) ? next : 'stage')}
-        placeholder={t(SELECT_PLACEHOLDER)}
-        size="md"
-        value={[action]}
-      />
-      {action === 'stage' ? (
-        <SelectTemplate
-          items={stageItems}
-          label={t(`${K}.bulkByTag.stage`)}
-          name="stage"
-          onValueChange={({ value: [next] }) => onStage(isOpportunityStage(next) ? next : '')}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          size="md"
-          value={stage === '' ? [] : [stage]}
-        />
-      ) : (
-        <SelectTemplate
-          items={ownerItems}
-          label={t(`${K}.bulkByTag.owner`)}
-          name="owner"
-          onValueChange={({ value: [next] }) => onOwner(next ?? '')}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          size="md"
-          value={owner === '' ? [] : [owner]}
-        />
-      )}
-      {valueMissing && (
-        <StatusText showIcon status="error">
-          {t(`${K}.bulkByTag.valueRequired`)}
-        </StatusText>
-      )}
-    </>
   );
 };

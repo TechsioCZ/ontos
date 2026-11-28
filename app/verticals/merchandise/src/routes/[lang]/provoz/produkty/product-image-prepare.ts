@@ -33,7 +33,8 @@ const draw = (image: HTMLImageElement, size: { readonly height: number; readonly
     return Effect.fail(new ImagePreparationFailed({ reason: 'Canvas is unavailable' }));
   }
   if (opaque) {
-    context.fillStyle = '#ffffff';
+    // The white baked into an uploaded image's transparent pixels: image data, not a UI colour.
+    context.fillStyle = 'white';
     context.fillRect(0, 0, size.width, size.height);
   }
   context.imageSmoothingQuality = 'high';

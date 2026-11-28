@@ -17,7 +17,7 @@ import { SHELL_ID } from './hosted-units.mts';
 
 /** The Shell's build, the slowest measured (74-116 s over the runs MODULE_BUILD_SECONDS names). */
 export const SHELL_BUILD_SECONDS = 116;
-/** `ultramodern typecheck --build` of shared-contracts and shared-design-tokens before the first unit build. */
+/** `ultramodern typecheck --build` of shared-contracts before the first unit build. */
 export const SHARED_TYPECHECK_SECONDS = 30;
 
 const unitSeconds = (unit: string) => (unit === SHELL_ID ? SHELL_BUILD_SECONDS : moduleSeconds(unit));

@@ -228,6 +228,7 @@
     "registration": {
       "title": "Evidenční list",
       "fullName": "Jméno a příjmení",
+      "fullNameRequired": "Vyplňte jméno a příjmení ubytovaného.",
       "birthDate": "Datum narození",
       "nationality": "Státní občanství",
       "identityDocument": "Číslo dokladu totožnosti",

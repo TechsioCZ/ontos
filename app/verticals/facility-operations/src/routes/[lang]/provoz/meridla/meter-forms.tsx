@@ -1,14 +1,26 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Meter master-data form and reading form (ops-meters lane). Both write through the governed apply-command Action.
-import { SaveBar, formatDate, saveLabelsFor, useDraftSave } from '@app/admin-ui';
+import { SaveBar, formatDate, requiredLabelFor, saveLabelsFor, useDraftSave } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import {
+  CheckboxField,
+  ChoiceField,
+  FileField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RuledTextField,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { DateTime, Effect, Option, Result, Schema } from 'effect';
-import { useReducer, useRef, useState } from 'react';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useRef, useState } from 'react';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
@@ -25,6 +37,7 @@ import { facilitySaveOutcome } from '../../../../ui/facility-save.ts';
 import { useDraftBase } from '../../../../ui/draft-base.ts';
 import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
 
 const k = 'facility-operations.meters';
 const CANCEL_LABEL = 'facility-operations.common.cancel';
@@ -64,6 +77,59 @@ const meterErrorText = (error: FailureReason | 'required' | undefined, t: Return
     ? error
     : t(error === 'required' ? 'facility-operations.common.required' : `facility-operations.common.errors.${error}`);
 
+/**
+ * The meter card's values. Uložit sends them through the draft save, so the form only holds them and Enter sends
+ * nothing.
+ */
+const meterFields = FormBuilder.empty
+  .addField('consumer', Schema.String)
+  .addField('contract', Schema.String)
+  .addField('location', Schema.String)
+  .addField('medium', Schema.String)
+  .addField('note', Schema.String)
+  .addField('retired', Schema.Boolean)
+  .addField('serialNumber', Schema.String)
+  .addField('supplier', Schema.String)
+  .addField('supplyPoint', Schema.String)
+  .addField('unit', Schema.String);
+
+const makeMeterForm = () =>
+  FormReact.make(meterFields, {
+    fields: {
+      consumer: TextField,
+      contract: TextField,
+      location: ChoiceField,
+      medium: ChoiceField,
+      note: TextAreaField,
+      retired: CheckboxField,
+      serialNumber: TextField,
+      supplier: TextField,
+      supplyPoint: TextField,
+      unit: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  });
+
+/** A new meter and the edit of one are separate forms, so the create panel never shares a meter's edit. */
+const meterCreateForm = makeMeterForm();
+const meterEditForm = makeMeterForm();
+
+type MeterValues = typeof meterCreateForm.schema.Encoded;
+
+/** The values the meter form shows for a draft: no location is the "none" choice. */
+const meterValuesOf = (draft: MeterDraft): MeterValues => ({
+  ...draft,
+  location: draft.location === '' ? NONE : draft.location,
+});
+
+/** The draft the meter form shows: a medium that is not one of the media keeps the opening one. */
+const meterDraftFrom = (values: MeterValues, opened: MeterDraft): MeterDraft => ({
+  ...values,
+  location: values.location === NONE ? '' : values.location,
+  medium: Schema.is(MeterMediumSchema)(values.medium) ? values.medium : opened.medium,
+});
+
 export const MeterForm = ({
   meter,
   onCancel,
@@ -77,10 +143,30 @@ export const MeterForm = ({
 }) => {
   const { language, t } = useModernI18n();
   const properties = usePropertyOptions();
-  const [draft, setDraft] = useState<MeterDraft>(() => meterDraftOf(meter));
+  const form = meter === undefined ? meterCreateForm : meterEditForm;
+  const opened = meterDraftOf(meter);
+  const shown = useFormValues(form, meterValuesOf(opened));
+  const draft = meterDraftFrom(shown.values, opened);
+  const setValues = useAtomSet(form.setValues);
   const [error, setError] = useState<FailureReason | 'required' | undefined>();
-  const set = <Key extends keyof MeterDraft>(key: Key, value: MeterDraft[Key]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
+  // A new meter's unit follows its medium while it is empty or still the previous medium's default.
+  const before = useRef<MeterValues | null>(null);
+  useAtomSubscribe(form.values, (next) => {
+    if (!shown.initialized || Option.isNone(next)) {
+      before.current = null;
+      return;
+    }
+    const previous = before.current;
+    before.current = next.value;
+    if (meter !== undefined || previous === null || previous.medium === next.value.medium) {
+      return;
+    }
+    const { medium } = meterDraftFrom(next.value, opened);
+    const { medium: previousMedium } = meterDraftFrom(previous, opened);
+    if (next.value.unit === '' || next.value.unit === defaultUnitOf[previousMedium]) {
+      setValues({ ...next.value, unit: defaultUnitOf[medium] });
+    }
+  });
 
   /** The stored location of a draft: the picked property, or the one the meter already has. */
   const pickedLocationOf = (value: MeterDraft): PropertyRef | undefined => {
@@ -120,14 +206,14 @@ export const MeterForm = ({
       const stored = meterDraftOf(meter);
       if (!sameMeterDraft(stored, draft)) {
         record.adopt(stored);
-        setDraft(stored);
+        setValues(meterValuesOf(stored));
       }
     },
     settled: !record.pending && sameMeterDraft(draft, record.confirmed),
   });
   const labels = saveLabelsFor(language);
   const discard = () => {
-    setDraft(record.confirmed);
+    setValues(meterValuesOf(record.confirmed));
     setError(undefined);
   };
   const handleSave = record.save;
@@ -135,7 +221,7 @@ export const MeterForm = ({
     const current = meterDraftOf(meter);
     base.rebase();
     record.adopt(current);
-    setDraft(current);
+    setValues(meterValuesOf(current));
     setError(undefined);
   };
 
@@ -143,7 +229,7 @@ export const MeterForm = ({
   const create = useFormSave<MeterDraft>({
     equals: sameMeterDraft,
     onDiscard: () => {
-      setDraft(meterDraftOf());
+      setValues(meterValuesOf(meterDraftOf()));
       setError(undefined);
     },
     open: meter === undefined,
@@ -161,140 +247,71 @@ export const MeterForm = ({
     value: draft,
   });
 
-  const locationItems = [
-    {
-      displayValue: t('facility-operations.property.none'),
-      label: t('facility-operations.property.none'),
-      value: NONE,
-    },
-  ];
+  const requiredLabel = requiredLabelFor(language);
+  const locationItems = [{ label: t('facility-operations.property.none'), value: NONE }];
   if (properties.status === 'ready') {
-    locationItems.push(
-      ...properties.options.map((option) => ({
-        displayValue: option.ref.label,
-        label: option.ref.label,
-        value: option.value,
-      })),
-    );
+    locationItems.push(...properties.options.map((option) => ({ label: option.ref.label, value: option.value })));
   } else if (meter?.location !== undefined) {
-    locationItems.push({
-      displayValue: meter.location.label,
-      label: meter.location.label,
-      value: `${meter.location.kind}:${meter.location.id}`,
-    });
+    locationItems.push({ label: meter.location.label, value: `${meter.location.kind}:${meter.location.id}` });
   }
 
   return (
-    <div className="flex flex-col gap-200">
+    <FormRoot
+      className="flex flex-col gap-200"
+      defaultValues={meterValuesOf(opened)}
+      form={form}
+      key={meter?.id ?? 'new'}
+      translateMessage={(message) => t(message)}
+    >
+      {shown.ready}
       {error !== undefined && (
         <StatusText showIcon status="error">
           {meterErrorText(error, t)}
         </StatusText>
       )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
+        <form.serialNumber
           autoComplete="off"
           helpText={t(`${k}.fieldHelp.serialNumber`)}
           id="meter-serial"
           label={t(`${k}.fields.serialNumber`)}
           maxLength={64}
-          onChange={(event) => set('serialNumber', event.target.value)}
           required
-          value={draft.serialNumber}
+          requiredLabel={requiredLabel}
         />
-        <Select
-          items={meterMedia.map((medium) => ({
-            displayValue: t(`${k}.medium.${medium}`),
-            label: t(`${k}.medium.${medium}`),
-            value: medium,
-          }))}
+        <form.medium
+          items={meterMedia.map((medium) => ({ label: t(`${k}.medium.${medium}`), value: medium }))}
           label={t(`${k}.fields.medium`)}
-          name="medium"
-          onValueChange={({ value }) => {
-            const parsed = Schema.decodeUnknownResult(MeterMediumSchema)(value[0] ?? 'ELECTRICITY');
-            if (Result.isFailure(parsed)) {
-              return;
-            }
-            const medium = parsed.success;
-            setDraft((current) => ({
-              ...current,
-              medium,
-              unit:
-                meter === undefined && (current.unit === '' || current.unit === defaultUnitOf[current.medium])
-                  ? defaultUnitOf[medium]
-                  : current.unit,
-            }));
-          }}
-          size="md"
-          value={[draft.medium]}
         />
-        <FormInput
+        <form.unit
           autoComplete="off"
           helpText={t(`${k}.fieldHelp.unit`)}
           id="meter-unit"
           label={t(`${k}.fields.unit`)}
           maxLength={16}
-          onChange={(event) => set('unit', event.target.value)}
           required
-          value={draft.unit}
+          requiredLabel={requiredLabel}
         />
-        <Select
-          items={locationItems}
-          label={t(`${k}.fields.location`)}
-          name="location"
-          onValueChange={({ value }) => set('location', value[0] === undefined || value[0] === NONE ? '' : value[0])}
-          size="md"
-          value={[draft.location === '' ? NONE : draft.location]}
-        />
-        <FormInput
+        <form.location items={locationItems} label={t(`${k}.fields.location`)} />
+        <form.supplyPoint
           autoComplete="off"
           helpText={t(`${k}.fieldHelp.supplyPoint`)}
           id="meter-supply-point"
           label={t(`${k}.fields.supplyPoint`)}
           maxLength={120}
-          onChange={(event) => set('supplyPoint', event.target.value)}
-          value={draft.supplyPoint}
         />
-        <FormInput
-          autoComplete="off"
-          id="meter-supplier"
-          label={t(`${k}.fields.supplier`)}
-          maxLength={200}
-          onChange={(event) => set('supplier', event.target.value)}
-          value={draft.supplier}
-        />
-        <FormInput
+        <form.supplier autoComplete="off" id="meter-supplier" label={t(`${k}.fields.supplier`)} maxLength={200} />
+        <form.consumer
           autoComplete="off"
           helpText={t(`${k}.fieldHelp.consumer`)}
           id="meter-consumer"
           label={t(`${k}.fields.consumer`)}
           maxLength={200}
-          onChange={(event) => set('consumer', event.target.value)}
-          value={draft.consumer}
         />
-        <FormInput
-          autoComplete="off"
-          id="meter-contract"
-          label={t(`${k}.fields.contract`)}
-          maxLength={200}
-          onChange={(event) => set('contract', event.target.value)}
-          value={draft.contract}
-        />
+        <form.contract autoComplete="off" id="meter-contract" label={t(`${k}.fields.contract`)} maxLength={200} />
       </div>
-      <FormTextarea
-        id="meter-note"
-        label={t(`${k}.fields.note`)}
-        maxLength={4000}
-        onChange={(event) => set('note', event.target.value)}
-        rows={2}
-        value={draft.note}
-      />
-      {meter !== undefined && (
-        <label className="flex items-center gap-100 text-sm">
-          <input checked={draft.retired} onChange={(event) => set('retired', event.target.checked)} type="checkbox" />
-          {t(`${k}.edit.retire`)}
-        </label>
-      )}
+      <form.note id="meter-note" label={t(`${k}.fields.note`)} maxLength={4000} rows={2} />
+      {meter !== undefined && <form.retired id="meter-retired" label={t(`${k}.edit.retire`)} />}
       {meter === undefined ? (
         <FormSaveFooter
           cancelLabel={t(CANCEL_LABEL)}
@@ -321,7 +338,7 @@ export const MeterForm = ({
           )}
         </EditGuard>
       )}
-    </div>
+    </FormRoot>
   );
 };
 
@@ -439,34 +456,55 @@ const submitMeterReading = Effect.fn('Facility.submitMeterReading')(function* su
   return commandResult(outcome, () => onSaved(meterId), setError);
 });
 
-interface ReadingDraft {
-  readonly cost: string;
-  readonly date: (typeof MeterReadingSchema.Encoded)['date'];
-  readonly meterId: string;
-  readonly note: string;
-  readonly photo?: File;
-  readonly readBy: string;
-  readonly value: string;
-}
+/**
+ * The values of one reading. Uložit sends them through the form save, so the form only holds them and Enter sends
+ * nothing.
+ */
+const makeReadingForm = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('cost', Schema.String)
+      .addField('date', Schema.String)
+      .addField('meterId', Schema.String)
+      .addField('note', Schema.String)
+      .addField('photo', Schema.OptionFromNullOr(Schema.instanceOf(File)))
+      .addField('readBy', Schema.String)
+      .addField('value', Schema.String),
+    {
+      fields: {
+        cost: RuledTextField,
+        date: TextField,
+        meterId: ChoiceField,
+        note: TextAreaField,
+        photo: FileField,
+        readBy: TextField,
+        value: RuledTextField,
+      },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+
+/** A reading from the list and a reading of one meter's detail are separate forms. */
+const pickedReadingForm = makeReadingForm();
+const fixedReadingForm = makeReadingForm();
+
+type ReadingDraft = typeof pickedReadingForm.schema.Encoded;
+
 const readingDraftOf = (fixedMeterId: string | undefined): ReadingDraft => ({
   cost: '',
   date: pragueToday(),
   meterId: fixedMeterId ?? '',
   note: '',
+  photo: null,
   readBy: '',
   value: '',
 });
-type ReadingDraftChange = Partial<ReadingDraft> | { readonly clearPhoto: true } | { readonly reset: ReadingDraft };
-const updateReadingDraft = (draft: ReadingDraft, changes: ReadingDraftChange): ReadingDraft => {
-  if ('reset' in changes) {
-    return changes.reset;
-  }
-  if ('clearPhoto' in changes) {
-    const { photo: _photo, ...withoutPhoto } = draft;
-    return withoutPhoto;
-  }
-  return { ...draft, ...changes };
-};
+
+/** The picked meter as a plain string, which changes only when the pick does. */
+const pickedMeterOf = (form: typeof pickedReadingForm) =>
+  form.getFieldAtoms(form.fields.meterId).value.pipe(Atom.map(Option.getOrElse(() => '')));
+const pickedMeters = { fixed: pickedMeterOf(fixedReadingForm), picked: pickedMeterOf(pickedReadingForm) };
 
 const ReadingPreview = ({
   meter,
@@ -549,24 +587,23 @@ export const ReadingForm = ({
   readonly onSaved: (meterId: string) => void;
   readonly run: RunCommand;
 }) => {
-  const { t } = useModernI18n();
-  const [draft, updateDraft] = useReducer(updateReadingDraft, fixedMeterId, readingDraftOf);
+  const { language, t } = useModernI18n();
+  const readingForm = fixedMeterId === undefined ? pickedReadingForm : fixedReadingForm;
+  // Read before this mount initialized the form only, so a later day's date never replaces the one it opened with.
+  const opened = readingDraftOf(fixedMeterId);
+  const { ready, values: draft } = useFormValues(readingForm, opened);
   const { cost, date, meterId, note, photo, readBy, value } = draft;
-  const setMeterId = (nextValue: string) => updateDraft({ meterId: nextValue });
-  const setDate = (nextValue: (typeof MeterReadingSchema.Encoded)['date']) => updateDraft({ date: nextValue });
-  const setValue = (nextValue: string) => updateDraft({ value: nextValue });
-  const setReadBy = (nextValue: string) => updateDraft({ readBy: nextValue });
-  const setCost = (nextValue: string) => updateDraft({ cost: nextValue });
-  const setNote = (nextValue: string) => updateDraft({ note: nextValue });
-  const setPhoto = (nextPhoto: File | undefined) => {
-    if (nextPhoto === undefined) {
-      updateDraft({ clearPhoto: true });
-    } else {
-      updateDraft({ photo: nextPhoto });
-    }
-  };
-  const photoInput = useRef<HTMLInputElement | null>(null);
+  const setValues = useAtomSet(readingForm.setValues);
+  const setPhoto = useAtomSet(readingForm.getFieldAtoms(readingForm.fields.photo).setValue);
   const [error, setError] = useState<ReadingError | undefined>();
+  // Picking another meter clears the message about the previous pick.
+  useAtomSubscribe(
+    fixedMeterId === undefined ? pickedMeters.picked : pickedMeters.fixed,
+    () => {
+      setError(undefined);
+    },
+    { immediate: false },
+  );
   const meter = meters.find((entry) => entry.id === meterId);
   const parsed = parseDecimal(value);
   const preview =
@@ -579,7 +616,7 @@ export const ReadingForm = ({
   // A reading is sent on Uložit only, with the same checks and command as before.
   const form = useFormSave<ReadingDraft>({
     onDiscard: () => {
-      updateDraft({ reset: readingDraftOf(fixedMeterId) });
+      setValues(readingDraftOf(fixedMeterId));
       setError(undefined);
     },
     submit: () =>
@@ -591,7 +628,7 @@ export const ReadingForm = ({
         note,
         onSaved,
         parsed,
-        photo,
+        photo: photo ?? undefined,
         problem,
         readBy,
         run,
@@ -610,126 +647,100 @@ export const ReadingForm = ({
 
   const activeMeters = meters.filter((entry) => entry.status !== 'RETIRED');
   const errorText = readingErrorText(error, t);
+  const requiredLabel = requiredLabelFor(language);
 
   return (
-    <div className="flex flex-col gap-200">
+    <FormRoot
+      className="flex flex-col gap-200"
+      defaultValues={opened}
+      form={readingForm}
+      translateMessage={(message) => t(message)}
+    >
+      {ready}
       {errorText !== undefined && (
         <StatusText showIcon status="error">
           {errorText}
         </StatusText>
       )}
       {fixedMeterId === undefined && (
-        <Select
+        <readingForm.meterId
           items={activeMeters.map((entry) => {
             const mediumLabel = t(`${k}.medium.${entry.medium}`);
             const locationLabel = entry.location === undefined ? '' : ` · ${entry.location.label}`;
-            const label = `${entry.serialNumber} · ${mediumLabel}${locationLabel}`;
-            return { displayValue: label, label, value: entry.id };
+            return { label: `${entry.serialNumber} · ${mediumLabel}${locationLabel}`, value: entry.id };
           })}
           label={t(`${k}.reading.meter`)}
-          name="meter"
-          onValueChange={({ value: picked }) => {
-            setMeterId(picked[0] ?? '');
-            setError(undefined);
-          }}
           placeholder={t(`${k}.reading.pickMeter`)}
-          size="md"
-          value={meterId === '' ? [] : [meterId]}
         />
       )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
+        <readingForm.date
           id="reading-date"
           label={t(`${k}.reading.date`)}
           max={pragueToday()}
-          onChange={(event) => setDate(event.target.value)}
           required
+          requiredLabel={requiredLabel}
           type="date"
-          value={date}
         />
-        <FormInput
+        <readingForm.value
           autoComplete="off"
           helpText={t(`${k}.reading.valueHelp`)}
           id="reading-value"
           inputMode="decimal"
+          invalid={readingValueStatus(value, parsed, problem) === 'error'}
           label={t(`${k}.reading.value`, { unit: meter?.unit ?? '—' })}
-          onChange={(event) => setValue(event.target.value)}
           required
-          validateStatus={readingValueStatus(value, parsed, problem)}
-          value={value}
+          requiredLabel={requiredLabel}
         />
       </div>
       <ReadingPreview meter={meter} parsed={parsed} preview={preview} problem={problem} />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          autoComplete="off"
-          id="reading-read-by"
-          label={t(`${k}.reading.readBy`)}
-          maxLength={120}
-          onChange={(event) => setReadBy(event.target.value)}
-          value={readBy}
-        />
+        <readingForm.readBy autoComplete="off" id="reading-read-by" label={t(`${k}.reading.readBy`)} maxLength={120} />
         {canRecordCosts && (
-          <FormInput
+          <readingForm.cost
             autoComplete="off"
             helpText={t(`${k}.reading.costHelp`)}
             id="reading-cost"
             inputMode="decimal"
+            invalid={cost.trim() !== '' && parseDecimal(cost) === undefined}
             label={t(`${k}.reading.cost`)}
-            onChange={(event) => setCost(event.target.value)}
-            validateStatus={cost.trim() !== '' && parseDecimal(cost) === undefined ? 'error' : 'default'}
-            value={cost}
           />
         )}
       </div>
-      <FormTextarea
-        id="reading-note"
-        label={t(`${k}.reading.note`)}
-        maxLength={4000}
-        onChange={(event) => setNote(event.target.value)}
-        rows={2}
-        value={note}
-      />
+      <readingForm.note id="reading-note" label={t(`${k}.reading.note`)} maxLength={4000} rows={2} />
       {canUploadPhoto ? (
         <div className="flex flex-col gap-50">
           <span className="font-medium text-sm">{t(`${k}.reading.photo`)}</span>
-          <input
-            accept="image/*"
-            className="hidden"
-            id="reading-photo"
-            onChange={(event) => setPhoto(event.target.files?.[0])}
-            ref={photoInput}
-            type="file"
-          />
-          <div className="flex flex-wrap items-center gap-150">
-            <Button appearance="outline" onClick={() => photoInput.current?.click()} severity="secondary" size="sm">
-              {t(`${k}.reading.photoPick`)}
-            </Button>
-            <span className="text-sm">
-              {photo === undefined ? t(`${k}.reading.photoNone`) : `${photo.name} (${Math.ceil(photo.size / 1024)} kB)`}
-            </span>
-            {photo !== undefined && (
-              <Button
-                appearance="ghost"
-                onClick={() => {
-                  setPhoto(undefined);
-                  if (photoInput.current !== null) {
-                    photoInput.current.value = '';
-                  }
-                }}
-                severity="secondary"
-                size="sm"
-              >
-                {t(CANCEL_LABEL)}
-              </Button>
+          <readingForm.photo accept="image/*" className="hidden" id="reading-photo">
+            {(pick) => (
+              <div className="flex flex-wrap items-center gap-150">
+                <Button appearance="outline" onClick={pick} severity="secondary" size="sm">
+                  {t(`${k}.reading.photoPick`)}
+                </Button>
+                <span className="text-sm">
+                  {photo === null ? t(`${k}.reading.photoNone`) : `${photo.name} (${Math.ceil(photo.size / 1024)} kB)`}
+                </span>
+                {photo !== null && (
+                  <Button
+                    appearance="ghost"
+                    onClick={() => {
+                      setPhoto(null);
+                    }}
+                    severity="secondary"
+                    size="sm"
+                  >
+                    {t(CANCEL_LABEL)}
+                  </Button>
+                )}
+              </div>
             )}
-          </div>
+          </readingForm.photo>
           <span className="text-fg-secondary text-xs">{t(`${k}.reading.photoHelp`)}</span>
         </div>
       ) : (
         <p className="text-fg-secondary text-xs">{t(`${k}.reading.photoRestricted`)}</p>
       )}
       <FormSaveFooter cancelLabel={t(CANCEL_LABEL)} error={errorText} form={form} onCancel={onCancel} />
-    </div>
+    </FormRoot>
   );
 };

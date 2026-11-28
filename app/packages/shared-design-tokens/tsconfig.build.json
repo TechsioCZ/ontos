@@ -1,6 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-design-tokens.build.tsbuildinfo"
-  }
-}

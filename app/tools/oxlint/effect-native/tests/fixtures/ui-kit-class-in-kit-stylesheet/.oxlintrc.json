@@ -1,0 +1,34 @@
+{
+  "jsPlugins": [
+    {
+      "name": "effect-native",
+      "specifier": "../../fixture-plugin.ts"
+    }
+  ],
+  "categories": {
+    "correctness": "off"
+  },
+  "rules": {
+    "effect-native/ui-kit-class-in-kit-stylesheet": [
+      "error",
+      {
+        "stylesheet": "./.kit-stylesheet.css"
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "**/invalid/verticals/orphan/**"
+      ],
+      "rules": {
+        "effect-native/ui-kit-class-in-kit-stylesheet": [
+          "error",
+          {
+            "stylesheet": "./.missing-kit-stylesheet.css"
+          }
+        ]
+      }
+    }
+  ]
+}

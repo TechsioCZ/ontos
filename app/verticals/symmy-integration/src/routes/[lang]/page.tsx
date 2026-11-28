@@ -7,16 +7,13 @@ const SymmyIntegrationHome = () => {
   const { language, supportedLanguages, t } = useModernI18n();
 
   return (
-    <main className="symmyintegration:min-h-screen symmyintegration:bg-um-canvas symmyintegration:px-4 symmyintegration:py-6 symmyintegration:text-um-foreground symmyintegration:sm:px-8">
+    <main className="min-h-screen bg-base px-4 py-6 text-fg-primary sm:px-8">
       <UltramodernRouteHead />
-      <nav
-        aria-label={t('symmy-integration.language.switcher')}
-        className="symmyintegration:flex symmyintegration:gap-3"
-      >
+      <nav aria-label={t('symmy-integration.language.switcher')} className="flex gap-3">
         {supportedLanguages.map((code) => (
           <Link
             aria-current={language === code ? 'page' : undefined}
-            className="symmyintegration:rounded-full symmyintegration:border symmyintegration:border-stone-900/15 symmyintegration:bg-white symmyintegration:px-4 symmyintegration:py-2 symmyintegration:text-sm symmyintegration:font-bold symmyintegration:text-stone-950 symmyintegration:no-underline"
+            className="rounded-full border border-border-primary bg-surface px-4 py-2 text-sm font-bold text-fg-primary no-underline"
             key={code}
             params={{ lang: code }}
             to="/$lang"
@@ -25,20 +22,11 @@ const SymmyIntegrationHome = () => {
           </Link>
         ))}
       </nav>
-      <h1 className="symmyintegration:mt-10 symmyintegration:text-5xl symmyintegration:font-black">
-        {t('symmy-integration.title')}
-      </h1>
-      <p
-        className="symmyintegration:mt-3 symmyintegration:text-lg symmyintegration:text-stone-600"
-        data-modern-mf-role="vertical"
-      >
+      <h1 className="mt-10 text-4xl font-bold">{t('symmy-integration.title')}</h1>
+      <p className="mt-3 text-lg text-fg-secondary" data-modern-mf-role="vertical">
         {t('symmy-integration.role')}
       </p>
-      <p
-        className="symmyintegration:sr-only"
-        data-build-marker={ultramodernUiMarker.build}
-        data-testid="ultramodern-ui-marker"
-      >
+      <p className="sr-only" data-build-marker={ultramodernUiMarker.build} data-testid="ultramodern-ui-marker">
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
     </main>

@@ -278,16 +278,17 @@ it.live('issues only after explicit confirmation, displays the secret once and n
     expect(issues).toHaveLength(0);
     yield* type(copy('name'), 'Worker');
     yield* click(button(labels.save));
-    const secretField = yield* shown(() => screen.queryByDisplayValue(testSecret));
+    const secretField = yield* shown(() => screen.queryByText(testSecret));
     yield* networkIdle;
-    expect(secretField?.hasAttribute('readonly')).toBe(true);
+    // Shown as an output, never as an editable or submitted input.
+    expect(secretField.tagName).toBe('OUTPUT');
     expect(issues).toEqual([
       { idempotencyKey: expect.any(String), payload: { name: 'Worker', principalId, scope: 'company-agent' } },
     ]);
     expect(stored()).toEqual(storedBefore);
     yield* click(button(copy('hideSecret')));
     yield* networkIdle;
-    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
+    expect(screen.queryByText(testSecret)).toBeNull();
     // Live changes of other apps cost no read; a change of Core-owned data reloads the keys.
     expect(lists).toHaveLength(2);
     yield* liveChange(['crm']);
@@ -296,11 +297,11 @@ it.live('issues only after explicit confirmation, displays the secret once and n
     yield* liveChange(['shell']);
     yield* waitUntil(() => lists.length === 3);
     yield* networkIdle;
-    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
+    expect(screen.queryByText(testSecret)).toBeNull();
     view.unmount();
     yield* mountKeys(<AgentApiKeys agent={agent} />);
     yield* networkIdle;
-    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
+    expect(screen.queryByText(testSecret)).toBeNull();
     expect(issues).toHaveLength(1);
     expect(stored()).toEqual(storedBefore);
   }).pipe(Effect.provide(network)),
@@ -313,7 +314,7 @@ it.live('rotates the exact binding with a reason and reports pending cleanup wit
     expect(isDisabled(labels.save)).toBe(true);
     yield* type(copy('reason'), 'Scheduled rotation');
     yield* click(button(labels.save));
-    expect(yield* shown(() => screen.queryByDisplayValue(testSecret))).toBeTruthy();
+    expect(yield* shown(() => screen.queryByText(testSecret))).toBeTruthy();
     yield* networkIdle;
     expect(screen.getByText(copy('cleanupPending'))).toBeTruthy();
     expect(rotations.map(({ payload }) => payload)).toEqual([
@@ -366,7 +367,7 @@ it.live('does not retry an ambiguous issuance and requires a fresh list before a
     expect(issues).toHaveLength(1);
     expect(lists).toHaveLength(1);
     expect(screen.queryByText('Not safe to display')).toBeNull();
-    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
+    expect(screen.queryByText(testSecret)).toBeNull();
     yield* click(button(copy('cancel')));
     // The typed name was never saved, so leaving asks; Zahodit změny closes the form.
     yield* click((yield* shown(() => screen.queryByRole('button', { name: labels.discard }))) ?? document.body);
@@ -542,7 +543,8 @@ it.live('registers a key value an integration already holds, sends it once and n
       payload?.scope === 'tenant-managed' && payload.secret !== undefined ? Redacted.value(payload.secret) : null,
     ).toBe(heldValue);
     // The partner already holds the value: nothing is shown as a one-time secret.
-    expect(screen.queryByDisplayValue(testSecret)).toBeNull();
+    expect(screen.queryByText(testSecret)).toBeNull();
     expect(screen.queryByDisplayValue(heldValue)).toBeNull();
+    expect(screen.queryByText(heldValue)).toBeNull();
   }).pipe(Effect.provide(network)),
 );

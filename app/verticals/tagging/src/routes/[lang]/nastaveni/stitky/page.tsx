@@ -31,12 +31,11 @@ import {
   tagCatalogStatusOf,
   useTagCatalogSnapshot,
 } from '../../../../tags/tag-catalog.ts';
-import { tagColorValue } from '../../../../tags/tag-colors.ts';
+import { tagColorClass } from '../../../../tags/tag-colors.ts';
 import { TagI18n } from '../../../../tags/tag-i18n.tsx';
 import { subjectKindValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 import { TagCreatePanel } from './tag-create-panel.tsx';
 import { TagEditPanel } from './tag-edit-panel.tsx';
 
@@ -247,18 +246,23 @@ const KindSection = ({ kind, tagId, total }: { kind: SubjectKind; tagId: TagId; 
 
   return (
     <section className="flex flex-col gap-100">
-      <button
+      <Button
         aria-expanded={open}
-        className="flex items-center justify-between gap-100 text-left font-semibold text-sm"
+        className="flex text-left font-semibold text-sm"
+        composition
         onClick={() => toggle()}
+        size="current"
         type="button"
+        unstyled
       >
-        <span className="flex items-center gap-100">
-          <span aria-hidden className={open ? 'icon-[mdi--chevron-down]' : 'icon-[mdi--chevron-right]'} />
-          {t(`tagging.kinds.${kind}`)}
+        <span className="flex w-full items-center justify-between gap-100">
+          <span className="flex items-center gap-100">
+            <span aria-hidden className={open ? 'token-icon-accordion-chevron' : 'token-icon-breadcrumb-separator'} />
+            {t(`tagging.kinds.${kind}`)}
+          </span>
+          <span className="tabular-nums">{total}</span>
         </span>
-        <span className="tabular-nums">{total}</span>
-      </button>
+      </Button>
       {open && <KindRows kind={kind} state={state} />}
     </section>
   );
@@ -292,7 +296,7 @@ const TagAssignmentsDialog = ({ onClose, tag }: { onClose: () => void; tag: TagW
 const tagColumns = (t: Translate): ColumnDef<TagWithCounts>[] => [
   {
     accessorKey: 'name',
-    cell: (info) => <TagBadge color={tagColorValue[info.row.original.color]} name={info.row.original.name} />,
+    cell: (info) => <TagBadge colorClass={tagColorClass[info.row.original.color]} name={info.row.original.name} />,
     header: t('tagging.tags.table.name'),
     meta: { width: 240 },
   },

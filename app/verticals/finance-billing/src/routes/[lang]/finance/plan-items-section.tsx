@@ -80,14 +80,20 @@ export const PlanItemsSection = (props: { readonly vm: FinanceViewModel }) => {
             <Table appearance="line" size="sm">
               <Table.Header>
                 <Table.Row>
-                  <Table.ColumnHeader>Položka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Typ</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Částka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Očekávané datum</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Pravděpodobnost</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end">Vážená částka</Table.ColumnHeader>
-                  <Table.ColumnHeader>Vztah</Table.ColumnHeader>
-                  <Table.ColumnHeader align="end" />
+                  <Table.ColumnHeader className="whitespace-nowrap">Položka</Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Typ</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Částka
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Očekávané datum</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Pravděpodobnost
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap">
+                    Vážená částka
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader className="whitespace-nowrap">Vztah</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end" className="whitespace-nowrap" />
                 </Table.Row>
               </Table.Header>
               <Table.Body>

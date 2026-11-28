@@ -1,4 +1,4 @@
-import { pipe, DateTime, Schema } from 'effect';
+import { pipe, DateTime, Effect, Option, Schema } from 'effect';
 import { orderDateText, needsReview } from '../../../../../shared/domain/imports.ts';
 import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/imports.ts';
 // AREA: imports — owned by the crm-imports lane. C03 Import objednávek: imported orders with their source state,
@@ -19,12 +19,11 @@ import {
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import { ChoiceField, FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
 import { useState } from 'react';
 import type { ComponentProps } from 'react';
 
@@ -35,6 +34,7 @@ import { ORDERS_CSV_FORMAT, ordersCsvColumns, ordersCsvTemplate } from '../../..
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCsvProblemText } from '../../../../crm/csv-problem-text.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   CrmScopeNote,
   CrmStateGate,
@@ -65,6 +65,21 @@ const ALL = '__all__';
 const OrderFilterSchema = Schema.Literals(['all', 'paired', 'queue', 'review']);
 type OrderFilter = typeof OrderFilterSchema.Type;
 const isOrderFilter = Schema.is(OrderFilterSchema);
+
+/** The filters of the order list: they narrow what the table shows and are never submitted. */
+const orderFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('orderFilter', Schema.String)
+    .addField('search', Schema.String)
+    .addField('sourceFilter', Schema.String),
+  {
+    fields: { orderFilter: ChoiceField, search: TextField, sourceFilter: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type OrderFilters = typeof orderFilterForm.schema.Encoded;
+const allOrders: OrderFilters = { orderFilter: 'all', search: '', sourceFilter: ALL };
 
 const orderColumns = (
   records: RecordsResponse,
@@ -422,9 +437,9 @@ const ImportsContent = () => {
   const { busy, load, state, submit } = useCrmRecords();
   const [orderId, setOrderId] = useCrmRouteSelection('objednavka');
   const [tab, setTab] = useState('orders');
-  const [filter, setFilter] = useState<OrderFilter>('all');
-  const [source, setSource] = useState(ALL);
-  const [search, setSearch] = useState('');
+  const filters = Option.getOrElse(useAtomValue(orderFilterForm.values), () => allOrders);
+  const { search, sourceFilter: source } = filters;
+  const filter: OrderFilter = isOrderFilter(filters.orderFilter) ? filters.orderFilter : 'all';
   const [batchId, setBatchId] = useState<string | undefined>();
   const [importDraft, setImportDraft] = useState<ImportDraft | undefined>();
   const [importOpen, setImportOpen] = useState(false);
@@ -541,18 +556,22 @@ const ImportsContent = () => {
                 <Tabs.Indicator />
               </Tabs.List>
               <Tabs.Content className="flex flex-col gap-200 pt-250" value="orders">
-                <div className="flex flex-wrap items-end gap-150">
-                  <Input
-                    aria-label={t('crm.ciWorkflow.searchOrder')}
-                    className="w-72"
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder={t('crm.ciWorkflow.searchOrderPlaceholder')}
-                    size="sm"
-                    type="search"
-                    value={search}
-                  />
+                <FormRoot
+                  className="flex flex-wrap items-end gap-150"
+                  defaultValues={filters}
+                  form={orderFilterForm}
+                  translateMessage={(message) => t(message, { defaultValue: message })}
+                >
+                  <div className="w-72">
+                    <orderFilterForm.search
+                      label={<span className="sr-only">{t('crm.ciWorkflow.searchOrder')}</span>}
+                      placeholder={t('crm.ciWorkflow.searchOrderPlaceholder')}
+                      size="sm"
+                      type="search"
+                    />
+                  </div>
                   <div className="w-48">
-                    <SelectTemplate
+                    <orderFilterForm.orderFilter
                       items={[
                         { label: 'Všechny objednávky', value: 'all' },
                         { label: 'Napárované', value: 'paired' },
@@ -560,31 +579,18 @@ const ImportsContent = () => {
                         { label: 'Vyžaduje kontrolu', value: 'review' },
                       ]}
                       label={t('crm.ciWorkflow.show')}
-                      name="orderFilter"
-                      onValueChange={(details) => {
-                        const selected = details.value[0] ?? 'all';
-                        if (isOrderFilter(selected)) {
-                          setFilter(selected);
-                        }
-                      }}
-                      size="sm"
-                      value={[filter]}
                     />
                   </div>
                   <div className="w-44">
-                    <SelectTemplate
+                    <orderFilterForm.sourceFilter
                       items={[
                         { label: 'Všechny zdroje', value: ALL },
                         ...sources.map((entry) => ({ label: entry, value: entry })),
                       ]}
                       label={t('crm.ciWorkflow.source')}
-                      name="sourceFilter"
-                      onValueChange={(details) => setSource(details.value[0] ?? ALL)}
-                      size="sm"
-                      value={[source]}
                     />
                   </div>
-                </div>
+                </FormRoot>
                 {orders.length === 0 ? (
                   <SectionCard>
                     <EmptyState

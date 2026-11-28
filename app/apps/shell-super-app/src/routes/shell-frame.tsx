@@ -7,6 +7,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { NavigationProgress } from '@techsio/ui-kit/atoms/navigation-progress';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
@@ -15,8 +16,9 @@ import { useDocumentTitle } from '@app/admin-ui';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { Sidebar } from '@techsio/ui-kit/organisms/sidebar';
 import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/organisms/sidebar';
-import { useContext, useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
-import type { ComponentProps, CSSProperties, ReactNode } from 'react';
+import { useAppTheme } from '@techsio/ui-kit/theme/theme-provider';
+import { useContext, useEffect, useEffectEvent, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import type { ComponentProps, ReactNode } from 'react';
 import { Effect, Schema } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import type { Atom } from 'effect/reactivity';
@@ -24,7 +26,6 @@ import type { Atom } from 'effect/reactivity';
 import { browserAtomRuntime, browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { withoutRecordedPageReads } from './browser-request-cache.ts';
 import { staffRoutePreloads } from './route-preload-scheduler.ts';
-import { staffDocumentTheme } from './staff-brand.ts';
 import type { RoutePreloadPriority } from './route-preload-scheduler.ts';
 
 import { AccessAdministrationPageSchema } from '../../shared/access-admin-api.ts';
@@ -645,6 +646,40 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => (
   </div>
 );
 
+const ModeSettingSchema = Schema.Literals(['light', 'dark', 'system']);
+const isModeSetting = Schema.is(ModeSettingSchema);
+
+/** The light/dark switch, offered only when the tenant's theme ships both modes. */
+const DashboardAppearance = () => {
+  const { t } = useModernI18n();
+  const { availableModes, mode, mounted, setMode } = useAppTheme();
+  if (availableModes.length < 2) {
+    return null;
+  }
+  const items: MenuItem[] = availableModes.map((value) => ({
+    checked: mounted && value === mode,
+    label: t(`shell.dashboard.appearance.${value}`),
+    name: 'appearance',
+    type: 'radio',
+    value,
+  }));
+  return (
+    <Header.ActionItem>
+      <Menu
+        aria-label={t('shell.dashboard.appearance.label')}
+        items={items}
+        onSelect={({ value }) => {
+          if (isModeSetting(value)) {
+            setMode(value);
+          }
+        }}
+        size="sm"
+        triggerText={t('shell.dashboard.appearance.label')}
+      />
+    </Header.ActionItem>
+  );
+};
+
 const DashboardAccountMenu = ({
   identity,
   logoutPending,
@@ -883,10 +918,7 @@ const DashboardHeaderSearch = ({ compositionRevision, hidden, onSearch, scopeKey
   const [value, setValue] = useState('');
   const suggestions = useShellSearchSuggestions(compositionRevision, scopeKey);
   return hidden ? null : (
-    <Header.Container
-      className="flex w-auto min-w-0 flex-1 items-center justify-center lg:min-w-[16rem]"
-      position="center"
-    >
+    <Header.Container className="flex w-auto min-w-0 flex-1 items-center justify-center lg:min-w-64" position="center">
       <div className="w-full max-w-xl">
         <ShellSearchBar
           onDismissSuggestions={suggestions.handleDismiss}
@@ -1050,18 +1082,26 @@ const handleSidebarExpandedChange = ({ expanded }: SidebarExpandedChangeDetails)
   writeSidebarCollapsed(!expanded.includes('start'));
 };
 
-type SidebarOffsetStyle = CSSProperties & {
-  '--demo-guide-width'?: string;
-  '--height-sidebar-viewport'?: string;
-  '--spacing-sidebar-offset'?: string;
-};
 /**
- * The kit derives `--height-sidebar-viewport` from the offset at `:root`, so an offset set on the root element alone
- * leaves the panel a full viewport tall below the top bar and clips its footer. Re-derive both on the frame.
+ * The docked guide's width on the document root while the frame is mounted: `--demo-guide-width` sizes the guide
+ * and the page's room beside it. The Sidebar's offset below the top bar is static and lives in ui-kit.css, so the
+ * server-rendered page already places the panel correctly.
  */
-const topBarOffsetStyle: SidebarOffsetStyle = {
-  '--height-sidebar-viewport': 'calc(100dvh - var(--spacing-700))',
-  '--spacing-sidebar-offset': 'var(--spacing-700)',
+const useFrameLayoutVariables = (demoGuideWidth: string) => {
+  useLayoutEffect(() => {
+    const variables = {
+      '--demo-guide-width': demoGuideWidth,
+    };
+    const root = document.documentElement.style;
+    for (const [name, value] of Object.entries(variables)) {
+      root.setProperty(name, value);
+    }
+    return () => {
+      for (const name of Object.keys(variables)) {
+        root.removeProperty(name);
+      }
+    };
+  }, [demoGuideWidth]);
 };
 
 const usePendingNavigationHref = (language: string): string | undefined => {
@@ -1147,20 +1187,13 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const hydrated = useHydratedMarker();
   const guideVisible = guide !== undefined && guideOpen && !props.logoutPending;
   // The saved width is re-fitted to the current screen by CSS, next to the expanded or icon-only sidebar.
-  const sidebarStyle: SidebarOffsetStyle = {
-    ...topBarOffsetStyle,
-    '--demo-guide-width': guideWidthCss(
-      guideWidth,
-      collapsed ? 'var(--width-sidebar-icon)' : 'var(--width-sidebar-expanded)',
-    ),
-  };
+  useFrameLayoutVariables(
+    guideWidthCss(guideWidth, collapsed ? 'var(--width-sidebar-icon)' : 'var(--width-sidebar-expanded)'),
+  );
 
   return (
     <StaffRoutePreloadContext value={preload}>
-      {/* The selected workspace's theme wins over the neutral one of the document layout. The `light` class is repeated
-          here because the shell's own calm admin tokens are keyed on `:root.light[data-theme]`; the frame must keep the
-          tokens working even when it is the only head source left after a route or layout transition. */}
-      <Helmet htmlAttributes={staffDocumentTheme(props.currentTenantId, props.currentLegalEntityId)}>
+      <Helmet>
         <title>{`${recordTitle ?? frameTitle(props.title, model, t)} | OntOS`}</title>
       </Helmet>
       {props.compositionRevision === undefined ? null : (
@@ -1171,14 +1204,12 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
         collapsible={{ start: 'icon' }}
         expanded={expandedSides}
         onExpandedChange={handleSidebarExpandedChange}
-        style={sidebarStyle}
       >
         <DrawerRouteSync />
         <Header
           aria-label={t('shell.dashboard.header.label')}
-          className="sticky top-0 z-20 w-full max-w-none gap-200 border-border-primary border-b bg-base px-200"
+          className="sticky top-0 z-20 h-700 w-full max-w-none gap-200 border-border-primary border-b bg-base px-200"
           size="sm"
-          style={{ height: 'var(--spacing-700)' }}
         >
           <Header.Container
             className="flex w-auto shrink-0 flex-nowrap items-center gap-200 lg:min-w-0 lg:shrink"
@@ -1212,6 +1243,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                   </HeaderButtonTooltip>
                 </Header.ActionItem>
               )}
+              <DashboardAppearance />
               <Header.ActionItem data-hydrated={hydrated}>
                 <DashboardAccountMenu
                   identity={props.identity}
@@ -1270,9 +1302,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             {/* The router keeps the previous page visible until the next one is prepared (code and data); a thin bar
                 shows a navigation that takes longer than a moment. */}
             {pendingHref === undefined ? null : (
-              <div className="shell-navigation-progress">
-                <progress aria-label={t('shell.dashboard.navigation.pending')} className="sr-only" />
-              </div>
+              <NavigationProgress aria-label={t('shell.dashboard.navigation.pending')} />
             )}
             <div aria-busy={pendingHref !== undefined} className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
               {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}

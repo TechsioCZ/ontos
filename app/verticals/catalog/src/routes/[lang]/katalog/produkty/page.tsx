@@ -5,8 +5,6 @@ import { useEffect } from 'react';
 
 import { catalogI18nResources } from '../../../../i18n/resources';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
-
 /** What the Shell passes the page; a standalone render of the remote passes nothing. */
 type ProductsPageProps = Partial<Pick<ModulePageProps, 'context' | 'search'>>;
 

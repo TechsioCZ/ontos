@@ -15,12 +15,12 @@ const SymmyIntegrationRouteContent = () => {
 
   return (
     <section
-      className="symmyintegration:rounded-2xl symmyintegration:bg-white/90 symmyintegration:p-5 symmyintegration:shadow-xl symmyintegration:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalSymmyIntegration"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="symmyintegration:text-2xl symmyintegration:font-black">{t('symmy-integration.title')}</h2>
-      <p className="symmyintegration:mt-2 symmyintegration:text-stone-600">{t('symmy-integration.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('symmy-integration.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('symmy-integration.routeSurface')}</p>
     </section>
   );
 };

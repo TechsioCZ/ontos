@@ -11,47 +11,85 @@ import {
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
+import {
+  ChoiceField,
+  Field,
+  FormReact,
+  FormRoot,
+  OptionalTextField,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { Effect, Option } from 'effect';
+import { Effect, Option, Schema, Struct } from 'effect';
 import type { PlatformError } from 'effect';
 import { constVoid } from 'effect/Function';
-import { useRef, useState } from 'react';
-import type { RegistrationOccupant } from '../../../../shared/apis/records.ts';
-import { RegistrationSheetIdSchema } from '../../../../shared/apis/records.ts';
+import { useEffect, useState } from 'react';
+import { OccupancyCommandSchema } from '../../../../shared/actions/apply-command.ts';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
+import { RegistrationOccupantSchema, RegistrationSheetIdSchema } from '../../../../shared/apis/records.ts';
+import { dossierActionsClass, dossierFieldsClass, dossierStackClass, dossierTileClass } from './dossier-classes.ts';
 import { additionSaveOutcome } from './occupancy-command.ts';
 import type { AdditionSave } from './occupancy-command.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import type { NoticeContext } from './notice-templates.ts';
 
+const CreateRegistrationSheetSchema = OccupancyCommandSchema.pipe(Schema.toTaggedUnion('_tag')).cases
+  .CreateRegistrationSheet;
+/** The sheet as CreateRegistrationSheet stores it: what Uložit sends, and what makes the draft complete. */
+const SheetPayloadSchema = CreateRegistrationSheetSchema.mapFields(Struct.pick(['note', 'occupants', 'purpose']));
+
+/** Tells a row of the form apart while people are added and removed; never stored. */
+const OccupantRowKeySchema = Schema.String.pipe(Schema.brand('OccupantRowKey'));
+/** One person staying, with the key of the row. */
+const OccupantRowSchema = Schema.Struct({ ...RegistrationOccupantSchema.fields, localKey: OccupantRowKeySchema });
+
+/**
+ * The sheet, one row per person staying: every field and check comes from the command's payload. Enter never saves:
+ * only Uložit does, through the shared save.
+ */
+const sheetForm = FormReact.make(
+  fromPayload(CreateRegistrationSheetSchema.mapFields(Struct.pick(['note', 'purpose']))).addField(
+    Field.makeArrayField('occupants', OccupantRowSchema),
+  ),
+  {
+    fields: {
+      note: TextField,
+      occupants: {
+        address: TextField,
+        birthDate: OptionalTextField,
+        identityDocument: TextField,
+        // The row key is never shown.
+        localKey: TextField,
+        name: TextField,
+        nationality: TextField,
+      },
+      purpose: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type SheetDraft = typeof sheetForm.schema.Encoded;
+type OccupantDraft = SheetDraft['occupants'][number];
+
 const purposes = ['Rekreace', 'Služební cesta', 'Bydlení – nájem', 'Podnikání – nájem', 'Jiný účel'] as const;
-const emptyOccupant = (name = ''): RegistrationOccupant => ({
+const emptyOccupant = (localKey: string, name = ''): OccupantDraft => ({
   address: '',
-  birthDate: Option.none(),
+  birthDate: null,
   identityDocument: '',
+  localKey,
   name,
   nationality: 'Česká republika',
-});
-interface OccupantDraft extends RegistrationOccupant {
-  readonly localKey: string;
-}
-interface SheetDraft {
-  readonly note: string;
-  readonly occupants: readonly OccupantDraft[];
-  readonly purpose: string;
-}
-const storedOccupant = (occupant: OccupantDraft): RegistrationOccupant => ({
-  address: occupant.address.trim(),
-  birthDate: occupant.birthDate,
-  identityDocument: occupant.identityDocument.trim(),
-  name: occupant.name.trim(),
-  nationality: occupant.nationality.trim(),
 });
 const day = (value: string | null) => (value === null ? 'bez konce' : formatDate(value));
 /** What the save compares the suggested sheet with: nothing is saved yet, so the suggestion is a draft Uložit sends. */
 const nothingSaved: SheetDraft = { note: '', occupants: [], purpose: '' };
+const decodeSheet = Schema.decodeUnknownEffect(SheetPayloadSchema);
+const complete = (draft: SheetDraft) => Option.isSome(Schema.decodeUnknownOption(SheetPayloadSchema)(draft));
 
 /** The sheet the record suggests: its guest and purpose, one row per announced person. */
 const suggestedSheet = (context: NoticeContext): SheetDraft => {
@@ -60,16 +98,12 @@ const suggestedSheet = (context: NoticeContext): SheetDraft => {
   const leasePurpose = context.unitLabel.startsWith('Byt') ? 'Bydlení – nájem' : 'Podnikání – nájem';
   return {
     note: '',
-    occupants: Array.from({ length: count }, (_, index) => ({
-      ...emptyOccupant(index === 0 && record.kind === 'SHORT_STAY' ? context.partyName : ''),
-      localKey: `initial-${index}`,
-    })),
+    occupants: Array.from({ length: count }, (_, index) =>
+      emptyOccupant(`initial-${index}`, index === 0 && record.kind === 'SHORT_STAY' ? context.partyName : ''),
+    ),
     purpose: record.kind === 'SHORT_STAY' ? 'Rekreace' : leasePurpose,
   };
 };
-
-const complete = (draft: SheetDraft) =>
-  draft.occupants.length > 0 && draft.occupants.every((occupant) => occupant.name.trim().length > 0);
 
 export const RegistrationSheetForm = ({
   context,
@@ -86,15 +120,13 @@ export const RegistrationSheetForm = ({
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const { record } = context;
-  // The suggestion as the form opened stays the yardstick of typed input, even when names load later.
-  const [sheet, setSheet] = useState(() => {
-    const opening = suggestedSheet(context);
-    return { draft: opening, suggested: opening };
-  });
-  const { draft, suggested } = sheet;
-  const setDraft = (next: (current: SheetDraft) => SheetDraft) =>
-    setSheet((current) => ({ ...current, draft: next(current.draft) }));
-  const occupantSequence = useRef(draft.occupants.length);
+  // The suggestion as the form opened stays the yardstick of typed input, even when names load later; rows added
+  // since are counted for their keys.
+  const [sheet, setSheet] = useState(() => ({ added: 0, suggested: suggestedSheet(context) }));
+  const { suggested } = sheet;
+  const draft = Option.getOrElse(useAtomValue(sheetForm.values), () => suggested);
+  const reset = useAtomSet(sheetForm.reset);
+  const validate = useAtomSet(sheetForm.validate);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   const save = useDraftSave<SheetDraft, never>({
     initial: nothingSaved,
@@ -105,48 +137,38 @@ export const RegistrationSheetForm = ({
       additionSaveOutcome(
         newId.pipe(
           Effect.flatMap((sheetId) =>
-            onSave({
-              _tag: 'CreateRegistrationSheet',
-              note: value.note.trim(),
-              occupancyRef: record.occupancyRef,
-              occupants: value.occupants.map(storedOccupant),
-              purpose: value.purpose,
-              sheetId: RegistrationSheetIdSchema.make(sheetId),
-            }),
+            decodeSheet(value).pipe(
+              Effect.flatMap((payload) =>
+                onSave({
+                  _tag: 'CreateRegistrationSheet',
+                  note: payload.note,
+                  occupancyRef: record.occupancyRef,
+                  occupants: payload.occupants,
+                  purpose: payload.purpose,
+                  sheetId: RegistrationSheetIdSchema.make(sheetId),
+                }),
+              ),
+            ),
           ),
         ),
         setReason,
       ),
     value: draft,
   });
+  // Field messages show once the draft is invalid, the same moment the save bar says so.
+  const invalid = save.status === 'invalid';
+  useEffect(() => {
+    if (invalid) {
+      validate();
+    }
+  }, [invalid, validate]);
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => save.dirty, withResolver: true });
-  const guard = useUnsavedChangesGuard({
-    draft: save,
-    navigation: blocker,
-    onDiscard: () => setDraft(() => suggested),
-  });
-  const showProblems = save.status === 'invalid';
-  const update = (index: number, field: keyof RegistrationOccupant, value: string) =>
-    setDraft((current) => ({
-      ...current,
-      occupants: current.occupants.map((occupant, position) => {
-        if (position !== index) {
-          return occupant;
-        }
-        if (field === 'birthDate') {
-          return { ...occupant, birthDate: value === '' ? Option.none() : Option.some(value) };
-        }
-        return { ...occupant, [field]: value };
-      }),
-    }));
-  const addOccupant = () => {
-    const localKey = `added-${occupantSequence.current}`;
-    occupantSequence.current += 1;
-    setDraft((current) => ({ ...current, occupants: [...current.occupants, { ...emptyOccupant(), localKey }] }));
-  };
-  const removeOccupant = (index: number) =>
-    setDraft((current) => ({ ...current, occupants: current.occupants.filter((_, position) => position !== index) }));
+  const guard = useUnsavedChangesGuard({ draft: save, navigation: blocker, onDiscard: () => reset() });
   const handleCancel = () => guard.request(onClose);
+  const addOccupant = (append: (occupant: OccupantDraft) => void) => {
+    append(emptyOccupant(`added-${sheet.added}`));
+    setSheet((current) => ({ ...current, added: current.added + 1 }));
+  };
   const handleSave = () => {
     save.save();
     save.afterSave((status) => {
@@ -155,124 +177,92 @@ export const RegistrationSheetForm = ({
       }
     });
   };
+  // The only field the person can leave invalid is a guest's name.
+  const translate = (message: string) =>
+    t(message.startsWith('property-leasing.') ? message : 'property-leasing.registration.fullNameRequired');
   return (
-    <form
-      className="sp-tenant-stack"
-      noValidate
-      onSubmit={(event) => {
-        // Enter never saves: only Uložit does.
-        event.preventDefault();
-      }}
-    >
-      <DetailList
-        items={[
-          { label: 'Jednotka', value: [context.unitLabel, context.propertyLabel].join(', ') },
-          { label: 'Období', value: `${formatDate(record.startDate)} – ${day(record.endDate)}` },
-          { label: record.kind === 'SHORT_STAY' ? 'Host' : 'Nájemce', value: context.partyName },
-        ]}
-      />
-      {draft.occupants.map((occupant, index) => (
-        <fieldset className="sp-tenant-contact" key={occupant.localKey}>
-          <legend>Ubytovaná osoba {index + 1}</legend>
-          <div className="sp-tenant-fields">
-            <FormInput
-              id={`sheet-name-${index}`}
-              label={t('property-leasing.registration.fullName')}
-              maxLength={200}
-              onChange={(event) => update(index, 'name', event.target.value)}
-              value={occupant.name}
-              {...(showProblems && occupant.name.trim().length === 0
-                ? { helpText: 'Vyplňte jméno a příjmení ubytovaného.', validateStatus: 'error' as const }
-                : {})}
-            />
-            <FormInput
-              label={t('property-leasing.registration.birthDate')}
-              onChange={(event) => update(index, 'birthDate', event.target.value)}
-              type="date"
-              value={Option.getOrElse(occupant.birthDate, () => '')}
-            />
-            <FormInput
-              label={t('property-leasing.registration.nationality')}
-              maxLength={200}
-              onChange={(event) => update(index, 'nationality', event.target.value)}
-              value={occupant.nationality}
-            />
-            <FormInput
-              id={`sheet-document-${index}`}
-              label={t('property-leasing.registration.identityDocument')}
-              maxLength={200}
-              onChange={(event) => update(index, 'identityDocument', event.target.value)}
-              value={occupant.identityDocument}
-            />
-          </div>
-          <FormInput
-            label={t('property-leasing.registration.permanentAddress')}
-            maxLength={300}
-            onChange={(event) => update(index, 'address', event.target.value)}
-            value={occupant.address}
-          />
-          {draft.occupants.length > 1 && (
-            <Button appearance="ghost" onClick={() => removeOccupant(index)} severity="secondary" size="sm">
-              Odebrat osobu
-            </Button>
-          )}
-        </fieldset>
-      ))}
-      <div className="sp-tenant-actions">
-        <Button
-          appearance="outline"
-          disabled={draft.occupants.length >= 20}
-          onClick={addOccupant}
-          severity="secondary"
-          size="sm"
-        >
-          Přidat osobu
-        </Button>
-        <label className="sp-tenant-stack">
-          <span>Účel pobytu</span>
-          <select
-            aria-label={t('property-leasing.registration.purpose')}
-            onChange={(event) => {
-              const { value } = event.target;
-              setDraft((current) => ({ ...current, purpose: value }));
-            }}
-            value={draft.purpose}
-          >
-            {purposes.map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <FormInput
-        id="sheet-note"
-        label={t('property-leasing.registration.optionalNote')}
-        maxLength={500}
-        onChange={(event) => {
-          const { value } = event.target;
-          setDraft((current) => ({ ...current, note: value }));
-        }}
-        value={draft.note}
-      />
-      <div className="sp-tenant-actions">
-        <Button appearance="outline" onClick={handleCancel} severity="secondary" size="sm">
-          {t('property-leasing.demo.cancel')}
-        </Button>
-        <SaveBar
-          error={Option.match(reason, {
-            onNone: () => null,
-            onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
-          })}
-          labels={labels}
-          onReloadLatest={constVoid}
-          onSave={handleSave}
-          size="sm"
-          status={save.status}
+    <>
+      <FormRoot className={dossierStackClass} defaultValues={suggested} form={sheetForm} translateMessage={translate}>
+        <DetailList
+          items={[
+            { label: 'Jednotka', value: [context.unitLabel, context.propertyLabel].join(', ') },
+            { label: 'Období', value: `${formatDate(record.startDate)} – ${day(record.endDate)}` },
+            { label: record.kind === 'SHORT_STAY' ? 'Host' : 'Nájemce', value: context.partyName },
+          ]}
         />
-      </div>
+        <sheetForm.occupants>
+          {({ append, items, remove }) => (
+            <>
+              {items.map((occupant, index) => (
+                <sheetForm.occupants.Item index={index} key={occupant.localKey}>
+                  <fieldset className={dossierTileClass}>
+                    <legend>Ubytovaná osoba {index + 1}</legend>
+                    <div className={dossierFieldsClass}>
+                      <sheetForm.occupants.name
+                        id={`sheet-name-${index}`}
+                        label={t('property-leasing.registration.fullName')}
+                        maxLength={200}
+                      />
+                      <sheetForm.occupants.birthDate label={t('property-leasing.registration.birthDate')} type="date" />
+                      <sheetForm.occupants.nationality
+                        label={t('property-leasing.registration.nationality')}
+                        maxLength={200}
+                      />
+                      <sheetForm.occupants.identityDocument
+                        id={`sheet-document-${index}`}
+                        label={t('property-leasing.registration.identityDocument')}
+                        maxLength={200}
+                      />
+                    </div>
+                    <sheetForm.occupants.address
+                      label={t('property-leasing.registration.permanentAddress')}
+                      maxLength={300}
+                    />
+                    {items.length > 1 && (
+                      <Button appearance="ghost" onClick={() => remove(index)} severity="secondary" size="sm">
+                        Odebrat osobu
+                      </Button>
+                    )}
+                  </fieldset>
+                </sheetForm.occupants.Item>
+              ))}
+              <div className={dossierActionsClass}>
+                <Button
+                  appearance="outline"
+                  disabled={items.length >= 20}
+                  onClick={() => addOccupant(append)}
+                  severity="secondary"
+                  size="sm"
+                >
+                  Přidat osobu
+                </Button>
+                <sheetForm.purpose
+                  items={purposes.map((value) => ({ label: value, value }))}
+                  label={t('property-leasing.registration.purpose')}
+                />
+              </div>
+            </>
+          )}
+        </sheetForm.occupants>
+        <sheetForm.note id="sheet-note" label={t('property-leasing.registration.optionalNote')} maxLength={500} />
+        <div className={dossierActionsClass}>
+          <Button appearance="outline" onClick={handleCancel} severity="secondary" size="sm">
+            {t('property-leasing.demo.cancel')}
+          </Button>
+          <SaveBar
+            error={Option.match(reason, {
+              onNone: () => null,
+              onSome: (value) => t(`property-leasing.demo.feedback.${value}`),
+            })}
+            labels={labels}
+            onReloadLatest={constVoid}
+            onSave={handleSave}
+            size="sm"
+            status={save.status}
+          />
+        </div>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-    </form>
+    </>
   );
 };

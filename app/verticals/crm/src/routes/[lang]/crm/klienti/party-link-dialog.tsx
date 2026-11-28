@@ -6,8 +6,8 @@ import { dialogCloseLabel, foldSearchText } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Effect, Fiber, Option } from 'effect';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, useAtomValue } from '@app/core-runtime/ui/form';
+import { Effect, Fiber, Option, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -15,7 +15,7 @@ import type { Client, PartyLinkInput } from '../../../../../shared/domain/client
 import { loadRegistryCustomers } from '../../../../crm/party-registry.ts';
 import type { RegistryCustomer, RegistryFailure } from '../../../../crm/party-registry.ts';
 
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 type Directory =
   | { readonly kind: 'loading' }
@@ -27,6 +27,23 @@ export const suggestedCustomer = (client: Client, customers: readonly RegistryCu
   customers.find(
     (entry) => client.regNo !== undefined && Option.isSome(entry.companyId) && entry.companyId.value === client.regNo,
   ) ?? customers.find((entry) => foldSearchText(entry.displayName) === foldSearchText(client.name));
+
+/** The registry customer picked to link; linking itself is the dialog's command, so the form is never submitted. */
+const partyLinkForm = FormReact.make(FormBuilder.empty.addField('target', Schema.String), {
+  fields: { target: SelectTemplateField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const partyLinkTarget = partyLinkForm.getFieldAtoms(partyLinkForm.fields.target);
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold the pick of an earlier dialog, so the pick is read only after this.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
 
 export const PartyLinkDialog = ({
   busy,
@@ -43,7 +60,8 @@ export const PartyLinkDialog = ({
 }) => {
   const { t } = useModernI18n();
   const [directory, setDirectory] = useState<Directory>({ kind: 'loading' });
-  const [choice, setChoice] = useState<string>('');
+  const [ready, setReady] = useState(false);
+  const picked = Option.getOrElse(useAtomValue(partyLinkTarget.value), () => '');
 
   useEffect(() => {
     const fiber = browserRuntime.runFork(
@@ -75,7 +93,8 @@ export const PartyLinkDialog = ({
   const offered =
     directory.kind === 'ready' ? directory.customers.filter((entry) => !taken.has(entry.link.counterpartyId)) : [];
   const suggestion = suggestedCustomer(client, offered);
-  const selectedChoice = choice === '' ? (suggestion?.link.counterpartyId ?? '') : choice;
+  // The suggestion is the pick the dialog opens with; once the form holds it, the form's pick is the one linked.
+  const selectedChoice = ready ? picked : (suggestion?.link.counterpartyId ?? '');
   const chosen = offered.find((entry) => entry.link.counterpartyId === selectedChoice);
 
   const link = (partyRef: PartyLinkInput, name: string) =>
@@ -143,21 +162,26 @@ export const PartyLinkDialog = ({
         )}
         {directory.kind === 'ready' && (
           <>
-            <SelectTemplate
-              items={[
-                { label: offered.length === 0 ? 'Žádný volný zákazník v registru' : 'Vyberte zákazníka…', value: '' },
-                ...offered.map((entry) => ({
-                  label: `${entry.displayName}${Option.isNone(entry.companyId) ? '' : [' · IČO ', entry.companyId.value].join('')}${
-                    entry === suggestion ? ' (shoda)' : ''
-                  }`,
-                  value: entry.link.counterpartyId,
-                })),
-              ]}
-              label={t('crm.ciClientsVisits.clients.existingRegistryCustomer')}
-              name="party-link-target"
-              onValueChange={(details) => setChoice(details.value[0] ?? '')}
-              value={[selectedChoice]}
-            />
+            <FormRoot
+              defaultValues={{ target: selectedChoice }}
+              form={partyLinkForm}
+              translateMessage={(message) => t(message, { defaultValue: message })}
+            >
+              <FormReady onReady={setReady} />
+              <partyLinkForm.target
+                items={[
+                  { label: offered.length === 0 ? 'Žádný volný zákazník v registru' : 'Vyberte zákazníka…', value: '' },
+                  ...offered.map((entry) => ({
+                    label: `${entry.displayName}${Option.isNone(entry.companyId) ? '' : [' · IČO ', entry.companyId.value].join('')}${
+                      entry === suggestion ? ' (shoda)' : ''
+                    }`,
+                    value: entry.link.counterpartyId,
+                  })),
+                ]}
+                label={t('crm.ciClientsVisits.clients.existingRegistryCustomer')}
+                name="party-link-target"
+              />
+            </FormRoot>
             <p className="text-fg-secondary text-xs">{suggestionHelp}</p>
           </>
         )}

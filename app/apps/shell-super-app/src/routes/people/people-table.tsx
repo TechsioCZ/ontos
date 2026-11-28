@@ -1,22 +1,33 @@
 import { EmptyState, paginationTranslations } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { AsyncResult, Atom } from 'effect/reactivity';
 import type { ReactNode } from 'react';
 import { useSyncExternalStore } from 'react';
 
 import type { Person } from '../../../shared/people-api.ts';
+import { browserAtomRuntime } from '../../runtime/browser-effect-runtime.ts';
 import {
   accessRoleNamesOf,
   allPeopleFilters,
+  defaultPeopleFilters,
   filterPeople,
   PeopleStatusFilterSchema,
   PersonKindKeySchema,
@@ -159,52 +170,95 @@ const statusOptions = (t: PeopleTranslator) => [
 const isStatusFilter = Schema.is(PeopleStatusFilterSchema);
 const isKindKey = Schema.is(PersonKindKeySchema);
 
-const option = (value: string, label: string) => ({ displayValue: label, label, value });
-
-const FilterSelect = ({
-  items,
-  label,
-  name,
-  onChange,
-  value,
-}: {
-  readonly items: readonly { readonly label: string; readonly value: string }[];
-  readonly label: string;
-  readonly name: string;
-  readonly onChange: (value: string) => void;
-  readonly value: string;
-}) => (
-  <div className="min-w-36 flex-1 sm:w-40 sm:flex-none">
-    <SelectTemplate
-      items={items.map((item) => option(item.value, item.label))}
-      label={label}
-      name={name}
-      onValueChange={(details) => {
-        const [next] = details.value;
-        if (next !== undefined) {
-          onChange(next);
-        }
-      }}
-      size="sm"
-      value={[value]}
-    />
-  </div>
+/** The filters of the people list: they narrow what the table shows and are never submitted. */
+const peopleFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('kind', Schema.String)
+    .addField('query', Schema.String)
+    .addField('roleId', Schema.String)
+    .addField('status', Schema.String),
+  {
+    fields: { kind: ChoiceField, query: TextField, roleId: ChoiceField, status: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
 );
+
+/** The filters as the table applies them; the defaults until the toolbar is on screen. */
+const peopleFilters = peopleFilterForm.values.pipe(
+  Atom.map(
+    Option.match({
+      onNone: () => defaultPeopleFilters,
+      onSome: ({ kind, query, roleId, status }): PeopleFilters => ({
+        kind: isKindKey(kind) ? kind : 'all',
+        query,
+        roleId,
+        status: isStatusFilter(status) ? status : 'current',
+      }),
+    }),
+  ),
+);
+const roleFilter = peopleFilterForm.getFieldAtoms(peopleFilterForm.fields.roleId);
+
+/** Company or whole organisation: picking one switches the list at once. */
+const peopleScopeForm = FormReact.make(FormBuilder.empty.addField('scope', Schema.String), {
+  fields: { scope: ChoiceField },
+  mode: { autoSubmit: true, validation: 'onChange' },
+  onSubmit: (_submit, { decoded }) =>
+    Effect.succeed<PeopleAdminScope>(decoded.scope === 'tenant' ? 'tenant' : 'company'),
+  runtime: browserAtomRuntime,
+});
+
+const FilterSlot = ({ children }: { readonly children: ReactNode }) => (
+  <div className="min-w-36 flex-1 sm:w-40 sm:flex-none">{children}</div>
+);
+
+const ScopeFilter = ({
+  onScopeChange,
+  scope,
+}: {
+  readonly onScopeChange: (scope: PeopleAdminScope) => void;
+  readonly scope: PeopleAdminScope;
+}) => {
+  const { t } = useModernI18n();
+  const setRoleFilter = useAtomSet(roleFilter.setValue);
+  useAtomSubscribe(peopleScopeForm.submit, (result) => {
+    if (AsyncResult.isSuccess(result) && !result.waiting && result.value !== scope) {
+      // Roles belong to a scope: another scope starts from all of its roles.
+      setRoleFilter('all');
+      onScopeChange(result.value);
+    }
+  });
+  return (
+    <FormRoot
+      className="contents"
+      defaultValues={{ scope }}
+      form={peopleScopeForm}
+      translateMessage={(message) => t(message, { defaultValue: message })}
+    >
+      <FilterSlot>
+        <peopleScopeForm.scope
+          items={[
+            { label: t('shell.people.table.companyScope'), value: 'company' },
+            { label: t('shell.people.table.tenantScope'), value: 'tenant' },
+          ]}
+          label={t('shell.people.table.scope')}
+        />
+      </FilterSlot>
+    </FormRoot>
+  );
+};
 
 export const PeopleToolbar = ({
   access,
   actions,
   companyAvailable,
-  filters,
-  onFiltersChange,
   onScopeChange,
   scope,
 }: {
   readonly access: PeopleAccessView | undefined;
   readonly actions: ReactNode;
   readonly companyAvailable: boolean;
-  readonly filters: PeopleFilters;
-  readonly onFiltersChange: (filters: PeopleFilters) => void;
   readonly onScopeChange: (scope: PeopleAdminScope) => void;
   readonly scope: PeopleAdminScope;
 }) => {
@@ -215,48 +269,34 @@ export const PeopleToolbar = ({
   ];
   return (
     <div className="flex flex-wrap items-end gap-150">
-      <Input
-        aria-label={t('shell.people.table.searchLabel')}
-        className="w-full sm:w-56"
-        onChange={(event) => onFiltersChange({ ...filters, query: event.target.value })}
-        placeholder={t('shell.people.table.searchPlaceholder')}
-        size="sm"
-        type="search"
-        value={filters.query}
-      />
-      <FilterSelect
-        items={[{ label: t('shell.people.table.allKinds'), value: 'all' }, ...personKindOptions]}
-        label={t('shell.people.table.kind')}
-        name="people-kind"
-        onChange={(kind) => onFiltersChange({ ...filters, kind: isKindKey(kind) ? kind : 'all' })}
-        value={filters.kind}
-      />
-      <FilterSelect
-        items={roles}
-        label={t('shell.people.table.roles')}
-        name="people-role"
-        onChange={(roleId) => onFiltersChange({ ...filters, roleId })}
-        value={filters.roleId}
-      />
-      <FilterSelect
-        items={statusOptions(t)}
-        label={t('shell.people.table.status')}
-        name="people-status"
-        onChange={(status) => onFiltersChange({ ...filters, status: isStatusFilter(status) ? status : 'current' })}
-        value={filters.status}
-      />
-      {companyAvailable ? (
-        <FilterSelect
-          items={[
-            { label: t('shell.people.table.companyScope'), value: 'company' },
-            { label: t('shell.people.table.tenantScope'), value: 'tenant' },
-          ]}
-          label={t('shell.people.table.scope')}
-          name="people-scope"
-          onChange={(next) => onScopeChange(next === 'tenant' ? 'tenant' : 'company')}
-          value={scope}
-        />
-      ) : null}
+      <FormRoot
+        className="contents"
+        defaultValues={defaultPeopleFilters}
+        form={peopleFilterForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
+      >
+        <div className="w-full sm:w-56">
+          <peopleFilterForm.query
+            label={<span className="sr-only">{t('shell.people.table.searchLabel')}</span>}
+            placeholder={t('shell.people.table.searchPlaceholder')}
+            size="sm"
+            type="search"
+          />
+        </div>
+        <FilterSlot>
+          <peopleFilterForm.kind
+            items={[{ label: t('shell.people.table.allKinds'), value: 'all' }, ...personKindOptions]}
+            label={t('shell.people.table.kind')}
+          />
+        </FilterSlot>
+        <FilterSlot>
+          <peopleFilterForm.roleId items={roles} label={t('shell.people.table.roles')} />
+        </FilterSlot>
+        <FilterSlot>
+          <peopleFilterForm.status items={statusOptions(t)} label={t('shell.people.table.status')} />
+        </FilterSlot>
+      </FormRoot>
+      {companyAvailable ? <ScopeFilter onScopeChange={onScopeChange} scope={scope} /> : null}
       <Tooltip content={t('shell.people.table.rolesHelp')}>
         <Button
           appearance="ghost"
@@ -360,19 +400,15 @@ const CompactPeopleList = ({
 
 export const PeopleTable = ({
   access,
-  filters,
   loading,
   onEdit,
-  onFiltersChange,
   onOpen,
   people,
   scope,
 }: {
   readonly access: PeopleAccessView | undefined;
-  readonly filters: PeopleFilters;
   readonly loading: boolean;
   readonly onEdit: (kind: PeopleEditKind, person: Person) => void;
-  readonly onFiltersChange: (filters: PeopleFilters) => void;
   readonly onOpen: (person: Person) => void;
   readonly people: readonly Person[];
   readonly scope: PeopleAdminScope;
@@ -380,12 +416,14 @@ export const PeopleTable = ({
   const { t } = useModernI18n();
   const translations = tableTranslations(t);
   const wide = useWideLayout();
+  const filters = useAtomValue(peopleFilters);
+  const setFilters = useAtomSet(peopleFilterForm.setValues);
   const visible = filterPeople(people, filters, access);
   const empty = () =>
     people.length > 0 ? (
       <EmptyState
         action={
-          <Button appearance="outline" onClick={() => onFiltersChange(allPeopleFilters)} severity="secondary" size="sm">
+          <Button appearance="outline" onClick={() => setFilters(allPeopleFilters)} severity="secondary" size="sm">
             {t('shell.people.table.clearFilters')}
           </Button>
         }

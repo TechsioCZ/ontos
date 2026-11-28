@@ -1,7 +1,5 @@
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
-import '../../index.css';
-
 import { partyRegistryI18nResources } from '../../../i18n/resources.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 

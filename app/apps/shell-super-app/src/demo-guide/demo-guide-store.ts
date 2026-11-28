@@ -82,9 +82,6 @@ export const guideWidthCss = (savedWidth: number, sidebarWidthCss: string): stri
 export const parseGuideProgress = (raw: string | null): readonly string[] =>
   raw === null ? [] : Option.getOrElse(Schema.decodeOption(progressSchema)(raw), (): readonly string[] => []);
 
-export const toggleStep = (doneIds: readonly string[], stepId: string): readonly string[] =>
-  doneIds.includes(stepId) ? doneIds.filter((id) => id !== stepId) : [...doneIds, stepId];
-
 export interface DemoGuideProgressSummary {
   readonly done: number;
   /** First step, in guide order, that is not done yet. */

@@ -3,9 +3,9 @@ import { expect, it } from 'effect-rstest';
 import { EmployeeIdSchema } from '../../shared/resources/employee.ts';
 import type { Employee } from '../../shared/apis/records.ts';
 import {
-  draftErrors,
   draftFromEmployee,
   employeeSaveResult,
+  isSendableDraft,
 } from '../../src/routes/[lang]/prodej/zamestnanci/employee-model.ts';
 
 const now = DateTime.makeUnsafe('2026-11-01T09:00:00Z');
@@ -31,7 +31,9 @@ it('maps the answer to the edit Save onto the save bar: a revision means saved, 
 
 it('never saves a draft with an empty name or a malformed e-mail', () => {
   const draft = draftFromEmployee(jana);
-  expect(draftErrors(draft)).toEqual([]);
-  expect(draftErrors({ ...draft, fullName: ' ' })).toContain('fullName');
-  expect(draftErrors({ ...draft, email: 'jana@' })).toContain('email');
+  expect(isSendableDraft(draft)).toBe(true);
+  expect(isSendableDraft({ ...draft, fullName: ' ' })).toBe(false);
+  expect(isSendableDraft({ ...draft, email: 'jana@' })).toBe(false);
+  expect(isSendableDraft({ ...draft, phone: '12345' })).toBe(false);
+  expect(isSendableDraft({ ...draft, phone: '' })).toBe(true);
 });
