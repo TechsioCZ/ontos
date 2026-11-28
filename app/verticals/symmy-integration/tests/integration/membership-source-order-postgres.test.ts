@@ -1,20 +1,23 @@
+import { createHash } from 'node:crypto';
+
 import {
   ScopedRoutineInvocationError,
   TrustedPrincipalContextSchema,
   defineScopedRoutine,
   findPostgresFailure,
-  loadDatabaseConnectionPair,
 } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
-import { NodeServices } from '@effect/platform-node';
+import { makeIsolatedNativeDatabaseFixture } from '@app/core-runtime/testing/isolated-native-database';
+import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
+import { migrate } from 'drizzle-orm/effect-postgres/migrator';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import {
   SymmyEffectClaimSchema,
@@ -29,6 +32,9 @@ import {
   symmyJobRoutes,
   symmyMembershipSourceOrders,
 } from '../../src/db/schema.ts';
+
+import { SymmyGroupCustomerRowsSchema } from '../../shared/domain/symmy-customer-group-batch.ts';
+import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 
 const openDatabase = (connectionString: string) =>
   PgClient.makeClient({ url: Redacted.make(connectionString) }).pipe(
@@ -151,6 +157,11 @@ const sqlStateOf = <Failure>(failure: Failure) =>
 const postgresCodeOf = <Failure>(failure: Failure) => Option.getOrUndefined(findPostgresFailure(failure))?.code;
 
 class FixtureRollback extends Schema.TaggedError<FixtureRollback>()('FixtureRollback', {}) {}
+const MembershipUpgradeFailureContract = Schema.TaggedStruct('MembershipUpgradeFailure', { cause: Schema.Defect() });
+const MembershipUpgradeFailure = Schema.TaggedError<typeof MembershipUpgradeFailureContract.Type>()(
+  'MembershipUpgradeFailure',
+  { cause: Schema.Defect() },
+);
 
 /** The enrollment of a membership route: the owner's membership write under one membership source. */
 const membershipEnrollment = (sourceNamespace: string) =>
@@ -182,24 +193,40 @@ it.effect(
   'orders ERP memberships of one profile in its ledger alone, delivers them in order and never skips an earlier one',
   () =>
     Effect.gen(function* membershipOrders() {
-      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const isolated = yield* makeIsolatedNativeDatabaseFixture({
+        mode: 'empty',
+        purpose: 'implementation-1118-symmy-job-admission',
+      });
+      yield* isolated.migrateCoreSchema();
+      const { connections } = isolated;
       const admin = yield* openDatabase(connections.admin.connectionString);
+      const fs = yield* FileSystem.FileSystem;
+      const migrationRoot = new URL('../../drizzle/', import.meta.url).pathname;
+      const upgrade = '20261127230734_membership-source-orders';
+      const migrationsFolder = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-membership-upgrade-' });
+      for (const directory of yield* fs.readDirectory(migrationRoot)) {
+        if (directory !== upgrade) {
+          yield* fs.copy(`${migrationRoot}${directory}`, `${migrationsFolder}/${directory}`);
+        }
+      }
+      const migrateOwner = Effect.fn('MembershipOrderFixture.migrateOwner')(function* migrateOwner() {
+        const migration = yield* Effect.try({
+          catch: (cause) => new MembershipUpgradeFailure({ cause }),
+          try: () =>
+            migrate(admin, {
+              migrationsFolder,
+              migrationsSchema: 'drizzle',
+              migrationsTable: '__drizzle_migrations_symmy_integration',
+            }),
+        });
+        yield* migration;
+      });
+      yield* migrateOwner();
       const tenantId = crypto.randomUUID();
       const legalEntityId = crypto.randomUUID();
       const principalId = crypto.randomUUID();
       const scope = makeScope(tenantId, principalId, legalEntityId);
       const profileId = crypto.randomUUID();
-      yield* Effect.addFinalizer(() =>
-        admin
-          .delete(symmyMembershipSourceOrders)
-          .where(eq(symmyMembershipSourceOrders.tenantId, tenantId))
-          .pipe(
-            Effect.andThen(admin.delete(symmyJobEffects).where(eq(symmyJobEffects.tenantId, tenantId))),
-            Effect.andThen(admin.delete(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId))),
-            Effect.andThen(admin.delete(symmyJobRoutes).where(eq(symmyJobRoutes.tenantId, tenantId))),
-            Effect.orDie,
-          ),
-      );
       // Three ERP membership routes, each selecting another group, share the membership source of one issuer. A
       // fourth route of the same kind keeps the contract it always had, for memberships its callers order themselves.
       const routeIds = {
@@ -235,30 +262,7 @@ it.effect(
       });
       yield* admin
         .insert(symmyJobRoutes)
-        .values(
-          Object.entries(routeIds).map(([routeCode, routeId]) =>
-            routeCode === 'internal'
-              ? routeRow(routeCode, routeId, [internalContract], internalNamespace)
-              : routeRow(routeCode, routeId, [erpContract], namespace),
-          ),
-        );
-      // The reserved namespace belongs to ERP membership routes alone, and such a route enrolls nothing else.
-      for (const [routeCode, refused] of Object.entries({
-        'mixed-contracts': routeRow('mixed-contracts', crypto.randomUUID(), [internalContract, erpContract], namespace),
-        'no-company': routeRow('no-company', crypto.randomUUID(), [erpContract], namespace, null),
-        'other-contract': routeRow('other-contract', crypto.randomUUID(), [internalContract], namespace),
-        'other-namespace': routeRow('other-namespace', crypto.randomUUID(), [erpContract], internalNamespace),
-      })) {
-        const failure = yield* admin.insert(symmyJobRoutes).values(refused).pipe(Effect.flip);
-        expect(postgresCodeOf(failure), routeCode).toBe('23514');
-      }
-      const reenrolled = yield* admin
-        .update(symmyJobRoutes)
-        .set({ fixtureIds: [internalContract, erpContract] })
-        .where(and(eq(symmyJobRoutes.tenantId, tenantId), eq(symmyJobRoutes.routeId, routeIds.retail)))
-        .pipe(Effect.flip);
-      expect(postgresCodeOf(reenrolled)).toBe('23514');
-
+        .values(routeRow('internal', routeIds.internal, [internalContract], internalNamespace));
       const scoped = <A, E>(run: (transaction: ScopedTransactionExecutor) => Effect.Effect<A, E>) =>
         inScope(connections.runtime.connectionString, scope, run);
       /** One membership effect of a job, pinned exactly as the admission pins it. */
@@ -446,6 +450,144 @@ it.effect(
           })
           .where(and(eq(symmyJobEffects.tenantId, tenantId), eq(symmyJobEffects.effectId, effectId)));
       });
+
+      // Exercise the real journaled upgrade with live-shaped pre-upgrade history, not an already-migrated database.
+      // It must neither import a denied future assertion nor infer accepted history from retained intent alone.
+      const retained: { readonly effectId: string; readonly jobId: string }[] = [];
+      for (const [seed, state, status, effectiveAt] of [
+        ['a0', 'settled', 'accepted_change', '2026-11-20T00:00:00.000Z'],
+        ['b0', 'settled', 'denied', '2099-01-01T00:00:00.000Z'],
+        ['c0', 'indeterminate', 'indeterminate', '2026-11-20T00:00:00.000Z'],
+        ['d0', 'settled', 'accepted_change', '2026-11-20T00:00:00.000Z'],
+      ] as const) {
+        const pinned = membershipEffect('internal', profileId, seed, effectiveAt, 900, internalNamespace);
+        const jobId = yield* insertJob(admin, 'internal', digest(seed), pinned, internalContract);
+        yield* admin
+          .update(symmyJobEffects)
+          .set({
+            outcome: Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+              effectId: pinned.effectId,
+              owner: 'commerce.customer-context',
+              status,
+            }),
+            state,
+          })
+          .where(eq(symmyJobEffects.effectId, pinned.effectId));
+        retained.push({ effectId: pinned.effectId, jobId });
+      }
+      // Keep the tombstoned payload shape as the old erasure routines produce it. This tests migration preservation,
+      // not signed erasure authorization (which belongs to the independent native lifecycle proof).
+      const erased = retained.at(3);
+      assert.isDefined(erased);
+      yield* admin
+        .update(symmyJobEffects)
+        .set({
+          effect: sql`symmy_integration.erase_symmy_effect_payload(effect)`,
+          effectKey: `erased.${erased.effectId}`,
+        })
+        .where(eq(symmyJobEffects.effectId, erased.effectId));
+      yield* admin
+        .update(symmyImportJobs)
+        .set({
+          executionPlan: sql`symmy_integration.erase_symmy_plan_payload(execution_plan)`,
+          fixtureId: 'ERASED',
+        })
+        .where(eq(symmyImportJobs.jobId, erased.jobId));
+
+      // Literal pre-cutover demo identity at 16bd33dd4c: its caller contract is INTERNAL_C14, not the new enrollment
+      // marker. Seed that historical request independently of the new store's encoder, then replay after upgrade.
+      const legacyKey = 'ERP-BEFORE-CUTOVER-KEY';
+      const legacyRows = Schema.decodeUnknownSync(SymmyGroupCustomerRowsSchema)([{ customerId: 'ERP-BEFORE-CUTOVER' }]);
+      const legacyKeyDigest = createHash('sha256').update(legacyKey).digest('hex');
+      const legacyIntentDigest = createHash('sha256')
+        .update(
+          JSON.stringify([
+            'customerGroupCustomersBatch',
+            'internal',
+            'INTERNAL_C14',
+            '[{"customerId":"ERP-BEFORE-CUTOVER"}]',
+          ]),
+        )
+        .digest('hex');
+      const legacyEffect = membershipEffect(
+        'internal',
+        profileId,
+        'e0',
+        '2026-11-20T00:00:00.000Z',
+        901,
+        internalNamespace,
+      );
+      const legacyJobId = yield* insertJob(admin, 'internal', legacyKeyDigest, legacyEffect, internalContract);
+      yield* admin
+        .update(symmyImportJobs)
+        .set({ intentDigest: legacyIntentDigest })
+        .where(eq(symmyImportJobs.jobId, legacyJobId));
+      const retainedRows = admin.select().from(symmyJobEffects).where(eq(symmyJobEffects.tenantId, tenantId));
+      const retainedJobs = admin.select().from(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId));
+      const beforeJobs = yield* retainedJobs;
+      const beforeUpgrade = yield* retainedRows;
+      expect(beforeUpgrade).toHaveLength(5);
+      yield* fs.copy(`${migrationRoot}${upgrade}`, `${migrationsFolder}/${upgrade}`);
+      yield* migrateOwner();
+      expect(yield* retainedRows).toEqual(beforeUpgrade);
+      expect(yield* admin.select().from(symmyMembershipSourceOrders)).toEqual([]);
+      // Re-running the same deployment migrator is an exact no-op, including its journal receipt.
+      yield* migrateOwner();
+      expect(yield* retainedRows).toEqual(beforeUpgrade);
+      expect(yield* admin.select().from(symmyMembershipSourceOrders)).toEqual([]);
+      expect(yield* retainedJobs).toEqual(beforeJobs);
+      const replayLegacy = (rows = legacyRows) =>
+        scoped((transaction) =>
+          symmyJobStoreFactory(transaction, scope).pipe(
+            Effect.flatMap((store) =>
+              store.admit({
+                code: 'internal',
+                groupCustomers: rows,
+                idempotencyKey: legacyKey,
+                routeKey: 'customerGroupCustomersBatch',
+              }),
+            ),
+          ),
+        );
+      expect(yield* replayLegacy()).toMatchObject({ executionReady: true, inserted: false, jobId: legacyJobId });
+      const changedReplay = yield* replayLegacy(
+        Schema.decodeUnknownSync(SymmyGroupCustomerRowsSchema)([{ customerId: 'ERP-DIFFERENT-CUSTOMER' }]),
+      ).pipe(Effect.flip);
+      expect(changedReplay).toMatchObject({ code: 'idempotency_conflict' });
+      expect(yield* retainedRows).toEqual(beforeUpgrade);
+      expect(yield* retainedJobs).toEqual(beforeJobs);
+      expect(yield* admin.select().from(symmyMembershipSourceOrders)).toEqual([]);
+
+      yield* admin.insert(symmyJobRoutes).values(
+        Object.entries(routeIds)
+          .filter(([routeCode]) => routeCode !== 'internal')
+          .map(([routeCode, routeId]) =>
+            routeCode === 'internal'
+              ? routeRow(routeCode, routeId, [internalContract], internalNamespace)
+              : routeRow(routeCode, routeId, [erpContract], namespace),
+          ),
+      );
+      // The reserved namespace belongs to ERP membership routes alone, and such a route enrolls nothing else.
+      for (const [routeCode, refused] of Object.entries({
+        'mixed-contracts': routeRow('mixed-contracts', crypto.randomUUID(), [internalContract, erpContract], namespace),
+        'no-company': routeRow('no-company', crypto.randomUUID(), [erpContract], namespace, null),
+        'other-contract': routeRow('other-contract', crypto.randomUUID(), [internalContract], namespace),
+        'other-namespace': routeRow('other-namespace', crypto.randomUUID(), [erpContract], internalNamespace),
+      })) {
+        const failure = yield* admin.insert(symmyJobRoutes).values(refused).pipe(Effect.flip);
+        expect(postgresCodeOf(failure), routeCode).toBe('23514');
+      }
+      const reenrolled = yield* admin
+        .update(symmyJobRoutes)
+        .set({ fixtureIds: [internalContract, erpContract] })
+        .where(and(eq(symmyJobRoutes.tenantId, tenantId), eq(symmyJobRoutes.routeId, routeIds.retail)))
+        .pipe(Effect.flip);
+      expect(postgresCodeOf(reenrolled)).toBe('23514');
+
+      // A pre-upgrade uncertain owner call is still recovered, not silently changed into an ERP reservation.
+      const retainedUncertain = retained.at(2);
+      assert.isDefined(retainedUncertain);
+      expect(yield* legacyClaimMode(retainedUncertain)).toBe('recover');
 
       // Two assignments of one profile to two groups, admitted concurrently, take distinct orders of one lineage.
       const [wholesale, retail] = yield* Effect.all(
@@ -644,5 +786,14 @@ it.effect(
           ),
       ).toEqual([]);
       expect(yield* legacyClaimMode({ effectId: callerOrdered.effectId, jobId: callerJob })).toBe('execute');
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        NodeChildProcessSpawner.layer.pipe(
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(NodeCrypto.layer),
+          Layer.provideMerge(Reactivity.layer),
+        ),
+      ),
+    ),
 );
