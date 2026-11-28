@@ -88,7 +88,7 @@ const program = Effect.gen(function* verifyPromotion() {
       'objects',
     )
     .pipe(Effect.mapError(failed));
-  if (!journals[0]?.present) {
+  if (journals[0]?.present !== true) {
     return yield* failed();
   }
   return yield* Console.log(

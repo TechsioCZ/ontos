@@ -72,7 +72,7 @@ const verifyRouteEnrollmentRecords = Effect.fn('SymmySchema.verifyRouteEnrollmen
           and dep.refobjid = 'symmy_integration.job_route_change_tokens'::regclass) as change_token_default
   `;
   if (
-    !records?.primary_key ||
+    records?.primary_key !== true ||
     !records.route_index ||
     !records.change_token_sequence ||
     !records.change_token_sequence_private ||
@@ -210,7 +210,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
       has_schema_privilege('ontos_runtime', 'symmy_integration', 'USAGE') as schema_usage
   `;
   if (
-    !runtime?.journal_exists ||
+    runtime?.journal_exists !== true ||
     !runtime.route_gate_trigger_enabled ||
     !runtime.route_change_token_trigger_enabled ||
     !runtime.record_guard_trigger_enabled ||

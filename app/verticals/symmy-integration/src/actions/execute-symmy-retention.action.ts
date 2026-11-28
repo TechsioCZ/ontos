@@ -17,6 +17,7 @@ import { symmyJobPrivacyExecutionService } from '../services/symmy-job-privacy-e
 import { SymmyJobPrivacyExecutionError } from '../services/symmy-job-privacy-execution-error.ts';
 import { SymmyJobRetentionError } from '../services/symmy-job-retention-error.ts';
 
+const domainEvents = {};
 const moduleKey = 'integration.symmy';
 const servicesForScope = Effect.fn('ExecuteSymmyRetentionAction.servicesForScope')(function* services(
   transaction: ScopedTransactionExecutor,
@@ -54,7 +55,7 @@ const retentionFailureCode = (
 };
 const handleExecuteSymmyRetention = Effect.fn('SymmyJobRetentionAction.handle')(function* handle(
   payload: ExecuteSymmyRetentionPayload,
-  context: ActionHandlerContext<Record<never, never>, Services>,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
   const result = yield* context.services.execute(payload.handoff, context.actionInvocationId).pipe(
     Effect.mapError((cause) =>
@@ -106,7 +107,7 @@ export const executeSymmyRetentionAction = defineAction(
     actionKey: 'integration.symmy.execute-symmy-retention',
     auditProfile: 'sensitive',
     domainErrorSchema: ExecuteSymmyRetentionRejected,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

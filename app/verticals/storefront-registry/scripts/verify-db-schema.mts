@@ -122,7 +122,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
     where ns.nspname='storefront_registry' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
   and not exists(select 1 from pg_catalog.pg_roles where rolname='ontos_runtime' and (rolsuper or rolbypassrls))
 ) as valid`);
-  if (!gateway?.valid) {
+  if (gateway?.valid !== true) {
     return yield* new StorefrontRegistrySchemaVerificationError({
       reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
     });

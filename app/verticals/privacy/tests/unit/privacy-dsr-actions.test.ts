@@ -389,7 +389,7 @@ describe('DSR authority-bound Actions', () => {
       expect(recorded).toBe(true);
       expect(result.outcome).toBe('SUCCESSFUL_DELIVERY');
       expect(result.providerReference).toBe(deliveryRequest.deliveryClaimRef);
-      expect(collector.snapshot().auditEvidence.recordId).toBe(result.evidenceId);
+      expect(collector.snapshot().auditEvidence['recordId']).toBe(result.evidenceId);
     }),
   );
 
@@ -458,7 +458,7 @@ describe('DSR authority-bound Actions', () => {
       expect(recorded).toBe(true);
       expect(result.outcome).toBe('VERIFIED');
       expect(result.scope).toBe(verificationRequest.scope);
-      expect(collector.snapshot().auditEvidence.recordId).toBe(result.verificationRef);
+      expect(collector.snapshot().auditEvidence['recordId']).toBe(result.verificationRef);
     }),
   );
 
@@ -786,7 +786,7 @@ describe('DSR authority-bound Actions', () => {
       expect(recorded).toBe(authoritativeOwnerTask);
       expect(result.status).toBe('SUCCEEDED');
       expect(Option.getOrThrow(result.outcomeRef)).toBe('owner-receipt:1');
-      expect(collector.snapshot().auditEvidence.recordId).toBe(result.taskRef);
+      expect(collector.snapshot().auditEvidence['recordId']).toBe(result.taskRef);
     }),
   );
 

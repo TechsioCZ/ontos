@@ -9,7 +9,7 @@ import { NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect, Layer, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Effect, Layer, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
 import { expect, it } from 'effect-rstest';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -174,7 +174,7 @@ it.effect(
         }),
         { concurrency: 1 },
       );
-      const [first] = fixtures;
+      const first = EffectArray.getUnsafe(fixtures, 0);
       const idempotencyKey = 'exact-retained-price-list';
       const admit = (caller = companyScope, key = idempotencyKey) =>
         runtime.transaction((transaction) =>

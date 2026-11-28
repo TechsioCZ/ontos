@@ -56,7 +56,7 @@ const originalAttempt: SymmyEffectAdapterInput = {
 it.effect('allows the exact original key to finish an interrupted pin or an open Core invocation', () =>
   Effect.gen(function* resumeOriginalFixtureEffect() {
     const { adapters } = yield* SymmyPolicyFixtureAdapters;
-    const [assortment] = adapters;
+    const assortment = Option.getOrThrow(Option.fromUndefinedOr(adapters[0]));
     expect(assortment.operation).toEqual(symmyAssortmentRuleOperation);
     expect(yield* assortment.recover(originalAttempt)).toEqual({ status: 'retry_original_key' });
     expect(yield* assortment.recover({ ...originalAttempt, originalRequestHash: requestHash })).toEqual({
@@ -67,7 +67,7 @@ it.effect('allows the exact original key to finish an interrupted pin or an open
       ['running', 'retry_original_key'],
       ['indeterminate', 'unavailable'],
       ['rejected', 'unavailable'],
-    ]) {
+    ] as const) {
       const outcome = yield* assortment.recover({
         ...originalAttempt,
         originalAuthContextRef: 'fixture-owner-attempt',
