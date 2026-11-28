@@ -44,9 +44,9 @@ export class SymmyJobNotification extends Context.Service<SymmyJobNotification, 
   '@app/symmy-integration/services/symmy-job-notification.service/SymmyJobNotification',
 ) {}
 
-const digest = Effect.fn('SymmyJobNotification.digest')(function* hash(content: string, timeoutMs: number) {
+const digest = Effect.fn('SymmyJobNotification.digest')(function* hash(content: string) {
   const host = yield* WebCrypto.WebCrypto;
-  return yield* sha256Bytes(host, new TextEncoder().encode(content), Duration.millis(timeoutMs)).pipe(
+  return yield* sha256Bytes(host, new TextEncoder().encode(content), '5 seconds').pipe(
     Effect.map(Hex.encode),
     Effect.catchTag('PlatformError', () => Effect.fail(failure('notification_configuration_unavailable'))),
   );
@@ -83,12 +83,14 @@ export const makeSymmyJobNotificationService = (
     ).pipe(Effect.catchTag('SchemaError', () => Effect.fail(failure('notification_configuration_unavailable'))));
     const crypto = yield* SecureRandom.SecureRandom;
     const claimToken = yield* crypto.uuidV4();
-    const { destinationDigest, payloadDigest } = yield* Effect.all(
+    // A claim consumes an attempt. Finish every local hash before claiming, independent of the HTTP deadline.
+    const { destinationDigest, idempotencyKey, payloadDigest } = yield* Effect.all(
       {
-        destinationDigest: digest(policy.recipientUrl.href, policy.timeoutMs),
-        payloadDigest: digest(body, policy.timeoutMs),
+        destinationDigest: digest(policy.recipientUrl.href),
+        idempotencyKey: digest(`${input.tenantId}:${input.notification.job.id}:${policy.policyId}:${policy.revision}`),
+        payloadDigest: digest(body),
       },
-      { concurrency: 2 },
+      { concurrency: 3 },
     );
     const pinnedPolicy = {
       initialBackoffMs: policy.initialBackoffMs,
@@ -121,10 +123,6 @@ export const makeSymmyJobNotificationService = (
     if (claim.mode !== 'CLAIMED') {
       return claim.wakeAtMs === undefined ? yield* failure('notification_retry') : { wakeAtMs: claim.wakeAtMs };
     }
-    const idempotencyKey = yield* digest(
-      `${input.tenantId}:${input.notification.job.id}:${policy.policyId}:${policy.revision}`,
-      policy.timeoutMs,
-    );
     const request = HttpClientRequest.post(policy.recipientUrl.href).pipe(
       HttpClientRequest.setHeader('authorization', `Bearer ${Redacted.value(policy.authorization)}`),
       HttpClientRequest.setHeader('idempotency-key', `symmy-notification:${idempotencyKey}`),

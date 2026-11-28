@@ -293,3 +293,54 @@ it.effect('returns the configuration outage before claiming or sending a notific
     Effect.provide(NodeCrypto.layer),
   ),
 );
+
+it.effect('preserves the only delivery attempt when the idempotency digest alone stalls', () => {
+  const started = Promise.withResolvers<undefined>();
+  const keyMaterial = `${tenantId}:${jobId}:${policy.policyId}:${policy.revision}`;
+  const host = webCryptoDigestFixture((algorithm, data) => {
+    if (new TextDecoder().decode(data) === keyMaterial) {
+      started.resolve(undefined);
+      return Promise.withResolvers<ArrayBuffer>().promise;
+    }
+    return globalThis.crypto.subtle.digest(algorithm, data);
+  });
+  const keys: (string | null)[] = [];
+  let claims = 0;
+  let settlements = 0;
+  const deliver = makeSymmyJobNotificationService([{ ...policy, maxAttempts: 1 }]).deliver(input);
+  return Effect.gen(function* verifyAttemptSurvivesLocalOutage() {
+    const stalled = yield* Effect.forkChild(deliver.pipe(Effect.provide(WebCrypto.layer(host)), Effect.flip));
+    yield* Effect.promise(() => started.promise);
+    yield* TestClock.adjust(Duration.seconds(5));
+    expect((yield* Fiber.join(stalled)).code).toBe('notification_configuration_unavailable');
+    expect([claims, keys.length, settlements]).toEqual([0, 0, 0]);
+    expect(yield* deliver).toBe('delivered');
+    expect(keys).toEqual(['symmy-notification:a4f76d6ec407493a4738abf5a3c078e5230fd88c429215de823961e782a7c579']);
+    expect([claims, settlements]).toEqual([1, 1]);
+  }).pipe(
+    Effect.provideService(SymmyJobNotificationStore, {
+      claim: () =>
+        Effect.sync(() => {
+          claims += 1;
+          return { attempt: claims, mode: 'CLAIMED', version: 1 };
+        }),
+      settle: () =>
+        Effect.sync(() => {
+          settlements += 1;
+          return { applied: true };
+        }),
+    }),
+    Effect.provide(
+      FetchHttpClient.layer.pipe(
+        Layer.provide(
+          Layer.succeed(FetchHttpClient.Fetch, async (resource, init) => {
+            keys.push(new Request(resource, init).headers.get('idempotency-key'));
+            return new Response(null, { status: 204 });
+          }),
+        ),
+      ),
+    ),
+    Effect.provideService(FetchHttpClient.RequestInit, { redirect: 'manual' }),
+    Effect.provide(NodeCrypto.layer),
+  );
+});
