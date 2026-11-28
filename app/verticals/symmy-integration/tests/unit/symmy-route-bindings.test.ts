@@ -179,8 +179,10 @@ const inventoryOf = (routeKey: SymmyEnrollmentRouteKey): SymmyRouteInventory => 
   return found.value;
 };
 const products = () => inventoryOf('productsBatch');
-const enrolledOf = (routeKey: SymmyEnrollmentRouteKey, entrypointKeys: readonly string[]) =>
-  inventoryOf(routeKey).operations.filter(({ entrypointKey }) => entrypointKeys.includes(entrypointKey));
+const enrolledOf = (routeKey: SymmyEnrollmentRouteKey, entrypointKeys: readonly string[]) => {
+  const enrolled = new Set(entrypointKeys);
+  return inventoryOf(routeKey).operations.filter(({ entrypointKey }) => enrolled.has(entrypointKey));
+};
 const enrolledProducts = () =>
   enrolledOf('productsBatch', [
     'commerce.catalog.create-product',
