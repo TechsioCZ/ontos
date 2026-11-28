@@ -25,6 +25,7 @@ const marketApp = 'commerce-market-catalog';
 const symmyApp = 'symmy-integration';
 const workerKey = 'integration.symmy.execute-symmy-job';
 const importWorkload = 'commerce.catalog.symmy-product-import';
+const evidenceReadWorkload = 'commerce.catalog.symmy-product-read';
 const sourceIssuer = 'INTERNAL_PRIVACY_DISPATCH_ISSUER';
 const sourceNamespace = 'INTERNAL_PRIVACY_DISPATCH_PRODUCTS';
 export const privateIntentMarker = 'INTERNAL_PRIVACY_DISPATCH_PRIVATE_INTENT';
@@ -161,6 +162,8 @@ export const makePrivacyDispatchNativeFixture = Effect.fn('PrivacyDispatchNative
     [integration.principalId, importWorkload],
     [system.principalId, workerKey],
     [system.principalId, importWorkload],
+    [system.principalId, evidenceReadWorkload],
+    [integration.principalId, evidenceReadWorkload],
   ]) {
     yield* admin`insert into core.access_workload_bindings(binding_id,incarnation,tenant_id,principal_id,workload_key,status)
       values(${randomUUID()},${randomUUID()},${tenantId},${principalId},${workload},'active')`;

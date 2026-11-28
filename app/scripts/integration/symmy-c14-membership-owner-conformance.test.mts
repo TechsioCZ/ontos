@@ -423,7 +423,7 @@ it.live(
           seedSourceProcessingNativeFixture({
             connections: isolated.connections,
             contexts: [
-              customerIntakeContext(integration.principalId, fixture.flatSource, null),
+              ...fixture.customerPrivacyContexts,
               {
                 ...customerIntakeContext(integration.principalId, fixture.flatSource, null),
                 authMethod: 'system',

@@ -333,12 +333,20 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     item: CustomerProfileSourceItem,
   ) {
     yield* requireItemScope(item);
-    // Ask Privacy before resolving further personal data at Party. After a customer-only grant end,
+    // A Counterparty might be an organization: the personal fallback must first establish a person,
+    // or an unrelated denied personal use would misclassify an unavailable business decision.
+    if (item.profile.subject.kind === 'COUNTERPARTY') {
+      yield* admitItem(item);
+    }
+    // For a known Retail person, ask Privacy before resolving further personal data at Party. After a customer-only grant end,
     // its definitive REFUSED is not a transient failure to obtain the dependent Party projection.
     yield* privacyDecision(item.source, item, SOURCE_READ_ROUTINE_KEY).pipe(
       Effect.mapError(customerProfileSourcePrivacyFailure),
     );
-    return yield* admitItem(item);
+    if (item.profile.subject.kind === 'RETAIL') {
+      yield* admitItem(item);
+    }
+    return yield* Effect.void;
   });
   const checkOriginalRecovery = Effect.fn('CustomerProfileSourceRead.checkOriginalRecovery')(
     function* checkOriginalRecovery(

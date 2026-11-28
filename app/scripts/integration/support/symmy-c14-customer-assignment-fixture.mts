@@ -417,36 +417,37 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
         'Explicit internal fixture authorizes named source Party creation, evidence read, and Retail profile creation separately',
       tenantId,
     };
+    const customerPrivacyContexts: Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'] = [
+      ...intakeContexts,
+      {
+        authMethod: 'api_key',
+        principalId: integration.principalId,
+        request: { consumerModuleId: partyModuleId, operation: 'EVIDENCE_READ', source: flatSource, target: null },
+      },
+      ...(['CREATE', 'EVIDENCE_READ'] as const).map(
+        (operation) =>
+          ({
+            authMethod: 'system',
+            principalId: systemId,
+            request: { consumerModuleId: partyModuleId, operation, source: flatSource, target: null },
+          }) satisfies Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'][number],
+      ),
+      {
+        authMethod: 'system',
+        principalId: systemId,
+        request: {
+          consumerModuleId: commerceModuleId,
+          operation: 'PROFILE_CREATE',
+          partySourceReference: { occurrenceId, recordId, source: sourceIdentity },
+          source: flatSource,
+          target: null,
+        },
+        targetAdmission: 'CURRENT_SOURCE_PERSON',
+      },
+    ];
     const standingPrivacy = yield* seedSourceProcessingNativeFixture({
       ...privacyGovernance,
-      contexts: [
-        ...intakeContexts,
-        {
-          authMethod: 'api_key',
-          principalId: integration.principalId,
-          request: { consumerModuleId: partyModuleId, operation: 'EVIDENCE_READ', source: flatSource, target: null },
-        },
-        ...(['CREATE', 'EVIDENCE_READ'] as const).map(
-          (operation) =>
-            ({
-              authMethod: 'system',
-              principalId: systemId,
-              request: { consumerModuleId: partyModuleId, operation, source: flatSource, target: null },
-            }) satisfies Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'][number],
-        ),
-        {
-          authMethod: 'system',
-          principalId: systemId,
-          request: {
-            consumerModuleId: commerceModuleId,
-            operation: 'PROFILE_CREATE',
-            partySourceReference: { occurrenceId, recordId, source: sourceIdentity },
-            source: flatSource,
-            target: null,
-          },
-          targetAdmission: 'CURRENT_SOURCE_PERSON',
-        },
-      ],
+      contexts: customerPrivacyContexts,
     });
     expect(standingPrivacy.plans).toEqual([]);
     expect(standingPrivacy.subjectRefs).toEqual([]);
@@ -731,6 +732,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       admin,
       completed,
       contracts,
+      customerPrivacyContexts,
       environment,
       flatSource,
       governancePrincipalId,
