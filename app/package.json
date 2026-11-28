@@ -116,6 +116,7 @@
     "authorization:catalog:report": "node ./scripts/authorization-catalog-report.mts",
     "authorization:inventory:check": "node ./scripts/check-module-entrypoint-boundaries.mts && node ./scripts/authorization-catalog-report.mts --quiet && node ./scripts/authorization-catalog-artifact.mts --check",
     "quality:audit": "node ./scripts/quality-audit.mts",
+    "quality:lint-policy": "node ./tools/oxlint/effective-policy.mjs",
     "quality:audit:gate": "node ./scripts/quality-audit-gate.mts",
     "quality:check": "pnpm quality:audit && pnpm quality:audit:gate && pnpm lint:suppressions",
     "quality:audit:test": "rstest --project scripts scripts/tests/quality-audit.test.mts scripts/tests/quality-audit-model.test.mts scripts/tests/quality-audit-runtime-model.test.mts scripts/tests/quality-audit-gate.test.mts scripts/tests/quality-audit-native-resolver.test.mts scripts/tests/quality-cli-lifecycle.test.mts scripts/tests/quality-audit-count-domain.test.mts scripts/tests/lint-suppression-ratchet.test.mts",
