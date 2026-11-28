@@ -1,3 +1,4 @@
+import { findPostgresFailure } from '@app/core-runtime';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { PartyContactPointRefSchema } from '@app/party-registry/resources/party-contact-point';
@@ -16,6 +17,7 @@ import { HttpBody, HttpClient } from 'effect/http';
 
 import {
   customerFixtureServices,
+  customerIntakeCounts,
   makeSymmyC14CustomerFixture,
   observeCustomerFixtureUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
@@ -101,6 +103,12 @@ const governContacts = Effect.fn('SymmyC14ContactLifecycle.govern')(function* go
     dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
     governancePrincipalId: fixture.governancePrincipalId,
     grants: [
+      {
+        allowTargetless: true,
+        consumerModuleId: 'integration.symmy',
+        operation: 'CUSTOMER_SOURCE_INTAKE',
+        targetKinds: ['PARTY_CONTACT_POINT'],
+      },
       { allowTargetless: true, consumerModuleId: partyModule, operation: 'CREATE', targetKinds: ['PARTY'] },
       { allowTargetless: true, consumerModuleId: partyModule, operation: 'EVIDENCE_READ', targetKinds: ['PARTY'] },
       ...(['ADD_CONTACT_POINT', 'UPDATE_CONTACT_POINT', 'END_CONTACT_POINT'] as const).map(
@@ -151,7 +159,7 @@ const enrollCarrier = Effect.fn('SymmyC14ContactLifecycle.carrier')(function* en
         source: recordSource(fixture, fixture.recordId),
       },
       {
-        effects: operations.slice(2).map((ownerOperation, index) => ({
+        effects: operations.slice(1).map((ownerOperation, index) => ({
           effectKey: `contact-operation-${index}`,
           operation: ownerOperation,
         })),
@@ -223,18 +231,19 @@ const enrollCarrier = Effect.fn('SymmyC14ContactLifecycle.carrier')(function* en
     groupRef.resourceId,
   );
   const client = yield* HttpClient.HttpClient;
+  const submitResponse = (key: string, plan: Plan) =>
+    Effect.gen(function* sendPlan() {
+      return yield* client.post(`${fixture.shell.baseUrl}/api/symmy/v1/customer-groups/${selector}/customers/batch`, {
+        body: yield* HttpBody.json({
+          contractVersion: 'INTERNAL_C14',
+          plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan),
+        }),
+        headers: { 'idempotency-key': key, 'x-api-key': Redacted.value(fixture.providerKey.secret) },
+      });
+    });
   const submit = (key: string, plan: Plan) =>
     Effect.gen(function* submitPlan() {
-      const response = yield* client.post(
-        `${fixture.shell.baseUrl}/api/symmy/v1/customer-groups/${selector}/customers/batch`,
-        {
-          body: yield* HttpBody.json({
-            contractVersion: 'INTERNAL_C14',
-            plan: yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(plan),
-          }),
-          headers: { 'idempotency-key': key, 'x-api-key': Redacted.value(fixture.providerKey.secret) },
-        },
-      );
+      const response = yield* submitResponse(key, plan);
       if (response.status !== 202) {
         return yield* unavailable(`The internal contact carrier returned ${response.status}: ${yield* response.text}`);
       }
@@ -249,7 +258,7 @@ const enrollCarrier = Effect.fn('SymmyC14ContactLifecycle.carrier')(function* en
         ),
       );
     });
-  return { environment, submit };
+  return { environment, submit, submitResponse };
 });
 
 /** Fresh observations, same admitted source records: UPDATE and END must not replay the original ADD occurrence. */
@@ -340,16 +349,123 @@ const subjects = (fixture: CustomerFixture) =>
     count(*) filter(where subject_kind='SOURCE_ASSERTED')::integer as source_asserted
     from privacy.privacy_subjects where tenant_id=${fixture.tenantId} and legal_entity_id=${fixture.legalEntityId}`;
 
+const contactCustomer = (fixture: CustomerFixture, foreign: boolean) => ({
+  contacts: [foreign ? otherContact : contact],
+  customerId: foreign ? otherRecord : fixture.recordId,
+  firstName: foreign ? 'Other' : 'Internal',
+  kind: 'PERSON' as const,
+  lastName: 'Customer',
+});
+
+/** Two deterministic database faults in this disposable clone. Each hits a different real transaction. */
+const proveRefusedPreparations = Effect.fn('SymmyC14ContactLifecycle.refusedPreparations')(function* prove(
+  fixture: CustomerFixture,
+  carrier: Effect.Success<ReturnType<typeof enrollCarrier>>,
+) {
+  const { admin, legalEntityId, tenantId } = fixture;
+  const body = customersBody(contactCustomer(fixture, false), contactCustomer(fixture, true));
+  const candidates = admin`select count(*)::int as count from privacy.source_processing_admissions where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and role='CHILD'`;
+  const effective = admin`select a.source_identity_key from privacy.source_processing_admissions a
+    where a.tenant_id=${tenantId} and a.legal_entity_id=${legalEntityId} and a.role='CHILD' and exists (
+      select 1 from core.action_invocations i join core.source_execution_fences f on f.tenant_id=i.tenant_id and f.admission_invocation_id=i.action_invocation_id
+      where i.tenant_id=a.tenant_id and i.legal_entity_id=a.legal_entity_id and i.principal_id=a.symmy_principal_id and i.action_invocation_id=a.symmy_invocation_id
+        and i.status='succeeded' and i.action_key='integration.symmy.admit-symmy-job' and i.committed_reply_json->>'kind'='result'
+        and i.committed_reply_json->'encoded'->>'sourcePreparationId'=a.symmy_preparation_id::text)`;
+  const before = yield* customerIntakeCounts(admin, tenantId);
+  // Each customer group is a separate governed Privacy Action. The first commits; the second cannot insert.
+  yield* Effect.acquireUseRelease(
+    admin`create unique index c14_fail_second_child_group on privacy.source_processing_admissions(symmy_preparation_id) where symmy_preparation_id is not null`,
+    () =>
+      fixture
+        .submitResponse('C14_REFUSE_SECOND_GROUP', body)
+        .pipe(Effect.tap((response) => Effect.sync(() => expect(response.status).not.toBe(202)))),
+    () => admin`drop index privacy.c14_fail_second_child_group`.pipe(Effect.orDie),
+  );
+  expect(yield* candidates).toEqual([{ count: 1 }]);
+  // Even a writer with ledger access cannot turn a pending candidate into an unconditional CHILD.
+  for (const mutation of [
+    admin`update privacy.source_processing_admissions set symmy_invocation_id=null,symmy_preparation_id=null,symmy_principal_id=null
+      where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and role='CHILD'`,
+    admin`update privacy.source_processing_admissions set symmy_principal_id=null
+      where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and role='CHILD'`,
+  ]) {
+    const failure = yield* Effect.flip(mutation);
+    expect(Option.getOrUndefined(findPostgresFailure(failure, ({ code }) => code === '23514'))).toEqual({
+      code: '23514',
+      constraint: 'privacy_source_admissions_candidate_ck',
+    });
+  }
+  expect(yield* effective).toEqual([]);
+  expect(yield* customerIntakeCounts(admin, tenantId)).toEqual(before);
+  // This signed internal plan asserts the SAME contact under the other customer. Privacy prepares it; failing
+  // the effects insert rolls back even the new job and fence. A fresh public ADD must bind the corrected root.
+  const observedAt = yield* DateTime.now;
+  const [root] = symmyC14CustomerPlanData({
+    legalEntityId,
+    observedAt,
+    occurrenceId: yield* uuid,
+    recordId: otherRecord,
+    sourceRouteId: fixture.sourceRouteId,
+    tenantId,
+  }).items;
+  assert.isDefined(root);
+  const [create] = root.effects;
+  assert.isDefined(create);
+  const fromPartyEffect = { effectKey: create.effectKey, itemKey: root.itemKey };
+  const occurrenceId = yield* uuid;
+  const recordId = contactRecordId(fixture.recordId, contact);
+  const wrongPlan = yield* Schema.decodeUnknownEffect(SymmyInternalExecutionPlanSchema)({
+    items: [
+      { ...root, effects: [create] },
+      {
+        effects: [
+          {
+            dependsOn: [fromPartyEffect],
+            effectKey: 'contact-add',
+            intent: {
+              _tag: 'AddPartyContactPointFromParty',
+              fromPartyEffect,
+              payload: {
+                contactPoint: contact,
+                privacyClassification: 'PERSONAL',
+                provenance,
+                sourceReference: { occurrenceId, recordId, source: fixture.sourceIdentity },
+                validFrom: DateTime.formatIso(observedAt),
+              },
+            },
+            operation: operation('party.registry.add-contact-point'),
+          },
+        ],
+        itemKey: 'contact',
+        source: recordSource(fixture, recordId),
+        sourceOccurrenceId: occurrenceId,
+      },
+    ],
+  });
+  yield* Effect.acquireUseRelease(
+    admin`alter table symmy_integration.job_effects add constraint c14_refuse_prepared_job check (state <> 'planned') not valid`,
+    () =>
+      carrier
+        .submitResponse('C14_REFUSE_PREPARED_JOB', wrongPlan)
+        .pipe(Effect.tap((response) => Effect.sync(() => expect(response.status).not.toBe(202)))),
+    () => admin`alter table symmy_integration.job_effects drop constraint c14_refuse_prepared_job`.pipe(Effect.orDie),
+  );
+  expect(yield* candidates).toEqual([{ count: 2 }]);
+  const refusedWrongRoot =
+    yield* admin`select a.role from privacy.source_processing_admissions a join privacy.source_processing_admissions root
+    on root.tenant_id=a.tenant_id and root.legal_entity_id=a.legal_entity_id and root.privacy_subject_id=a.privacy_subject_id and root.role='SUBJECT'
+    where a.tenant_id=${tenantId} and a.legal_entity_id=${legalEntityId} and a.source_record->>'recordId'=${recordId}
+      and root.source_record->>'recordId'=${otherRecord} and not exists (select 1 from core.source_execution_fences f where f.tenant_id=a.tenant_id and f.admission_invocation_id=a.symmy_invocation_id)`;
+  expect(refusedWrongRoot).toEqual([{ role: 'CHILD' }]);
+  expect(yield* effective).toEqual([]);
+  expect(yield* customerIntakeCounts(admin, tenantId)).toEqual(before);
+  return wrongPlan;
+});
+
 const addContact = Effect.fn('SymmyC14ContactLifecycle.add')(function* add(fixture: CustomerFixture, foreign: boolean) {
   const accepted = yield* fixture.submitFor(
     foreign ? otherKey : addKey,
-    customersBody({
-      contacts: [foreign ? otherContact : contact],
-      customerId: foreign ? otherRecord : fixture.recordId,
-      firstName: foreign ? 'Other' : 'Internal',
-      kind: 'PERSON',
-      lastName: 'Customer',
-    }),
+    customersBody(contactCustomer(fixture, foreign)),
   );
   const rows = yield* settle(fixture, accepted.jobId, 3);
   expect(rows.every((row) => Option.isSome(row.owner_invocation_id))).toBe(true);
@@ -359,6 +475,51 @@ const addContact = Effect.fn('SymmyC14ContactLifecycle.add')(function* add(fixtu
   const receipt = yield* Schema.decodeUnknownEffect(addedReceiptSchema)(added.owner_receipt);
   expect(receipt.revision).toBe(1);
   return receipt;
+});
+
+/** This owner-local test trigger adds an unrequested relationship to the same preparation BEFORE the foreign job
+ * commits. It shares every attempt/receipt identifier with the genuine row, but not its source-to-subject assertion. */
+const addForeignWithExtraClaim = Effect.fn('SymmyC14ContactLifecycle.unselectedClaim')(function* extraClaim(
+  fixture: CustomerFixture,
+) {
+  const { admin, legalEntityId, tenantId } = fixture;
+  const foreign = yield* Effect.acquireUseRelease(
+    admin`create function privacy.c14_extra_child_claim() returns trigger language plpgsql as $$
+      begin
+        insert into privacy.source_processing_admissions
+          (tenant_id,legal_entity_id,authorization_id,first_admitted_at,last_admitted_at,last_action_invocation_id,
+           privacy_subject_id,role,source_identity_key,source_record,symmy_invocation_id,symmy_preparation_id,symmy_principal_id)
+        select new.tenant_id,new.legal_entity_id,new.authorization_id,new.first_admitted_at,new.last_admitted_at,new.last_action_invocation_id,
+          new.privacy_subject_id,'CHILD',a.source_identity_key,a.source_record,new.symmy_invocation_id,new.symmy_preparation_id,new.symmy_principal_id
+          from privacy.source_processing_admissions a where a.tenant_id=new.tenant_id and a.legal_entity_id=new.legal_entity_id
+          and a.role='CHILD' and a.privacy_subject_id<>new.privacy_subject_id and a.source_identity_key<>new.source_identity_key
+          limit 1;
+        return null;
+      end $$`,
+    () =>
+      Effect.acquireUseRelease(
+        admin`create trigger c14_extra_child_claim after insert on privacy.source_processing_admissions for each row
+        when (new.role='CHILD' and pg_trigger_depth()=0) execute function privacy.c14_extra_child_claim()`,
+        () => addContact(fixture, true),
+        () => admin`drop trigger c14_extra_child_claim on privacy.source_processing_admissions`.pipe(Effect.orDie),
+      ),
+    () => admin`drop function privacy.c14_extra_child_claim()`.pipe(Effect.orDie),
+  );
+  const rows =
+    yield* admin`select a.source_record->>'recordId' as record_id, jsonb_array_length(i.committed_reply_json->'encoded'->'sourceBindingCommitments') as selected
+    from privacy.source_processing_admissions a join core.action_invocations i on i.action_invocation_id=a.symmy_invocation_id and i.tenant_id=a.tenant_id
+    where a.tenant_id=${tenantId} and a.legal_entity_id=${legalEntityId} and a.role='CHILD' and a.symmy_preparation_id::text=i.committed_reply_json->'encoded'->>'sourcePreparationId'
+      and exists (select 1 from privacy.source_processing_admissions own where own.symmy_invocation_id=a.symmy_invocation_id and own.symmy_preparation_id=a.symmy_preparation_id
+        and own.last_action_invocation_id=a.last_action_invocation_id and own.privacy_subject_id=a.privacy_subject_id and own.source_record->>'recordId'=${contactRecordId(otherRecord, otherContact)})`;
+  expect(rows).toHaveLength(2);
+  expect(rows).toEqual(
+    expect.arrayContaining([
+      { record_id: contactRecordId(otherRecord, otherContact), selected: 1 },
+      { record_id: contactRecordId(fixture.recordId, contact), selected: 1 },
+    ]),
+  );
+  // The owner operations below must still resolve the first source to ITS customer, never this unselected claimant.
+  return foreign;
 });
 
 const assertNativeContact = Effect.fn('SymmyC14ContactLifecycle.nativeIdentity')(function* assertNative(
@@ -412,6 +573,7 @@ it.live(
           ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
         });
         yield* Effect.gen(function* proveLifecycle() {
+          const wrongRoot = yield* proveRefusedPreparations(fixture, carrier);
           const added = yield* addContact(fixture, false);
           expect(added.partyRef).toEqual(fixture.partyReceipt.partyRef);
           expect(yield* point(fixture, added.contactPointRef)).toMatchObject([
@@ -423,25 +585,34 @@ it.live(
               state: 'ACTIVE',
             },
           ]);
-          const foreign = yield* addContact(fixture, true);
+          // The fresh ADD committed the corrected root; that same contact can no longer claim the other one.
+          const beforeRootChange = yield* customerIntakeCounts(fixture.admin, fixture.tenantId);
+          const rebind = yield* carrier.submitResponse('C14_REFUSE_COMMITTED_ROOT_CHANGE', wrongRoot);
+          expect(rebind.status).not.toBe(202);
+          expect(yield* customerIntakeCounts(fixture.admin, fixture.tenantId)).toEqual(beforeRootChange);
+          const foreign = yield* addForeignWithExtraClaim(fixture);
           expect(foreign.partyRef.resourceId).not.toBe(added.partyRef.resourceId);
+          // Cancelling future execution of the original ADD does not revoke its historical choice of subject.
+          const cancelled =
+            yield* fixture.admin`update core.source_execution_fences f set state='cancelled' from privacy.source_processing_admissions a
+            join privacy.source_processing_admissions root on root.tenant_id=a.tenant_id and root.legal_entity_id=a.legal_entity_id
+                and root.privacy_subject_id=a.privacy_subject_id and root.role='SUBJECT'
+            where f.tenant_id=${fixture.tenantId} and f.tenant_id=a.tenant_id and a.legal_entity_id=${fixture.legalEntityId}
+              and f.admission_invocation_id=a.symmy_invocation_id and a.source_record->>'recordId'=${contactRecordId(fixture.recordId, contact)}
+              and root.source_record->>'recordId'=${fixture.recordId} returning f.state`;
+          expect(cancelled).toEqual([{ state: 'cancelled' }]);
           const foreignBefore = yield* point(fixture, foreign.contactPointRef);
           const ownBefore = yield* point(fixture, added.contactPointRef);
           // Exact enrolled source and native target, but the target's Party is not the Party of this CHILD source.
+          const beforeForeign = yield* customerIntakeCounts(fixture.admin, fixture.tenantId);
           for (const kind of ['UPDATE', 'END'] as const) {
-            const denied = yield* carrier.submit(
+            const denied = yield* carrier.submitResponse(
               `INTERNAL_C14_CONTACT_FOREIGN_${kind}`,
               yield* lifecyclePlan(fixture, foreign.contactPointRef, kind),
             );
-            const deniedRows = yield* settle(fixture, denied.jobId, 2);
-            const customerRoot = deniedRows.find(({ effect_key }) => effect_key === 'party-create');
-            assert.isDefined(customerRoot);
-            expect(Option.isSome(customerRoot.owner_invocation_id)).toBe(true);
-            const deniedContact = deniedRows.find(({ effect_key }) => effect_key === contactLifecycleEffectKey);
-            assert.isDefined(deniedContact);
-            expect(deniedContact.outcome_status).toBe('denied');
-            expect(Option.isNone(deniedContact.owner_invocation_id)).toBe(true);
-            expect(deniedContact.owner_receipt).toBeNull();
+            // Privacy cannot attest the required owner correlation.
+            expect(denied.status).toBe(503);
+            expect(yield* customerIntakeCounts(fixture.admin, fixture.tenantId)).toEqual(beforeForeign);
             expect(yield* point(fixture, foreign.contactPointRef)).toEqual(foreignBefore);
             expect(yield* point(fixture, added.contactPointRef)).toEqual(ownBefore);
           }
@@ -487,9 +658,14 @@ it.live(
           ]);
           expect(yield* point(fixture, foreign.contactPointRef)).toEqual(foreignBefore);
           expect(yield* subjects(fixture)).toEqual([{ data_subjects: 0, source_asserted: 2 }]);
-          const bindings = yield* fixture.admin`select child.role,
+          const bindings = yield* fixture.admin`select distinct child.role,
               child.source_record->>'recordId' as record_id,subject.subject_kind
             from privacy.source_processing_admissions child
+            join core.action_invocations i on i.tenant_id=child.tenant_id and i.action_invocation_id=child.symmy_invocation_id
+              and i.legal_entity_id=child.legal_entity_id and i.principal_id=child.symmy_principal_id and i.status='succeeded'
+              and i.action_key='integration.symmy.admit-symmy-job' and i.committed_reply_json->>'kind'='result'
+              and i.committed_reply_json->'encoded'->>'sourcePreparationId'=child.symmy_preparation_id::text
+            join core.source_execution_fences f on f.tenant_id=i.tenant_id and f.admission_invocation_id=i.action_invocation_id
             join privacy.source_processing_admissions parent
               on parent.tenant_id=child.tenant_id and parent.legal_entity_id=child.legal_entity_id
               and parent.privacy_subject_id=child.privacy_subject_id and parent.role='SUBJECT'

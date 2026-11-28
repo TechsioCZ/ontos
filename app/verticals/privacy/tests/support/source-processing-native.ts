@@ -227,8 +227,7 @@ const subjectForSource = Effect.fn('PrivacyNativeFixture.subjectForSource')(func
   return subjectId;
 });
 /**
- * An explicit fixture admits each plan source as its own subject; a
- * DATA policy for a committed profile admits its plan sources as records of that one person.
+ * Seed SUBJECT roots only. A DATA policy for a committed profile uses its own source root.
  */
 const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions')(function* seedRouteAdmissions(input: {
   readonly authorizationId: string;
@@ -247,7 +246,7 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
     readonly request: typeof SourceProcessingEligibilityRequestSchema.Type;
     readonly subjectId: string;
   }[] = [];
-  const admitted = new Map<string, { record: unknown; role: string; subjectId: string }>();
+  const admitted = new Map<string, { record: unknown; subjectId: string }>();
   // A real intake admits customers and their child records through the Privacy Action instead.
   const ownSources =
     seed.admitSources === true || person !== undefined
@@ -260,14 +259,15 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
     const { occurrenceId: _occurrenceId, ...locator } = request.source;
     const key = privacySourceSubjectIdentityKey(locator);
     const prior = admitted.get(key);
-    const childOfPerson = person !== undefined && key !== person.personKey;
+    if (person !== undefined && key !== person.personKey) {
+      return yield* unavailable(undefined, 'A CHILD source requires a native Symmy admission');
+    }
     const subjectId =
       prior?.subjectId ??
       person?.personSubjectId ??
       (yield* subjectForSource(transaction, scope, locator, from, nextId, subjects));
     admitted.set(key, {
       record: yield* Schema.encodeEffect(PrivacySourceRecordIdentitySchema)(locator),
-      role: prior?.role ?? (childOfPerson ? 'CHILD' : 'SUBJECT'),
       subjectId,
     });
     planSubjects.push({ request, subjectId: person?.dataSubjectId ?? subjectId });
@@ -285,23 +285,24 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
             lastActionInvocationId: yield* nextId(),
             lastAdmittedAt: new Date(from),
             privacySubjectId: entry.subjectId,
-            role: entry.role,
+            role: 'SUBJECT',
             sourceIdentityKey: key,
             sourceRecord: entry.record,
           })
           .onConflictDoNothing();
         const [stored] = yield* transaction
-          .select({ role: sourceProcessingAdmissions.role, subjectId: sourceProcessingAdmissions.privacySubjectId })
+          .select({ subjectId: sourceProcessingAdmissions.privacySubjectId })
           .from(sourceProcessingAdmissions)
           .where(
             and(
               eq(sourceProcessingAdmissions.tenantId, scope.tenantId),
               eq(sourceProcessingAdmissions.legalEntityId, scope.legalEntityId),
               eq(sourceProcessingAdmissions.sourceIdentityKey, key),
+              eq(sourceProcessingAdmissions.role, 'SUBJECT'),
             ),
           )
           .limit(1);
-        if (stored?.subjectId !== entry.subjectId || stored.role !== entry.role) {
+        if (stored?.subjectId !== entry.subjectId) {
           return yield* unavailable();
         }
         return yield* Effect.void;

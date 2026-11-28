@@ -224,10 +224,7 @@ it.live('checks standing source-route authorization against the native Privacy l
             actionInvocationId: yield* nextId(),
             admittedAt: fixture.from,
             authorizationId: fixture.authorization.authorizationRef.resourceId,
-            sources: [
-              { role: 'SUBJECT', source: { ...fixture.route, recordId } },
-              { role: 'CHILD', source: { ...fixture.route, recordId: `contact:${recordId}` } },
-            ],
+            sources: [{ role: 'SUBJECT', source: { ...fixture.route, recordId } }],
             subjectId,
           });
         }
@@ -244,8 +241,6 @@ it.live('checks standing source-route authorization against the native Privacy l
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
     yield* intervention('OBJECTION', 'RESOLVED', exactScope);
     expect((yield* read()).outcome).toBe('ALLOWED');
-    const child = yield* read(fixture.requestFor('contact:client:one', 'occurrence:child'));
-    expect(child.outcome === 'ALLOWED' && child.evidence.evaluatedScope.subjectRef.resourceId).toBe(subjectOne);
     const second = yield* read(fixture.requestFor('client:two', 'occurrence:second-idempotency-key'));
     expect(second.outcome).toBe('ALLOWED');
     expect(second.outcome === 'ALLOWED' ? second.evidence.evaluatedScope.subjectRef.resourceId : '').toBe(subjectTwo);
@@ -264,7 +259,7 @@ it.live('checks standing source-route authorization against the native Privacy l
     yield* intervention('OBJECTION', 'ACTIVE');
     yield* intervention('RESTRICTION', 'ACTIVE');
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
-    const other = fixture.requestFor('contact:client:two', 'occurrence:carry-forward');
+    const other = fixture.requestFor('client:two', 'occurrence:carry-forward');
     expect((yield* read(other)).outcome).toBe('ALLOWED');
     yield* prepareOwner((transaction, scope) =>
       Effect.gen(function* revoke() {
