@@ -2528,7 +2528,10 @@ it('gives the one Core Media row its object store before the suites and keeps th
 
 it('formats and lints the run’s changed files through the pre-commit hook, and never silently nothing', () => {
   const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
-  expect(lint.strategy).toEqual({ 'fail-fast': true, matrix: { include: [{ row: 1, rows: 1 }] } });
+  expect(lint.strategy).toEqual({
+    'fail-fast': expression("github.event_name != 'pull_request' || needs.ci-plan.outputs.lintSweep != 'all'"),
+    matrix: { include: [{ row: 1, rows: 1 }] },
+  });
   const download = lint.steps.find(({ name }) => name === 'Download the exact changed-path list');
   expect(download?.with).toEqual({
     name: CHANGED_PATHS_ARTIFACT,
@@ -2674,8 +2677,11 @@ it('runs the compiler, generators and repository tooling on lint row 1 only, wit
   );
   expect(
     Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(readGateWorkflow('all')).jobs[FORMAT_AND_LINT_JOB].strategy,
-  ).toEqual({ 'fail-fast': true, matrix: { include: fullPlanMatrices('all').lint } });
-  // A failed row cancels its sibling, so the existing stop-after-lint job observes a failed matrix
+  ).toEqual({
+    'fail-fast': expression("github.event_name != 'pull_request' || needs.ci-plan.outputs.lintSweep != 'all'"),
+    matrix: { include: fullPlanMatrices('all').lint },
+  });
+  // A failed queue row cancels its sibling, so the existing stop-after-lint job observes a failed matrix
   // promptly. Workspace gates still needs that same aggregate format-and-lint verdict.
   expect(readCancelWorkflow().jobs['stop-red-queue-run-after-lint']?.needs).toEqual([FORMAT_AND_LINT_JOB]);
   expect(readTargetWorkflow().jobs['workspace-gates'].needs).toContain(FORMAT_AND_LINT_JOB);

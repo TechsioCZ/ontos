@@ -795,7 +795,8 @@ jobs:
     runs-on: *gate-image
     timeout-minutes: 30
     strategy:
-      fail-fast: true
+      # On a PR-wide toolchain change, surface both partitions in one run. Queue entries still fail fast.
+      fail-fast: ${{ github.event_name != 'pull_request' || needs.ci-plan.outputs.lintSweep != 'all' }}
       matrix:
         include: ${{ fromJSON(needs.ci-plan.outputs.lint) }}
     env:
@@ -900,12 +901,26 @@ jobs:
               exit 1
               ;;
           esac
-          # A sweep runs through the hook too: lefthook cuts the list into command lines of contiguous files, so no
-          # linter process holds every type program at once. One `pnpm lint` over every file did, beside the
-          # workspace typecheck, and lost its 16 GB runner.
-          # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
-            <"$files"
+          # A failed lefthook chunk stops its own process. For a PR-wide sweep, give each bounded batch the
+          # original NUL-delimited file names and collect failures. Do not rerun the full build and integration
+          # matrix just to discover the next lint error. The final status is red if any batch failed.
+          mise exec --cd app -- bash -o pipefail -c '
+            cd .. || exit 1
+            hook() { app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed; }
+            if [[ "$GITHUB_EVENT_NAME" != pull_request || "$LINT_SWEEP" != all ]]; then hook; exit $?; fi
+            status=0
+            total=0
+            batch=()
+            flush() { printf "%s\0" "${batch[@]}" | hook || status=1; batch=(); }
+            while IFS= read -r -d "" file; do
+              batch+=("$file")
+              total=$((total + 1))
+              if (( ${#batch[@]} == 1000 )); then flush; fi
+            done
+            if (( ${#batch[@]} )); then flush; fi
+            if (( total == 0 )); then exit 1; fi
+            exit "$status"
+          ' <"$files"
           # Preserve the five strict, project-scoped Effect diagnostic checks in addition to path-selected Oxlint.
           if [[ "$LINT_ROW" == 1 ]]; then
             mise exec --cd app -- pnpm lint:effect-diagnostics
