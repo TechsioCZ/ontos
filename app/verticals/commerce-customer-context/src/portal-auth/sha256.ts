@@ -1,4 +1,6 @@
-import { Context, Effect, Layer, PlatformError } from 'effect';
+import { sha256Bytes } from '@app/core-runtime/crypto/sha256';
+import { Context, Effect, Layer } from 'effect';
+import type { PlatformError } from 'effect';
 import { WebCrypto } from 'effect/crypto';
 
 /** Portal proof and replay storage require a bounded, typed outage, unlike Effect's infallible Digest service. */
@@ -9,43 +11,10 @@ export class CommerceAuthSha256 extends Context.Service<
   }
 >()('@app/commerce-customer-context/portal-auth/sha256/CommerceAuthSha256') {}
 
-export const commerceAuthDigestUnavailable = (cause: unknown) =>
-  PlatformError.systemError({ _tag: 'Unknown', cause, method: 'digest', module: 'WebCrypto' });
-
-const digestTimeout = Effect.timeoutOrElse({
-  duration: '5 seconds',
-  orElse: () => Effect.fail(commerceAuthDigestUnavailable({ reason: 'WEB_CRYPTO_DIGEST_TIMEOUT' })),
-});
-
-/**
- * The host digest arrives as an Effect; the live layer converts the WebCrypto Promise once, at the driver edge.
- * The port bounds every digest it is given, so the proof callers rely on does not depend on the injected host.
- */
-export const makeCommerceAuthSha256 = (
-  digest: (data: Uint8Array<ArrayBuffer>) => Effect.Effect<ArrayBuffer, PlatformError.PlatformError>,
-) =>
-  CommerceAuthSha256.of({
-    hash: (value) =>
-      digest(new TextEncoder().encode(value)).pipe(
-        digestTimeout,
-        Effect.map((bytes) => new Uint8Array(bytes)),
-      ),
-  });
+export const makeCommerceAuthSha256 = (crypto: Pick<typeof globalThis.crypto, 'subtle'>) =>
+  CommerceAuthSha256.of({ hash: (value) => sha256Bytes(crypto, new TextEncoder().encode(value), '5 seconds') });
 
 export const commerceAuthSha256Live = Layer.effect(
   CommerceAuthSha256,
-  WebCrypto.WebCrypto.use((crypto) =>
-    Effect.succeed(
-      makeCommerceAuthSha256((bytes) =>
-        Effect.try({
-          catch: commerceAuthDigestUnavailable,
-          // The lookup runs inside the bridge, so a missing subtle provider is a typed outage too.
-          try: () => crypto.subtle.digest.bind(crypto.subtle, 'SHA-256', bytes),
-        }).pipe(
-          Effect.flatMap((digest) => Effect.tryPromise({ catch: commerceAuthDigestUnavailable, try: digest })),
-          digestTimeout,
-        ),
-      ),
-    ),
-  ),
+  WebCrypto.WebCrypto.pipe(Effect.map(makeCommerceAuthSha256)),
 );

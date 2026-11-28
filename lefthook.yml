@@ -23,7 +23,7 @@ pre-push:
   jobs:
     - name: typecheck
       root: 'app/'
-      run: GOMAXPROCS=9 ULTRAMODERN_TYPECHECK_BUILDERS=1 ULTRAMODERN_TYPECHECK_CHECKERS=1 pnpm typecheck
+      run: ULTRAMODERN_TYPECHECK_BUILDERS=1 ULTRAMODERN_TYPECHECK_CHECKERS=1 pnpm typecheck
     - name: contract
       root: 'app/'
-      run: GOMAXPROCS=9 GOMEMLIMIT=12GiB pnpm contract:check
+      run: pnpm contract:check

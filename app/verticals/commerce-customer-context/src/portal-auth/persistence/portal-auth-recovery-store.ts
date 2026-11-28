@@ -63,7 +63,7 @@ const VerificationLedgerRecordSchema = Schema.Struct({
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
 const digestBytes = (digest: CommerceAuthSha256['Service'], value: string, operation: string) =>
-  digest.hash(value).pipe(Effect.mapError((cause) => unavailable(operation, cause)));
+  digest.hash(value).pipe(Effect.mapError((cause) => unavailableSafe(operation, cause)));
 
 const base64UrlOf = (bytes: Uint8Array): string =>
   btoa(String.fromCodePoint(...bytes))

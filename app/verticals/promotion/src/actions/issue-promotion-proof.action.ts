@@ -4,7 +4,6 @@
 import type { ActionCollectorError, ActionHandlerContext } from '@app/core-runtime';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
-import type { Digest } from 'effect/crypto';
 import { SecureRandom } from 'effect/crypto';
 import {
   PromotionEvaluationRequestSchema,
@@ -69,7 +68,7 @@ export const handleIssuePromotionProof = Effect.fn('IssuePromotionProofAction.ha
 ): Effect.fn.Return<
   typeof PromotionProofHandleSchema.Type,
   typeof ActionErrorSchema.Type | ActionCollectorError,
-  Digest.Digest | SecureRandom.SecureRandom | PromotionExternalFactSource
+  SecureRandom.SecureRandom | PromotionExternalFactSource
 > {
   yield* context.services.persistence.lockForWrite;
   const crypto = yield* SecureRandom.SecureRandom;

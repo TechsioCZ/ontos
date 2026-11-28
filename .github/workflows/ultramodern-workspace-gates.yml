@@ -365,7 +365,7 @@ jobs:
           retention-days: 30
 
   # The default-branch producer of the caches the gates restore, where every pull request and merge
-  # group can read them: the pnpm store, the installed node_modules, the TS-Go typecheck build,
+  # group can read them: the pnpm store, the installed node_modules, the tsrs typecheck build,
   # the Playwright Chromium build, and the apt packages of Chromium's
   # system libraries. An Actions cache is readable from the current branch or the default branch only, so
   # a merge group run (gh-readonly-queue/main/*) can read nothing a pull request saved, and the gate jobs
@@ -404,7 +404,7 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm typecheck
 
-      - name: Save the TS-Go typecheck build
+      - name: Save the tsrs typecheck build
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: app/node_modules/.cache/tsgo
@@ -833,7 +833,6 @@ jobs:
         working-directory: app
         env:
           # Leave room for the runner and Effect diagnostics while checking the complete workspace.
-          GOMEMLIMIT: 4GiB
           ULTRAMODERN_TYPECHECK_BUILDERS: '1'
         run: mise exec -- pnpm typecheck
 

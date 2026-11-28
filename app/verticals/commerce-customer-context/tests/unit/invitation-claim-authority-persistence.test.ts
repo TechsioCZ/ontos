@@ -1,12 +1,9 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
 import { ScopedRoutineInvocationError } from '@app/core-runtime';
 import type { ScopedRoutineDefinition, ScopedRoutineParameter } from '@app/core-runtime';
 import { Effect, Exit, Fiber, Option, Redacted, Schema } from 'effect';
 import { SecureRandom } from 'effect/crypto';
-import {
-  CommerceAuthSha256,
-  commerceAuthDigestUnavailable,
-  makeCommerceAuthSha256,
-} from '../../src/portal-auth/sha256.ts';
+import { CommerceAuthSha256, makeCommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 import { TestClock } from 'effect/testing';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -384,7 +381,9 @@ it.effect('maps wrong, expired, and rate-limited redemption outcomes to precise 
 
 it.effect('bounds invitation-proof hashing to five seconds before calling persistence', () =>
   Effect.gen(function* boundedInvitationHash() {
-    const stalledDigest = makeCommerceAuthSha256(() => Effect.never);
+    const stalledDigest = makeCommerceAuthSha256(
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    );
     const routineCalls: string[] = [];
     const redemption = counterpartyInvitationClaimRedemptionForTransaction(
       invokerWith((key) => {
@@ -412,7 +411,7 @@ it.effect('reports an unavailable host digest before consuming the invitation', 
         routineCalls.push(key);
         return [];
       }),
-      makeCommerceAuthSha256(() => Effect.fail(commerceAuthDigestUnavailable(new Error('Host digest unavailable')))),
+      makeCommerceAuthSha256(webCryptoDigestFixture(() => Promise.reject(new Error('Host digest unavailable')))),
       trustedRedemptionScope,
     );
     expectUnavailable(yield* Effect.flip(redemption.redeem(redemptionInput)));
