@@ -14,7 +14,7 @@ import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Option, Redacted, Result, Schema, Stream } from 'effect';
 import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
@@ -748,7 +748,7 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
           { authContextRef: 'expired-delivery', executorPrincipalId: principalId, requestHash: digest('51') },
         ),
       ).pipe(Effect.result);
-      expect(late._tag).toBe('Failure');
+      expect(Result.isFailure(late)).toBe(true);
       expect(yield* claimMode(following)).toBe('execute');
 
       // Another profile is another lineage and never waits for this one.
