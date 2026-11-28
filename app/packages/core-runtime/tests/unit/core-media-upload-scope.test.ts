@@ -21,7 +21,7 @@ const source = Effect.fn('CoreMediaScopeTest.source')(function* source(relative:
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^[\t ]*\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const UPLOAD_SOURCE_PATHS = [

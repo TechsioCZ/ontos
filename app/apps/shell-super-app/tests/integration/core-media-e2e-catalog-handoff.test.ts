@@ -238,9 +238,8 @@ const moduleRouteOver = (world: MediaE2eWorld, edge: ShellEdge, relayed: Relayed
           onSome: Effect.succeed,
         });
         // `subject` keeps the requester's selected company; `tenant` would drop it (the issuer's rule).
-        const { legalEntityId, ...tenantOnly } = requester;
+        const { legalEntityId: _legalEntityId, ...tenantOnly } = requester;
         const relayedScope = request.legalEntityScope === 'subject' ? requester : tenantOnly;
-        void legalEntityId;
         const token = yield* issueAssertion(world, relayedScope, request.audience);
         const authorization: `Bearer ${string}` = `Bearer ${token}`;
         return {

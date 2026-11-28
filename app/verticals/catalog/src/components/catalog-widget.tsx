@@ -25,18 +25,15 @@ const CatalogWidgetContent = () => {
   );
 };
 
-export const CatalogWidget = (_props: Record<string, never>) => {
-  void _props;
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="catalog"
-      fallbackLanguage="en"
-      resources={federatedI18nResources}
-      supportedLanguages={federatedI18nLanguages}
-    >
-      <CatalogWidgetContent />
-    </FederatedI18nBoundary>
-  );
-};
+export const CatalogWidget = () => (
+  <FederatedI18nBoundary
+    defaultNamespace="catalog"
+    fallbackLanguage="en"
+    resources={federatedI18nResources}
+    supportedLanguages={federatedI18nLanguages}
+  >
+    <CatalogWidgetContent />
+  </FederatedI18nBoundary>
+);
 
 export default CatalogWidget;

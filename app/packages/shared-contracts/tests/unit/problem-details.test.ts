@@ -320,15 +320,18 @@ const narrowProblem: NarrowProblem = {
   title: 'Conflict',
   type: 'urn:ontos:test:narrow',
 };
-void narrowProblem;
 // @ts-expect-error The endpoint-specific tag must remain literal.
 const wrongTag: NarrowProblem = { ...narrowProblem, _tag: 'OtherProblem' };
 // @ts-expect-error The status must remain literal and match the constructor status.
 const wrongStatus: NarrowProblem = { ...narrowProblem, status: 422 };
 // @ts-expect-error Extension members must retain their literal types.
 const wrongExtension: NarrowProblem = { ...narrowProblem, resolution: 'RETRY' };
-void wrongTag;
-void wrongStatus;
-void wrongExtension;
+it('validates the same narrow Problem Details discriminators at runtime', () => {
+  const valid = Schema.is(narrowSchema);
+  expect(valid(narrowProblem)).toBe(true);
+  for (const rejected of [wrongTag, wrongStatus, wrongExtension]) {
+    expect(valid(rejected)).toBe(false);
+  }
+});
 // @ts-expect-error Unsupported Problem Details statuses cannot be constructed.
 makeProblemDetailsSchema('UnsupportedStatusProblem', 418);

@@ -77,27 +77,28 @@ const sqlCategories = new Map<SqlState, Category>([
   ['42501', 'PERMISSION_OWNERSHIP'],
 ]);
 // Only standalone structured fields qualify; inline query/message substrings do not.
-const sqlStateField =
-  /^[\t ]*(?:code|sqlState|sqlstate|'(?:code|sqlState|sqlstate)'|"(?:code|sqlState|sqlstate)")[\t ]*:[\t ]*(?:'(?<singleCode>[A-Z0-9]{5})'|"(?<doubleCode>[A-Z0-9]{5})")[\t ]*,?[\t ]*$/u;
-const positionField =
-  /^[\t ]*(?:position|'position'|"position")[\t ]*:[\t ]*(?:'(?<singlePosition>[1-9]\d{0,7})'|"(?<doublePosition>[1-9]\d{0,7})"|(?<barePosition>[1-9]\d{0,7}))[\t ]*,?[\t ]*$/u;
+const stripQuotes = (value: string) => {
+  const first = value.at(0);
+  return (first === "'" || first === '"') && value.endsWith(first) && value.length >= 2 ? value.slice(1, -1) : value;
+};
+const field = /^[\t ]*(?<key>[^\s:]+)[\t ]*:[\t ]*(?<value>[^\s,]+)[\t ]*(?:,[\t ]*)?$/u;
 
 const structuredMetadata = (text: string) => {
   const codes = new Set<SqlState>();
   const positions = new Set<number>();
   for (const line of text.split(/\r?\n/u)) {
-    const codeMatch = sqlStateField.exec(line);
-    const code = codeMatch?.groups?.['singleCode'] ?? codeMatch?.groups?.['doubleCode'];
-    if (isSqlState(code)) {
-      codes.add(code);
+    const fields = field.exec(line)?.groups;
+    if (fields === undefined) {
+      continue;
     }
-    const positionMatch = positionField.exec(line);
-    const positionText =
-      positionMatch?.groups?.['singlePosition'] ??
-      positionMatch?.groups?.['doublePosition'] ??
-      positionMatch?.groups?.['barePosition'];
-    if (positionText !== undefined) {
-      const position = Number(positionText);
+    const key = stripQuotes(fields['key'] ?? '');
+    const raw = fields['value'] ?? '';
+    const value = stripQuotes(raw);
+    if (['code', 'sqlState', 'sqlstate'].includes(key) && value !== raw && isSqlState(value)) {
+      codes.add(value);
+    }
+    if (key === 'position' && /^[1-9]\d{0,7}$/u.test(value)) {
+      const position = Number(value);
       if (isPosition(position)) {
         positions.add(position);
       }

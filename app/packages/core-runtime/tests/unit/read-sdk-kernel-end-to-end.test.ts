@@ -308,9 +308,9 @@ it.layer(NodeCrypto.layer)('a { run } read on the SDK kernel', (suite) => {
         afterCallStatements.findIndex((statement) => /^commit/iu.test(statement)),
       );
       expect(moduleTransaction[0]).toMatch(/^begin$/iu);
-      expect(moduleTransaction.filter((statement) => /^set transaction|read (?:only|write)/iu.test(statement))).toEqual(
-        [],
-      );
+      expect(
+        moduleTransaction.filter((statement) => /(?:^set transaction)|(?:read (?:only|write))/iu.test(statement)),
+      ).toEqual([]);
     }),
   );
 

@@ -21,7 +21,7 @@ const source = Effect.fn('CoreMediaMetadataScopeTest.source')(function* source(r
 const codeOf = (text: string): string =>
   text
     .replaceAll(/\/\*[\s\S]*?\*\//gu, '')
-    .replaceAll(/^\s*\/\/.*$/gmu, '')
+    .replaceAll(/^[\t ]*\/\/.*$/gmu, '')
     .replaceAll(/\s\/\/.*$/gmu, '');
 
 const LANE_SOURCE_PATHS = [

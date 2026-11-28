@@ -50,7 +50,7 @@ const sourceLiteral = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 const bundleArguments = ['--bundle', '--platform=node', '--format=esm', '--packages=external'] as const;
 const redactedDiagnostic = (value: string) =>
   value
-    .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[redacted]@')
+    .replaceAll(/(?<scheme>\b\w+:\/\/)[^\s/@]+@/gu, '$<scheme>[redacted]@')
     .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, '[redacted]')
     .slice(-4096);
 const compositionFailure = (error: ActiveApplicationCompositionUnavailableError) => {

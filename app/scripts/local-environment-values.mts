@@ -8,8 +8,8 @@ const existingValues = (lines: readonly string[]): Readonly<Record<string, strin
   Object.fromEntries(
     lines.flatMap((line) => {
       const match = assignmentPattern.exec(line);
-      const key = match?.groups?.key;
-      const value = match?.groups?.value;
+      const key = match?.groups?.['key'];
+      const value = match?.groups?.['value'];
       return key === undefined || value === undefined ? [] : [[key, value] as const];
     }),
   );
@@ -39,11 +39,12 @@ export interface LocalPublicClientTopology {
 export const localPublicClientValues = (lines: readonly string[], topology: LocalPublicClientTopology) => {
   const existing = existingValues(lines);
   return {
-    ONTOS_PARTY_REGISTRY_API_BASE_URL: existing.ONTOS_PARTY_REGISTRY_API_BASE_URL ?? topology.partyRegistryApiBaseUrl,
+    ONTOS_PARTY_REGISTRY_API_BASE_URL:
+      existing['ONTOS_PARTY_REGISTRY_API_BASE_URL'] ?? topology.partyRegistryApiBaseUrl,
     ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
-      existing.ONTOS_PRICE_GROUP_CATALOG_BASE_URL ?? topology.priceGroupCatalogApiBaseUrl,
+      existing['ONTOS_PRICE_GROUP_CATALOG_BASE_URL'] ?? topology.priceGroupCatalogApiBaseUrl,
     ONTOS_SHELL_GATEWAY_BASE_URL:
-      existing.ONTOS_SHELL_GATEWAY_BASE_URL ?? `http://localhost:${topology.shellPort}/${topology.shellId}-api`,
+      existing['ONTOS_SHELL_GATEWAY_BASE_URL'] ?? `http://localhost:${topology.shellPort}/${topology.shellId}-api`,
   };
 };
 
@@ -52,7 +53,7 @@ export const localPublicClientValues = (lines: readonly string[], topology: Loca
  * an empty list, which the Shell accepts and admits no module credential against. An existing value is kept.
  */
 export const localModuleValues = (lines: readonly string[]): Readonly<Record<string, string>> =>
-  existingValues(lines).ONTOS_GATEWAY_MODULE_BINDINGS === undefined ? { ONTOS_GATEWAY_MODULE_BINDINGS: '[]' } : {};
+  existingValues(lines)['ONTOS_GATEWAY_MODULE_BINDINGS'] === undefined ? { ONTOS_GATEWAY_MODULE_BINDINGS: '[]' } : {};
 
 export const localSpiceDbValues = (
   lines: readonly string[],
@@ -60,11 +61,11 @@ export const localSpiceDbValues = (
   certificate: string,
 ) => {
   const existing = existingValues(lines);
-  const grpcPort = overrides.grpcPort ?? existing.SPICEDB_GRPC_PORT ?? '50051';
-  const httpPort = overrides.httpPort ?? existing.SPICEDB_HTTP_PORT ?? '8443';
+  const grpcPort = overrides.grpcPort ?? existing['SPICEDB_GRPC_PORT'] ?? '50051';
+  const httpPort = overrides.httpPort ?? existing['SPICEDB_HTTP_PORT'] ?? '8443';
   const resolvePreSharedKey = () =>
     (overrides.preSharedKey === undefined ? undefined : Redacted.value(overrides.preSharedKey)) ??
-    existing.SPICEDB_PRESHARED_KEY ??
+    existing['SPICEDB_PRESHARED_KEY'] ??
     'ontos-local-development-key';
   const preSharedKey = resolvePreSharedKey();
 
@@ -72,8 +73,8 @@ export const localSpiceDbValues = (
     // The local certificate is the source of truth; it replaces any earlier value.
     SPICEDB_CA_CERT: dotenvQuoted(certificate),
     SPICEDB_ENDPOINT:
-      overrides.grpcPort === undefined && existing.SPICEDB_ENDPOINT !== undefined
-        ? existing.SPICEDB_ENDPOINT
+      overrides.grpcPort === undefined && existing['SPICEDB_ENDPOINT'] !== undefined
+        ? existing['SPICEDB_ENDPOINT']
         : `localhost:${grpcPort}`,
     SPICEDB_GRPC_PORT: grpcPort,
     SPICEDB_HTTP_PORT: httpPort,
@@ -113,13 +114,14 @@ export const localDatabaseIdentityValues = (lines: readonly string[]) =>
       onNone: () => ({}),
       onSome: (runtimeUrl) =>
         Object.fromEntries(
-          DATABASE_IDENTITIES.filter(
-            (identity) => identity.id !== SHARED_RUNTIME_IDENTITY.id && existing[identity.urlKey] === undefined,
-          ).map((identity) => {
+          DATABASE_IDENTITIES.flatMap((identity) => {
+            if (identity.id === SHARED_RUNTIME_IDENTITY.id || existing[identity.urlKey] !== undefined) {
+              return [];
+            }
             const url = new URL(runtimeUrl);
             url.username = identity.role;
             url.password = identity.role;
-            return [identity.urlKey, url.toString()] as const;
+            return [[identity.urlKey, url.toString()] as const];
           }),
         ),
     });

@@ -291,9 +291,10 @@ export const registeredWorkloadCallDrift = (
     Object.entries(REVIEWED_REGISTERED_WORKLOAD_CALLS).find(([caller]) => caller === appId)?.[1] ?? [],
   );
   const built = countingCalls(calls.map(canonicalRegisteredWorkloadCall));
-  return EffectArray.sort(new Set([...reviewed.keys(), ...built.keys()]), Order.String)
-    .map((call) => ({ built: built.get(call) ?? 0, call, reviewed: reviewed.get(call) ?? 0 }))
-    .filter((entry) => entry.built !== entry.reviewed);
+  return EffectArray.sort(new Set([...reviewed.keys(), ...built.keys()]), Order.String).flatMap((call) => {
+    const entry = { built: built.get(call) ?? 0, call, reviewed: reviewed.get(call) ?? 0 };
+    return entry.built === entry.reviewed ? [] : [entry];
+  });
 };
 
 /**

@@ -57,9 +57,7 @@ export const materializeApplicationMigrationProvider = Effect.fn('ApplicationMig
         () => new ApplicationMigrationPublicationError({ reason: 'Invalid migration provider configuration' }),
       ),
     );
-    const candidates = decoded.zerops
-      .map((setup, index) => ({ index, setup }))
-      .filter(({ setup }) => setup.setup === 'migrator');
+    const candidates = decoded.zerops.flatMap((setup, index) => (setup.setup === 'migrator' ? [{ index, setup }] : []));
     const [candidate] = candidates;
     if (
       candidates.length !== 1 ||

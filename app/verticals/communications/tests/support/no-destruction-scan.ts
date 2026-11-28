@@ -191,22 +191,34 @@ export const scanSourceForDestruction = (fileName: string, source: string): read
 /* Migrations                                                                                       */
 /* ------------------------------------------------------------------------------------------------ */
 
-const migrationStatements: readonly { readonly kind: string; readonly pattern: RegExp }[] = [
-  ...sqlStatements,
-  {
-    kind: 'SQL GRANT of a row-changing privilege',
-    pattern: /\bgrant\s+[^;]*?\b(?:delete|truncate|update)\b[^;]*?\bon\s+table\b[^;]*/iu,
-  },
-];
+// Tokenize one GRANT at a time, so a privilege in a later statement cannot be attributed to this one.
+const grantFindings = (code: string): DestructionFinding[] => {
+  const findings: DestructionFinding[] = [];
+  for (const match of code.matchAll(/\bgrant\s+[^;]*/giu)) {
+    const [grant] = match;
+    const mutation = /\b(?:delete|truncate|update)\b/iu.exec(grant);
+    if (mutation !== null && /\bon\s+table\b/iu.test(grant.slice(mutation.index + mutation[0].length))) {
+      findings.push({
+        kind: 'SQL GRANT of a row-changing privilege',
+        line: lineOf(code, match.index),
+        text: grant.replaceAll(/\s+/gu, ' ').trim(),
+      });
+    }
+  }
+  return findings;
+};
 
 /** Every destructive or row-rewriting SQL statement of a migration, with the comments removed first. */
 export const scanMigrationForDestruction = (sql: string): readonly DestructionFinding[] => {
   const code = sql.replaceAll(/--[^\n]*/gu, '').replaceAll(/\/\*[\s\S]*?\*\//gu, '');
-  return migrationStatements.flatMap(({ kind, pattern }) =>
-    [...code.matchAll(new RegExp(pattern.source, `${pattern.flags}g`))].map((match) => ({
-      kind,
-      line: lineOf(code, match.index),
-      text: match[0].replaceAll(/\s+/gu, ' ').trim(),
-    })),
-  );
+  return [
+    ...sqlStatements.flatMap(({ kind, pattern }) =>
+      [...code.matchAll(new RegExp(pattern.source, `${pattern.flags}g`))].map((match) => ({
+        kind,
+        line: lineOf(code, match.index),
+        text: match[0].replaceAll(/\s+/gu, ' ').trim(),
+      })),
+    ),
+    ...grantFindings(code),
+  ];
 };

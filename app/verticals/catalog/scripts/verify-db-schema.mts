@@ -81,7 +81,9 @@ const infrastructureCounts = (row: InfrastructureRow | undefined) =>
         row.foreign_key_count,
       ];
 const sameInventory = (actual: readonly number[] | undefined, expected: readonly number[]) =>
-  actual !== undefined && actual.every((value, index) => value === expected[index]);
+  actual !== undefined &&
+  actual.length === expected.length &&
+  actual.every((value, index) => value === expected[index]);
 
 const verification = Effect.gen(function* verifyCatalogDatabase() {
   const configuration = yield* loadDatabaseConnectionPair();
@@ -146,7 +148,7 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
     where ns.nspname='catalog' and t.relname='gateway_assertion_redemptions' and acl.grantee=0)
   and not exists(select 1 from pg_catalog.pg_roles where rolname='ontos_runtime' and (rolsuper or rolbypassrls))
 ) as valid`);
-  if (!gateway?.valid) {
+  if (gateway?.valid !== true) {
     yield* new CatalogSchemaVerificationError({
       reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
     });
@@ -220,7 +222,7 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
     where n.nspname='catalog' and c.relname='catalog_media_assignments'
       and k.conname='catalog_media_assignments_active_position_commit_uk'`,
   );
-  if (mediaPositionGuards.length !== 1 || !mediaPositionGuards[0]?.valid) {
+  if (mediaPositionGuards.length !== 1 || mediaPositionGuards[0]?.valid !== true) {
     yield* new CatalogSchemaVerificationError({
       reason: 'Catalog media final-position uniqueness is not the expected deferred generated-key constraint',
     });
@@ -297,7 +299,10 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
         join pg_namespace n on n.oid=c.relnamespace
         where n.nspname='catalog' and c.relname='catalog_sku_reservations_binary_code_uk' and i.indisunique and i.indisvalid`,
   );
-  if (skuIndex.length !== 1 || !skuIndex[0]?.index_definition.includes('(tenant_id, normalized_code COLLATE "C")')) {
+  if (
+    skuIndex.length !== 1 ||
+    skuIndex[0]?.index_definition.includes('(tenant_id, normalized_code COLLATE "C")') !== true
+  ) {
     yield* new CatalogSchemaVerificationError({ reason: 'Catalog SKU tenant-wide binary uniqueness is absent' });
   }
   const skuCodes = yield* inspect<{ display_code: string; normalized_code: string }>(

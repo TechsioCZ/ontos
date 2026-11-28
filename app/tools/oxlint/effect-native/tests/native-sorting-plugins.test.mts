@@ -58,7 +58,7 @@ const cases: readonly SortingCase[] = [
 ];
 
 it('native sorting integration does not declare the ESLint runner', () => {
-  const hasDirectEslintDependency = /^[ ]{2}"(?:dependencies|devDependencies)"\s*:\s*\{[^{}]*"eslint"\s*:/msu.test(
+  const hasDirectEslintDependency = /^ {2}"(?:dependencies|devDependencies)"\s*:\s*\{[^{}]*"eslint"\s*:/msu.test(
     applicationManifest,
   );
   expect(hasDirectEslintDependency).toBe(false);

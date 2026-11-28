@@ -121,7 +121,7 @@ const HISTORY_TABLES = [
 /** Content that must be in NO stored fact of the history: an address, a link, markup, a secret. */
 const FORBIDDEN_CONTENT = [
   new RegExp(ORIGINAL_ADDRESS.replaceAll('.', String.raw`\.`), 'u'),
-  /[A-Za-z0-9._+-]+@[A-Za-z0-9-]+\.[A-Za-z]/u,
+  /[\w.+-]@[A-Za-z0-9-]+\.[A-Za-z]/u,
   /https?:\/\//u,
   /<\/?[a-z][^>]*>/iu,
   /\b(?:otp|password|passwd|secret|bearer|claim[-_]?url|reset[-_]?token|invitation[-_]?proof)\b/iu,

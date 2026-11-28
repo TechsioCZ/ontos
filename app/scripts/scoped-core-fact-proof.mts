@@ -1193,7 +1193,7 @@ const readerConsumersClosed = (
   }
   for (const [file, source] of proof.sources) {
     if (
-      /(?:^|\/)(?:tests?|__tests__)\/|\.(?:test|spec)\.[cm]?tsx?$/u.test(file) ||
+      /(?:(?:^|\/)(?:tests?|__tests__)\/)|(?:\.(?:test|spec)\.[cm]?tsx?$)/u.test(file) ||
       (!source.includes('import') && !source.includes('export'))
     ) {
       continue;

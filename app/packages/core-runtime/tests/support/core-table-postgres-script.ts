@@ -124,7 +124,7 @@ const lastIdentifier = (expression: string): string =>
   expression;
 const resultName = (expression: string): string =>
   /\sas\s+"?(?<alias>\w+)"?$/iu.exec(expression)?.groups?.['alias'] ??
-  lastIdentifier(expression.replace(/\(.*\)$/u, ''));
+  lastIdentifier(expression.endsWith(')') ? (expression.split('(', 1)[0] ?? expression) : expression);
 const placeholders = (text: string) =>
   [...text.matchAll(/\$(?<position>\d+)/gu)].map((match) => Number(match.groups?.['position']) - 1);
 const parametersIn = (text: string, params: readonly PostgresWireValue[]) =>
@@ -155,12 +155,7 @@ const tableResult = (
   command,
   rows: rows.map((row) => columns.map(({ key, wire }) => driverValue(row[key], wire.oid))),
 });
-const withReturning = (
-  command: string,
-  table: PgTable,
-  returning: string | undefined,
-  rows: readonly CoreTableRow[],
-) =>
+const withReturning = (command: string, table: PgTable, returning: string | undefined, rows: readonly CoreTableRow[]) =>
   returning === undefined
     ? { columns: [], command, rows: [] }
     : tableResult(command, scriptedColumns(table, splitTopLevel(returning)), rows);

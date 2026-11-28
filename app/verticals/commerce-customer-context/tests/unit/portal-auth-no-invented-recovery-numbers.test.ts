@@ -23,7 +23,7 @@ const codeOf = (file: string) =>
     .filter((line) => !/^\s*(?:\/\/|\/?\*)/u.test(line))
     .join('\n');
 /** A numeric literal other than 0 and 1 (indexes, "none yet" and "next" arithmetic carry no limit). */
-const LIMIT_LITERAL = /(?<![\w.])(?!(?:0|1)(?![\w.]))\d[\d_]*(?:\.\d+)?(?![\w])/u;
+const LIMIT_LITERAL = /(?<![\w.])(?![01](?![\w.]))\d[\d_]*(?:\.\d+)?(?!\w)/u;
 /** A duration written with any digit, even 1: a wait is a wait whatever its size. */
 const DURATION_LITERAL = /\bDuration\.\w+\(\s*\d/u;
 const isInvented = (line: string) => LIMIT_LITERAL.test(line) || DURATION_LITERAL.test(line);

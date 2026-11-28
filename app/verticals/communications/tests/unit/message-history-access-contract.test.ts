@@ -110,16 +110,19 @@ const ACCESS_LANE = [
   '../../src/services/message-history-read.service.ts',
 ];
 /** A write, a removal or a hidden cleanup. Comments are stripped first: the rule is about statements, not about words. */
-const DESTRUCTIVE =
-  /\.(?:delete|update|insert|execute)\s*\(|\bdelete\s+from\b|\btruncate\b|\bdrop\s+(?:table|column|schema)\b|\banonymi[sz]e\w*\s*\(|\bpurge\w*\s*\(|\b(?:unlink|rm|rmSync|writeFile)\s*\(/iu;
+const destructive = (source: string) =>
+  [
+    /\.(?:delete|update|insert|execute)\s*\(|\bdelete\s+from\b|\btruncate\b|\bdrop\s+(?:table|column|schema)\b/iu,
+    /\banonymi[sz]e\w*\s*\(|\bpurge\w*\s*\(|\b(?:unlink|rm|rmSync|writeFile)\s*\(/iu,
+  ].some((pattern) => pattern.test(source));
 const withoutComments = (source: string) =>
-  source.replaceAll(/\/\*[\s\S]*?\*\//gu, '').replaceAll(/(?:^|[^:])\/\/.*$/gmu, '');
+  source.replaceAll(/\/\*[\s\S]*?\*\//gu, '').replaceAll(/(?<!:)\/\/[^\n\r]*/gu, '');
 
 describe('No destructive statement exists in the access lane (#1409, ACC-12, AC-08)', () => {
   it('contains no DELETE, UPDATE, INSERT, TRUNCATE, ANONYMIZE, PURGE or file removal: reading, refusing and the document policy only decide', () => {
     for (const path of ACCESS_LANE) {
       const source = withoutComments(read(path));
-      expect({ hit: DESTRUCTIVE.exec(source)?.[0] ?? null, path }).toEqual({ hit: null, path });
+      expect(destructive(source), path).toBe(false);
     }
   });
 
@@ -131,10 +134,10 @@ describe('No destructive statement exists in the access lane (#1409, ACC-12, AC-
       'anonymizeRecipient(id)',
       'purgeExpired(window)',
     ]) {
-      expect(DESTRUCTIVE.test(sample)).toBe(true);
+      expect(destructive(sample)).toBe(true);
     }
-    expect(
-      DESTRUCTIVE.test(withoutComments('// delete from nothing\n/* tx.delete(x) */\nconst fine = tx.select()')),
-    ).toBe(false);
+    expect(destructive(withoutComments('// delete from nothing\n/* tx.delete(x) */\nconst fine = tx.select()'))).toBe(
+      false,
+    );
   });
 });

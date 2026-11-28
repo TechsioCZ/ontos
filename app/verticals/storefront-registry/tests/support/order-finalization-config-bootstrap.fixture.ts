@@ -167,7 +167,7 @@ const main = Effect.scoped(
     Effect.sync(() =>
       process.stderr.write(
         `owner-producer-cause: ${Cause.pretty(cause)
-          .replaceAll(/(?<scheme>\w+:\/\/)[^\s/@]+:[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
+          .replaceAll(/(?<scheme>\b\w+:\/\/)[^\s/@]+@/gu, '$<scheme>[REDACTED]@')
           .replaceAll(/eyJ[\w-]+\.[\w-]+\.[\w-]+/gu, '[REDACTED]')
           .replaceAll(/(?<field>Bearer\s+)\S+/gu, '$<field>[REDACTED]')
           .slice(0, 6144)}\n`,

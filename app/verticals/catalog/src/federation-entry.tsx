@@ -25,19 +25,15 @@ const CatalogRouteContent = () => {
   );
 };
 
-const CatalogRoute = (props: Record<string, never>): JSX.Element => {
-  void props;
-
-  return (
-    <FederatedI18nBoundary
-      defaultNamespace="catalog"
-      fallbackLanguage="en"
-      resources={federatedI18nResources}
-      supportedLanguages={federatedI18nLanguages}
-    >
-      <CatalogRouteContent />
-    </FederatedI18nBoundary>
-  );
-};
+const CatalogRoute = (): JSX.Element => (
+  <FederatedI18nBoundary
+    defaultNamespace="catalog"
+    fallbackLanguage="en"
+    resources={federatedI18nResources}
+    supportedLanguages={federatedI18nLanguages}
+  >
+    <CatalogRouteContent />
+  </FederatedI18nBoundary>
+);
 
 export default CatalogRoute;

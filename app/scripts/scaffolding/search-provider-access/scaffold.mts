@@ -106,7 +106,7 @@ const patchContract = (
     }
     let nextFields = fields;
     for (const filter of config.requestFilters) {
-      if (!new RegExp(`^  ${filter}:`, 'mu').test(nextFields)) {
+      if (!nextFields.split('\n').some((line) => line.startsWith(`  ${filter}:`))) {
         nextFields = `${requestField(filter)}\n${nextFields}`;
       }
     }

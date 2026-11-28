@@ -60,30 +60,34 @@ const run = Effect.fn('run')(
       stopChild,
     );
 
-    yield* Effect.callback((resume) => {
-      const onError = (cause) => {
-        resume(Effect.fail(new MigratorError(`${command} failed while running`, cause)));
-      };
-      /**
-       * @param {number | null} code - Numeric process exit code.
-       * @param {NodeJS.Signals | null} signal - Signal that terminated the process.
-       */
-      const onExit = (code, signal) => {
-        if (code === 0) {
-          resume(Effect.void);
-          return;
-        }
-        const outcome = signal ?? `code ${String(code)}`;
-        resume(Effect.fail(new MigratorError(`${command} exited with ${outcome}`)));
-      };
+    yield* Effect.callback(
+      /** @param {(exit: Effect.Effect<void, MigratorError>) => void} resume - Resume the waiting fiber with the host outcome. */
+      (resume) => {
+        /** @param {Error} cause - Host operation failure. */
+        const onError = (cause) => {
+          resume(Effect.fail(new MigratorError(`${command} failed while running`, cause)));
+        };
+        /**
+         * @param {number | null} code - Numeric process exit code.
+         * @param {NodeJS.Signals | null} signal - Signal that terminated the process.
+         */
+        const onExit = (code, signal) => {
+          if (code === 0) {
+            resume(Effect.void);
+            return;
+          }
+          const outcome = signal ?? `code ${String(code)}`;
+          resume(Effect.fail(new MigratorError(`${command} exited with ${outcome}`)));
+        };
 
-      child.once('error', onError);
-      child.once('exit', onExit);
-      return Effect.sync(() => {
-        child.off('error', onError);
-        child.off('exit', onExit);
-      });
-    });
+        child.once('error', onError);
+        child.once('exit', onExit);
+        return Effect.sync(() => {
+          child.off('error', onError);
+          child.off('exit', onExit);
+        });
+      },
+    );
   },
 );
 
@@ -139,26 +143,31 @@ const serveReadiness = Effect.fn('serveReadiness')(
       closeServer,
     );
 
-    yield* Effect.callback((resume) => {
-      const onError = (cause) => resume(Effect.fail(new MigratorError('The migration readiness server failed', cause)));
-      const onListening = () => {
-        console.log(`Migration verification complete; readiness listening on port ${String(port)}`);
-      };
-      const onSignal = () => resume(Effect.void);
+    yield* Effect.callback(
+      /** @param {(exit: Effect.Effect<void, MigratorError>) => void} resume - Resume the waiting fiber with the host outcome. */
+      (resume) => {
+        /** @param {Error} cause - Host operation failure. */
+        const onError = (cause) =>
+          resume(Effect.fail(new MigratorError('The migration readiness server failed', cause)));
+        const onListening = () => {
+          console.log(`Migration verification complete; readiness listening on port ${String(port)}`);
+        };
+        const onSignal = () => resume(Effect.void);
 
-      server.once('error', onError);
-      server.once('listening', onListening);
-      process.once('SIGINT', onSignal);
-      process.once('SIGTERM', onSignal);
-      server.listen(port, '0.0.0.0');
+        server.once('error', onError);
+        server.once('listening', onListening);
+        process.once('SIGINT', onSignal);
+        process.once('SIGTERM', onSignal);
+        server.listen(port, '0.0.0.0');
 
-      return Effect.sync(() => {
-        server.off('error', onError);
-        server.off('listening', onListening);
-        process.off('SIGINT', onSignal);
-        process.off('SIGTERM', onSignal);
-      });
-    });
+        return Effect.sync(() => {
+          server.off('error', onError);
+          server.off('listening', onListening);
+          process.off('SIGINT', onSignal);
+          process.off('SIGTERM', onSignal);
+        });
+      },
+    );
   },
 );
 
@@ -210,8 +219,9 @@ const main = (requirementsPath, verifyOnly) =>
         yield* assertMigrationVerificationOnly(before.plan);
       }
       let infrastructurePrepared = false;
+      const byOwner = new Map(before.streams.map((stream) => [stream.ownerId, stream]));
       for (const owner of before.plan.owners) {
-        const stream = before.streams.find((candidate) => candidate.ownerId === owner.ownerId);
+        const stream = byOwner.get(owner.ownerId);
         if (stream === undefined) {
           return yield* Effect.fail(new MigratorError('Selected migration stream is unavailable'));
         }
@@ -292,7 +302,7 @@ const main = (requirementsPath, verifyOnly) =>
           new MigratorError('Selected migrations remain pending after the native migrator returned'),
         );
       }
-      const verifiers = after.plan.owners.filter((owner) => owner.verify).map((owner) => owner.ownerId);
+      const verifiers = after.plan.owners.flatMap((owner) => (owner.verify ? [owner.ownerId] : []));
       if (verifiers.length > 0) {
         yield* runAppScript(
           'scripts/verify-application-db-schema.mts',

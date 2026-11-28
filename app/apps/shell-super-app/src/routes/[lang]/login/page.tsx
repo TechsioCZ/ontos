@@ -4,7 +4,6 @@ import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema, SchemaIssue } from 'effect';
-import type { Cause } from 'effect';
 import { AsyncResult } from 'effect/reactivity';
 import { useEffect, useRef, useState } from 'react';
 
@@ -83,20 +82,14 @@ const LoginPage = () => {
     toaster.create({ description: t(description), title: t(errorTitleKey), type: 'error' });
     setFocusRequest({ field });
   };
+  const navigationFailed = () => Effect.sync(() => reportFailure(internalErrorMessageKey, 'login'));
   const enterShell = () => {
     setNavigating(true);
     void browserRuntime.runPromise(
       Effect.tryPromise(() => router.invalidate({ sync: true })).pipe(
         Effect.andThen(Effect.tryPromise(() => navigate({ to: `/${language}/` }))),
         Effect.timeout('10 seconds'),
-        Effect.matchEffect({
-          onFailure: (failure: Cause.TimeoutError | Cause.UnknownError) =>
-            Effect.sync(() => {
-              void failure;
-              reportFailure(internalErrorMessageKey, 'login');
-            }),
-          onSuccess: Effect.succeed,
-        }),
+        Effect.catchTags({ TimeoutError: navigationFailed, UnknownError: navigationFailed }),
         Effect.ensuring(Effect.sync(() => setNavigating(false))),
       ),
     );

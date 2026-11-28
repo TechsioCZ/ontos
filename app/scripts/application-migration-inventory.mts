@@ -47,7 +47,7 @@ const applicationDirectory = fileURLToPath(new URL('../', import.meta.url));
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })) }),
 );
-const migrationName = /^[0-9]{14}_[a-zA-Z0-9_-]+$/u;
+const migrationName = /^\d{14}_[\w-]+$/u;
 const primary = (
   ownerId: string,
   directory: string,
@@ -148,23 +148,30 @@ export const migrationRuntimeIdentityIds = (sql: string): readonly string[] => {
   for (const part of sql.split('--> statement-breakpoint')) {
     const statement = part
       .replaceAll(/\/\*[\s\S]*?\*\//gu, ' ')
-      .replaceAll(/^\s*--[^\n]*$/gmu, '')
+      .replaceAll(/^[\t ]*--[^\n]*$/gmu, '')
       .trim();
-    const roles =
-      /^(?:(?:create|alter)\s+policy\b[^;]*?\bto\s+|grant\b[^;]*?\bto\s+|alter\b[^;]*?\bowner\s+to\s+|set\s+(?:local\s+)?role\s+)(?<roles>(?:"[a-z0-9_]+"|[a-z0-9_]+)(?:\s*,\s*(?:"[a-z0-9_]+"|[a-z0-9_]+))*)/iu.exec(
-        statement,
-      )?.groups?.roles;
-    if (roles === undefined) {
+    const start = [
+      /^(?:create|alter)\s+policy\b[^;]*?\bto\s+/iu,
+      /^grant\b[^;]*?\bto\s+/iu,
+      /^alter\b[^;]*?\bowner\s+to\s+/iu,
+      /^set\s+(?:local\s+)?role\s+/iu,
+    ]
+      .map((prefix) => prefix.exec(statement)?.[0])
+      .find((prefix) => prefix !== undefined);
+    if (start === undefined) {
       continue;
     }
-    for (const match of roles.matchAll(/"(?<quoted>[a-z0-9_]+)"|(?<plain>[a-z0-9_]+)/giu)) {
-      const role = match.groups?.quoted ?? match.groups?.plain?.toLowerCase();
-      if (role !== undefined) {
-        requiredRoles.add(role);
-      }
+    const rolePattern = /(?:"(?<quoted>[a-z0-9_]+)"|(?<plain>[a-z0-9_]+))(?:\s*,\s*)?/iuy;
+    rolePattern.lastIndex = start.length;
+    let role = rolePattern.exec(statement);
+    while (role !== null) {
+      const name = role.groups?.['quoted'] ?? role.groups?.['plain']?.toLowerCase();
+      if (name !== undefined) {requiredRoles.add(name);}
+      if (!role[0].trimEnd().endsWith(',')) {break;}
+      role = rolePattern.exec(statement);
     }
   }
-  return DATABASE_IDENTITIES.filter((identity) => requiredRoles.has(identity.role)).map((identity) => identity.id);
+  return DATABASE_IDENTITIES.flatMap((identity) => (requiredRoles.has(identity.role) ? [identity.id] : []));
 };
 
 const readStream = Effect.fn('ApplicationMigrationInventory.readStream')(function* readStreamEffect(
@@ -173,8 +180,8 @@ const readStream = Effect.fn('ApplicationMigrationInventory.readStream')(functio
 ) {
   const fs = yield* FileSystem.FileSystem;
   const text = yield* fs.readFileString(path.join(root, source.directory, source.configFile));
-  const journalName = /table:\s*'(?<journal>__drizzle_migrations_[a-z0-9_]+)'/u.exec(text)?.groups?.journal;
-  const output = /out:\s*'\.\/(?<output>[a-z0-9-]+)'/u.exec(text)?.groups?.output;
+  const journalName = /table:\s*'(?<journal>__drizzle_migrations_[a-z0-9_]+)'/u.exec(text)?.groups?.['journal'];
+  const output = /out:\s*'\.\/(?<output>[a-z0-9-]+)'/u.exec(text)?.groups?.['output'];
   if (journalName === undefined || output === undefined) {
     return yield* invalid(`Invalid source migration metadata for ${source.ownerId}`);
   }
@@ -196,9 +203,10 @@ const readStream = Effect.fn('ApplicationMigrationInventory.readStream')(functio
     { concurrency: 4 },
   );
   const migrations = sourceMigrations.map(({ hash, name }) => ({ hash, name }));
-  const migrationRuntimeIdentityRequirements = sourceMigrations
-    .filter((migration) => migration.runtimeIdentityIds.length > 0)
-    .map(({ name, runtimeIdentityIds }) => ({ identityIds: runtimeIdentityIds, migrationName: name }));
+  const migrationRuntimeIdentityRequirements = sourceMigrations.flatMap((migration) => {
+    const { name, runtimeIdentityIds } = migration;
+    return migration.runtimeIdentityIds.length > 0 ? [{ identityIds: runtimeIdentityIds, migrationName: name }] : [];
+  });
   const { prerequisiteIds, ...metadata } = source;
   return {
     ...metadata,
@@ -218,7 +226,7 @@ export const loadApplicationMigrationInventory = Effect.fn('ApplicationMigration
       yield* fs.readFileString(path.join(root, 'topology/reference-topology.json')),
     );
     const declared = new Set(
-      orderedSources.filter((source) => source.configFile === defaultDrizzleConfig).map((source) => source.directory),
+      orderedSources.flatMap((source) => (source.configFile === defaultDrizzleConfig ? [source.directory] : [])),
     );
     const generated: OwnerStreamSource[] = [];
     for (const owner of topology.verticals) {
@@ -269,9 +277,9 @@ export const pendingMigrationRuntimeIdentityIds = (
   return [
     ...new Set([
       ...stream.runtimeIdentityIds,
-      ...(stream.migrationRuntimeIdentityRequirements ?? [])
-        .filter((requirement) => pendingNames.has(requirement.migrationName))
-        .flatMap((requirement) => requirement.identityIds),
+      ...(stream.migrationRuntimeIdentityRequirements ?? []).flatMap((requirement) =>
+        pendingNames.has(requirement.migrationName) ? requirement.identityIds : [],
+      ),
     ]),
   ];
 };

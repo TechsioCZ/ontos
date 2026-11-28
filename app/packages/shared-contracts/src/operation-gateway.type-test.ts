@@ -33,8 +33,8 @@ const successfulInvocation = makeOperationGateway(inventoryAudience, () =>
 type InventoryIssuer = OperationGatewayIssuer<typeof inventoryAudience, typeof acquisitionFailure>;
 type InventoryAudience = Parameters<InventoryIssuer>[0]['audience'];
 
-const audienceIsExact: Equal<InventoryAudience, 'inventory-stock'> = true;
-const failureChannelsAreExact: Equal<
+export const audienceIsExact: Equal<InventoryAudience, 'inventory-stock'> = true;
+export const failureChannelsAreExact: Equal<
   EffectChannels<typeof failedInvocation>,
   readonly [
     never,
@@ -42,11 +42,7 @@ const failureChannelsAreExact: Equal<
     never,
   ]
 > = true;
-const successChannelsAreExact: Equal<
+export const successChannelsAreExact: Equal<
   EffectChannels<typeof successfulInvocation>,
   readonly ['completed', DocumentCompositionRevisionError | Schema.SchemaError, never]
 > = true;
-
-void audienceIsExact;
-void failureChannelsAreExact;
-void successChannelsAreExact;

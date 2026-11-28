@@ -126,11 +126,11 @@ const withWorkerOnlyEnvironment = (ownerId, service, units) =>
     const runStart = service.indexOf('\n    run:\n');
     const run = runStart === -1 ? '' : service.slice(runStart);
     const block = /\n {6}envVariables:\n(?<lines>(?: {8}[^\n]*\n)+)/u.exec(run);
-    if (block?.groups?.lines === undefined) {
+    if (block?.groups?.['lines'] === undefined) {
       return yield* Effect.fail(failure(`Missing run environment for ${ownerId}`));
     }
     /** @type {string[]} */
-    const entries = block.groups.lines.split('\n').filter((line) => line.length > 0);
+    const entries = block.groups['lines'].split('\n').filter((line) => line.length > 0);
     const reference = migratorSecretReference(configuration.moduleCredentialVariable);
     const added = [[GATEWAY_MODULE_API_KEY_VARIABLE, `\${${reference}}`], ...apiDependencyEnvironment(ownerId, units)];
     for (const [key, value] of added) {
@@ -274,7 +274,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
 const runEnvironment = (service) => {
   const block =
     /\n {6}envVariables:\n(?<lines>(?: {8}[^\n]*\n)+)/u.exec(`${service.slice(service.indexOf('\n    run:\n'))}\n`)
-      ?.groups?.lines ?? '';
+      ?.groups?.['lines'] ?? '';
   /** @type {Map<string, string>} */
   const environment = new Map();
   for (const match of block.matchAll(/^ {8}(?<key>[A-Z][A-Z0-9_]*): (?<value>.*)$/gmu)) {
@@ -301,9 +301,11 @@ const renderHostService = (services, serviceIds, rootPackageName, moduleCredenti
       ['OUTBOX_WORKER_HEALTH_PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
       ['PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
       ['ULTRAMODERN_ZEROPS_SERVICE', OUTBOX_WORKER_HOST.id],
-      // Each hosted owner's module credential, under its own name; the host runtime maps it to that owner's layer.
-      ...moduleCredentialVariables.map((variable) => [variable, `\${${migratorSecretReference(variable)}}`]),
     ]);
+    // Each hosted owner's module credential, under its own name.
+    for (const variable of moduleCredentialVariables) {
+      environment.set(variable, `\${${migratorSecretReference(variable)}}`);
+    }
     for (const [index, service] of services.entries()) {
       for (const [key, value] of runEnvironment(service)) {
         if (OWNER_SPECIFIC_ENVIRONMENT.has(key)) {
@@ -333,8 +335,8 @@ const renderHostService = (services, serviceIds, rootPackageName, moduleCredenti
         /--app '[^']*' --package '[^']*' --package-dir '[^']*' --worker/u,
         `--app '${OUTBOX_WORKER_HOST.id}' --package '${rootPackageName}' --package-dir '.' --worker`,
       )
-      .replace(/^(?<key> {10}port: )[0-9]+$/mu, `$<key>${OUTBOX_WORKER_HOST_HEALTH_PORT}`);
-    const runBase = /^ {6}base: (?<base>.*)$/mu.exec(template.slice(runStart))?.groups?.base;
+      .replace(/^(?<key> {10}port: )\d+$/mu, `$<key>${OUTBOX_WORKER_HOST_HEALTH_PORT}`);
+    const runBase = /^ {6}base: (?<base>.*)$/mu.exec(template.slice(runStart))?.groups?.['base'];
     if (runBase === undefined) {
       return yield* Effect.fail(failure(`Missing run base for ${templateId}`));
     }
@@ -399,7 +401,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
       if (ownerSection === undefined) {
         return yield* Effect.fail(failure(`Missing owner deployment for ${vertical.id}`));
       }
-      const port = /^ {8}PORT: '(?<port>[0-9]+)'$/mu.exec(ownerSection)?.groups?.port;
+      const port = /^ {8}PORT: '(?<port>\d+)'$/mu.exec(ownerSection)?.groups?.['port'];
       const topologyPort = String(ports[vertical.id] ?? '');
       if (port === undefined || port.length === 0 || port !== topologyPort) {
         return yield* Effect.fail(failure(`Owner port disagrees with topology for ${vertical.id}`));

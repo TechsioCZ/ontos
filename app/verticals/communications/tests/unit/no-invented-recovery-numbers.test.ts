@@ -45,8 +45,8 @@ const GENERATOR_TEMPLATE = path.join(root, '..', '..', 'scripts', 'scaffolding',
 const NUMERIC_LIMIT_AFTER =
   /\b(?:attempts?|retr(?:y|ies)|tries|submitted|attemptNumber|maxAttempts|limit)\w*(?:\.length)?\s*(?:>=|<=|===|!==|==|>|<)\s*\d/iu;
 const NUMERIC_LIMIT_BEFORE = /\b\d+\s*(?:>=|<=|===|!==|==|>|<)\s*\w*(?:attempt|retr(?:y|ies)|tries|submitted)\w*/iu;
-const NUMERIC_BOUND_CALL =
-  /\b(?:attempts?|retr(?:y|ies)|tries)\w*\.(?:slice|splice|take)\(\s*\d|\b(?:times|repeats?|retries|maxTries)\s*[:=(]\s*\d/iu;
+const NUMERIC_BOUND_CALL = /\b(?:attempts?|retr(?:y|ies)|tries)\w*\.(?:slice|splice|take)\(\s*\d/iu;
+const NUMERIC_REPEAT = /\b(?:times|repeats?|retries|maxTries)\s*[:=(]\s*\d/iu;
 
 /** The number a generator template writes after `key:`, e.g. `30_000` -> 30000. */
 const generatedNumber = (template: string, key: string) =>
@@ -64,7 +64,9 @@ describe('no invented recovery numbers (#1403)', () => {
       'times: 3',
     ]) {
       expect(
-        [NUMERIC_LIMIT_AFTER, NUMERIC_LIMIT_BEFORE, NUMERIC_BOUND_CALL].some((pattern) => pattern.test(offender)),
+        [NUMERIC_LIMIT_AFTER, NUMERIC_LIMIT_BEFORE, NUMERIC_BOUND_CALL, NUMERIC_REPEAT].some((pattern) =>
+          pattern.test(offender),
+        ),
       ).toBe(true);
     }
     for (const innocent of [
@@ -73,7 +75,9 @@ describe('no invented recovery numbers (#1403)', () => {
       'export const LEASE_MS = 30_000;',
     ]) {
       expect(
-        [NUMERIC_LIMIT_AFTER, NUMERIC_LIMIT_BEFORE, NUMERIC_BOUND_CALL].some((pattern) => pattern.test(innocent)),
+        [NUMERIC_LIMIT_AFTER, NUMERIC_LIMIT_BEFORE, NUMERIC_BOUND_CALL, NUMERIC_REPEAT].some((pattern) =>
+          pattern.test(innocent),
+        ),
       ).toBe(false);
     }
   });
@@ -97,7 +101,8 @@ describe('no invented recovery numbers (#1403)', () => {
     ],
     ['a numeric limit compared with an attempt or retry count', NUMERIC_LIMIT_AFTER],
     ['a numeric limit on the left of an attempt or retry comparison', NUMERIC_LIMIT_BEFORE],
-    ['a numeric attempt or retry bound given to a slice, take, repeat or times', NUMERIC_BOUND_CALL],
+    ['a numeric attempt or retry bound given to a slice or take', NUMERIC_BOUND_CALL],
+    ['a numeric bound given to repeats or times', NUMERIC_REPEAT],
     [
       'a retry framework import',
       /from\s+['"](?:p-retry|async-retry|retry|bull|bullmq|agenda|node-cron|cron|bee-queue)['"]/u,

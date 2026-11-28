@@ -154,7 +154,7 @@ const cursorOf = (page: Page) =>
 const sqlStateOf = (failure: Parameters<typeof findPostgresFailure>[0]) =>
   Option.match(findPostgresFailure(failure), { onNone: () => 'none', onSome: ({ code }) => code });
 
-const ADDRESS_LIKE = /[A-Za-z0-9._+-]+@[A-Za-z0-9-]+\.[A-Za-z]|https?:\/\/|<\/?[a-z][^>]*>|token|password|\botp\b/iu;
+const ADDRESS_LIKE = /[\w.+-]@[a-z\d-]+\.[a-z]|https?:\/\/|<\/?[a-z][^>]*>|token|password|\botp\b/iu;
 
 describe('The public history Reads over native PostgreSQL (#1409)', () => {
   it.live(

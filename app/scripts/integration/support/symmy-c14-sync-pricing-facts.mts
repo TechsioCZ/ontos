@@ -223,23 +223,24 @@ export const makeInternalSyncProducts = (
   effectiveFrom: string,
   categories?: readonly ProductCategoryRef[],
 ): typeof Schema.Json.Type => ({
-  products: internalSyncSkuPrices
-    .filter(({ itemKey }) => keys.includes(itemKey))
-    .map(({ base, itemKey, list }) => {
-      const prices: (typeof Schema.Json.Type)[] = [
-        { amount: base, currencyCode: 'CZK', effectiveFrom },
-        { amount: list, currencyCode: 'CZK', effectiveFrom, priceGroupCode: internalSyncListCode },
-      ];
-      const product = {
-        identifier: { type: 'sku', value: itemKey },
-        lifecycle: 'ACTIVE',
-        name: itemKey,
-        variants: [{ identifier: { type: 'sku', value: itemKey }, prices }],
-      };
-      return categories === undefined
-        ? product
-        : { ...product, categoryIds: categories.map(({ resourceId }) => resourceId) };
-    }),
+  products: internalSyncSkuPrices.flatMap(({ base, itemKey, list }) => {
+    if (!keys.includes(itemKey)) {
+      return [];
+    }
+    const prices: (typeof Schema.Json.Type)[] = [
+      { amount: base, currencyCode: 'CZK', effectiveFrom },
+      { amount: list, currencyCode: 'CZK', effectiveFrom, priceGroupCode: internalSyncListCode },
+    ];
+    const product = {
+      identifier: { type: 'sku', value: itemKey },
+      lifecycle: 'ACTIVE',
+      name: itemKey,
+      variants: [{ identifier: { type: 'sku', value: itemKey }, prices }],
+    };
+    return [
+      categories === undefined ? product : { ...product, categoryIds: categories.map(({ resourceId }) => resourceId) },
+    ];
+  }),
 });
 
 /** Native persisted amounts and source association, not a successful HTTP envelope or a captured exact grant. */

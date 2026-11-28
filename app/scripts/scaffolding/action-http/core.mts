@@ -81,7 +81,7 @@ export const resolveCoreDomainProblems = (
   }
   const tags = [...new Set(errors.map(({ tag }) => tag))].toSorted((left, right) => left.localeCompare(right));
   return tags.map((tag) => {
-    const kinds = new Set(errors.filter((error) => error.tag === tag).map(({ kind }) => kind));
+    const kinds = new Set(errors.flatMap(({ kind, tag: member }) => (member === tag ? [kind] : [])));
     const kind = stated.get(tag) ?? (kinds.size === 1 ? [...kinds][0] : undefined);
     if (kind === undefined) {
       return raiseScaffoldFailure(

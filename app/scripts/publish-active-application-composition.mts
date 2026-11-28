@@ -875,7 +875,7 @@ const readPublicationDocument = (file: string, maximumBytes: number) =>
         reason: 'invalid_observation',
       });
     }
-    const text = yield* Effect.try({
+    return yield* Effect.try({
       catch: () =>
         new ActiveApplicationCompositionPublicationError({
           message: 'the candidate is not UTF-8',
@@ -883,7 +883,6 @@ const readPublicationDocument = (file: string, maximumBytes: number) =>
         }),
       try: () => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
     });
-    return text;
   });
 
 const readPublicationCandidate = (file: string) =>
@@ -1471,7 +1470,7 @@ const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('se
 
 const definedWorkerSetups = (zeropsYamlText: string, workerSetupNames: ReadonlySet<string>) =>
   Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
-    Effect.map(({ zerops }) => zerops.filter(({ setup }) => workerSetupNames.has(setup)).map(({ setup }) => setup)),
+    Effect.map(({ zerops }) => zerops.flatMap(({ setup }) => (workerSetupNames.has(setup) ? [setup] : []))),
   );
 
 /**

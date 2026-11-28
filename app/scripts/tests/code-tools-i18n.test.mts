@@ -11,8 +11,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const codeToolsPackage = '@modern-js/code-tools';
 const malformedPluginCase = 'malformed plugin';
-const cleanOutput =
-  /^(?:Found 0 warnings and 0 errors\.\r?\nFinished in \d+(?:\.\d+)?(?:ms|s) on [1-9]\d* files? with \d+ rules using [1-9]\d* threads?\.\r?\n)?$/u;
+const cleanTiming = /^Finished in \d+(?:\.\d+)?(?:ms|s) on [1-9]\d* files? with \d+ rules using [1-9]\d* threads?\.$/u;
 const require = createRequire(import.meta.url);
 const packageEntry = pathToFileURL(require.resolve(codeToolsPackage));
 const packageRoot = fileURLToPath(new URL('../..', packageEntry));
@@ -114,7 +113,12 @@ printOxlintOutput(result); process.exitCode = result.exitCode;`;
       const output = stripVTControlCharacters(result.stdout + result.stderr);
       if (fixture.diagnostic === null) {
         expect(result.status, output).toBe(0);
-        expect(output).toMatch(cleanOutput);
+        if (output !== '') {
+          const [summary, timing, ...rest] = output.split(/\r?\n/u);
+          expect(summary).toBe('Found 0 warnings and 0 errors.');
+          expect(timing).toMatch(cleanTiming);
+          expect(rest).toEqual(['']);
+        }
       } else {
         expect(result.status, output).toBe(1);
         expect(output).toMatch(fixture.diagnostic);

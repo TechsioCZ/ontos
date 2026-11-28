@@ -8,7 +8,7 @@ import { CONSERVATIVE_FULL_DEPLOY_PATHS } from '../plan-deployment-impact.mts';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
 const OWNED_AREAS = /^(?:apps|packages|verticals|topology)\//u;
-const RELATIVE_REFERENCE = /(?:from|import|new URL\(|extends"?:?)\s*\(?\s*['"](?<reference>\.{1,2}\/[^'"]+)['"]/gu;
+const RELATIVE_REFERENCE = /(?:from|import|new URL\(|extends"?:?)\s*(?:\(\s*)?['"](?<reference>\.{1,2}\/[^'"]+)['"]/gu;
 // The package scripts a Zerops or Cloudflare deployment runs; `dev` and test scripts never ship.
 const DEPLOYED_SCRIPTS = ['build', 'cloudflare:build', 'cloudflare:deploy', 'serve'] as const;
 const UnitManifestFromJson = Schema.fromJsonString(
@@ -24,7 +24,7 @@ const unitRoots = ['apps', 'verticals'].flatMap((area) =>
 
 const relativeReferences = (file: string): readonly string[] =>
   [...readFileSync(file, 'utf-8').matchAll(RELATIVE_REFERENCE)].flatMap((match) =>
-    match.groups?.reference === undefined ? [] : [path.resolve(path.dirname(file), match.groups.reference)],
+    match.groups?.['reference'] === undefined ? [] : [path.resolve(path.dirname(file), match.groups['reference'])],
   );
 
 /** Root-level files a unit build reads, following each root file's own relative imports. */
@@ -43,7 +43,7 @@ const rootBuildInputs = (): ReadonlySet<string> => {
     for (const name of DEPLOYED_SCRIPTS) {
       pending.push(
         ...[...(scripts?.[name] ?? '').matchAll(SCRIPT_REFERENCE)].flatMap((match) =>
-          match.groups?.reference === undefined ? [] : [path.resolve(unitRoot, match.groups.reference)],
+          match.groups?.['reference'] === undefined ? [] : [path.resolve(unitRoot, match.groups['reference'])],
         ),
       );
     }

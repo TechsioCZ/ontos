@@ -45,11 +45,18 @@ export const safeText = (value: string): Result.Result<string, ValueFailure> => 
   return normal.trim() === normal ? Result.succeed(normal) : malformed;
 };
 
-const decimal = /^(?<sign>-?)(?<integer>0|[1-9][0-9]{0,14})(?:\.(?<fraction>[0-9]{1,6}))?$/u;
+const decimal = /^(?<sign>-?)(?<integer>0|[1-9]\d{0,14})(?:\.(?<fraction>\d{1,6}))?$/u;
 const currencyCode = /^[A-Z]{3}$/u;
 const NO_BREAK_SPACE = '\u00A0';
 
-const groupDigits = (digits: string, separator: string) => digits.replaceAll(/\B(?=(?:[0-9]{3})+$)/gu, separator);
+const groupDigits = (digits: string, separator: string) => {
+  const first = digits.length % 3 || 3;
+  const groups = [digits.slice(0, first)];
+  for (let offset = first; offset < digits.length; offset += 3) {
+    groups.push(digits.slice(offset, offset + 3));
+  }
+  return groups.join(separator);
+};
 
 /**
  * Presentation of an exact amount: only separators and the position of the currency code differ by language. Every
@@ -84,7 +91,7 @@ const englishMonths = [
   'November',
   'December',
 ] as const;
-const isoDate = /^(?<year>[0-9]{4})-(?<month>[0-9]{2})-(?<day>[0-9]{2})$/u;
+const isoDate = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u;
 
 const isLeapYear = (year: number) => (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
 const daysInMonth = (year: number, month: number) => {

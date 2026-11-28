@@ -758,7 +758,7 @@ describe('Pre-handoff step of a Message Intent (#1401)', () => {
           ]);
           expect(everything).not.toContain(ORIGINAL_ADDRESS);
           // no address-shaped value at all: the owner's mask is `p***@...` and never matches a usable address
-          expect(everything).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.-]+/u);
+          expect(everything).not.toMatch(/[\w.+-]@[\w-]+\.[\w.-]/u);
           expect(everything).not.toMatch(/otp|password|secret|token|bearer/iu);
         }
         // and the schema itself has no column for one

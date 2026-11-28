@@ -279,16 +279,14 @@ class TaggedContextProof {
     }
     const fields = new Map<string, DataValue>();
     for (const property of node.properties) {
-      if (
-        property.type !== 'Property' ||
-        property.computed ||
-        property.method ||
-        property.kind !== 'init' ||
-        (property.key.type !== 'Identifier' && property.key.type !== 'Literal')
-      ) {
+      if (property.type !== 'Property' || property.computed || property.method || property.kind !== 'init') {
         return BAD;
       }
-      const name = property.key.type === 'Identifier' ? property.key.name : property.key.value;
+      const nodeKey = property.key;
+      if (nodeKey.type !== 'Identifier' && nodeKey.type !== 'Literal') {
+        return BAD;
+      }
+      const name = nodeKey.type === 'Identifier' ? nodeKey.name : nodeKey.value;
       if (
         !Schema.is(Schema.String)(name) ||
         fields.has(name) ||

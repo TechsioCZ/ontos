@@ -146,7 +146,8 @@ const decodeWholePurchaseBasis = Schema.decodeUnknownOption(PricingWholePurchase
   onExcessProperty: 'error',
 });
 
-const signedDecimalPattern = /^(?:-(?:0\.\d*[1-9]\d*|[1-9]\d*(?:\.\d+)?)|0(?:\.\d+)?|[1-9]\d*(?:\.\d+)?)$/u;
+const signedDecimal = (amount: string) =>
+  /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(amount) && !(amount.startsWith('-') && !/[1-9]/u.test(amount));
 
 interface DecimalParts {
   readonly coefficient: bigint;
@@ -187,7 +188,7 @@ const formatDecimal = (coefficient: bigint, scale: number): string => {
   const absolute = negative ? -coefficient : coefficient;
   const padded = absolute.toString().padStart(scale + 1, '0');
   const integer = padded.slice(0, -scale);
-  const fraction = padded.slice(-scale).replace(/0+$/u, '');
+  const fraction = padded.slice(-scale).replace(/(?<!0)0+$/u, '');
   const unsigned = fraction.length === 0 ? integer : `${integer}.${fraction}`;
   return negative ? `-${unsigned}` : unsigned;
 };
@@ -307,9 +308,9 @@ export const assessWholePurchaseDiscountThreshold = (
   input: PricingWholePurchaseThresholdInput,
 ): Effect.Effect<PricingWholePurchaseThresholdResult, PricingDiscountApplicabilityRejected> => {
   if (
-    !signedDecimalPattern.test(input.configuredAmount.amount) ||
+    !signedDecimal(input.configuredAmount.amount) ||
     compareDecimals(input.configuredAmount.amount, '0') < 0 ||
-    input.intermediates.some(({ amount }) => !signedDecimalPattern.test(amount.amount))
+    input.intermediates.some(({ amount }) => !signedDecimal(amount.amount))
   ) {
     return Effect.fail(
       reject('MONETARY_INTERMEDIATE_INVALID', 'Whole-purchase applicability requires canonical exact decimal values'),

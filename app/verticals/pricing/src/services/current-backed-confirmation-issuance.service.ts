@@ -236,10 +236,9 @@ const validateResolvedSource = Effect.fn('PricingCurrentBackedConfirmationIssuan
       );
     }
     const projection = yield* projectPricingCommercialTotal(source.currentResult.commercialTotal).pipe(
-      Effect.mapError((cause) => {
-        void cause;
-        return sourceInvalid('The full Current result cannot reproduce the accepted safe publication');
-      }),
+      Effect.catchTag('PricingCommercialTotalProjectionUnverifiable', () =>
+        Effect.fail(sourceInvalid('The full Current result cannot reproduce the accepted safe publication')),
+      ),
     );
     if (!sameSafeProjection(projection, evaluation.publication)) {
       return yield* Effect.fail(
@@ -254,19 +253,17 @@ const expiresAtFor = (
   issuedAt: typeof PricingInstantSchema.Type,
   durationMilliseconds: number,
 ): Effect.Effect<typeof PricingInstantSchema.Type, PricingCommitmentConfirmationIssuanceOutcome> =>
-  Effect.try({
-    catch: (cause) => {
-      void cause;
-      return sourceInvalid('The owner validity policy produced an invalid Confirmation interval');
-    },
-    try: () =>
-      DateTime.makeUnsafe(issuedAt).pipe(DateTime.add({ milliseconds: durationMilliseconds }), DateTime.formatIso),
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(PricingInstantSchema)),
-    Effect.mapError((cause) => {
-      void cause;
-      return sourceInvalid('The owner validity policy produced an invalid Confirmation interval');
-    }),
+  Option.liftThrowable(() =>
+    DateTime.makeUnsafe(issuedAt).pipe(DateTime.add({ milliseconds: durationMilliseconds }), DateTime.formatIso),
+  )().pipe(
+    Effect.fromOption(() => sourceInvalid('The owner validity policy produced an invalid Confirmation interval')),
+    Effect.flatMap((value) =>
+      Schema.decodeUnknownEffect(PricingInstantSchema)(value).pipe(
+        Effect.catchTag('SchemaError', () =>
+          Effect.fail(sourceInvalid('The owner validity policy produced an invalid Confirmation interval')),
+        ),
+      ),
+    ),
   );
 
 /**
