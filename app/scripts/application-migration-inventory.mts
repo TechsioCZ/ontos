@@ -200,13 +200,18 @@ const statementRoleNames = (node: Node): readonly (string | undefined)[] => {
 /** PostgreSQL 18 resolves quoting, comments and statement boundaries before we inspect role-bearing clauses. */
 export const migrationRuntimeIdentityIds = Effect.fn('ApplicationMigrationInventory.runtimeIdentities')(
   function* migrationRuntimeIdentityIdsEffect(sql: string, source: string) {
-    const parsed = yield* Effect.tryPromise({
-      catch: () => invalid(`Cannot parse migration SQL: ${source}`),
-      try: async () => await parse(sql),
-    });
-    const roles = new Set(
-      (parsed.stmts ?? []).flatMap(({ stmt }) => (stmt === undefined ? [] : statementRoleNames(stmt))),
+    // Drizzle sends each breakpoint fragment separately, even when the preceding statement has no semicolon.
+    const names = yield* Effect.forEach(sql.split('--> statement-breakpoint'), (fragment, index) =>
+      Effect.tryPromise({
+        catch: () => invalid(`Cannot parse migration SQL: ${source} (fragment ${index + 1})`),
+        try: async () => await parse(fragment),
+      }).pipe(
+        Effect.map(({ stmts }) =>
+          (stmts ?? []).flatMap(({ stmt }) => (stmt === undefined ? [] : statementRoleNames(stmt))),
+        ),
+      ),
     );
+    const roles = new Set(names.flat());
     return DATABASE_IDENTITIES.flatMap((identity) => (roles.has(identity.role) ? [identity.id] : []));
   },
 );
