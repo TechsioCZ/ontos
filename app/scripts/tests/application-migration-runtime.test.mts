@@ -100,6 +100,8 @@ it.effect('only pending migrations bootstrap roles named by executable PostgreSQ
   Effect.gen(function* nativeRoleBootstrap() {
     const ids = yield* migrationRuntimeIdentityIds(
       [
+        'CREATE TABLE "audit TO !" (id integer)',
+        '--> statement-breakpoint',
         'GRANT SELECT ON TABLE "audit TO !" TO party_registry_worker;',
         'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO party_registry_runtime;',
         'GRANT shell_gateway_issuer TO analyst;',
