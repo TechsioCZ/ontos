@@ -246,23 +246,46 @@ const itemSource = (item: Item): AdmittedSource => {
   };
 };
 
-const parentItemKey = (item: Item): string | undefined =>
-  item.effects
-    .flatMap((effect) =>
+const parentItemKeys = (item: Item): readonly string[] => [
+  ...new Set(
+    item.effects.flatMap((effect) =>
       (effect.dependsOn ?? []).flatMap((dependency) =>
         Predicate.isString(dependency) || dependency.itemKey === item.itemKey ? [] : [dependency.itemKey],
       ),
-    )
-    .at(0);
+    ),
+  ),
+];
 
 const itemsByKey = (plan: SymmyPinnedJobPlan) => new Map<string, Item>(plan.items.map((item) => [item.itemKey, item]));
 
-/** The customer record an item builds on: the item at the root of its dependencies, itself when it has none. */
-const rootItemOf = (byKey: ReadonlyMap<string, Item>, item: Item, seen: ReadonlySet<string> = new Set()): Item => {
-  const parent = parentItemKey(item);
-  const next = parent === undefined || seen.has(parent) ? undefined : byKey.get(parent);
-  return next === undefined ? item : rootItemOf(byKey, next, new Set([...seen, item.itemKey]));
-};
+/** Every prerequisite must reach one customer root. Array order never chooses which person an item describes. */
+const rootItemOf = Effect.fn('SymmyCustomerIntakePrivacy.rootItem')(function* rootItem(
+  byKey: ReadonlyMap<string, Item>,
+  item: Item,
+  seen: ReadonlySet<string> = new Set(),
+): Effect.fn.Return<Item, SymmyJobStoreError> {
+  if (seen.has(item.itemKey)) {
+    return yield* denied();
+  }
+  const parents = parentItemKeys(item);
+  if (parents.length === 0) {
+    return item;
+  }
+  const visited = new Set([...seen, item.itemKey]);
+  const roots = yield* Effect.forEach(
+    parents,
+    (key) => {
+      const parent = byKey.get(key);
+      return parent === undefined ? Effect.fail(denied()) : rootItemOf(byKey, parent, visited);
+    },
+    { concurrency: 1 },
+  );
+  const [root] = roots;
+  if (root === undefined || roots.some((candidate) => candidate.itemKey !== root.itemKey)) {
+    return yield* denied();
+  }
+  return root;
+});
 
 const sameSource = (left: AdmittedSource, right: AdmittedSource) =>
   computeCanonicalValueHash(left) === computeCanonicalValueHash(right);
@@ -271,42 +294,45 @@ const sameSource = (left: AdmittedSource, right: AdmittedSource) =>
  * One admission per customer record: its own source and the child records (contacts, addresses) built on it. Two
  * customers never share a subject; a child always belongs to the root record it depends on.
  */
-export const projectSymmyCustomerIntakeAdmissions = (
-  plan: SymmyPinnedJobPlan,
-  personalItemKeys: ReadonlySet<string>,
-): readonly { readonly occurrenceId: string; readonly payload: AdmitSourceProcessingSubjectPayload }[] => {
-  const byKey = itemsByKey(plan);
-  const groups = new Map<string, { readonly children: Map<string, AdmittedSource>; readonly root: Item }>();
-  for (const item of plan.items.filter(({ itemKey }) => personalItemKeys.has(itemKey))) {
-    const root = rootItemOf(byKey, item);
-    const group = groups.get(root.itemKey) ?? { children: new Map<string, AdmittedSource>(), root };
-    groups.set(root.itemKey, group);
-    const source = itemSource(item);
-    if (!sameSource(source, itemSource(root))) {
-      group.children.set(computeCanonicalValueHash(source), source);
-    }
-  }
-  return [...groups.values()].map(({ children, root }) => {
-    const source = itemSource(root);
-    const profiles = root.effects.flatMap(({ intent }) =>
-      Schema.is(SymmyPartyCommerceIntentSchema)(intent)
-        ? Match.value(intent).pipe(
-            Match.tag('CustomerGroupMembership', (membership) => [
-              profileTarget(membership.payload.profile.profileRef),
-            ]),
-            Match.orElse(() => []),
-          )
-        : [],
+export const projectSymmyCustomerIntakeAdmissions = Effect.fn('SymmyCustomerIntakePrivacy.admissions')(
+  function* admissions(plan: SymmyPinnedJobPlan, personalItemKeys: ReadonlySet<string>) {
+    const byKey = itemsByKey(plan);
+    const groups = new Map<string, { readonly children: Map<string, AdmittedSource>; readonly root: Item }>();
+    yield* Effect.forEach(
+      plan.items.filter(({ itemKey }) => personalItemKeys.has(itemKey)),
+      Effect.fnUntraced(function* groupItem(item) {
+        const root = yield* rootItemOf(byKey, item);
+        const group = groups.get(root.itemKey) ?? { children: new Map<string, AdmittedSource>(), root };
+        groups.set(root.itemKey, group);
+        const source = itemSource(item);
+        if (!sameSource(source, itemSource(root))) {
+          group.children.set(computeCanonicalValueHash(source), source);
+        }
+      }),
+      { concurrency: 1, discard: true },
     );
-    const payload: AdmitSourceProcessingSubjectPayload = { childSources: [...children.values()], source };
-    if (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' && profiles[0] !== undefined) {
-      Object.assign(payload, { membershipProfile: profiles[0] });
-    }
-    return { occurrenceId: root.effects[0].ref.occurrence.occurrenceId, payload };
-  });
-};
+    return [...groups.values()].map(({ children, root }) => {
+      const source = itemSource(root);
+      const profiles = root.effects.flatMap(({ intent }) =>
+        Schema.is(SymmyPartyCommerceIntentSchema)(intent)
+          ? Match.value(intent).pipe(
+              Match.tag('CustomerGroupMembership', (membership) => [
+                profileTarget(membership.payload.profile.profileRef),
+              ]),
+              Match.orElse(() => []),
+            )
+          : [],
+      );
+      const payload: AdmitSourceProcessingSubjectPayload = { childSources: [...children.values()], source };
+      if (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' && profiles[0] !== undefined) {
+        Object.assign(payload, { membershipProfile: profiles[0] });
+      }
+      return { occurrenceId: root.effects[0].ref.occurrence.occurrenceId, payload };
+    });
+  },
+);
 
-type Admission = ReturnType<typeof projectSymmyCustomerIntakeAdmissions>[number];
+type Admission = Effect.Success<ReturnType<typeof projectSymmyCustomerIntakeAdmissions>>[number];
 
 /** One governed Privacy admission. A replay of the job repeats the same admission; a new job is a new use. */
 const admitSubject = Effect.fn('SymmyCustomerIntakePrivacy.admitSubject')(function* admitSubject(
@@ -412,22 +438,30 @@ export const projectSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.
 ) {
   const items = yield* itemRequests(scope, plan);
   const byKey = itemsByKey(plan);
+  const describedUses = yield* Effect.forEach(
+    items,
+    ({ item, requests: uses }) =>
+      rootItemOf(byKey, item).pipe(
+        Effect.map((root) => {
+          const source = itemSource(item);
+          const customer = itemSource(root);
+          return uses.map((request) =>
+            isPersonalUse(request) && !sameSource(source, customer)
+              ? { ...request, describedSubjectSource: customer }
+              : request,
+          );
+        }),
+      ),
+    { concurrency: 1 },
+  );
   const requests = yield* Effect.forEach(
-    items.flatMap(({ item, requests: uses }) => {
-      const source = itemSource(item);
-      const customer = itemSource(rootItemOf(byKey, item));
-      return uses.map((request) =>
-        isPersonalUse(request) && !sameSource(source, customer)
-          ? { ...request, describedSubjectSource: customer }
-          : request,
-      );
-    }),
+    describedUses.flat(),
     (request) =>
       Schema.decodeUnknownEffect(SourceProcessingEligibilityRequestSchema)(request).pipe(Effect.mapError(unavailable)),
     { concurrency: 1 },
   );
   return {
-    admissions: projectSymmyCustomerIntakeAdmissions(
+    admissions: yield* projectSymmyCustomerIntakeAdmissions(
       plan,
       new Set(items.flatMap(({ item, requests: uses }) => (uses.some(isPersonalUse) ? [item.itemKey] : []))),
     ),

@@ -124,6 +124,24 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                   partyRef: { ...standing.partyRef, resourceId: invocationId },
                 })).outcome,
               ).toBe('NOT_ADMISSIBLE');
+              // Existence is not an authorization oracle: foreign sources fail enrollment alike, and an enrolled
+              // caller denied by Privacy gets NOT_ADMISSIBLE whether or not its record was ever committed.
+              for (const recordId of ['person-record', 'never-committed-record']) {
+                const probe = { ...standing, admittedRecord: { ...standing.admittedRecord, recordId } };
+                const foreign = yield* readSourcePersonAdmission(transaction, scope, probe).pipe(
+                  Effect.provideService(
+                    ConfigProvider.ConfigProvider,
+                    ConfigProvider.fromUnknown({ ONTOS_PARTY_CLIENT_SOURCE_BINDINGS: '[]' }),
+                  ),
+                  Effect.result,
+                );
+                expect(Result.isFailure(foreign)).toBe(true);
+                expect(
+                  yield* readSourcePersonAdmission(transaction, scope, probe).pipe(
+                    Effect.provideService(PartyClientSourcePrivacy, { checkImport: () => Effect.succeed('DENIED') }),
+                  ),
+                ).toEqual({ outcome: 'NOT_ADMISSIBLE' });
+              }
               const sourceMatchInvocation = 'df640000-0000-4000-8000-000000000002';
               const matched = yield* matchParty(transaction, {
                 actionInvocationId: sourceMatchInvocation,

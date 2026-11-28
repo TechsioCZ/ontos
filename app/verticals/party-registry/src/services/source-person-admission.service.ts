@@ -19,7 +19,10 @@ import {
   partyContactPoints,
 } from '../db/schema.ts';
 import type { PartyTransaction } from '../db/types.ts';
-import { authorizePartyClientSourceReference } from './party-client-source-evidence.service.ts';
+import {
+  authorizePartyClientSourceReference,
+  requirePartyClientSourceEnrollment,
+} from './party-client-source-evidence.service.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.assign(
@@ -148,6 +151,9 @@ const committedPersonReference = Effect.fn('SourcePersonAdmission.committedRefer
   if (('partyRef' in request && request.partyRef.tenantId !== scope.tenantId) || scope.legalEntityId === undefined) {
     return;
   }
+  // Source enrollment is checked before a record lookup, so a foreign source cannot distinguish a missing record
+  // from a committed one. The occurrence itself is owner-selected below and reauthorized before proof is released.
+  yield* requirePartyClientSourceEnrollment(request.admittedRecord, scope, true).pipe(Effect.mapError(unavailable));
   const { source, recordId } = request.admittedRecord;
   const evidence = sql`${partyMatchDecisions.evidenceEvaluation}->'evidence' @> jsonb_build_array(jsonb_build_object('kind','CLIENT_SOURCE_ASSERTION','recordId',${recordId}::text,'source',jsonb_build_object('issuer',${source.issuer}::text,'namespace',${source.namespace}::text,'recordType',${source.recordType}::text,'routeRef',${source.routeRef}::text)))`;
   const rows = yield* transaction
@@ -231,7 +237,17 @@ export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')
   if (input === undefined) {
     return notAdmissible;
   }
-  const correlated = yield* loadSourceCorrelatedParty(transaction, scope, input);
+  const authorized = yield* authorizePartyClientSourceReference(input.sourceReference, scope, {
+    operation: 'EVIDENCE_READ',
+  }).pipe(
+    Effect.as(true),
+    Effect.catchTag('PartyEvidenceInsufficient', () => Effect.succeed(false)),
+    Effect.mapError(unavailable),
+  );
+  if (!authorized) {
+    return notAdmissible;
+  }
+  const correlated = yield* loadAuthorizedSourceCorrelatedParty(transaction, scope, input);
   if (correlated === undefined || correlated.party.currentType !== 'PERSON') {
     return notAdmissible;
   }

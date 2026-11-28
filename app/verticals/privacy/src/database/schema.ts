@@ -114,6 +114,9 @@ export const privacySubjects = privacySchema.table.withRLS(
         sql`(${table.subjectRecord}->'subject'->'sourceAdmission'->'sourceSubjectRef'->>'resourceId')`,
       )
       .where(sql`${table.subjectKind} = 'DATA_SUBJECT'`),
+    index('privacy_subjects_party_idx')
+      .on(table.tenantId, table.legalEntityId, sql`(${table.subjectRecord}->'subject'->'partyRef'->>'resourceId')`)
+      .where(sql`${table.subjectKind} = 'DATA_SUBJECT'`),
     unique('privacy_subjects_source_identity_uk').on(table.tenantId, table.legalEntityId, table.sourceIdentityKey),
     check('privacy_subjects_kind_ck', sql`${table.subjectKind} in ('DATA_SUBJECT', 'ANONYMOUS', 'SOURCE_ASSERTED')`),
     check(

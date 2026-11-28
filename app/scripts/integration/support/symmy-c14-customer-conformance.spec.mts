@@ -21,7 +21,7 @@ import {
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
 import { assert, expect } from 'effect-rstest';
-import { Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Redacted, Ref, Schema } from 'effect';
+import { Clock, Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Redacted, Ref, Schema } from 'effect';
 import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
@@ -1054,6 +1054,54 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       // The refused reads and wrong-route controls above created nothing and ran no further owner action.
       expect((yield* tenantRows)[0]).toEqual({ parties: 1, profiles: 1 });
       expect((yield* ownerWrites)[0]).toEqual({ party: 1, profile: 1 });
+      // Fill one normal partner page through the actual governed intake and owners, without inserting profiles,
+      // Party receipts or Privacy subjects. Its export measures the complete runtime-role proof path, not an admin
+      // lookup on copies of indexes. The fixed limit keeps page cost comparable in CI (the first customer is above).
+      const pageCustomers = Array.from({ length: 49 }, (_, index) => ({
+        customerId: `INTERNAL_C14_PAGE_${String(index).padStart(2, '0')}`,
+        firstName: `PagePerson${index}`,
+        kind: 'PERSON' as const,
+        lastName: `Fixture${index}`,
+      }));
+      const pageKey = 'INTERNAL_C14_FULL_PAGE';
+      const pageJob = yield* submitFor(pageKey, customersBody(...pageCustomers));
+      const pageWorker = yield* startProductWorker(workerArtifact, {
+        ...environment,
+        ONTOS_C14_WORKER_CLAIM_OWNER: pageKey,
+        ONTOS_GATEWAY_MODULE_API_KEY: moduleKey,
+      });
+      yield* observeUntil(
+        admin<{ settled: number; total: number }>`select count(*)::integer as total,
+          count(*) filter(where state='settled')::integer as settled from symmy_integration.job_effects
+          where job_id=${pageJob.jobId}`,
+        (rows) => rows[0]?.total === 98 && rows[0].settled === 98,
+        2400,
+      ).pipe(
+        Effect.tapError(() =>
+          Effect.all([
+            pageWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+            logOwnerDiagnostics(shell.gatewayDiagnostics(), ownerDiagnostics),
+          ]),
+        ),
+      );
+      yield* pageWorker.child.kill();
+      yield* pageWorker.child.exitCode;
+      for (const pass of ['cold', 'warm']) {
+        const started = yield* Clock.monotonicTimeNanos;
+        const response = yield* client.get(`${shell.baseUrl}/api/symmy/v1/admin/customers?limit=50`, { headers });
+        expect(response.status).toBe(200);
+        const page = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(customerReadbackSchema)));
+        expect(page).toMatchObject({ count: 50, limit: 50, offset: 0 });
+        expect(page.customers).toHaveLength(50);
+        expect(new Set(page.customers.map(({ sourceRecordId }) => sourceRecordId)).size).toBe(50);
+        expect(page.customers.every(({ party }) => party !== undefined)).toBe(true);
+        yield* Effect.logInfo({
+          elapsedSeconds: Number((yield* Clock.monotonicTimeNanos) - started) / 1e9,
+          event: 'standing-source-full-page',
+          items: 50,
+          pass,
+        });
+      }
       return yield* Effect.void;
     }
     const sourceBinding = admin`select source_occurrence_id,source_order

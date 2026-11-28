@@ -48,6 +48,7 @@ CREATE TABLE "privacy"."source_processing_authorizations" (
 );
 --> statement-breakpoint
 ALTER TABLE "privacy"."source_processing_authorizations" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
+CREATE INDEX "privacy_subjects_party_idx" ON "privacy"."privacy_subjects" ("tenant_id","legal_entity_id",("subject_record"->'subject'->'partyRef'->>'resourceId')) WHERE "subject_kind" = 'DATA_SUBJECT';--> statement-breakpoint
 CREATE INDEX "privacy_subjects_reconciled_source_idx" ON "privacy"."privacy_subjects" ("tenant_id","legal_entity_id",("subject_record"->'subject'->'sourceAdmission'->'sourceSubjectRef'->>'resourceId')) WHERE "subject_kind" = 'DATA_SUBJECT';--> statement-breakpoint
 CREATE INDEX "privacy_source_admissions_subject_idx" ON "privacy"."source_processing_admissions" ("tenant_id","legal_entity_id","authorization_id","privacy_subject_id");--> statement-breakpoint
 CREATE INDEX "privacy_source_authorizations_route_idx" ON "privacy"."source_processing_authorizations" ("tenant_id","legal_entity_id","source_issuer","source_namespace","source_route_ref");--> statement-breakpoint

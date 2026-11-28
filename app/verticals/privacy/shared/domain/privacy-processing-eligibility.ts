@@ -115,6 +115,33 @@ export const PrivacyProcessingInterventionSchema = Schema.Struct({
 export type PrivacyProcessingIntervention = typeof PrivacyProcessingInterventionSchema.Type;
 
 const interventionScopeEquivalent = Schema.toEquivalence(IntendedProcessingScopeSchema);
+const absent = (reason: string, asOf: string): PrivacyInputResolution => ({
+  currentness: {
+    authoritative: false,
+    observedAt: asOf,
+    revision: 'none',
+    sourceRef: 'none',
+  },
+  reason,
+  state: 'ABSENT',
+});
+
+const currentness = (value: PrivacyInputCurrentness | null, asOf: string): PrivacyInputResolution => {
+  if (value === null) {
+    return absent('input_absent', asOf);
+  }
+  if (!value.authoritative) {
+    return { currentness: value, reason: 'source_not_authoritative', state: 'UNAVAILABLE' };
+  }
+  if (!isPrivacyInstantAtOrBefore(value.observedAt, asOf)) {
+    return { currentness: value, reason: 'observed_after_evaluation_time', state: 'CONFLICT' };
+  }
+  if (value.validUntil !== undefined && !isPrivacyInstantAfter(value.validUntil, asOf)) {
+    return { currentness: value, reason: 'input_expired', state: 'STALE' };
+  }
+  return { currentness: value, reason: 'authoritative_current_input', state: 'CURRENT' };
+};
+
 const INTERVENTIONS_SOURCE = 'privacy.core.processing-interventions';
 
 /**
@@ -133,7 +160,7 @@ export const currentProcessingIntervention = (
   // An intervention remains governed by its original ledger until explicitly resolved there.
   for (const previous of predecessors) {
     const inherited = currentProcessingIntervention(interventions, kind, previous, asOf);
-    if (inherited.status === 'ACTIVE' || !inherited.currentness.authoritative) {
+    if (inherited.status === 'ACTIVE' || currentness(inherited.currentness, asOf).state !== 'CURRENT') {
       return { ...inherited, scope: intendedScope };
     }
   }
@@ -146,7 +173,9 @@ export const currentProcessingIntervention = (
     )
     .toSorted((left, right) => right.currentness.observedAt.localeCompare(left.currentness.observedAt));
   const current = matching.at(0);
-  const sameTime = matching.filter(({ currentness }) => currentness.observedAt === current?.currentness.observedAt);
+  const sameTime = matching.filter(
+    ({ currentness: observed }) => observed.observedAt === current?.currentness.observedAt,
+  );
   if (sameTime.length > 1 || (current !== undefined && !current.currentness.authoritative)) {
     return {
       currentness: { authoritative: false, observedAt: asOf, revision: 'conflict', sourceRef: INTERVENTIONS_SOURCE },
@@ -605,33 +634,6 @@ export const reconcilePrivacyEligibilityHandoff = (input: {
     return { ...input.handoff, status: 'RECONCILIATION_REQUIRED' };
   }
   return { ...input.handoff, status: input.outcome === 'SUCCEEDED' ? 'COMPLETED' : 'FAILED' };
-};
-
-const absent = (reason: string, asOf: string): PrivacyInputResolution => ({
-  currentness: {
-    authoritative: false,
-    observedAt: asOf,
-    revision: 'none',
-    sourceRef: 'none',
-  },
-  reason,
-  state: 'ABSENT',
-});
-
-const currentness = (value: PrivacyInputCurrentness | null, asOf: string): PrivacyInputResolution => {
-  if (value === null) {
-    return absent('input_absent', asOf);
-  }
-  if (!value.authoritative) {
-    return { currentness: value, reason: 'source_not_authoritative', state: 'UNAVAILABLE' };
-  }
-  if (!isPrivacyInstantAtOrBefore(value.observedAt, asOf)) {
-    return { currentness: value, reason: 'observed_after_evaluation_time', state: 'CONFLICT' };
-  }
-  if (value.validUntil !== undefined && !isPrivacyInstantAfter(value.validUntil, asOf)) {
-    return { currentness: value, reason: 'input_expired', state: 'STALE' };
-  }
-  return { currentness: value, reason: 'authoritative_current_input', state: 'CURRENT' };
 };
 
 const scopeMismatch = (reason: string, asOf: string): PrivacyInputResolution => ({

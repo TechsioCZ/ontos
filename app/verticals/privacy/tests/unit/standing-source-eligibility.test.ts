@@ -347,7 +347,12 @@ describe('standing source processing authorization', () => {
       expect(
         yield* evaluateSourceProcessingEligibility(
           fixture.request,
-          { ...scope, principalId: '10000000-0000-4000-8000-000000000099' },
+          trustVerifiedGatewayPrincipalContext(
+            { ...scope, principalId: '10000000-0000-4000-8000-000000000099' },
+            'a'.repeat(64),
+            undefined,
+            { appId: 'party-registry', buildMarker: 'fixture', principalId: '10000000-0000-4000-8000-000000000099' },
+          ),
           strict,
           fixture.evaluatedAt,
         ),
@@ -676,6 +681,19 @@ describe('standing source processing authorization', () => {
             person(reconciledId, assertedId, [restrictionFor(fixture.authorization, admitted.get('client:two') ?? '')]),
           )).outcome,
         ).toBe('ALLOWED');
+      }),
+    );
+    it.effect('never clears a predecessor restriction with an expired resolution', () =>
+      Effect.gen(function* expiredResolution() {
+        const history = [fixture.ended, renewed.authorization];
+        const restriction = restrictionFor(fixture.authorization, assertedId);
+        const resolved: PrivacyProcessingIntervention = { ...restriction, status: 'RESOLVED' };
+        // A current resolution clears the predecessor; at its exact expiry it is stale, not an absent restriction.
+        expect((yield* run(person(reconciledId, assertedId, [resolved], renewed, history))).outcome).toBe('ALLOWED');
+        for (const validUntil of [fixture.from, fixture.evaluatedAt]) {
+          const expired = { ...resolved, currentness: { ...resolved.currentness, validUntil } };
+          expect((yield* run(person(reconciledId, assertedId, [expired], renewed, history))).outcome).toBe('DENIED');
+        }
       }),
     );
     it.effect('keeps that restriction after the route authorization is renewed', () =>

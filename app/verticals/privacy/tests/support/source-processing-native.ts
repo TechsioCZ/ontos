@@ -290,6 +290,21 @@ const seedRouteAdmissions = Effect.fn('PrivacyNativeFixture.seedRouteAdmissions'
             sourceRecord: entry.record,
           })
           .onConflictDoNothing();
+        const [stored] = yield* transaction
+          .select({ role: sourceProcessingAdmissions.role, subjectId: sourceProcessingAdmissions.privacySubjectId })
+          .from(sourceProcessingAdmissions)
+          .where(
+            and(
+              eq(sourceProcessingAdmissions.tenantId, scope.tenantId),
+              eq(sourceProcessingAdmissions.legalEntityId, scope.legalEntityId),
+              eq(sourceProcessingAdmissions.sourceIdentityKey, key),
+            ),
+          )
+          .limit(1);
+        if (stored?.subjectId !== entry.subjectId || stored.role !== entry.role) {
+          return yield* unavailable();
+        }
+        return yield* Effect.void;
       }),
     { concurrency: 1, discard: true },
   );

@@ -187,7 +187,7 @@ it.effect('admits one subject per customer and keeps each contact on the custome
       ],
     });
     expect(
-      projectSymmyCustomerIntakeAdmissions(admissionPlan, new Set(['customer-0', 'contact-0-0', 'customer-1'])),
+      yield* projectSymmyCustomerIntakeAdmissions(admissionPlan, new Set(['customer-0', 'contact-0-0', 'customer-1'])),
     ).toEqual([
       {
         occurrenceId: '10000000-0000-4000-8000-000000000301',
@@ -237,7 +237,7 @@ it.effect('encodes only a membership record as a child, not a CUSTOMER containin
       const job = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
         items: [{ ...root, effects: [{ ...effect, intent, ref: { ...effect.ref, occurrence } }] }],
       });
-      const [projected] = projectSymmyCustomerIntakeAdmissions(job, new Set(['customer']));
+      const [projected] = yield* projectSymmyCustomerIntakeAdmissions(job, new Set(['customer']));
       const payload = yield* Schema.decodeUnknownEffect(AdmitSourceProcessingSubjectPayloadSchema)(projected?.payload);
       expect(payload.membershipProfile).toEqual(
         entityKind === 'CUSTOMER' ? undefined : { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: profileRef.resourceId },
@@ -291,6 +291,27 @@ const customerWithContact = (customerRecordId: string) =>
       personalItem(2, 'contact-0-0', 'contact:one', [{ effectKey: 'party-update', itemKey: 'customer-0' }]),
     ],
   });
+
+it.effect('rejects cross-customer prerequisites in either order before proposing any binding', () =>
+  Effect.gen(function* ambiguousRoot() {
+    const group = personalItem(3, 'group-definition', 'group:one');
+    const customer = personalItem(1, 'customer', 'customer:one');
+    const groupDependency = { effectKey: 'party-update', itemKey: 'group-definition' };
+    const customerDependency = { effectKey: 'party-update', itemKey: 'customer' };
+    for (const ordered of [
+      [groupDependency, customerDependency],
+      [customerDependency, groupDependency],
+    ]) {
+      const job = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
+        items: [group, customer, personalItem(2, 'membership', 'membership:one', ordered)],
+      });
+      expect(yield* projectSymmyCustomerIntake(scope, job).pipe(Effect.flip)).toMatchObject({ code: 'route_denied' });
+      expect(yield* projectSymmyCustomerIntakeAdmissions(job, new Set(['membership'])).pipe(Effect.flip)).toMatchObject(
+        { code: 'route_denied' },
+      );
+    }
+  }),
+);
 
 it.effect('names the customer record a contact describes, so Privacy can check it before any binding exists', () =>
   Effect.gen(function* describedCustomer() {

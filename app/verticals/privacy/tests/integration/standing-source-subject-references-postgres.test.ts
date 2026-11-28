@@ -182,7 +182,15 @@ it.live(
           }
 
           const real = yield* sourceProcessingEligibilityServices(transaction, scope);
-          const services: SourceProcessingEligibilityServices = { ...real, subjectExists: () => Effect.succeed(true) };
+          const services: SourceProcessingEligibilityServices = {
+            ...real,
+            // Only targeted external Party proof is replaced here. Targetless processing must still load the real
+            // Privacy subject and validate the admitted role: a CHILD source is not the parent's own source record.
+            subjectExists: (subjectId, request, targetAdmission, admittedAs) =>
+              request.target === null
+                ? real.subjectExists(subjectId, request, targetAdmission, admittedAs)
+                : Effect.succeed(true),
+          };
           const evaluate = (request: SourceProcessingEligibilityRequest, appId: string) =>
             evaluateSourceProcessingEligibility(request, caller(appId), services, first.evaluatedAt);
           const subjectOf = (result: Effect.Success<ReturnType<typeof evaluate>>) =>
