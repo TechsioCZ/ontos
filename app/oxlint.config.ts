@@ -1430,7 +1430,8 @@ export default defineConfig({
     'no-use-before-define': 'error',
     'react-doctor/no-barrel-import': 'error',
     'sonarjs/fixme-tag': 'error',
-    'sonarjs/no-nested-functions': 'error',
+    // Sonar 4.2.0 defaulted to 4; 4.2.2 defaults to 5. Preserve the actual limit, not just the severity.
+    'sonarjs/no-nested-functions': ['error', { threshold: 4 }],
     'sonarjs/todo-tag': 'error',
     'typescript/consistent-type-imports': 'error',
     'unicorn/no-useless-undefined': 'error',
