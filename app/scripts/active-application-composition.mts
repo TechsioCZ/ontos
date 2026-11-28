@@ -2,26 +2,28 @@ import { createHash } from 'node:crypto';
 
 import { Array as EffectArray, DateTime, Duration, Effect, Option, Order, Schema } from 'effect';
 
+import { ActiveApplicationCompositionSnapshotSchema } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
-  ActiveApplicationCompositionSnapshotSchema,
   ApplicationCompositionSchema,
   ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
-  ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   ONTOS_SHELL_CONTRIBUTION_ABI,
-  OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
   canonicalizeApplicationComposition,
   validateApplicationCompositionCandidate,
-} from '../packages/core-runtime/src/index.ts';
-import type { ApplicationCompositionBackend } from '../packages/core-runtime/src/modules/application-composition.ts';
+} from '../packages/core-runtime/src/modules/application-composition.ts';
+import {
+  ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  OntosModuleDeploymentContractSchema,
+} from '../packages/core-runtime/src/modules/manifest.ts';
 import type {
-  ActiveApplicationCompositionSnapshot,
+  ApplicationCompositionBackend,
   ApplicationComposition,
   ApplicationCompositionCandidateEvidence,
   ApplicationCompositionModule,
   ObservedApplicationCompositionContract,
   ObservedModuleFederationManifest,
-} from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/application-composition.ts';
+import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import { deriveModuleIntrinsicRequirements } from '../packages/core-runtime/src/modules/module-dependency-contracts.ts';
 import { governedSharedSingletonPackages, UI_KIT_PACKAGE } from '../module-federation.shared.ts';
 

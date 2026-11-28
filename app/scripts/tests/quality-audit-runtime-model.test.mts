@@ -11,6 +11,10 @@ import { buildKnipRuntimeEvidence } from '../../quality-audit/knip-runtime-model
 import { runQualityAudit } from '../quality-audit.mts';
 import { runPinnedKnip } from './quality-audit-test-support.mts';
 
+const packageJson = 'package.json';
+const nativeResolver = 'native-resolver';
+const badVersion = '  "version": "wrong-';
+
 const shellPackage = '@fixture/shell';
 const shellRoot = 'apps/shell';
 const layoutFile = `${shellRoot}/src/routes/layout.tsx`;
@@ -49,7 +53,7 @@ const fixture = () =>
     ).pipe(Effect.map((directory) => path.join(realpathSync(directory), 'app')));
     write(
       root,
-      'package.json',
+      packageJson,
       '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"},"scripts":{"typecheck":"ultramodern-create ultramodern typecheck --build tsconfig.json","performance:readiness":"ultramodern-create ultramodern performance-readiness"}}',
     );
     write(root, tsgoPackage, '{"name":"@effect/tsgo","version":"0.19.0"}');
@@ -127,7 +131,7 @@ const producerFixture = Effect.fn(function* pinnedHostFixture() {
         version: Schema.String,
       }),
     ),
-  )(readFileSync(path.join(appRoot, 'node_modules', generatorPackage, 'package.json'), 'utf-8'));
+  )(readFileSync(path.join(appRoot, 'node_modules', generatorPackage, packageJson), 'utf-8'));
   const entries = Schema.decodeUnknownSync(
     Schema.fromJsonString(
       Schema.Struct({
@@ -163,7 +167,7 @@ const producerFixture = Effect.fn(function* pinnedHostFixture() {
   for (const directory of ['', shellRoot]) {
     write(
       root,
-      path.join(directory, 'package.json'),
+      path.join(directory, packageJson),
       JSON.stringify(
         {
           devDependencies: {
@@ -231,7 +235,7 @@ it.live(
   'pinned producer peer edges prove only exact owner-local support and native hosts',
   Effect.fn(function* exactProducerHosts() {
     const { root } = yield* producerFixture();
-    const evidence = (yield* facts(root)).filter(({ kind }) => kind === 'native-resolver');
+    const evidence = (yield* facts(root)).filter(({ kind }) => kind === nativeResolver);
     expect(evidence.map(({ target, workspace }) => [workspace, target]).toSorted(compareBindings)).toEqual(
       [
         ['.', nativeHost],
@@ -242,11 +246,11 @@ it.live(
     );
     for (const fact of evidence) {
       expect(fact).toMatchObject({
-        anchor: path.join(root, fact.workspace, 'package.json'),
-        declarationSource: fact.workspace === '.' ? 'package.json' : `${shellRoot}/package.json`,
+        anchor: path.join(root, fact.workspace, packageJson),
+        declarationSource: fact.workspace === '.' ? packageJson : `${shellRoot}/package.json`,
         dependencyCategory: 'devDependencies',
-        owningManifest: path.join(root, fact.workspace, 'package.json'),
-        resolved: path.join(root, 'node_modules', fact.target, 'package.json'),
+        owningManifest: path.join(root, fact.workspace, packageJson),
+        resolved: path.join(root, 'node_modules', fact.target, packageJson),
         specifier: `${fact.target}/package.json`,
       });
       expect(fact.producerResolved).toBe(fact.resolved);
@@ -260,7 +264,7 @@ it.live(
   'producer host proof resolves catalog aliases without accepting a neighboring release identity',
   Effect.fn(function* exactHostCatalog() {
     const { root } = yield* producerFixture();
-    const file = 'package.json';
+    const file = packageJson;
     const original = readFileSync(path.join(root, file), 'utf-8');
     const alias = /npm:@bleedingdev\/[^"]+/u.exec(original)?.[0];
     expect(alias).toBeDefined();
@@ -269,15 +273,15 @@ it.live(
     }
     write(root, file, original.replace(alias, 'catalog:ultramodern'));
     write(root, 'pnpm-workspace.yaml', `catalogs:\n  ultramodern:\n    '${generatorPackage}': '${alias}'\n`);
-    expect(
-      (yield* facts(root)).filter((fact) => fact.kind === 'native-resolver' && fact.workspace === '.'),
-    ).toHaveLength(2);
+    expect((yield* facts(root)).filter((fact) => fact.kind === nativeResolver && fact.workspace === '.')).toHaveLength(
+      2,
+    );
     write(
       root,
       'pnpm-workspace.yaml',
       `catalogs:\n  ultramodern:\n    '${generatorPackage}': '${alias}-wrong-release'\n`,
     );
-    expect((yield* facts(root)).filter(({ kind }) => kind === 'native-resolver')).toEqual([]);
+    expect((yield* facts(root)).filter(({ kind }) => kind === nativeResolver)).toEqual([]);
   }),
 );
 
@@ -285,7 +289,7 @@ it.live(
   'producer hosts bind dependency categories independently when a package is declared in both groups',
   Effect.fn(function* exactHostCategories() {
     const { requiredSupport, root } = yield* producerFixture();
-    const file = 'package.json';
+    const file = packageJson;
     const original = readFileSync(path.join(root, file), 'utf-8');
     write(
       root,
@@ -296,7 +300,7 @@ it.live(
       ),
     );
     const declared = (yield* facts(root)).filter(
-      (fact) => fact.kind === 'native-resolver' && fact.workspace === '.' && fact.target === supportHost,
+      (fact) => fact.kind === nativeResolver && fact.workspace === '.' && fact.target === supportHost,
     );
     expect(declared.map(({ dependencyCategory }) => dependencyCategory)).toEqual(['dependencies', 'devDependencies']);
     expect(new Set(declared.map(({ declarationLine }) => declarationLine)).size).toBe(2);
@@ -310,7 +314,7 @@ it.live(
     );
     expect(
       (yield* facts(root))
-        .filter((fact) => fact.kind === 'native-resolver' && fact.workspace === '.' && fact.target === supportHost)
+        .filter((fact) => fact.kind === nativeResolver && fact.workspace === '.' && fact.target === supportHost)
         .map(({ dependencyCategory }) => dependencyCategory),
     ).toEqual(['devDependencies']);
   }),
@@ -320,7 +324,7 @@ it.live(
   'producer host proof rejects nearby pin, identity, descriptor, edge and installed-host mismatches',
   Effect.fn(function* invalidProducerHosts() {
     const { requiredSupport, root } = yield* producerFixture();
-    const rootFile = 'package.json';
+    const rootFile = packageJson;
     const producerFile = `node_modules/${hostProducer}/package.json`;
     const hostFile = `node_modules/${supportHost}/package.json`;
     const generatorFile = `node_modules/${generatorPackage}/package.json`;
@@ -329,17 +333,17 @@ it.live(
       [rootFile, (text: string) => text.replace('"supportArtifacts":', '"unrelatedArtifacts":')],
       [rootFile, (text: string) => text.replace('"supportArtifacts": {', '"supportArtifacts": {"unexpected": true,')],
       [rootFile, (text: string) => text.replace(/npm:@bleedingdev\/[^"]+/u, 'npm:@bleedingdev/wrong@0.0.0')],
-      [generatorFile, (text: string) => text.replace(/^ {2}"version": "/mu, '  "version": "wrong-')],
+      [generatorFile, (text: string) => text.replace(/^ {2}"version": "/mu, badVersion)],
       [producerFile, (text: string) => text.replace(`"sourceName": "${hostProducer}"`, '"sourceName": "wrong"')],
       [producerFile, (text: string) => text.replace('"name": "', '"name": "wrong-')],
-      [producerFile, (text: string) => text.replace(/^ {2}"version": "/mu, '  "version": "wrong-')],
+      [producerFile, (text: string) => text.replace(/^ {2}"version": "/mu, badVersion)],
       [
         producerFile,
         (text: string) => text.replace(`"${supportHost}": "${requiredSupport.version}"`, `"${supportHost}": "0.0.0"`),
       ],
       [producerFile, (text: string) => text.replace('"peerDependencies":', '"unusedPeerDependencies":')],
       [generatorFile, (text: string) => text.replace(`"${hostProducer}":`, '"@fixture/unrelated-owner":')],
-      [hostFile, (text: string) => text.replace(/^ {2}"version": "/mu, '  "version": "wrong-')],
+      [hostFile, (text: string) => text.replace(/^ {2}"version": "/mu, badVersion)],
       [hostFile, (text: string) => text.replace(`"name": "${supportHost}"`, '"name": "wrong"')],
     ] as const;
     for (const [file, mutate] of controls) {
@@ -350,7 +354,7 @@ it.live(
       const evidence = yield* facts(root);
       expect(
         evidence.filter(
-          (fact) => fact.kind === 'native-resolver' && fact.workspace === '.' && fact.target === supportHost,
+          (fact) => fact.kind === nativeResolver && fact.workspace === '.' && fact.target === supportHost,
         ),
         file,
       ).toEqual([]);
@@ -362,9 +366,9 @@ it.live(
       `node_modules/${hostProducer}/node_modules/${supportHost}/package.json`,
       readFileSync(path.join(root, hostFile), 'utf-8'),
     );
-    expect(
-      (yield* facts(root)).filter((fact) => fact.kind === 'native-resolver' && fact.target === supportHost),
-    ).toEqual([]);
+    expect((yield* facts(root)).filter((fact) => fact.kind === nativeResolver && fact.target === supportHost)).toEqual(
+      [],
+    );
   }),
 );
 
@@ -442,8 +446,8 @@ it.live(
     )(readFileSync(path.join(knip.directory, 'modeled-usages.json'), 'utf-8'));
     expect(usages.map(({ file, issue }) => [file, issue.name]).toSorted(compareBindings)).toEqual(
       [
-        ['package.json', supportHost],
-        ['package.json', nativeHost],
+        [packageJson, supportHost],
+        [packageJson, nativeHost],
         [`${shellRoot}/package.json`, supportHost],
         [`${shellRoot}/package.json`, nativeHost],
       ].toSorted(compareBindings),
@@ -453,7 +457,7 @@ it.live(
       expect(model.config.workspaces[workspace]?.ignoreDependencies ?? []).toEqual([]);
       expect(
         model.evidence.some(
-          (fact) => fact.kind === 'native-resolver' && fact.workspace === workspace && fact.target === unusedHost,
+          (fact) => fact.kind === nativeResolver && fact.workspace === workspace && fact.target === unusedHost,
         ),
       ).toBe(false);
     }
@@ -778,7 +782,7 @@ it.live(
   'direct framework commands retain compiler and readiness evidence only while invoked',
   Effect.fn(function* directFrameworkCommands() {
     const root = yield* fixture();
-    const packageFile = 'package.json';
+    const packageFile = packageJson;
     const original = readFileSync(path.join(root, packageFile), 'utf-8');
     try {
       const modeled = yield* facts(root);

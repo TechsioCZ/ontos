@@ -220,14 +220,14 @@ it.effect('times out a notification attempt without changing any owner effect', 
       }),
   };
   return Effect.gen(function* verifyNotificationTimeout() {
-    const sending = yield* Deferred.make<undefined>();
+    const sending = yield* Deferred.make<true>();
     const running = yield* Effect.forkChild(
       makeSymmyJobNotificationService([policy])
         .deliver(input)
         .pipe(
           Effect.provideService(
             HttpClient.HttpClient,
-            HttpClient.make(() => Deferred.succeed(sending, undefined).pipe(Effect.andThen(Effect.never))),
+            HttpClient.make(() => Deferred.succeed(sending, true).pipe(Effect.andThen(Effect.never))),
           ),
           Effect.flip,
         ),
@@ -295,11 +295,11 @@ it.effect('returns the configuration outage before claiming or sending a notific
 );
 
 it.effect('preserves the only delivery attempt when the idempotency digest alone stalls', () => {
-  const started = Promise.withResolvers<undefined>();
+  const started = Promise.withResolvers<true>();
   const keyMaterial = `${tenantId}:${jobId}:${policy.policyId}:${policy.revision}`;
   const host = webCryptoDigestFixture((algorithm, data) => {
     if (new TextDecoder().decode(data) === keyMaterial) {
-      started.resolve(undefined);
+      started.resolve(true);
       return Promise.withResolvers<ArrayBuffer>().promise;
     }
     return globalThis.crypto.subtle.digest(algorithm, data);

@@ -1,10 +1,8 @@
 import { Effect, FileSystem, Option, Path, Schema } from 'effect';
 
-import {
-  ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY,
-  ONTOS_SHELL_CONTRIBUTION_ABI,
-} from '../packages/core-runtime/src/index.ts';
-import type { OntosShellRuntimeContract } from '../packages/core-runtime/src/index.ts';
+import { ONTOS_MODULE_DEPENDENCY_CONTRACT_CAPABILITY } from '../packages/core-runtime/src/modules/module-dependency-contracts.ts';
+import { ONTOS_SHELL_CONTRIBUTION_ABI } from '../packages/core-runtime/src/modules/application-composition.ts';
+import type { OntosShellRuntimeContract } from '../packages/core-runtime/src/modules/application-composition.ts';
 
 /**
  * The Shell reports the Core-defined contribution ABI and the Core capabilities it provides so the

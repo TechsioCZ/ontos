@@ -97,6 +97,9 @@ const observeMiddleware = (
     const next = rstest.fn<Parameters<Middleware>[2]>(() => {
       response.destroy();
     });
+    const baselineCloseListeners = new Set(response.listeners('close'));
+    middleware(incoming, response, next);
+    const middlewareListeners = response.listeners('close').filter((listener) => !baselineCloseListeners.has(listener));
     const snapshot = (): ObservedResponse => {
       const result: ObservedResponse = {
         body: null,
@@ -116,9 +119,6 @@ const observeMiddleware = (
     const onClosed = () => {
       resume((disconnect?.afterDisconnect ?? Effect.void).pipe(Effect.andThen(Effect.sync(snapshot))));
     };
-    const baselineCloseListeners = new Set(response.listeners('close'));
-    middleware(incoming, response, next);
-    const middlewareListeners = response.listeners('close').filter((listener) => !baselineCloseListeners.has(listener));
     response.once('close', onClosed);
     return Effect.sync(() => response.removeListener('close', onClosed));
   });

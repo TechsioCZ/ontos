@@ -5,7 +5,7 @@ import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
   OntosModuleDeploymentContractSchema,
-} from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/manifest.ts';
 import { moduleReleaseWorkerName } from '../packages/core-runtime/src/http/module-release-identity.ts';
 import {
   ApplicationCompositionBackendSchema,

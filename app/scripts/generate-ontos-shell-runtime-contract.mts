@@ -7,7 +7,7 @@ import { Command, Flag } from 'effect/cli';
 import {
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
-} from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/application-composition.ts';
 
 import { createShellRuntimeContract, readCompiledNodeShellIdentity } from './ontos-shell-runtime-contract.ts';
 

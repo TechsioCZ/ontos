@@ -12,18 +12,18 @@ import type { PlatformError } from 'effect/PlatformError';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
-  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
-  OntosMcpToolCatalogJsonSchema,
   OntosModuleIdSchema,
-  buildInstalledModuleCatalog,
-} from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/manifest.ts';
+import {
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+  OntosMcpToolCatalogJsonSchema,
+} from '../packages/core-runtime/src/modules/mcp-contribution.ts';
+import { buildInstalledModuleCatalog } from '../packages/core-runtime/src/modules/catalog.ts';
 import { coreSystemModuleDeclarations } from '../packages/core-runtime/src/modules/core-system-workloads.ts';
-import type {
-  InstalledDeploymentContractInput,
-  OntosModuleDeploymentContract,
-} from '../packages/core-runtime/src/index.ts';
+import type { InstalledDeploymentContractInput } from '../packages/core-runtime/src/modules/catalog.ts';
+import type { OntosModuleDeploymentContract } from '../packages/core-runtime/src/modules/manifest.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
 import {
   registeredWorkloadCallerIssues,
