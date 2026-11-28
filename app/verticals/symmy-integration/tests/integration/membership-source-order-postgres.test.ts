@@ -13,9 +13,9 @@ import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platf
 import { PgClient } from '@effect/sql-pg';
 import { and, eq, sql } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { migrate } from 'drizzle-orm/effect-postgres/migrator';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
-import { DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema } from 'effect';
+import { DateTime, Effect, FileSystem, Layer, Option, Redacted, Schema, Stream } from 'effect';
+import { ChildProcess } from 'effect/process';
 import { Reactivity } from 'effect/reactivity';
 import { assert, expect, it } from 'effect-rstest';
 
@@ -157,11 +157,6 @@ const sqlStateOf = <Failure>(failure: Failure) =>
 const postgresCodeOf = <Failure>(failure: Failure) => Option.getOrUndefined(findPostgresFailure(failure))?.code;
 
 class FixtureRollback extends Schema.TaggedError<FixtureRollback>()('FixtureRollback', {}) {}
-const MembershipUpgradeFailureContract = Schema.TaggedStruct('MembershipUpgradeFailure', { cause: Schema.Defect() });
-const MembershipUpgradeFailure = Schema.TaggedError<typeof MembershipUpgradeFailureContract.Type>()(
-  'MembershipUpgradeFailure',
-  { cause: Schema.Defect() },
-);
 
 /** The enrollment of a membership route: the owner's membership write under one membership source. */
 const membershipEnrollment = (sourceNamespace: string) =>
@@ -209,17 +204,47 @@ it.effect(
           yield* fs.copy(`${migrationRoot}${directory}`, `${migrationsFolder}/${directory}`);
         }
       }
+      // Use the deployment's drizzle-kit runner: historical Symmy migrations contain SQL batches that its pg
+      // driver accepts, while the Effect driver's prepared statements intentionally reject multiple commands.
+      const migrationConfig = `${migrationsFolder}/drizzle.config.ts`;
+      const configHelper = new URL(
+        '../../../../packages/core-runtime/src/environment/drizzle-config.ts',
+        import.meta.url,
+      ).pathname;
+      yield* fs.writeFileString(
+        migrationConfig,
+        `import { defineWorkspaceDrizzleConfig } from ${JSON.stringify(configHelper)};
+export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFolder)}, schema: ${JSON.stringify(new URL('../../src/db/schema.ts', import.meta.url).pathname)}, table: '__drizzle_migrations_symmy_integration' });
+`,
+      );
       const migrateOwner = Effect.fn('MembershipOrderFixture.migrateOwner')(function* migrateOwner() {
-        const migration = yield* Effect.try({
-          catch: (cause) => new MembershipUpgradeFailure({ cause }),
-          try: () =>
-            migrate(admin, {
-              migrationsFolder,
-              migrationsSchema: 'drizzle',
-              migrationsTable: '__drizzle_migrations_symmy_integration',
-            }),
-        });
-        yield* migration;
+        const migration = yield* ChildProcess.make(
+          'mise',
+          [
+            'exec',
+            '--',
+            'pnpm',
+            '--filter',
+            '@app/symmy-integration',
+            'exec',
+            'drizzle-kit',
+            'migrate',
+            '--config',
+            migrationConfig,
+          ],
+          {
+            cwd: new URL('../../../../', import.meta.url).pathname,
+            env: { APP_ENV_PATH: '/dev/null', DATABASE_ADMIN_URL: connections.admin.connectionString },
+            extendEnv: true,
+            stderr: 'pipe',
+            stdout: 'pipe',
+          },
+        );
+        const [status] = yield* Effect.all(
+          [migration.exitCode, Stream.runDrain(migration.stdout), Stream.runDrain(migration.stderr)],
+          { concurrency: 3 },
+        );
+        expect(Number(status)).toBe(0);
       });
       yield* migrateOwner();
       const tenantId = crypto.randomUUID();
