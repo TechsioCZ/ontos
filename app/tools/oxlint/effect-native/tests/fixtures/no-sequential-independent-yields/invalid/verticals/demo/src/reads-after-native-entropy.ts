@@ -1,4 +1,4 @@
-// expect-count: 1
+// expect-count: 2
 import { Effect } from 'effect';
 import { SecureRandom } from 'effect/crypto';
 

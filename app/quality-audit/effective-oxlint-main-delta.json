@@ -12,6 +12,10 @@
       "after": "0.9.23",
       "before": "0.9.12"
     },
+    "oxlint-tsgolint": {
+      "after": null,
+      "before": "7.0.2007"
+    },
     "tsrs": {
       "after": "7.1.0-beta.tsrs3",
       "before": "0.25.0-ts7.1.0-beta"
@@ -22,8 +26,8 @@
     }
   },
   "baseCommit": "c49606f60184386c2ef75f8a7b00bbdce97ad5a9",
-  "basePolicySha256": "52aa0cde2d1d69136c665beb3a354b8d4814a3ed7a5a59615c8dcd7ea851413f",
-  "candidatePolicySha256": "d157aaa334756f5d24f509fe7a097d1013a7f3f464bdf46038dce2e6e211b4bc",
+  "basePolicySha256": "e75f5a35016f15fc1aed6347d4341ff984e4ff1595b68b23e2d3579fc8ff7c0a",
+  "candidatePolicySha256": "ac7d06ee3f89871e04187e0df059c8e6b05487ba9c9e0e044194d05c16d9e007",
   "declaredDefaults": {
     "react-doctor/class-component-missing-component-will-unmount-teardown": {
       "after": null,
@@ -3141,5 +3145,10 @@
       "after": "deny",
       "before": null
     }
+  },
+  "typedLintBackend": {
+    "after": "tsrs-lint",
+    "before": "oxlint-tsgolint",
+    "ruleMapping": "https://github.com/TechsioCZ/ontos/pull/1556#user-content-typed-rule-mapping"
   }
 }

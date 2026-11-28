@@ -1,3 +1,4 @@
+// expect-count: 2
 import { Effect } from 'effect';
 import type { SecureRandom as Entropy } from 'effect/crypto';
 

@@ -743,11 +743,10 @@ export const acquireDelegatedGatewayContext = Effect.fn('GatewayDelegation.acqui
     Match.orElse(() => Effect.void),
   );
   const source = yield* subjectWireOf(request.subject);
-  const exchangeId = yield* crypto.uuidV4();
   const payload = {
     audience: request.audience,
     compositionRevision: source.compositionRevision,
-    exchangeId,
+    exchangeId: yield* crypto.uuidV4(),
     legalEntityScope: request.legalEntityScope,
     subject: source.subject,
   };

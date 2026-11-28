@@ -302,8 +302,13 @@ export const makePrivacyNoticeInformationStep = Effect.gen(function* makeInforma
           const session = yield* trustedSession(scope, integrity);
           yield* subjectAuthority.resolve(target);
           const notice = yield* exactNotice(repository, scope, target);
-          const material = yield* materialBinding(notice, target, integrity, DateTime.formatIso(yield* DateTime.now));
-          const presentationId = yield* crypto.uuidV4();
+          const [material, presentationId] = yield* Effect.all(
+            [
+              materialBinding(notice, target, integrity, DateTime.formatIso(yield* DateTime.now)),
+              Effect.suspend(() => crypto.uuidV4()),
+            ],
+            { concurrency: 1 },
+          );
           const servedAt = DateTime.formatIso(yield* DateTime.now);
           yield* resolveNoticePresentationScope(notice, target, servedAt);
           const claims: PrivacyNoticePresentationClaims = {

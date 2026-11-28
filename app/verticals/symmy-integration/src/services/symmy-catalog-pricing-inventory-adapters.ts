@@ -1727,8 +1727,10 @@ const freshRecoveryGateway = Effect.fn('SymmyOwnerAdapters.freshRecoveryGateway'
   ) {
     return yield* symmyJobWorkerUnavailable();
   }
-  const requestHash = yield* recoveryReadRequestHash(intent, invocationId);
-  const requestCorrelation = yield* crypto.uuidV4();
+  const [requestHash, requestCorrelation] = yield* Effect.all(
+    [recoveryReadRequestHash(intent, invocationId), Effect.suspend(() => crypto.uuidV4())],
+    { concurrency: 1 },
+  );
   type RecoverySubject = Extract<GatewayDelegationSubject, { readonly _tag: 'RegisteredRecovery' }>;
   let source: RecoverySubject['source'] =
     input.context === undefined

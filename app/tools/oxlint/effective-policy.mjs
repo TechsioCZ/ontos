@@ -46,7 +46,10 @@ function capture(root) {
     ),
   );
   const defaults = {};
-  for (const [name, spec] of Object.entries(publishedPlugins)) {
+  const localPlugins = config.jsPlugins
+    .filter((plugin) => typeof plugin === 'object' && plugin.specifier.startsWith('.'))
+    .map(({ name, specifier }) => [name, specifier]);
+  for (const [name, spec] of [...Object.entries(publishedPlugins), ...localPlugins]) {
     const mod = req(spec);
     for (const [key, rule] of Object.entries((mod.default ?? mod).rules)) {
       const id = name + '/' + key;
@@ -54,8 +57,12 @@ function capture(root) {
     }
   }
   // Native/opaque defaults can change even if --print-config and public metadata do not. Upgrades require a reviewed refresh.
+  const analyzers = [...pinned];
+  if (Object.hasOwn(JSON.parse(readFileSync(manifest, 'utf-8')).devDependencies, 'oxlint-tsgolint')) {
+    analyzers.push('oxlint-tsgolint');
+  }
   const versions = Object.fromEntries(
-    pinned.map((name) => [
+    analyzers.map((name) => [
       name,
       JSON.parse(readFileSync(findPackageJSON(name, pathToFileURL(manifest)), 'utf-8')).version,
     ]),
@@ -109,6 +116,15 @@ function compare(before, after, baseCommit) {
     other: changes(oldOther, other),
     declaredDefaults: changes(before.defaults, after.defaults),
     analyzerVersions: changes(before.versions, after.versions),
+    ...(before.versions['oxlint-tsgolint'] && !after.versions['oxlint-tsgolint']
+      ? {
+          typedLintBackend: {
+            before: 'oxlint-tsgolint',
+            after: 'tsrs-lint',
+            ruleMapping: 'https://github.com/TechsioCZ/ontos/pull/1556#user-content-typed-rule-mapping',
+          },
+        }
+      : {}),
   };
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {

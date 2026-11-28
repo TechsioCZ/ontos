@@ -188,8 +188,8 @@ Execute every command to validate the feature with zero regressions.
 
 - `mise exec -- pnpm install --frozen-lockfile` — prove the exact Codesmith pin and lockfile install cleanly with the repository-managed toolchain.
 - `mise exec -- pnpm exec ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json` — strictly typecheck the generator runner, entrypoints, helpers, and tests with the workspace's Effect-enabled tsrs compiler.
-- `mise exec -- pnpm exec oxlint scripts/scaffolding` — lint generator infrastructure that the existing root lint script does not scan.
-- `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — run all generator unit and disposable-workspace integration tests.
+- `mise exec -- pnpm lint` — lint the workspace, including `scripts/scaffolding`, with pinned tsrs-backed Oxlint, Effect diagnostics, and UltraModern semantic lint.
+- `mise exec -- pnpm test:generation` — run the generator unit and disposable-workspace integration tests with the workspace Rstest project.
 - `mise exec -- pnpm scaffold:action -- --help` — verify Action command discovery and documented flags without writing.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` — verify page command discovery and documented flags without writing.
 - `mise exec -- pnpm scaffold:outbox-message -- --help` — verify Outbox Message command discovery and documented flags without writing.
@@ -227,7 +227,7 @@ Execute every command to validate the feature with zero regressions.
 - `scripts/scaffolding/tests/scaffold-generators.test.mts` — 16 passing test groups covering all four generators independently and together, help/argument behavior, topology identity, preflight/no-write failures, stable slots and ordering, locale and route wiring, fail-closed templates, cross-owner protection, formatter stability, and compilation against real workspace contracts.
 - `packages/core-runtime/tests/unit/action-definition.test.ts` — proves callers receive an immutable descriptor registration without a callable handler property.
 
-### Validation Results
+### Historical Validation Results (Issue 73)
 
 - `mise exec -- pnpm install --frozen-lockfile` — passed with the repository-managed toolchain and a temporary writable UltraModern skills root.
 - Focused generator TypeScript, oxlint, and Node tests — passed; 16 tests, 0 failures.
@@ -247,7 +247,7 @@ Execute every command to validate the feature with zero regressions.
 
 - The root workspace validator originally rejected any direct `@modern-js/*` dependency outside the aliased UltraModern release cohort. Codesmith 2.6.9 is independently versioned, so the validator now records and enforces it as an exact standalone Modern tool. This required the sole additional existing-file change beyond the originally listed three files.
 - Added the already-resolved exact `@types/node` 20.19.43 root development dependency because pnpm's strict dependency isolation prevented the standalone tooling tsconfig from resolving Node types through another package.
-- Used the repository's stable TS7 `tsc` executable for the focused tooling typecheck; the installed `@effect/tsgo` package is a setup utility rather than the compiler executable.
+- The original issue 73 proof used the then-current TS7 `tsc` executable. For current validation use the UltraModern typecheck command above, which selects the workspace tsrs compiler.
 
 ## Notes
 
