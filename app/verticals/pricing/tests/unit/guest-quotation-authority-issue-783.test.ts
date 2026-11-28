@@ -220,10 +220,12 @@ describe('Guest Pricing Quotation authority', () => {
   it.effect('never treats knowledge of a quotation reference as Guest authority', () =>
     Effect.gen(function* rejectsBearerKnowledge() {
       const owner = successfulOwner();
-      const failure = yield* makePricingGuestQuotationAuthorityService(owner.port)
-        // @ts-expect-error Intentionally proves a bare bearer reference cannot cross the runtime decoder.
-        .verify({ quotationRef })
-        .pipe(Effect.flip);
+      const failure = yield* (
+        makePricingGuestQuotationAuthorityService(owner.port)
+          // @ts-expect-error Intentionally proves a bare bearer reference cannot cross the runtime decoder.
+          .verify({ quotationRef })
+          .pipe(Effect.flip)
+      );
 
       expect(failure).toEqual(new PricingGuestQuotationAuthorityRejected({ reason: 'INVALID_REQUEST' }));
       expect(owner.attempts).toHaveLength(0);

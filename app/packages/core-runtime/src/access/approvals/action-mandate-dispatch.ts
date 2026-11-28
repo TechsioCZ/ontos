@@ -555,33 +555,35 @@ export const makeDrizzleActionMandateDispatch = Effect.fn('ActionMandateDispatch
 
     const claim: ActionMandateDispatch['claim'] = Effect.fn('ActionMandateDispatch.claim')(
       function* claimMandate(input) {
-        const rows = yield* input.transaction
-          .select({
-            approverId: accessMandates.approverId,
-            digest: accessProposals.commandDigest,
-            proposalId: accessProposals.proposalId,
-            scopeId: accessProposals.scopeId,
-            status: accessProposals.status,
-            target: accessProposals.target,
-          })
-          .from(accessProposals)
-          .innerJoin(
-            accessMandates,
-            and(
-              eq(accessMandates.tenantId, accessProposals.tenantId),
-              eq(accessMandates.proposalId, accessProposals.proposalId),
-            ),
-          )
-          .where(
-            and(
-              eq(accessProposals.tenantId, input.scope.tenantId),
-              eq(accessMandates.mandateId, input.prepared.mandateId),
-            ),
-          )
-          // Only the proposal changes during claim. Mandate rows are immutable; locking the joined
-          // mandate as well would require granting UPDATE on authority that must remain append-only.
-          .for('update', { of: accessProposals })
-          .pipe(Effect.mapError((cause) => fenceUnavailable(cause)));
+        const rows = yield* (
+          input.transaction
+            .select({
+              approverId: accessMandates.approverId,
+              digest: accessProposals.commandDigest,
+              proposalId: accessProposals.proposalId,
+              scopeId: accessProposals.scopeId,
+              status: accessProposals.status,
+              target: accessProposals.target,
+            })
+            .from(accessProposals)
+            .innerJoin(
+              accessMandates,
+              and(
+                eq(accessMandates.tenantId, accessProposals.tenantId),
+                eq(accessMandates.proposalId, accessProposals.proposalId),
+              ),
+            )
+            .where(
+              and(
+                eq(accessProposals.tenantId, input.scope.tenantId),
+                eq(accessMandates.mandateId, input.prepared.mandateId),
+              ),
+            )
+            // Only the proposal changes during claim. Mandate rows are immutable; locking the joined
+            // mandate as well would require granting UPDATE on authority that must remain append-only.
+            .for('update', { of: accessProposals })
+            .pipe(Effect.mapError((cause) => fenceUnavailable(cause)))
+        );
         const [row] = rows;
         if (
           row === undefined ||

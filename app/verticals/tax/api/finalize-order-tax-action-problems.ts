@@ -187,9 +187,8 @@ const mapCoreProblem = (error: ActionCoreError): FinalizeOrderTaxActionProblem =
   );
 
 const isDomainError = Schema.is(finalizeOrderTaxAction.descriptor.domainErrorSchema);
-export const mapFinalizeOrderTaxActionProblem = (
-  error: ActionCoreError | DomainError,
-): FinalizeOrderTaxActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
+export const mapFinalizeOrderTaxActionProblem = (error: ActionCoreError | DomainError): FinalizeOrderTaxActionProblem =>
+  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const finalizeOrderTaxActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   FinalizeOrderTaxActionSchemaErrorMiddleware,

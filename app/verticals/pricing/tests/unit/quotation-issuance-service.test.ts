@@ -200,10 +200,12 @@ describe('Pricing Quotation issuance', () => {
       expect(decoratedFailure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
 
       const issued = yield* makePricingQuotationIssuanceService(ownerBoundary, trustedTime).issue(request);
-      const reissueFailure = yield* makePricingQuotationIssuanceService(ownerBoundary, trustedTime)
-        // @ts-expect-error An issued Quotation cannot inhabit the issuance request type.
-        .issue(issued)
-        .pipe(Effect.flip);
+      const reissueFailure = yield* (
+        makePricingQuotationIssuanceService(ownerBoundary, trustedTime)
+          // @ts-expect-error An issued Quotation cannot inhabit the issuance request type.
+          .issue(issued)
+          .pipe(Effect.flip)
+      );
       expect(reissueFailure).toEqual(new PricingQuotationIssuanceRejected({ reason: 'INVALID_ISSUANCE_REQUEST' }));
     }),
   );

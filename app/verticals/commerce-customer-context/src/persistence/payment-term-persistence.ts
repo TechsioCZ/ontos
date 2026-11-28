@@ -1266,9 +1266,7 @@ const mapRetailReadStateFailure = (failure: ReadStateFailure): RetailPaymentTerm
   }
 };
 
-const retailDefinitionRequests = (
-  change: RetailPaymentTermPreferenceChange,
-): readonly PaymentTermDefinitionRequest[] =>
+const retailDefinitionRequests = (change: RetailPaymentTermPreferenceChange): readonly PaymentTermDefinitionRequest[] =>
   change._tag === 'SET_PREFERENCE'
     ? [
         {

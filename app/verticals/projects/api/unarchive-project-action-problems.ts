@@ -185,9 +185,8 @@ const mapCoreProblem = (error: ActionCoreError): UnarchiveProjectActionProblem =
   );
 
 const isDomainError = Schema.is(unarchiveProjectAction.descriptor.domainErrorSchema);
-export const mapUnarchiveProjectActionProblem = (
-  error: ActionCoreError | DomainError,
-): UnarchiveProjectActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
+export const mapUnarchiveProjectActionProblem = (error: ActionCoreError | DomainError): UnarchiveProjectActionProblem =>
+  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const unarchiveProjectActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   UnarchiveProjectActionSchemaErrorMiddleware,

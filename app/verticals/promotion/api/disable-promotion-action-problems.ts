@@ -236,9 +236,8 @@ const mapCoreProblem = (error: ActionCoreError): DisablePromotionActionProblem =
   );
 
 const isDomainError = Schema.is(disablePromotionAction.descriptor.domainErrorSchema);
-export const mapDisablePromotionActionProblem = (
-  error: ActionCoreError | DomainError,
-): DisablePromotionActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
+export const mapDisablePromotionActionProblem = (error: ActionCoreError | DomainError): DisablePromotionActionProblem =>
+  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const disablePromotionActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   DisablePromotionActionSchemaErrorMiddleware,

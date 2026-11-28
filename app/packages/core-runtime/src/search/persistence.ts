@@ -589,35 +589,37 @@ const makeTransactionOperations = () => {
       // Authorization belongs in WHERE, before the candidate bound and before any ordering: a row the
       // caller may not read is never a candidate, so it can neither be counted nor displace a visible
       // one. The assignee is an owner-authored private index fact, never result metadata.
-      const rows = yield* transaction
-        .select()
-        .from(searchIndexEntries)
-        .where(
-          and(
-            eq(searchIndexEntries.deleted, false),
-            input.selectedLegalEntityId === undefined
-              ? isNull(searchIndexEntries.legalEntityId)
-              : eq(searchIndexEntries.legalEntityId, input.selectedLegalEntityId),
-            eq(searchIndexEntries.sourceModuleKey, input.moduleId),
-            eq(searchIndexEntries.sourceResourceType, input.resourceType),
-            eq(searchIndexEntries.tenantId, input.tenantId),
-            listAccess === undefined
-              ? undefined
-              : searchVisibilitySql(listAccess, {
-                  assignedPrincipalId: sql`${searchIndexEntries.facetsJson}->>'assignedPrincipalId'`,
-                  recordKey: searchIndexEntries.sourceResourceId,
-                }),
-          ),
-        )
-        // A denied title takes no part in ordering either: the database orders by the resource key the
-        // caller may read, so no hidden name is read to choose the candidate window.
-        .orderBy(
-          ...(titleHidden
-            ? [asc(searchIndexEntries.sourceResourceId)]
-            : [asc(searchIndexEntries.title), asc(searchIndexEntries.sourceResourceId)]),
-        )
-        .limit(10_001)
-        .pipe(Effect.mapError(unavailable));
+      const rows = yield* (
+        transaction
+          .select()
+          .from(searchIndexEntries)
+          .where(
+            and(
+              eq(searchIndexEntries.deleted, false),
+              input.selectedLegalEntityId === undefined
+                ? isNull(searchIndexEntries.legalEntityId)
+                : eq(searchIndexEntries.legalEntityId, input.selectedLegalEntityId),
+              eq(searchIndexEntries.sourceModuleKey, input.moduleId),
+              eq(searchIndexEntries.sourceResourceType, input.resourceType),
+              eq(searchIndexEntries.tenantId, input.tenantId),
+              listAccess === undefined
+                ? undefined
+                : searchVisibilitySql(listAccess, {
+                    assignedPrincipalId: sql`${searchIndexEntries.facetsJson}->>'assignedPrincipalId'`,
+                    recordKey: searchIndexEntries.sourceResourceId,
+                  }),
+            ),
+          )
+          // A denied title takes no part in ordering either: the database orders by the resource key the
+          // caller may read, so no hidden name is read to choose the candidate window.
+          .orderBy(
+            ...(titleHidden
+              ? [asc(searchIndexEntries.sourceResourceId)]
+              : [asc(searchIndexEntries.title), asc(searchIndexEntries.sourceResourceId)]),
+          )
+          .limit(10_001)
+          .pipe(Effect.mapError(unavailable))
+      );
       if (rows.length > 10_000) {
         return yield* unavailable();
       }
