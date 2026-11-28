@@ -6531,6 +6531,41 @@
           "opclass": null
         },
         {
+          "value": "(\"subject_record\"->'subject'->'partyRef'->>'resourceId')",
+          "isExpression": true,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"subject_kind\" = 'DATA_SUBJECT'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "privacy_subjects_party_idx",
+      "entityType": "indexes",
+      "schema": "privacy",
+      "table": "privacy_subjects"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
           "value": "(\"subject_record\"->'subject'->'sourceAdmission'->'sourceSubjectRef'->>'resourceId')",
           "isExpression": true,
           "asc": true,
