@@ -96,18 +96,51 @@ it.effect('prepares none without any database credentials or optional owner conf
   }),
 );
 
-it('derives only existing physical identities required by executable native DDL', () => {
-  expect(
-    migrationRuntimeIdentityIds(
-      '-- CREATE POLICY ignored ON t TO "shell_gateway_issuer";\nCREATE POLICY genuine ON t TO "party_registry_runtime" USING (tenant_id = \'shell_gateway_issuer\');--> statement-breakpoint\nGRANT SELECT ON t TO "party_registry_worker";',
-    ),
-  ).toEqual(['party_registry_request', 'party_registry_worker']);
-  expect(
-    migrationRuntimeIdentityIds(
-      'INSERT INTO t VALUES (\'party_registry_worker CREATE POLICY fake ON t TO "party_registry_worker"\');--> statement-breakpoint\n/* CREATE POLICY ignored ON t TO "shell_gateway_issuer"; */ SELECT 1;',
-    ),
-  ).toEqual([]);
-});
+it.effect('only pending migrations bootstrap roles named by executable PostgreSQL clauses', () =>
+  Effect.gen(function* nativeRoleBootstrap() {
+    const ids = yield* migrationRuntimeIdentityIds(
+      'GRANT SELECT ON TABLE "audit TO !" TO party_registry_worker;',
+      first.name,
+    );
+    const withRequirement = {
+      ...stream,
+      migrationRuntimeIdentityRequirements: [{ identityIds: ids, migrationName: first.name }],
+    };
+    expect(pendingMigrationRuntimeIdentityIds(withRequirement, [first])).toEqual([
+      'shared_runtime',
+      'party_registry_worker',
+    ]);
+    expect(pendingMigrationRuntimeIdentityIds(withRequirement, [second])).toEqual(['shared_runtime']);
+    const failure = yield* migrationRuntimeIdentityIds('GRANT SELECT ON', first.name).pipe(Effect.flip);
+    expect(failure.reason).toContain(first.name);
+  }),
+);
+
+// Assert each clause independently: a valid GRANT must not conceal a missed OWNER or SET ROLE.
+for (const [sql, expected] of [
+  [
+    'CREATE POLICY "p TO shell_gateway_issuer" ON t /* outer /* TO shell_gateway_issuer */ still a comment */ TO "party_registry_runtime", PUBLIC;',
+    ['party_registry_request'],
+  ],
+  ['ALTER POLICY "p TO !" ON t TO party_registry_worker;', ['party_registry_worker']],
+  [
+    'SELECT $body$; GRANT SELECT ON t TO shell_gateway_issuer;$body$; -- GRANT SELECT ON t TO shell_gateway_issuer;',
+    [],
+  ],
+  ['ALTER TABLE "OWNER TO shell_gateway_issuer" OWNER TO party_registry_worker;', ['party_registry_worker']],
+  ['ALTER SCHEMA test OWNER TO "party_registry_runtime";', ['party_registry_request']],
+  ['GRANT another_role TO party_registry_worker;', ['party_registry_worker']],
+  ['SET LOCAL ROLE party_registry_worker;', ['party_registry_worker']],
+  ['ALTER POLICY p ON t RENAME TO shell_gateway_issuer;', []],
+  ['REVOKE SELECT ON t FROM party_registry_worker;', []],
+  ['SELECT 1; GRANT SELECT ON t TO party_registry_worker;', ['party_registry_worker']],
+] as const) {
+  it.effect(`inventories role operands of ${sql}`, () =>
+    Effect.gen(function* nativeRoleOperands() {
+      expect(yield* migrationRuntimeIdentityIds(sql, first.name)).toEqual(expected);
+    }),
+  );
+}
 
 it.effect('refuses a changed pending plan on verification-only execution', () =>
   Effect.gen(function* rejectsVerificationWrites() {

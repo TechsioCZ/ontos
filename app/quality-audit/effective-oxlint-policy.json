@@ -6041,6 +6041,20 @@
     "sonarjs/x-powered-by": [],
     "sonarjs/xml-parser-xxe": []
   },
+  "disabledPresetRulesAtRoot": {
+    "github/array-foreach": "error",
+    "sonarjs/cognitive-complexity": [
+      "error",
+      20
+    ],
+    "sonarjs/expression-complexity": "error",
+    "sonarjs/function-name": "error",
+    "sonarjs/max-union-size": "error",
+    "sonarjs/no-inconsistent-returns": "error",
+    "sonarjs/no-redundant-jump": "error",
+    "sonarjs/no-redundant-optional": "error",
+    "sonarjs/shorthand-property-grouping": "error"
+  },
   "versions": {
     "@effect/tsgo": "0.73.2",
     "@nkzw/eslint-plugin": "2.0.0",

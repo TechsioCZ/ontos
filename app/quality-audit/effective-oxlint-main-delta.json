@@ -26,8 +26,8 @@
     }
   },
   "baseCommit": "c49606f60184386c2ef75f8a7b00bbdce97ad5a9",
-  "basePolicySha256": "e75f5a35016f15fc1aed6347d4341ff984e4ff1595b68b23e2d3579fc8ff7c0a",
-  "candidatePolicySha256": "ac7d06ee3f89871e04187e0df059c8e6b05487ba9c9e0e044194d05c16d9e007",
+  "basePolicySha256": "5df4ecb89aa75b369830dea3092f72df4ed1c5409f97abf80a0ab16552105d4d",
+  "candidatePolicySha256": "55453d44e010f77ccdfc7eedfdc88dd02ae2bb0cf1f42d37b285dc54ee56ef02",
   "declaredDefaults": {
     "react-doctor/class-component-missing-component-will-unmount-teardown": {
       "after": null,
@@ -1355,6 +1355,32 @@
     },
     "sonarjs/void-use": {
       "after": [],
+      "before": null
+    }
+  },
+  "disabledPresetRulesAtRoot": {
+    "github/no-then": {
+      "after": null,
+      "before": "error"
+    },
+    "sonarjs/no-inconsistent-returns": {
+      "after": "error",
+      "before": null
+    },
+    "sonarjs/no-nested-conditional": {
+      "after": null,
+      "before": "error"
+    },
+    "sonarjs/no-redundant-optional": {
+      "after": "error",
+      "before": null
+    },
+    "sonarjs/no-unused-vars": {
+      "after": null,
+      "before": "error"
+    },
+    "sonarjs/shorthand-property-grouping": {
+      "after": "error",
       "before": null
     }
   },
