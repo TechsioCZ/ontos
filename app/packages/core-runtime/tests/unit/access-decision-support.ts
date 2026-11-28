@@ -351,8 +351,8 @@ const recordAnswer = (spec: CheckSpec, item: AccessCheckItem) => {
   if (item.permission === 'entrusted_match') {
     return row.entrusted !== undefined && holderEquals(row.entrusted, holder) ? 'has' : 'none';
   }
-  const teams = spec.authority.teamMembers?.get(holderId(holder)) ?? [];
-  return (row.teamIds ?? []).some((rowTeam) => teams.includes(rowTeam)) ? 'has' : 'none';
+  const teams = new Set(spec.authority.teamMembers?.get(holderId(holder)));
+  return (row.teamIds ?? []).some((rowTeam) => teams.has(rowTeam)) ? 'has' : 'none';
 };
 
 export const makeCheck = (spec: CheckSpec): CheckState => {

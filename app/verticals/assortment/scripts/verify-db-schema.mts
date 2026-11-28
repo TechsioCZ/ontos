@@ -82,7 +82,7 @@ const verifyFixtureInfrastructure = Effect.gen(function* verifyAssortmentFixture
     ) as valid`,
     'objects',
   );
-  if (!redemption?.valid) {
+  if (redemption?.valid !== true) {
     return yield* new AssortmentVerificationError({ reason: 'Assortment gateway replay evidence or grants mismatch' });
   }
   const [fixturePermits] = yield* database.executor.execute<
@@ -109,7 +109,7 @@ const verifyFixtureInfrastructure = Effect.gen(function* verifyAssortmentFixture
     where relation.oid = 'assortment.c14_rule_fixture_permits'::regclass`,
     'objects',
   );
-  if (!fixturePermits?.valid) {
+  if (fixturePermits?.valid !== true) {
     return yield* new AssortmentVerificationError({
       reason: 'Assortment fixture permit row security or grants mismatch',
     });
@@ -158,7 +158,7 @@ const verifyFixtureInfrastructure = Effect.gen(function* verifyAssortmentFixture
       and routine.oid = to_regprocedure('assortment.import_c14_rule_fixture(uuid,uuid,uuid,uuid,uuid,uuid,uuid,jsonb)')`,
     'objects',
   );
-  if (!fixtureRoutine?.valid) {
+  if (fixtureRoutine?.valid !== true) {
     return yield* new AssortmentVerificationError({ reason: 'Assortment fixture routine privileges mismatch' });
   }
 

@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const AuthBindingIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AuthBindingId'));
 const status = Schema.Literals(['active', 'disabled', 'revoked']);
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -35,7 +36,7 @@ const SetSelfApiKeyBindingStatusResultSchema = Schema.Struct({
 const handle = Effect.fn('SetSelfApiKeyBindingStatusAction.handle')(function* setSelfApiKeyBindingStatusActionHandle(
   payload: SetSelfApiKeyBindingStatusPayload,
   context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
+    typeof domainEvents,
     {
       readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
     }
@@ -78,7 +79,7 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
     actionKey: 'core.identity.set-self-api-key-binding-status',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

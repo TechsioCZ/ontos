@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 const safeSessionRef = Schema.String.check(
@@ -41,7 +42,7 @@ type ValidateSupportImpersonation = PrincipalManagementRepositoryService['valida
 const handle = Effect.fn('RecordSupportImpersonationAction.handle')(function* recordSupportImpersonationActionHandle(
   payload: RecordSupportImpersonationPayload,
   context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
+    typeof domainEvents,
     {
       readonly validate: (
         input: Parameters<ValidateSupportImpersonation>[0],
@@ -122,7 +123,7 @@ export const recordSupportImpersonationAction = defineAction(
     auditEvidenceSchema: RecordSupportImpersonationPayloadSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

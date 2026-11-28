@@ -52,7 +52,7 @@ import {
   preVerificationPrivacyDatabaseLive,
 } from '@app/privacy/testing/pre-verification-binding-native';
 import type { PreVerificationPrivacyNative } from '@app/privacy/testing/pre-verification-binding-native';
-import { Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
+import { Struct, Deferred, Effect, Layer, Option, Predicate, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import { randomUUID } from 'node:crypto';
 
@@ -235,10 +235,8 @@ export const authWorld = Effect.fn('AuthCommunicationsWorld.make')(function* mak
 
   const owner = yield* makeSourceOwnerWorld(yield* makeRuntimeDatabase(), {
     languages: options.languages ?? ['cs', 'en'],
-    mode: options.mode,
+    ...Struct.pick(options, ['mode', 'recipientLanguage', 'retiredLanguages']),
     privacyOwner,
-    recipientLanguage: options.recipientLanguage,
-    retiredLanguages: options.retiredLanguages,
     revisionOf: fictionalRevisionOf,
     types,
   });

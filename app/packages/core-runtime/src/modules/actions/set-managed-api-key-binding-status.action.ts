@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const uuid = Schema.String.check(Schema.isUUID());
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
@@ -42,7 +43,7 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
   function* setManagedApiKeyBindingStatusActionHandle(
     payload: SetManagedApiKeyBindingStatusPayload,
     context: ActionHandlerContext<
-      Readonly<Record<never, never>>,
+      typeof domainEvents,
       {
         readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
       }
@@ -83,7 +84,7 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     actionKey: 'core.identity.set-managed-api-key-binding-status',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

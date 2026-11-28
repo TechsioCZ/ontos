@@ -62,7 +62,7 @@ const portOf = (unitId: string): number => {
 /** Every `localhost` or `127.0.0.1` port a unit's entry names, each against the unit's own port. */
 const localPortMismatches = (label: string, unitId: string, entry: Schema.Json): readonly string[] =>
   [...JSON.stringify(entry).matchAll(/\/\/(?:localhost|127\.0\.0\.1):(?<port>\d+)/gu)]
-    .map((match) => Number(match.groups?.port))
+    .map((match) => Number(match.groups?.['port']))
     .filter((port) => port !== portOf(unitId))
     .map((port) => `${label}.${unitId} uses ${port}, expected ${portOf(unitId)}`);
 
@@ -128,7 +128,7 @@ it('loads remotes from approved composition and waits for verticals on their ove
     ...readText(`${topology.shell.path}/playwright.config.ts`).matchAll(
       /url: 'http:\/\/127\.0\.0\.1:(?<port>\d+)\/(?<unit>[a-z-]+)-api\//gu,
     ),
-  ].map((match) => ({ port: match.groups?.port, unitId: match.groups?.unit ?? '' }));
+  ].map((match) => ({ port: match.groups?.['port'], unitId: match.groups?.['unit'] ?? '' }));
   expect(readinessUrls.length).toBeGreaterThan(0);
   for (const { port, unitId } of readinessUrls) {
     expect(`${unitId} ${port}`).toBe(`${unitId} ${portOf(unitId)}`);
@@ -146,7 +146,7 @@ it('runs each unit and its outbox worker on the unit overlay port in stage zerop
   );
   const setups = zerops.flatMap(({ run, setup }) => {
     const unitId = unitBySetup.get(setup);
-    const port = run.envVariables?.PORT;
+    const port = run.envVariables?.['PORT'];
     return unitId === undefined || port === undefined ? [] : [{ port, setup, unitId }];
   });
   expect(setups.length).toBeGreaterThanOrEqual(unitIds.length);

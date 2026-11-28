@@ -40,7 +40,7 @@ export class StageDeploymentBaseError extends Schema.TaggedError<StageDeployment
 const RUN_PATH_PATTERN = /\/actions\/runs\/(?<runId>\d+)(?:\/|$)/u;
 
 /** Run id of a deployment status log URL, which may end at the run or continue into a job or attempt. */
-const runIdOf = (logUrl: string) => RUN_PATH_PATTERN.exec(URL.parse(logUrl)?.pathname ?? '')?.groups?.runId;
+const runIdOf = (logUrl: string) => RUN_PATH_PATTERN.exec(URL.parse(logUrl)?.pathname ?? '')?.groups?.['runId'];
 
 /** The comparison base, or none when the environment has no successful deployment yet. */
 export const findStageDeploymentBase = <E, R>(

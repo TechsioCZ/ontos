@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'archived']);
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -35,7 +36,7 @@ const ChangePrincipalStatusResultSchema = Schema.Struct({
 const handle = Effect.fn('ChangePrincipalStatusAction.handle')(function* changePrincipalStatusActionHandle(
   payload: ChangePrincipalStatusPayload,
   context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
+    typeof domainEvents,
     {
       readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'];
     }
@@ -74,7 +75,7 @@ export const changePrincipalStatusAction = defineAction(
     actionKey: 'core.identity.change-principal-status',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

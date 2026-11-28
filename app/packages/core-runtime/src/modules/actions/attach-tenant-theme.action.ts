@@ -16,11 +16,12 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  * The Action Invocation is the idempotency anchor.
  */
 
+const domainEvents = {};
 interface AttachTenantThemeServices {
   readonly themes: ReturnType<typeof tenantThemeRepositoryFromTransaction>;
 }
 
-type AttachTenantThemeContext = ActionHandlerContext<Record<never, never>, AttachTenantThemeServices>;
+type AttachTenantThemeContext = ActionHandlerContext<typeof domainEvents, AttachTenantThemeServices>;
 
 const AttachTenantThemeFailureSchema = Schema.Union([TenantThemeNotFound, TenantThemeUnavailable]);
 
@@ -61,7 +62,7 @@ export const attachTenantThemeAction = defineAction(
     actionKey: 'core.themes.attach-tenant-theme',
     auditProfile: 'sensitive',
     domainErrorSchema: AttachTenantThemeFailureSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

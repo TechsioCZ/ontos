@@ -1,5 +1,5 @@
 import { Cause, Effect, Schema } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import { validateQualityAuditSummary } from '../quality-audit-gate.mts';
 import { validateReport } from '../quality-audit.mts';
@@ -285,6 +285,7 @@ it.effect(
     );
     const summary = clean();
     const [first] = summary.results;
+    assert.isOk(first);
     first.name = 'unknown';
     yield* Effect.matchCause(validate(summary), {
       onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/Malformed/u),
@@ -372,6 +373,7 @@ it.effect(
   Effect.fn(function* mergedScenario14() {
     const duplicate = clean();
     const [, repeated] = duplicate.results;
+    assert.isOk(repeated);
     duplicate.results[0] = repeated;
     yield* Effect.matchCause(validate(duplicate), {
       onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/six unique/u),

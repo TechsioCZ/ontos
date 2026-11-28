@@ -95,7 +95,7 @@ const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
   const pathMatch = /^A request to the Cloudflare API \((?<providerPath>[^)\r\n]*)\) failed\./u.exec(
     output.slice(request.index),
   );
-  const providerPath = pathMatch?.groups?.providerPath;
+  const providerPath = pathMatch?.groups?.['providerPath'];
   const codeMatch = /^\[code: (?<providerCode>0|[1-9]\d*)\]/u.exec(output.slice(code.index));
   if (
     providerPath === undefined ||
@@ -105,7 +105,7 @@ const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
   ) {
     return undefined;
   }
-  const providerCode = Number(codeMatch.groups?.providerCode);
+  const providerCode = Number(codeMatch.groups?.['providerCode']);
   return Number.isSafeInteger(providerCode) ? { providerCode, providerPath } : undefined;
 };
 

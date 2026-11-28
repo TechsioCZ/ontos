@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { assert, expect, it } from 'effect-rstest';
 
 import {
   CZECH_LAUNCH_COMMERCE_FIXTURE,
@@ -80,6 +80,8 @@ it.effect('publishes complete Payment Term applicability and an independently re
     ]);
 
     const [applicability, fallback] = CZECH_LAUNCH_COMMERCE_FIXTURE.policies.paymentTerm;
+    assert.isOk(applicability);
+    assert.isOk(fallback);
     expect(applicability.revision.revisionId).not.toBe(fallback.revision.revisionId);
     expect(applicability.revision.value.paymentTermRef).toEqual(fallback.revision.value.paymentTermRef);
     expect(applicability.revision.value.paymentTermRef).toEqual({

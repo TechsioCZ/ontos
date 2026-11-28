@@ -198,9 +198,9 @@ const focusOnCustomerAffectedUseSeam = (sources: ReadonlyMap<string, string>): R
   if (originalManifest === undefined) {
     expect.unreachable(`expected original ${manifestFile}`);
   }
-  const focusedApis = readGeneratedSlotEntries(manifest, manifestApiStart, manifestApiEnd);
+  const focusedApis = new Set(readGeneratedSlotEntries(manifest, manifestApiStart, manifestApiEnd));
   const prunedApis = readGeneratedSlotEntries(originalManifest, manifestApiStart, manifestApiEnd).filter(
-    (entry) => !focusedApis.includes(entry),
+    (entry) => !focusedApis.has(entry),
   );
   const operations = readGeneratedSlotEntries(manifest, operationStart, operationEnd);
   const keptOperations = operations.filter((entry) => kept.some((name) => entry.includes(`apiKey: '${name}'`)));

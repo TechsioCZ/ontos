@@ -96,7 +96,7 @@ const signIn = async (page: Page, language: Language, credentials: Authenticatio
 };
 
 /** The browser person this suite drives: the E2E login fixture's own human, in its own tenant. */
-const test = base.extend<Record<never, never>, { authentication: AuthenticationFixture }>({
+const test = base.extend<object, { authentication: AuthenticationFixture }>({
   authentication: [
     async ({ browserName: _browserName }, use) => {
       await Effect.runPromise(

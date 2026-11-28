@@ -67,11 +67,11 @@ const derive = (workspace: string) => {
   }
   const outputs = new Map<string, readonly string[]>();
   for (const { groups } of text.matchAll(blocks)) {
-    outputs.set(groups?.name ?? '', (groups?.body ?? '').split('\n'));
+    outputs.set(groups?.['name'] ?? '', (groups?.['body'] ?? '').split('\n'));
   }
   return {
     directories: outputs.get('directories') ?? [],
-    manifests: /^manifests=(?<hash>\w+)$/mu.exec(text)?.groups?.hash ?? '',
+    manifests: /^manifests=(?<hash>\w+)$/mu.exec(text)?.groups?.['hash'] ?? '',
     paths: outputs.get('paths') ?? [],
   };
 };
@@ -122,8 +122,10 @@ const workspacePackages = (workspace: string) => {
 };
 
 /** The workspace packages whose node_modules the cached paths leave out. */
-const uncovered = (workspace: string, paths: readonly string[]) =>
-  workspacePackages(workspace).filter((directory) => !paths.includes(`app/${directory}/node_modules`));
+const uncovered = (workspace: string, paths: readonly string[]) => {
+  const covered = new Set(paths);
+  return workspacePackages(workspace).filter((directory) => !covered.has(`app/${directory}/node_modules`));
+};
 
 const withWorkspace = (listing: string, directories: readonly string[], body: (workspace: string) => void) => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), 'install-app-cache-paths-'));
@@ -243,12 +245,12 @@ it('restores and saves exactly the derived paths under a key that names every pa
   const key = step(KEY_STEP);
   const restore = step('Restore the installed workspace');
   const save = step('Save the installed workspace');
-  expect(restore.with?.path).toBe(DERIVED_PATHS);
-  expect(save.with?.path).toBe(DERIVED_PATHS);
+  expect(restore.with?.['path']).toBe(DERIVED_PATHS);
+  expect(save.with?.['path']).toBe(DERIVED_PATHS);
   expect(key.run).toContain(DERIVED_MANIFESTS);
   expect(key.run).toContain("'app/pnpm-workspace.yaml'");
-  expect(restore.with?.key).toBe(expression('steps.workspace-key.outputs.key'));
-  expect(save.with?.key).toBe(expression('steps.workspace.outputs.cache-primary-key'));
+  expect(restore.with?.['key']).toBe(expression('steps.workspace-key.outputs.key'));
+  expect(save.with?.['key']).toBe(expression('steps.workspace.outputs.cache-primary-key'));
   for (const { name, run, with: inputs } of steps) {
     expect(`${run ?? ''}${JSON.stringify(inputs ?? {})}`, name).not.toMatch(
       /(?:apps|packages|verticals)\/\*\/node_modules/u,
@@ -342,7 +344,7 @@ it('moves only pnpm’s lockfile record between pnpm’s cache directory and the
         xdg === undefined ? env : { ...env, XDG_CACHE_HOME: xdg },
       );
     };
-    expect(locate('reuse', path.join(home, 'xdg')).outputs.record).toBe(path.join(home, 'xdg/pnpm', RECORD_FILE));
+    expect(locate('reuse', path.join(home, 'xdg')).outputs['record']).toBe(path.join(home, 'xdg/pnpm', RECORD_FILE));
     expect(locate('publish').status).toBe(0);
     expect(locate('save').status).not.toBe(0);
     const { record = '', staging = '' } = locate('reuse').outputs;

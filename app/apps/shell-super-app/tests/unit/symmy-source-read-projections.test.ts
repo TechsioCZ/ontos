@@ -493,12 +493,13 @@ const bodyOf = (request: Request | undefined) =>
     Effect.orDie,
     Effect.flatMap((present) => Effect.promise(() => present.clone().json())),
   );
-const scopeWithout = (selected: SymmySourceReadScope, ...removed: readonly string[]): SymmySourceReadScope => ({
-  ...selected,
-  allowedOwnerOperations: selected.allowedOwnerOperations.filter(
-    ({ entrypointKey }) => !removed.includes(entrypointKey),
-  ),
-});
+const scopeWithout = (selected: SymmySourceReadScope, ...removed: readonly string[]): SymmySourceReadScope => {
+  const excluded = new Set(removed);
+  return {
+    ...selected,
+    allowedOwnerOperations: selected.allowedOwnerOperations.filter(({ entrypointKey }) => !excluded.has(entrypointKey)),
+  };
+};
 const fixture = (
   mode: FixtureMode = 'current',
   recordKey = sourceCorrelation.recordKey,

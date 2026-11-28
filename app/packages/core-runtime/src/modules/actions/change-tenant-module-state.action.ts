@@ -30,6 +30,7 @@ import type {
   PersistTenantModuleStateChangeResult,
 } from '../tenant-module-state-service.ts';
 
+const domainEvents = {};
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
   condition: boolean,
@@ -67,7 +68,7 @@ const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateValidationUnavailableError,
 ]);
 
-type ChangeTenantModuleStateDomainEvents = Readonly<Record<never, Schema.ConstraintDecoder<unknown>>>;
+type ChangeTenantModuleStateDomainEvents = typeof domainEvents;
 
 interface ChangeTenantModuleStateServices {
   readonly persist: (
@@ -142,7 +143,7 @@ export const changeTenantModuleStateAction = defineAction(
     actionKey: 'core.modules.change-tenant-module-state',
     auditProfile: 'sensitive',
     domainErrorSchema: ChangeTenantModuleStateError,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

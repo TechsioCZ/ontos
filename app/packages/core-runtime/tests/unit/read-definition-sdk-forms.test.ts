@@ -1,3 +1,4 @@
+import type { NoAccessQuestions, ReadRunContext } from '../../src/sdk/read.ts';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -13,7 +14,6 @@ import type { ReadLoadContext } from '../../src/reads/definition.ts';
 import { ModuleOperationRouteSchema, declaredCall, declaredWriteCall, moduleOperation } from '../../src/sdk/index.ts';
 import type { CallCapability, RecoveriesDeclared } from '../../src/sdk/index.ts';
 import { canList, canRun, readAnswer } from '../../src/sdk/read.ts';
-import type { ReadRunContext } from '../../src/sdk/read.ts';
 
 /**
  * `defineRead` takes three spellings: the bare handler and `{ load }` (one transaction, as before) and
@@ -70,7 +70,7 @@ const handler = (input: { readonly subject: string }, context: ReadLoadContext<{
   Effect.succeed(readAnswer({ outcome: `${input.subject}:${context.services.label}` }, { resultCount: 1 }));
 const run = (
   input: { readonly subject: string },
-  context: ReadRunContext<{ readonly label: string }, typeof calls, Readonly<Record<never, never>>>,
+  context: ReadRunContext<{ readonly label: string }, typeof calls, NoAccessQuestions>,
 ) =>
   context
     .call('restrictions', { subject: input.subject })

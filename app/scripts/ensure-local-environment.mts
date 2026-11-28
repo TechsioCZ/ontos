@@ -101,7 +101,7 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   );
   const updated = lines.map((line) => {
     const match = /^(?<key>[A-Z][A-Z0-9_]*)=/u.exec(line);
-    const key = match?.groups?.key;
+    const key = match?.groups?.['key'];
     if (key === undefined || !remaining.has(key)) {
       return line;
     }

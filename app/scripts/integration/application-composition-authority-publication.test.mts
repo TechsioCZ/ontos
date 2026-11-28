@@ -126,7 +126,7 @@ const initialCutoverProvider = (nodeStatus: string | undefined, workerPresent: b
     if (url.pathname === KV_NAMESPACE_PATH || url.pathname === KV_VALUE_PATH) {
       expect(request.method).toBe('GET');
       expect(url.href).toBe(`https://api.cloudflare.com${url.pathname}`);
-      expect(request.headers.authorization).toBe('Bearer publication-test-cloudflare-token');
+      expect(request.headers['authorization']).toBe('Bearer publication-test-cloudflare-token');
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
@@ -326,7 +326,7 @@ it.live(
       const kvClient = HttpClient.make((request, url) =>
         Effect.gen(function* nativeKvResponse() {
           expect(url.href).toBe(KV_URL);
-          expect(request.headers.authorization).toBe('Bearer publication-native-kv-token');
+          expect(request.headers['authorization']).toBe('Bearer publication-native-kv-token');
           const previousMethod = kvRequests.at(-1);
           kvRequests.push(request.method);
           if (request.method === 'GET') {

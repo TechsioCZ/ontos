@@ -143,7 +143,7 @@ const inventoryFor = (plan: ImmutableApplicationReleasePlan) => ({
       }),
     ),
     ...['main.js', 'async.js', 'shared.js', 'main.css', 'async.css', 'shared.css'].map((path) => file(path)),
-  ],
+  ] as const,
 });
 
 it.effect('pins the complete Shell runtime contract and federation inventory to exact retained bytes', () =>
@@ -720,7 +720,7 @@ for (const secretResponse of [
           const originalOutput = yield* readReleaseFiles(output);
           const originalInventory = inventoryFor(plan);
           const inventory = {
-            assets: [...originalInventory.assets, encodedAsset, ...nativeBracketAssets, compiledRobots],
+            assets: [...originalInventory.assets, encodedAsset, ...nativeBracketAssets, compiledRobots] as const,
           };
           const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
             environment: 'stage',
@@ -933,7 +933,12 @@ for (const secretResponse of [
               { body: { enabled: true, previews_enabled: false }, method: 'POST', url: assetSubdomainUrl },
             ]);
           }
-          expect(commands[0].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
+          expect(EffectArray.getUnsafe(commands, 0).args.slice(0, 4)).toEqual([
+            'exec',
+            'wrangler',
+            'deploy',
+            '--config',
+          ]);
           expect(requests.slice(0, 2)).toEqual([ACCOUNT_SUBDOMAIN_URL, providerUrl]);
           expect(requests.some((url) => url.includes('/dispatch/'))).toBe(false);
           expect(requests.some((url) => url.includes('/secrets'))).toBe(false);
@@ -991,8 +996,13 @@ for (const secretResponse of [
           expect(events.findIndex((event) => event.includes('clock_timestamp()'))).toBeLessThan(
             events.lastIndexOf(DEPLOY_EVENT),
           );
-          expect(commands[1].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
-          expect(commands[1].args[4]).toContain('.wrangler-immutable-shell-ingress-');
+          expect(EffectArray.getUnsafe(commands, 1).args.slice(0, 4)).toEqual([
+            'exec',
+            'wrangler',
+            'deploy',
+            '--config',
+          ]);
+          expect(EffectArray.getUnsafe(commands, 1).args[4]).toContain('.wrangler-immutable-shell-ingress-');
           expect(publishedInventories).toHaveLength(2);
           for (const published of publishedInventories) {
             expect(published.some(({ path }) => path === 'main.js')).toBe(true);

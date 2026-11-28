@@ -43,12 +43,13 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  * `scanning` is never produced: no mandatory scanner exists, and none is introduced here.
  */
 
+const domainEvents = {};
 interface ConfirmAssetServices {
   readonly repository: ReturnType<typeof mediaAssetRepositoryFromTransaction>;
   readonly verification: MediaStoredObjectVerification;
 }
 
-type ConfirmAssetContext = ActionHandlerContext<Record<never, never>, ConfirmAssetServices>;
+type ConfirmAssetContext = ActionHandlerContext<typeof domainEvents, ConfirmAssetServices>;
 
 const MediaConfirmFailureSchema = Schema.Union([
   MediaAssetNotFound,
@@ -177,7 +178,7 @@ export const confirmAssetAction = defineAction(
     actionKey: 'core.media.confirm-asset',
     auditProfile: 'standard',
     domainErrorSchema: MediaConfirmFailureSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

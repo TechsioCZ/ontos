@@ -417,8 +417,8 @@ it.live(
     }
     expect(knip.coverage.modeledFindingCounts).toEqual({ devDependencies: 2 });
     expect(knip.coverage.modeledUsages).toBe(2);
-    expect(knip.coverage.nativeFindingCounts.devDependencies).toBe(5);
-    expect(knip.coverage.findingCounts.devDependencies).toBe(3);
+    expect(knip.coverage.nativeFindingCounts['devDependencies']).toBe(5);
+    expect(knip.coverage.findingCounts['devDependencies']).toBe(3);
     const usages = Schema.decodeUnknownSync(
       Schema.fromJsonString(
         Schema.Array(
@@ -443,7 +443,7 @@ it.live(
     yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
     const [invalid] = json(readFileSync(path.join(output, summaryFile), 'utf-8')).results;
     expect(invalid?.coverage.modeledUsages).toBe(0);
-    expect(invalid?.coverage.findingCounts.devDependencies).toBe(5);
+    expect(invalid?.coverage.findingCounts['devDependencies']).toBe(5);
   }),
 );
 
@@ -607,9 +607,9 @@ it.live(
       ),
     );
     const [report] = decode(readFileSync(path.join(output, summaryFile), 'utf-8')).results;
-    expect(report?.coverage.nativeFindingCounts.duplicates).toBe(2);
-    expect(report?.coverage.findingCounts.duplicates).toBe(1);
-    expect(report?.coverage.modeledFindingCounts.duplicates).toBe(1);
+    expect(report?.coverage.nativeFindingCounts['duplicates']).toBe(2);
+    expect(report?.coverage.findingCounts['duplicates']).toBe(1);
+    expect(report?.coverage.modeledFindingCounts['duplicates']).toBe(1);
     if (report === undefined) {
       throw new Error('Expected Knip report');
     }
@@ -617,7 +617,7 @@ it.live(
     write(root, aliasFile, registeredAlias.replace('success: ResponseSchema', 'success: BasisSchema'));
     yield* runQualityAudit(root, output, 'knip').pipe(Effect.provide(NodeServices.layer));
     const [invalid] = decode(readFileSync(path.join(output, summaryFile), 'utf-8')).results;
-    expect(invalid?.coverage.findingCounts.duplicates).toBe(2);
-    expect(invalid?.coverage.modeledFindingCounts.duplicates ?? 0).toBe(0);
+    expect(invalid?.coverage.findingCounts['duplicates']).toBe(2);
+    expect(invalid?.coverage.modeledFindingCounts['duplicates'] ?? 0).toBe(0);
   }),
 );

@@ -41,7 +41,7 @@ const ownerConfigs = [
 const fixtureStageMessage = 'INTERNAL_C14 Regions fixture stage';
 const sourceIssuer = 'INTERNAL_C14_REGIONS_OPERATOR';
 const sourceNamespace = 'explicit-region-fixtures';
-const sourceRegionIds = ['CZ fixture / alpha', 'CZ fixture / beta'];
+const sourceRegionIds = ['CZ fixture / alpha', 'CZ fixture / beta'] as const;
 const regionSchema = Schema.Struct({
   countryCodes: Schema.Tuple([Schema.Literal('CZ')]),
   currencyCode: Schema.Literal('CZK'),

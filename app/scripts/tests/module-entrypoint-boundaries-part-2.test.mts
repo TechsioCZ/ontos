@@ -1424,7 +1424,7 @@ export const ReserveActionApi = HttpApi.make('ReserveActionApi').add(ReserveActi
     actionTarget.replace(INVENTORY_MODULE_ID, 'other.owner'),
     actionTarget.replace('// @ontos-action-http-slug reserve', '// @ontos-action-http-slug other'),
     actionTarget.replace('/inventory-stock/actions/reserve', '/other/actions/reserve'),
-    actionTarget.split('import')[0],
+    actionTarget.slice(0, actionTarget.indexOf('import')),
   ]) {
     sources.set(RESERVE_PUBLISHED_SOURCE, invalid);
     expect(acceptsAction()).toBe(false);

@@ -158,7 +158,7 @@ const awaitCommittedFixture = Effect.fn('ScopedMigrationRecovery.awaitCommittedF
     'select pg_catalog.to_regclass($1) is not null as present',
     [`${fixtureSchema}.proof`],
   );
-  if (!table?.present) {
+  if (table?.present !== true) {
     return false;
   }
   yield* verifySchema(fixture.client);

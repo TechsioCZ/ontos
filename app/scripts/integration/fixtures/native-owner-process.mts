@@ -67,6 +67,10 @@ class OwnerServerStartupError extends Schema.TaggedError<OwnerServerStartupError
 
 const OwnerCorrelationIdSchema = Schema.String.pipe(Schema.brand('OwnerFixtureCorrelationId'));
 const OwnerIdempotencyKeySchema = Schema.String.pipe(Schema.brand('OwnerFixtureIdempotencyKey'));
+interface OwnerRevisions {
+  receivedRevision?: string;
+  verifiedRevision?: string;
+}
 const OwnerResponseSchema = Schema.Struct({
   authorization: Schema.RedactedFromValue(Schema.String),
   body: Schema.String,
@@ -182,7 +186,7 @@ const ownerProcess = Effect.gen(function* runOwnerProcess() {
     const body = new TextDecoder().decode(bodyBytes);
     const url = new URL(request.originalUrl, origin);
     yield* emit({ body, event: 'received', method: request.method, path: url.pathname, query: url.search });
-    const principal = yield* verifier.verifyAndRedeem(Redacted.make(request.headers.authorization), {
+    const principal = yield* verifier.verifyAndRedeem(Redacted.make(request.headers['authorization']), {
       redemption: { consume: () => Effect.void },
     });
     yield* emit({ event: 'business', method: request.method, path: url.pathname });
@@ -232,24 +236,32 @@ const ownerProcess = Effect.gen(function* runOwnerProcess() {
         HttpServerResponse.setCookieUnsafe('ownerB', '2', { httpOnly: true }),
       );
     }
+    const revisions: OwnerRevisions = {};
+    const received = request.headers['x-ontos-composition-revision'];
+    const verified = readVerifiedGatewayCompositionRevision(principal);
+    if (received !== undefined) {
+      revisions.receivedRevision = received;
+    }
+    if (verified !== undefined) {
+      revisions.verifiedRevision = verified;
+    }
     const responseBody = yield* Schema.encodeEffect(Schema.fromJsonString(OwnerResponseSchema))({
-      authorization: Redacted.make(request.headers.authorization ?? ''),
+      authorization: Redacted.make(request.headers['authorization'] ?? ''),
       body,
       buildMarker: configuration.buildMarker,
       connectionSecret: Option.map(Option.fromUndefinedOr(request.headers['x-connection-secret']), Redacted.make),
-      cookie: Option.map(Option.fromUndefinedOr(request.headers.cookie), Redacted.make),
+      cookie: Option.map(Option.fromUndefinedOr(request.headers['cookie']), Redacted.make),
       correlationId: yield* Schema.decodeEffect(OwnerResponseSchema.fields.correlationId)(
         request.headers['x-correlation-id'] ?? null,
       ),
-      host: Option.fromUndefinedOr(request.headers.host),
+      host: Option.fromUndefinedOr(request.headers['host']),
       idempotencyKey: yield* Schema.decodeEffect(OwnerResponseSchema.fields.idempotencyKey)(
         request.headers['idempotency-key'] ?? null,
       ),
       method: request.method,
       path: url.pathname,
       query: url.search,
-      receivedRevision: request.headers['x-ontos-composition-revision'],
-      verifiedRevision: readVerifiedGatewayCompositionRevision(principal),
+      ...revisions,
     });
     const location = redirectLocations.get(url.pathname);
     if (location !== undefined) {

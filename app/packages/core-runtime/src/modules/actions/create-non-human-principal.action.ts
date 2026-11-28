@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const uuid = Schema.String.check(Schema.isUUID());
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const displayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
@@ -28,7 +29,7 @@ const CreateNonHumanPrincipalResultSchema = Schema.Struct({
 const handle = (
   payload: CreateNonHumanPrincipalPayload,
   context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
+    typeof domainEvents,
     {
       readonly create: PrincipalManagementRepositoryService['createNonHumanPrincipal'];
     }
@@ -58,7 +59,7 @@ export const createNonHumanPrincipalAction = defineAction(
     actionKey: 'core.identity.create-non-human-principal',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

@@ -23,13 +23,14 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  * invocation never runs this handler again. The storage key then derives from that id.
  */
 
+const domainEvents = {};
 interface UploadAssetServices {
   readonly maximumObjectBytes: number | undefined;
   readonly providerId: string;
   readonly repository: ReturnType<typeof mediaAssetRepositoryFromTransaction>;
 }
 
-type UploadAssetContext = ActionHandlerContext<Record<never, never>, UploadAssetServices>;
+type UploadAssetContext = ActionHandlerContext<typeof domainEvents, UploadAssetServices>;
 
 const MediaUploadFailureSchema = Schema.Union([MediaForbidden, MediaTooLarge, MediaUnavailable]);
 
@@ -109,7 +110,7 @@ export const uploadAssetAction = defineAction(
     actionKey: 'core.media.upload-asset',
     auditProfile: 'standard',
     domainErrorSchema: MediaUploadFailureSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

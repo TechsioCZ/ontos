@@ -79,7 +79,7 @@ const observation = (input: {
   readonly token?: string;
 }) => {
   const client = HttpClient.make((request, destination) => {
-    input.requests?.push({ authorization: request.headers.authorization ?? null, url: destination.href });
+    input.requests?.push({ authorization: request.headers['authorization'] ?? null, url: destination.href });
     return Effect.succeed(HttpClientResponse.fromWeb(request, input.response(destination.href)));
   });
   return observeApplicationCompositionBackend({

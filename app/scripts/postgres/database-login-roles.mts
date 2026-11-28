@@ -33,7 +33,7 @@ export const ensureDatabaseLoginRole = (
       [input.role],
     );
     const passwordLiteral = quoteLiteral(Redacted.value(input.password));
-    const verb = exists[0]?.exists ? 'alter' : 'create';
+    const verb = exists[0]?.exists === true ? 'alter' : 'create';
     yield* client.unsafe(`${verb} role ${role} login password ${passwordLiteral} ${LOGIN_ROLE_ATTRIBUTES}`);
     yield* client.unsafe(`grant connect on database ${quoteIdentifier(input.database)} to ${role}`);
   }).pipe(Effect.mapError(runtimeRoleQueryFailure));

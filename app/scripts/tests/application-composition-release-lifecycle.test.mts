@@ -173,7 +173,7 @@ const gateFixture = (value: string, authorityRows: readonly object[], status = 2
   const requests: { readonly authorization: string | undefined; readonly method: string; readonly url: string }[] = [];
   const statements: string[] = [];
   const client = HttpClient.make((request, destination) => {
-    requests.push({ authorization: request.headers.authorization, method: request.method, url: destination.href });
+    requests.push({ authorization: request.headers['authorization'], method: request.method, url: destination.href });
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(value, { status })));
   });
   return {
@@ -305,8 +305,8 @@ it.effect('never admits a Shell from missing, malformed, unavailable, or expired
     const snapshot = yield* completeSnapshot;
     const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
     const document = yield* Schema.decodeEffect(Schema.fromJsonString(JsonRecord))(encoded);
-    const composition = yield* Schema.decodeUnknownEffect(JsonRecord)(document.composition);
-    const modules = yield* Schema.decodeUnknownEffect(Schema.Array(JsonRecord))(composition.modules);
+    const composition = yield* Schema.decodeUnknownEffect(JsonRecord)(document['composition']);
+    const modules = yield* Schema.decodeUnknownEffect(Schema.Array(JsonRecord))(composition['modules']);
     const missingBackend = yield* Schema.encodeEffect(JsonText)({
       ...document,
       composition: { ...composition, modules: modules.map((module) => ({ ...module, backend: null })) },
@@ -431,7 +431,7 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   };
   const client = HttpClient.make((request, destination) => {
     proofRequests.push(`${request.method} ${destination.href}`);
-    proofCredentials.push({ authorization: request.headers.authorization, url: destination.href });
+    proofCredentials.push({ authorization: request.headers['authorization'], url: destination.href });
     events.push(`PROOF ${destination.href}`);
     if (destination.pathname.startsWith(INITIAL_NAMESPACE_PATH)) {
       const pointerResponse =

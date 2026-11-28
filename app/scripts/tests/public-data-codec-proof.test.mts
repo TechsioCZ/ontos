@@ -483,7 +483,7 @@ it('specializes the actual private request metadata codec from its closed publis
     [partyIdentityFile, 'counterpartyCustomerOnboardRequestIdentity'],
     [commerceIdentityFile, 'createCounterpartyPurchasingProfileRequestIdentity'],
     [commerceIdentityFile, 'ensureRetailCustomerProfileRequestIdentity'],
-  ]) {
+  ] as const) {
     expect(contextualProof(file, exported), exported).toBe(true);
   }
   expect(contextualProof(partyIdentityFile, 'requestIdentity')).toBe(false);
@@ -705,7 +705,7 @@ const identityFiles = [
   'verticals/price-group-catalog/shared/source-request-identity.ts',
   partyIdentityFile,
   commerceIdentityFile,
-];
+] as const;
 it('rejects IO substituted into the actual Catalog locale validator dependency', () => {
   const filename = 'verticals/catalog/shared/domain/product-descriptive-facts.ts';
   const source = sources.get(filename) ?? '';
@@ -719,7 +719,7 @@ it('proves every published native request metadata codec in the owner inventory'
   for (const file of identityFiles) {
     for (const match of (sources.get(file) ?? '').matchAll(/export const (?<name>\w+RequestIdentity)\s*=/gu)) {
       count += 1;
-      expect(contextualProof(file, match.groups?.name ?? ''), `${file}:${match.groups?.name ?? ''}`).toBe(true);
+      expect(contextualProof(file, match.groups?.['name'] ?? ''), `${file}:${match.groups?.['name'] ?? ''}`).toBe(true);
     }
   }
   expect(count).toBe(31);
@@ -1268,7 +1268,7 @@ it('preserves exact native literal union cardinality in schema descriptor traver
     ["paths: Schema.Literals(['only']),", "if(SchemaAST.isUnion(root)){fetch('remote');}"],
     ['paths: Schema.Literals([]),', "if(SchemaAST.isUnion(root)){fetch('remote');}"],
     ["paths: Schema.Literals(['first','second']),", "if(key==='1'){fetch('remote');}"],
-  ]) {
+  ] as const) {
     const mutated = source
       .replace(pathsExtension, extension)
       .replace(
@@ -1313,7 +1313,7 @@ it('keeps native kind predicates unknown for opaque schema own values', () => {
   for (const [extension, field, predicate] of [
     ["paths: Schema.Literals(['first','second']),", 'members', 'Array.isArray'],
     [pathsExtension, 'value', 'Schema.isSchema'],
-  ]) {
+  ] as const) {
     const mutated = source
       .replace(pathsExtension, extension)
       .replace(
@@ -1661,8 +1661,8 @@ it('extracts exact native column initialization AST and count facts without deco
   expect(evidence?.builderMethods.map((method) => [method.name, method.argumentCount])).toEqual([['notNull', 0]]);
   expect(evidence?.factoryCalls).toEqual([]);
   expect(evidence?.source).toBe(columnSource);
-  expect(evidence?.program.type).toBe('Program');
-  expect(evidence?.tableCall.type).toBe('CallExpression');
+  expect(evidence?.program['type']).toBe('Program');
+  expect(evidence?.tableCall['type']).toBe('CallExpression');
   const arrayColumn = columnEvidence(
     columnSource.replace("text('outcome_code').notNull()", "text('outcome_code').array().notNull()"),
   );
@@ -1691,7 +1691,7 @@ it('retains actual specialization captures when a closed native column factory i
   const evidence = columnEvidence(source);
   expect(evidence).not.toBeNull();
   expect(evidence?.nativeRoot.kind).toBe('text');
-  expect(evidence?.nativeRoot.captures.get('name')?.value).toBe('outcome_code');
+  expect(evidence?.nativeRoot.captures.get('name')?.['value']).toBe('outcome_code');
   expect(evidence?.factoryCalls.length).toBe(1);
 });
 for (const [name, source] of [

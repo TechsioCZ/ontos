@@ -35,12 +35,13 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  * preserved; the observed digest and length go to the audit evidence. No byte, key or credential is recorded.
  */
 
+const domainEvents = {};
 interface RecordIntegrityServices {
   readonly finding: MediaIntegrityFinding;
   readonly repository: ReturnType<typeof mediaAssetRepositoryFromTransaction>;
 }
 
-type RecordIntegrityContext = ActionHandlerContext<Record<never, never>, RecordIntegrityServices>;
+type RecordIntegrityContext = ActionHandlerContext<typeof domainEvents, RecordIntegrityServices>;
 
 /** The only evidence this Action records: lengths and digests of the identity and of the corrupt bytes, never bytes. */
 const IntegrityAuditEvidenceSchema = Schema.Struct({
@@ -157,7 +158,7 @@ export const recordAssetIntegrityFailureAction = defineAction(
     auditEvidenceSchema: IntegrityAuditEvidenceSchema,
     auditProfile: 'standard',
     domainErrorSchema: MediaIntegrityRecordFailureSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

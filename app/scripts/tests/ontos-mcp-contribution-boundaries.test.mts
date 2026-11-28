@@ -103,8 +103,8 @@ it.each([
     expect(tool?.id).toBe(`booking/command/${PREFERENCES_TAG}`);
     expect(tool?.name).toBe('booking_app__update_preferences');
     expect(tool?.invoke).toEqual({ commandTag: PREFERENCES_TAG, path: `/booking-app/actions/${actionSlug}` });
-    expect(tool?.inputSchema.properties).toHaveProperty(included);
-    expect(tool?.inputSchema.properties).not.toHaveProperty(excluded);
+    expect(tool?.inputSchema['properties']).toHaveProperty(included);
+    expect(tool?.inputSchema['properties']).not.toHaveProperty(excluded);
     expect(tool).not.toHaveProperty(ACTION_SELECTOR);
   },
 );
@@ -426,8 +426,8 @@ it('gives a command tool the Action revision constraint and keeps the revision o
   };
   const { catalog } = catalogOf({ actions: [action], authored: { ...authored, commands: { KeepBooking: { title } } } });
   const [tool] = catalog.tools;
-  expect(tool?.inputSchema.required).toEqual([]);
-  expect(tool?.inputSchema.properties).toMatchObject({
+  expect(tool?.inputSchema['required']).toEqual([]);
+  expect(tool?.inputSchema['properties']).toMatchObject({
     expectedRevision: { allOf: [{ minimum: 1, type: 'integer' }], minimum: 0, type: 'integer' },
   });
 });

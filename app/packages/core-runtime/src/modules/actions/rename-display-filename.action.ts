@@ -19,11 +19,12 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
  * committed invocation never runs this handler again.
  */
 
+const domainEvents = {};
 interface RenameDisplayFilenameServices {
   readonly repository: ReturnType<typeof mediaAssetRepositoryFromTransaction>;
 }
 
-type RenameDisplayFilenameContext = ActionHandlerContext<Record<never, never>, RenameDisplayFilenameServices>;
+type RenameDisplayFilenameContext = ActionHandlerContext<typeof domainEvents, RenameDisplayFilenameServices>;
 
 const RenameDisplayFilenameFailureSchema = Schema.Union([MediaAssetNotFound, MediaUnavailable]);
 
@@ -57,7 +58,7 @@ export const renameDisplayFilenameAction = defineAction(
     actionKey: 'core.media.rename-display-filename',
     auditProfile: 'standard',
     domainErrorSchema: RenameDisplayFilenameFailureSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },
