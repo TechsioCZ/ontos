@@ -82,6 +82,28 @@ const EXPECTED_IMMUTABLE_TRIGGERS = [
   'retention_rules:privacy_retention_rules_immutable',
 ] as const;
 
+const EXPECTED_GOVERNANCE_TRIGGERS = EffectArray.sort(
+  [
+    ...EXPECTED_IMMUTABLE_TRIGGERS,
+    ...[
+      'source_processing_authorizations',
+      'source_processing_admissions',
+      'privacy_subjects',
+      'processing_purposes',
+      'purpose_versions',
+      'responsibility_assignments',
+      'applicability_decisions',
+      'applicability_policies',
+      'legal_basis_assignments',
+      'consent_decisions',
+      'consent_scope_bindings',
+      'processing_interventions',
+      'anti_resurrection_protections',
+    ].map((table) => `${table}:source_eligibility_change`),
+  ],
+  Order.String,
+);
+
 const EXPECTED_FOREIGN_KEYS = [
   'privacy_activity_lifecycle_activity_fk',
   'privacy_consent_scope_bindings_subject_fk',
@@ -167,6 +189,7 @@ interface RoleRow {
 }
 
 interface TriggerRow {
+  readonly holds_scope: boolean;
   readonly table_name: string;
   readonly trigger_name: string;
 }
@@ -309,7 +332,8 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
 
     const triggers = yield* connected
       .unsafe<TriggerRow>(
-        `select relation.relname as table_name, trigger_record.tgname as trigger_name
+        `select relation.relname as table_name, trigger_record.tgname as trigger_name,
+                 (trigger_record.tgenabled='O' and trigger_record.tgtype=31 and trigger_record.tgfoid=to_regprocedure('privacy.serialize_source_eligibility_change()')) as holds_scope
                  from pg_catalog.pg_trigger as trigger_record
                  join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
                  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -321,10 +345,14 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
         Effect.map((rows) => ({ rows })),
         Effect.mapError((cause) => failure('Unable to inspect Privacy immutable triggers', cause)),
       );
-    const actualTriggers = triggers.rows.map(({ table_name, trigger_name }) => `${table_name}:${trigger_name}`);
-    if (!sameStrings(actualTriggers, EXPECTED_IMMUTABLE_TRIGGERS)) {
+    const actualTriggers = triggers.rows.map(({ holds_scope, table_name, trigger_name }) =>
+      trigger_name === 'source_eligibility_change' && !holds_scope
+        ? `${table_name}:invalid_interlock`
+        : `${table_name}:${trigger_name}`,
+    );
+    if (!sameStrings(actualTriggers, EXPECTED_GOVERNANCE_TRIGGERS)) {
       yield* failure(
-        `Privacy immutable trigger mismatch; expected=[${EXPECTED_IMMUTABLE_TRIGGERS.join(',')}], actual=[${actualTriggers.join(',')}]`,
+        `Privacy governance trigger mismatch; expected=[${EXPECTED_GOVERNANCE_TRIGGERS.join(',')}], actual=[${actualTriggers.join(',')}]`,
       );
     }
 

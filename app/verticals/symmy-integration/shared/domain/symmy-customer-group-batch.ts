@@ -1,14 +1,13 @@
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import { CreateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/create-customer-group-action';
 import { UpdateCustomerGroupPayloadSchema } from '@app/commerce-customer-context/api/update-customer-group-action';
-import { Option, Schema } from 'effect';
+import { Schema } from 'effect';
 import {
   CustomerProfileSourceRequestSchema,
   CustomerProfileSourceResponseSchema,
 } from '@app/commerce-customer-context/api/customer-profile-source';
-import type { CustomerProfileSourceRequest } from '@app/commerce-customer-context/api/customer-profile-source';
 import { OrganizationMembershipProfileSchema } from '@app/commerce-customer-context/domain/organization-membership-source';
-import { SymmySourceRecordRefSchema } from '@app/shared-contracts/symmy';
+import { currentCustomerSourceMatches, SymmySourceRecordRefSchema } from '@app/shared-contracts/symmy';
 
 import { SymmyCustomerRowSchema } from './symmy-customer-batch.ts';
 
@@ -152,46 +151,6 @@ const customerProfiles = Schema.Array(SymmyGroupMembershipCustomerFactSchema).ch
       'Each customer source has one current profile',
   ),
 );
-type CurrentRequest = Extract<CustomerProfileSourceRequest, { readonly mode: 'CURRENT' }>;
-/** Exact customer source route and revisions, not merely a same-tenant profile or manager namespace. */
-export const symmyMembershipSourceMatches = (
-  request: Omit<CurrentRequest, 'mode'>,
-  source: typeof CustomerProfileSourceAssertionSchema.Type,
-): boolean =>
-  source.issuer === request.issuer &&
-  source.namespace === request.namespace &&
-  source.recordType === request.recordType &&
-  source.recordId === request.recordId &&
-  source.mappingRevision === request.mappingRevision &&
-  source.route.id === request.route.id &&
-  source.route.revision === request.route.revision;
-
-/** Project exactly the Current owner record that was requested. Consumers decide how to report inactivity. */
-export const projectSymmyMembershipCustomer = (
-  request: CurrentRequest,
-  tenantId: string,
-  { item }: Extract<typeof CustomerProfileSourceResponseSchema.Type, { readonly _tag: 'CURRENT' }>,
-) => {
-  const { partyRef, profile, source } = item;
-  if (
-    !symmyMembershipSourceMatches(request, source) ||
-    profile.profileRef.tenantId !== tenantId ||
-    partyRef.tenantId !== tenantId ||
-    profile.subject.kind !== profile.profileRef.kind ||
-    (profile.profileRef.kind === 'COUNTERPARTY' && item.icoAuthority === undefined)
-  ) {
-    return { status: 'INVALID' } as const;
-  }
-  if (profile.state !== 'ACTIVE') {
-    return { status: 'INACTIVE' } as const;
-  }
-  const fact = Schema.decodeUnknownOption(SymmyGroupMembershipCustomerFactSchema)({
-    customerSource: source,
-    processingKind: item.icoAuthority === 'ORGANIZATION' ? 'ORG_BUSINESS_REFERENCE' : 'PERSONAL',
-    profile: { profileKind: profile.profileRef.kind, profileRef: profile.profileRef },
-  });
-  return Option.isSome(fact) ? ({ fact: fact.value, status: 'CURRENT' } as const) : ({ status: 'INVALID' } as const);
-};
 
 const {
   mode: _currentMode,
@@ -218,7 +177,7 @@ export const SymmyGroupMembershipCustomerResolutionSchema = Schema.Struct({
   Schema.makeFilter(
     ({ authority, profiles }) =>
       profiles.every(({ customerSource }) =>
-        symmyMembershipSourceMatches({ ...authority, recordId: customerSource.recordId }, customerSource),
+        currentCustomerSourceMatches({ ...authority, recordId: customerSource.recordId }, customerSource),
       ) || 'Every current profile must come from the exact queried customer authority',
   ),
 );

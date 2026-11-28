@@ -1,3 +1,8 @@
+import {
+  currentCustomerSourceMatches,
+  symmyCustomerRecordProven,
+  symmyCustomerSourceRecordId,
+} from '@app/shared-contracts/symmy';
 import { defineScopedRoutine, registeredAdmissionAuthContextRef } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { readVerifiedGatewayRouteScope } from '@app/core-runtime/auth/system-principal-context-provenance';
@@ -52,7 +57,6 @@ import {
   SymmyCustomerGroupRowsSchema,
   SymmyGroupCustomerRowsSchema,
   SymmyMembershipCustomerAuthoritySchema,
-  symmyMembershipSourceMatches,
 } from '../../shared/domain/symmy-customer-group-batch.ts';
 import type {
   SymmyCustomerGroupRows,
@@ -69,7 +73,6 @@ import { SymmyProductRowsSchema } from '../../shared/domain/symmy-product-batch.
 import type { SymmyProductPriceGroupFacts, SymmyProductRows } from '../../shared/domain/symmy-product-batch.ts';
 import { SymmyStockRowsSchema } from '../../shared/domain/symmy-stock-batch.ts';
 import type { SymmyStockRows } from '../../shared/domain/symmy-stock-batch.ts';
-import { symmyCustomerRecordProven, symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
 import { buildSymmyCustomerPlan, createPartyOperation, enrolledCustomerSource } from './symmy-customer-plan.ts';
 import { buildSymmyCustomerGroupPlan } from './symmy-customer-group-plan.ts';
 import { buildSymmyGroupMembershipPlan } from './symmy-customer-group-membership-plan.ts';
@@ -740,7 +743,7 @@ export const resolveSymmyMembershipCustomerProfiles = Effect.fn('SymmyJobStore.r
         !requestedRecords.has(recordId) ||
         profiles.has(recordId) ||
         fact.profile.profileRef.tenantId !== input.tenantId ||
-        !symmyMembershipSourceMatches({ ...queried, recordId }, fact.customerSource)
+        !currentCustomerSourceMatches({ ...queried, recordId }, fact.customerSource)
       ) {
         return yield* routeDenied();
       }

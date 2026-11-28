@@ -1,10 +1,13 @@
 import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { executeCustomerProfileSourceWithAuthorization } from '@app/commerce-customer-context/api/customer-profile-source/client';
-import { symmyCustomerRecordProven, symmyCustomerSourceRecordId } from '@app/shared-contracts/symmy';
+import {
+  projectCurrentMembershipCustomer,
+  symmyCustomerRecordProven,
+  symmyCustomerSourceRecordId,
+} from '@app/shared-contracts/symmy';
 import type { SymmyRouteContextResponseSchema } from '@app/symmy-integration/api/symmy-route-context';
 import { executeSymmyRouteContextWithAuthorization } from '@app/symmy-integration/api/symmy-route-context/client';
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
-import { projectSymmyMembershipCustomer } from '@app/symmy-integration/symmy-internal-contracts';
 import type { SymmyGroupCustomerRows } from '@app/symmy-integration/symmy-internal-contracts';
 import { Duration, Effect, Match, Option, Redacted, Schema } from 'effect';
 import { Hex } from 'effect/encoding';
@@ -113,7 +116,12 @@ export const readSymmyMembershipCustomerFacts = Effect.fn('SymmyMembershipIntake
           // The owner names no profile for the record: its item is refused alone.
           Match.tag('ABSENT', () => Effect.succeed(Option.none<CustomerFact>())),
           Match.tag('CURRENT', (current) => {
-            const projection = projectSymmyMembershipCustomer(request, membershipRoute.tenantId, current);
+            const projection = projectCurrentMembershipCustomer(
+              request,
+              membershipRoute.tenantId,
+              current,
+              Schema.decodeUnknownOption(customerFactSchema),
+            );
             return projection.status === 'INVALID'
               ? unavailable()
               : Effect.succeed(projection.status === 'INACTIVE' ? Option.none() : Option.some(projection.fact));

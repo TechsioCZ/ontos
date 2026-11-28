@@ -1,3 +1,4 @@
+import { projectCurrentMembershipCustomer } from '@app/shared-contracts/symmy';
 import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import type {
   CustomerProfileSourceRequest,
@@ -6,8 +7,8 @@ import type {
 import { Effect, Match, Option, Schema } from 'effect';
 
 import {
-  projectSymmyMembershipCustomer,
   SymmyGroupMembershipCustomerResolutionSchema,
+  SymmyGroupMembershipCustomerFactSchema,
 } from '../domain/symmy-customer-group-batch.ts';
 import type { SymmyGroupMembershipCustomerFact } from '../domain/symmy-customer-group-batch.ts';
 
@@ -59,7 +60,12 @@ export const readSymmyGroupMembershipFacts = Effect.fn('SymmyMembershipIntake.re
             Effect.fn('SymmyMembershipIntake.currentFact')(function* currentFact(
               current: Extract<CustomerProfileSourceResponse, { readonly _tag: 'CURRENT' }>,
             ) {
-              const projection = projectSymmyMembershipCustomer(request, input.tenantId, current);
+              const projection = projectCurrentMembershipCustomer(
+                request,
+                input.tenantId,
+                current,
+                Schema.decodeUnknownOption(SymmyGroupMembershipCustomerFactSchema),
+              );
               if (projection.status === 'INVALID') {
                 return yield* unavailable();
               }

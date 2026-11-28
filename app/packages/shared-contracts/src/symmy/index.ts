@@ -1,3 +1,4 @@
+export { currentCustomerSourceMatches, projectCurrentMembershipCustomer } from './membership-customer.ts';
 export {
   symmyCustomerRecordProjection,
   symmyCustomerRecordProven,
