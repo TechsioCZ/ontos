@@ -88,7 +88,7 @@ const installDevelopmentContractMiddleware =
           // Preparation removes a module's catalog without an MCP contribution, never its manifest.
           Effect.catchIf(
             (error) => requestPath === DEVELOPMENT_MCP_TOOL_CATALOG && Predicate.isTagged(error.reason, 'NotFound'),
-            () => Effect.succeed(undefined),
+            () => Effect.undefined,
           ),
         ),
         {

@@ -1,5 +1,14 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,17 +21,22 @@ import { ChildProcess } from 'effect/process';
 
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
+const projectConfig = 'tsconfig.json';
+const fixtureCompiler = 'compile-fixture.mjs';
+
 const workspace = fileURLToPath(new URL('../..', import.meta.url));
 const require = createRequire(import.meta.url);
 const frameworkRequire = createRequire(require.resolve('@modern-js/app-tools'));
 const serverUtils = path.resolve(path.dirname(frameworkRequire.resolve('@modern-js/server-utils')), '../..');
 
 const compileFixture = `
+  import { nativeServerCompiler } from '@modern-js/app-tools-extensions/native-server-compiler';
   import path from 'node:path';
   import { pathToFileURL } from 'node:url';
   const [directory, compiler, expectedValue] = process.argv.slice(2);
   const { compile } = await import(pathToFileURL(compiler).href);
   await compile(directory, { disableTsChecker: true, sourceMap: { js: false } }, {
+    compiler: nativeServerCompiler,
     sourceDirs: ['api', 'shared', 'server'].map(name => path.join(directory, name)),
     distDir: path.join(directory, 'dist'),
     tsconfigPath: path.join(directory, 'tsconfig.json'),
@@ -40,7 +54,8 @@ for (const [format, extension] of [
   ['esm-node', 'mjs'],
 ] as const) {
   const proveClosure = Effect.fn(function* closureProof() {
-    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-server-closure-'));
+    // The compiler resolves imports to physical paths; compare like roots on macOS (/var -> /private/var) and Linux.
+    const directory = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'ontos-server-closure-')));
     try {
       const write = (name: string, content: string) => {
         const file = path.join(directory, name);
@@ -50,7 +65,7 @@ for (const [format, extension] of [
       symlinkSync(path.join(workspace, 'node_modules'), path.join(directory, 'node_modules'), 'dir');
       write('package.json', JSON.stringify({ name: 'server-closure-proof', private: true, type: 'commonjs' }));
       write(
-        'tsconfig.json',
+        projectConfig,
         JSON.stringify({
           compilerOptions: {
             declaration: true,
@@ -79,12 +94,12 @@ for (const [format, extension] of [
       }
       write('shared/schema.ts', 'export const schemaVersion = 1;');
       write('server/modern.server.ts', "export { schemaVersion } from '../shared/schema.js';");
-      write('compile-fixture.mjs', compileFixture);
-      const authoredConfig = readFileSync(path.join(directory, 'tsconfig.json'), 'utf-8');
+      write(fixtureCompiler, compileFixture);
+      const authoredConfig = readFileSync(path.join(directory, projectConfig), 'utf-8');
       execFileSync(
         process.execPath,
         [
-          path.join(directory, 'compile-fixture.mjs'),
+          path.join(directory, fixtureCompiler),
           directory,
           path.join(serverUtils, `dist/${format}/index.${extension}`),
           '42',
@@ -97,7 +112,7 @@ for (const [format, extension] of [
         },
       );
       expect(readFileSync(path.join(directory, 'dist/src/level-5.js'), 'utf-8')).toContain('42');
-      expect(readFileSync(path.join(directory, 'tsconfig.json'), 'utf-8')).toBe(authoredConfig);
+      expect(readFileSync(path.join(directory, projectConfig), 'utf-8')).toBe(authoredConfig);
       const emitted = readdirSync(path.join(directory, 'dist'), { recursive: true, withFileTypes: true });
       expect(emitted.filter((file) => file.name.endsWith('.map'))).toEqual([]);
       expect(readFileSync(path.join(directory, 'dist/api/index.d.ts'), 'utf-8')).toContain('value');
@@ -109,7 +124,7 @@ for (const [format, extension] of [
       execFileSync(
         process.execPath,
         [
-          path.join(directory, 'compile-fixture.mjs'),
+          path.join(directory, fixtureCompiler),
           directory,
           path.join(serverUtils, `dist/${format}/index.${extension}`),
           '43',
@@ -124,7 +139,7 @@ for (const [format, extension] of [
       expect(readFileSync(path.join(directory, 'dist/src/new-source.js'), 'utf-8')).toContain('43');
       expect(readFileSync(path.join(directory, 'dist/src/new-source.d.ts'), 'utf-8')).toContain('43');
       expect(readFileSync(path.join(directory, 'dist/src/new-source.d.ts'), 'utf-8')).toContain('invalid: string');
-      expect(readFileSync(path.join(directory, 'tsconfig.json'), 'utf-8')).toBe(authoredConfig);
+      expect(readFileSync(path.join(directory, projectConfig), 'utf-8')).toBe(authoredConfig);
       expect(
         readdirSync(path.join(directory, 'dist'), { recursive: true, withFileTypes: true }).filter((file) =>
           file.name.endsWith('.map'),
@@ -133,7 +148,7 @@ for (const [format, extension] of [
       const checked = yield* collectToolingProcess(
         ChildProcess.make(
           path.join(workspace, 'node_modules/.bin/ultramodern-create'),
-          ['ultramodern', 'typecheck', '--project', path.join(directory, 'tsconfig.json'), '--noEmit'],
+          ['ultramodern', 'typecheck', '--project', path.join(directory, projectConfig), '--noEmit'],
           {
             cwd: directory,
             env: { ULTRAMODERN_WORKSPACE_ROOT: directory },

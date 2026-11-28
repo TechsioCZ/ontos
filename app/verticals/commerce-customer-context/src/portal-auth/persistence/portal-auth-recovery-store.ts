@@ -62,9 +62,6 @@ const VerificationLedgerRecordSchema = Schema.Struct({
 });
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
-const digestBytes = (digest: CommerceAuthSha256['Service'], value: string, operation: string) =>
-  digest.hash(value).pipe(Effect.mapError((cause) => unavailableSafe(operation, cause)));
-
 const base64UrlOf = (bytes: Uint8Array): string =>
   btoa(String.fromCodePoint(...bytes))
     .replaceAll('+', '-')
@@ -112,6 +109,9 @@ class VerificationSettlementDiagnostics extends Context.Service<
 >()(
   '@app/commerce-customer-context/portal-auth/persistence/portal-auth-recovery-store/VerificationSettlementDiagnostics',
 ) {}
+
+const digestBytes = (digest: CommerceAuthSha256['Service'], value: string, operation: string) =>
+  digest.hash(value).pipe(Effect.mapError((cause) => unavailableSafe(operation, cause)));
 
 /** Unexpected failure dominates operational availability; retain every original phase privately. */
 const verificationSettlementCause = (

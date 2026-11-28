@@ -3,11 +3,11 @@ import { Array as EffectArray, Order, Result, Schema } from 'effect';
 import {
   OntosRegisteredWorkloadCallSchema,
   registeredWorkloadCallReceiverIssue,
-} from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/registered-workload-calls.ts';
 import type {
   OntosRegisteredWorkloadCall,
   RegisteredWorkloadCallReceiver,
-} from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/registered-workload-calls.ts';
 
 /**
  * Every registered-workload call a module declares must reach a deployment whose published operation version declares

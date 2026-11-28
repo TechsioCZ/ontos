@@ -700,7 +700,7 @@ const computeReadQueryHash = (
   captureMode: ReadEvidenceCaptureMode,
   decodedInput: unknown,
 ): Effect.Effect<string | undefined, ReadInputValidationError> =>
-  captureMode === 'hash_only' ? computeRequiredReadQueryHash(decodedInput) : Effect.void.pipe(Effect.as(undefined));
+  captureMode === 'hash_only' ? computeRequiredReadQueryHash(decodedInput) : Effect.undefined;
 /* oxlint-enable effect-native/no-nullable-service-outcome */
 
 const resolveReadPermissionTarget = Effect.fn('Runtime.resolveReadPermissionTarget')(
@@ -1164,6 +1164,18 @@ export const requireHostedModuleCallRoute = (
       );
 };
 
+const coreReadInput = (request: Parameters<CoreRunRead>[0]) =>
+  withOptional(
+    {
+      input: request.input,
+      principal: request.principal,
+      registration: governedReadRegistration(request.registration),
+      transport: request.transport,
+    },
+    'audience',
+    request.audience,
+  );
+
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1187,7 +1199,31 @@ const readRuntimeFromDependencies = <
   const ownerAuthorizationOverlay = options.ownerAuthorizationOverlay ?? failClosedOwnerAuthorizationOverlay;
   const { accessDecision } = options;
 
-  const runReadBoundary = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
+  /**
+   * The execution kernel a `{ run }` read executes on, built over this runtime's own dependencies: each
+   * engine layer is built with exactly the services it requires, and the read gets their context.
+   */
+  const buildKernel = Effect.fn('ReadRuntime.buildKernel')(function* buildReadKernel(
+    read: (input: ReturnType<typeof coreReadInput>) => ReturnType<CoreRunRead>,
+  ) {
+    const owned = Context.make(CoreDatabase, database).pipe(
+      Context.add(
+        CoreCallRoute,
+        coreCallRouteFor((request) => read(coreReadInput(request))),
+      ),
+      Context.add(OwnerAuthorizationOverlay, ownerAuthorizationOverlay),
+    );
+    const routed =
+      options.moduleCallRoute === undefined ? owned : Context.add(owned, ModuleCallRoute, options.moduleCallRoute);
+    const engines = yield* Layer.build(
+      Layer.mergeAll(KernelTransactionsLive, CallRequirementsLive, ReadRunEvidenceLive),
+    ).pipe(Effect.provideContext(routed));
+    const calls = yield* Layer.build(KernelCallsLive).pipe(Effect.provideContext(Context.merge(routed, engines)));
+    const sessions = yield* Layer.build(KernelSessionsLive).pipe(Effect.provideContext(Context.merge(engines, calls)));
+    return Context.merge(Context.merge(routed, engines), sessions);
+  });
+
+  const runRead = Effect.fn('ReadRuntime.runRead')(function* runReadEffect<
     InputSchema extends Schema.ConstraintDecoder<unknown>,
     ResultSchema extends Schema.ConstraintDecoder<unknown>,
     Owner extends string,
@@ -1397,63 +1433,6 @@ const readRuntimeFromDependencies = <
     );
 
     /**
-     * The one v2 authorization question this read asks (CUTOVER-PLAN §3.1): a single-record read is
-     * decided with its record target, a list, report or search read is decided as a list whose
-     * predicate the owner applies inside its own query (O25), and the field groups this caller lacks
-     * are projected out of the result (D14, O58, O17).
-     */
-    const authorizeThroughGate = Effect.fn('ReadRuntime.authorizeThroughGate')(function* authorizeThroughGateEffect(
-      readScope: OperationalScope,
-      readTarget: Option.Option<AccessRecordTarget>,
-      // A governed read decides inside the transaction it already holds (O75): a decision that opened
-      // its own REPEATABLE READ transaction there would nest into it after the composition lock ran.
-      ownedTransaction: CoreTransaction | undefined,
-    ): Effect.fn.Return<ReadGateAuthorization, ReadPermissionUnavailable> {
-      if (accessDecision === undefined) {
-        return UNAVAILABLE_GATE_AUTHORIZATION;
-      }
-      const now = yield* DateTime.nowAsDate;
-      const question = withOptionalProperty(
-        {
-          carrier: accessCarrier,
-          legalEntityScope: descriptor.legalEntityScope,
-          now,
-          scope: readScope,
-        },
-        Option.isSome(readTarget),
-        'target',
-        Option.getOrUndefined(readTarget),
-        {},
-      );
-      const rowScoped = ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind);
-      const listing: ListAccessResolution | undefined = rowScoped
-        ? yield* accessDecision.list(question, ownedTransaction)
-        : undefined;
-      const decision: AccessDecision =
-        listing === undefined ? yield* accessDecision.decide(question, ownedTransaction) : listing.decision;
-      // A read is never proposable, so only an ALLOWED decision may read (O45).
-      if (decision.outcome !== 'ALLOWED') {
-        return decision.outcome === 'UNAVAILABLE'
-          ? UNAVAILABLE_GATE_AUTHORIZATION
-          : { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
-      }
-      const listAccess = listing?.predicate;
-      if (rowScoped && listAccess === undefined) {
-        // A list answer without a predicate describes no matching row, so it never widens into an
-        // unfiltered read of the scope (B1, D16, O25).
-        return { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
-      }
-      const deniedFieldPaths = yield* decideReadFieldPaths(now, readScope, readTarget, ownedTransaction);
-      return withOptionalProperty(
-        { decidedAt: now, decision: 'allowed' as const, deniedFieldPaths, mainAccessDecision: decision },
-        listAccess !== undefined,
-        'listAccess',
-        listAccess,
-        {},
-      );
-    });
-
-    /**
      * The declared result paths this caller may not read (O17). Field access rides the parent read it
      * belongs to (D14, O58, O74): a record-scoped read decides each group with the record it returns
      * and that record's own parent read; a scope-wide read has no record, so its groups ride the
@@ -1528,6 +1507,63 @@ const readRuntimeFromDependencies = <
       }
       return groups.flatMap((group, index) =>
         answers[index]?.outcome === 'ALLOWED' ? [] : group.fields.map((field) => field.split('.')),
+      );
+    });
+
+    /**
+     * The one v2 authorization question this read asks (CUTOVER-PLAN §3.1): a single-record read is
+     * decided with its record target, a list, report or search read is decided as a list whose
+     * predicate the owner applies inside its own query (O25), and the field groups this caller lacks
+     * are projected out of the result (D14, O58, O17).
+     */
+    const authorizeThroughGate = Effect.fn('ReadRuntime.authorizeThroughGate')(function* authorizeThroughGateEffect(
+      readScope: OperationalScope,
+      readTarget: Option.Option<AccessRecordTarget>,
+      // A governed read decides inside the transaction it already holds (O75): a decision that opened
+      // its own REPEATABLE READ transaction there would nest into it after the composition lock ran.
+      ownedTransaction: CoreTransaction | undefined,
+    ): Effect.fn.Return<ReadGateAuthorization, ReadPermissionUnavailable> {
+      if (accessDecision === undefined) {
+        return UNAVAILABLE_GATE_AUTHORIZATION;
+      }
+      const now = yield* DateTime.nowAsDate;
+      const question = withOptionalProperty(
+        {
+          carrier: accessCarrier,
+          legalEntityScope: descriptor.legalEntityScope,
+          now,
+          scope: readScope,
+        },
+        Option.isSome(readTarget),
+        'target',
+        Option.getOrUndefined(readTarget),
+        {},
+      );
+      const rowScoped = ROW_SCOPED_READ_ACCESS_KINDS.has(descriptor.accessKind);
+      const listing: ListAccessResolution | undefined = rowScoped
+        ? yield* accessDecision.list(question, ownedTransaction)
+        : undefined;
+      const decision: AccessDecision =
+        listing === undefined ? yield* accessDecision.decide(question, ownedTransaction) : listing.decision;
+      // A read is never proposable, so only an ALLOWED decision may read (O45).
+      if (decision.outcome !== 'ALLOWED') {
+        return decision.outcome === 'UNAVAILABLE'
+          ? UNAVAILABLE_GATE_AUTHORIZATION
+          : { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
+      }
+      const listAccess = listing?.predicate;
+      if (rowScoped && listAccess === undefined) {
+        // A list answer without a predicate describes no matching row, so it never widens into an
+        // unfiltered read of the scope (B1, D16, O25).
+        return { decision: 'denied', deniedFieldPaths: NO_FIELD_PATHS };
+      }
+      const deniedFieldPaths = yield* decideReadFieldPaths(now, readScope, readTarget, ownedTransaction);
+      return withOptionalProperty(
+        { decidedAt: now, decision: 'allowed' as const, deniedFieldPaths, mainAccessDecision: decision },
+        listAccess !== undefined,
+        'listAccess',
+        listAccess,
+        {},
       );
     });
 
@@ -1678,7 +1714,7 @@ const readRuntimeFromDependencies = <
       readonly scope: OperationalScope;
     }) =>
       Effect.scoped(
-        buildKernel.pipe(
+        buildKernel(runRead).pipe(
           Effect.flatMap((kernel) =>
             executeRunFormRead(
               input.registration,
@@ -2238,41 +2274,8 @@ const readRuntimeFromDependencies = <
       AdmittedRun: ({ admittedRun }) => admittedRun,
       Released: ({ released }) => Effect.succeed(released),
     });
-  });
+  }, withoutModuleOperationExecution);
 
-  const runRead: typeof runReadBoundary = (input) => withoutModuleOperationExecution(runReadBoundary(input));
-  /** Core's own operations run in-process through `runRead`, which clears the caller's lease. */
-  const coreRunRead: CoreRunRead = (request) =>
-    runRead(
-      withOptional(
-        {
-          input: request.input,
-          principal: request.principal,
-          registration: governedReadRegistration(request.registration),
-          transport: request.transport,
-        },
-        'audience',
-        request.audience,
-      ),
-    );
-  /**
-   * The execution kernel a `{ run }` read executes on, built over this runtime's own dependencies: each
-   * engine layer is built with exactly the services it requires, and the read gets their context.
-   */
-  const buildKernel = Effect.gen(function* buildReadKernel() {
-    const owned = Context.make(CoreDatabase, database).pipe(
-      Context.add(CoreCallRoute, coreCallRouteFor(coreRunRead)),
-      Context.add(OwnerAuthorizationOverlay, ownerAuthorizationOverlay),
-    );
-    const routed =
-      options.moduleCallRoute === undefined ? owned : Context.add(owned, ModuleCallRoute, options.moduleCallRoute);
-    const engines = yield* Layer.build(
-      Layer.mergeAll(KernelTransactionsLive, CallRequirementsLive, ReadRunEvidenceLive),
-    ).pipe(Effect.provideContext(routed));
-    const calls = yield* Layer.build(KernelCallsLive).pipe(Effect.provideContext(Context.merge(routed, engines)));
-    const sessions = yield* Layer.build(KernelSessionsLive).pipe(Effect.provideContext(Context.merge(engines, calls)));
-    return Context.merge(Context.merge(routed, engines), sessions);
-  });
   return Object.freeze({ runRead });
 };
 

@@ -7,6 +7,9 @@ import { expect, it } from 'effect-rstest';
 import { appRoot } from './oxlint.mts';
 import { withTemporaryWorkspace } from './temporary-workspace.mts';
 
+const hookFilename = 'lefthook.yml';
+const modulesDirectory = 'node_modules';
+
 const runHook = (root: string, files: readonly string[], job: 'lint' | 'semantic-lint') => {
   const child = spawnSync(
     path.join(appRoot, 'node_modules/.bin/lefthook'),
@@ -34,8 +37,8 @@ it('the production hook selects each authored root and enforces the native seman
   withTemporaryWorkspace((root) => {
     const app = path.join(root, 'app');
     mkdirSync(app);
-    symlinkSync(path.join(appRoot, 'node_modules'), path.join(app, 'node_modules'), 'dir');
-    copyFileSync(path.join(appRoot, '..', 'lefthook.yml'), path.join(root, 'lefthook.yml'));
+    symlinkSync(path.join(appRoot, modulesDirectory), path.join(app, modulesDirectory), 'dir');
+    copyFileSync(path.join(appRoot, '..', hookFilename), path.join(root, hookFilename));
     writeFileSync(path.join(app, 'package.json'), JSON.stringify({ name: 'semantic-lint-control', private: true }));
     writeFileSync(
       path.join(app, 'tsconfig.json'),
@@ -80,11 +83,11 @@ it('the production Oxlint hook blocks repeated flatMap and find lookups but acce
     const source = 'packages/demo/src/select.ts';
     const target = path.join(app, source);
     mkdirSync(path.dirname(target), { recursive: true });
-    for (const directory of ['tools', 'node_modules', 'apps']) {
+    for (const directory of ['tools', modulesDirectory, 'apps']) {
       symlinkSync(path.join(appRoot, directory), path.join(app, directory), 'dir');
     }
     copyFileSync(path.join(appRoot, 'oxlint.config.ts'), path.join(app, 'oxlint.config.ts'));
-    copyFileSync(path.join(appRoot, '..', 'lefthook.yml'), path.join(root, 'lefthook.yml'));
+    copyFileSync(path.join(appRoot, '..', hookFilename), path.join(root, hookFilename));
     writeFileSync(
       path.join(app, 'package.json'),
       JSON.stringify({ name: 'lookup-control', private: true, type: 'module' }),

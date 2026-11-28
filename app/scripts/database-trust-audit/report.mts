@@ -645,6 +645,9 @@ const sortSnapshot = (snapshot: DatabaseTrustBoundarySnapshot): DatabaseTrustBou
 
 const TABLE_GRANT_PRIVILEGES = ['select', 'insert', 'update', 'delete'] as const;
 
+const tableName = ({ schema, table }: { readonly schema: string; readonly table: string }): string =>
+  `${schema}.${table}`;
+
 const columnGrantFor = (
   grant: DatabaseRoleGrants['tables'][number] | undefined,
   privilege: (typeof TABLE_GRANT_PRIVILEGES)[number],
@@ -777,9 +780,6 @@ const roleSettingObjects = (snapshot: DatabaseTrustBoundarySnapshot, expected: r
     ...expected.flatMap((setting) => (allDatabases.has(setting) ? [] : [`all_databases:${setting}`])),
   ];
 };
-
-const tableName = ({ schema, table }: { readonly schema: string; readonly table: string }): string =>
-  `${schema}.${table}`;
 
 /** Legacy entries carry no grant manifest; a missing entry is compared against an empty manifest. */
 const manifestGrants = (entry: DatabaseTrustManifestEntry | undefined): DatabaseRoleGrants | undefined => {

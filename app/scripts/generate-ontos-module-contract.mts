@@ -14,15 +14,16 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
-  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
   OntosModuleIdSchema,
   canonicalOntosPublicApiKey,
-  extractVerticalRuntimeSafeDescriptors,
-} from '../packages/core-runtime/src/index.ts';
-import type { OntosModuleManifest, VerticalRuntimeRegistration } from '../packages/core-runtime/src/index.ts';
+} from '../packages/core-runtime/src/modules/manifest.ts';
+import { ONTOS_MODULE_MCP_TOOL_CATALOG_PATH } from '../packages/core-runtime/src/modules/mcp-contribution.ts';
+import { extractVerticalRuntimeSafeDescriptors } from '../packages/core-runtime/src/modules/runtime-registration.ts';
+import type { OntosModuleManifest } from '../packages/core-runtime/src/modules/manifest.ts';
+import type { VerticalRuntimeRegistration } from '../packages/core-runtime/src/modules/runtime-registration.ts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   readModuleRuntimeDeclarationEffect,

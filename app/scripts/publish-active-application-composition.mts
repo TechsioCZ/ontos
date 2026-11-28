@@ -46,19 +46,23 @@ import {
 
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
-  ApplicationCompositionSchema,
-  ApplicationCompositionModuleSchema,
-  canonicalizeApplicationComposition,
-  buildApplicationCompositionCatalog,
-  ApplicationCompositionArtifactReferenceSchema,
   ONTOS_MODULE_CONTRACT_PATH,
-  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
   OntosDeploymentIdentitySchema,
   OntosModuleDeploymentContractSchema,
+} from '../packages/core-runtime/src/modules/manifest.ts';
+import {
+  ApplicationCompositionSchema,
+  ApplicationCompositionModuleSchema,
+  canonicalizeApplicationComposition,
+  ApplicationCompositionArtifactReferenceSchema,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosShellRuntimeContractSchema,
-  validateActiveApplicationCompositionSnapshot,
-} from '../packages/core-runtime/src/index.ts';
+  ApplicationCompositionBackendSchema,
+  ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
+} from '../packages/core-runtime/src/modules/application-composition.ts';
+import { buildApplicationCompositionCatalog } from '../packages/core-runtime/src/modules/application-composition-catalog.ts';
+import { validateActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
   ARTIFACT_FETCH_TIMEOUT,
@@ -70,14 +74,8 @@ import {
   deriveApplicationComposition,
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
-import type {
-  ApplicationComposition,
-  ActiveApplicationCompositionSnapshot,
-} from '../packages/core-runtime/src/index.ts';
-import {
-  ApplicationCompositionBackendSchema,
-  ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
-} from '../packages/core-runtime/src/modules/application-composition.ts';
+import type { ApplicationComposition } from '../packages/core-runtime/src/modules/application-composition.ts';
+import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../packages/core-runtime/src/modules/application-composition-limits.ts';
 import {
   quiesceInitialCompositionCutover,
