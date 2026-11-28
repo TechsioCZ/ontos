@@ -1,4 +1,8 @@
 import type { Effect, Option } from 'effect';
+import type {
+  SourceChildPreparationSchema,
+  SourceProcessingEligibilityRequest,
+} from '@app/privacy-contracts/source-processing-eligibility';
 import { Context, Schema } from 'effect';
 
 import type {
@@ -40,13 +44,14 @@ export interface SourceProcessingAuthorizationRepositoryService {
   readonly admission: (
     source: PrivacySourceRecordIdentity,
   ) => Effect.Effect<Option.Option<SourceProcessingAdmissionRow>, PrivacyOperationPersistenceError>;
-  /** Records the sources of one subject, or refreshes when the route last used them. */
+  /** Records the subject's own source. Children are validated only; the fenced job consumes their receipt. */
   readonly admit: (input: {
     readonly actionInvocationId: string;
     readonly admittedAt: string;
     readonly authorizationId: string;
     /** Only set when Commerce has identified the existing customer source of this membership. */
     readonly membershipRoot?: PrivacySourceRecordIdentity;
+    readonly preparation?: typeof SourceChildPreparationSchema.Type;
     readonly sources: readonly SourceProcessingAdmittedSource[];
     readonly subjectId: string;
   }) => Effect.Effect<SourceProcessingAdmissionRow, PrivacyOperationPersistenceError>;
@@ -65,6 +70,10 @@ export interface SourceProcessingAuthorizationRepositoryService {
   ) => Effect.Effect<Option.Option<SourceProcessingAuthorization>, PrivacyOperationPersistenceError>;
   /** Includes an ended route so its old contexts can never authorize new uses. */
   readonly historyForRoute: SourceProcessingAuthorizationRepositoryService['activeForRoute'];
+  readonly preparedSubject: (
+    source: PrivacySourceRecordIdentity,
+    preparation: NonNullable<SourceProcessingEligibilityRequest['preparation']>,
+  ) => Effect.Effect<Option.Option<string>, PrivacyOperationPersistenceError>;
   readonly sourceSubjectId: (
     source: PrivacySourceRecordIdentity,
   ) => Effect.Effect<Option.Option<string>, PrivacyOperationPersistenceError>;

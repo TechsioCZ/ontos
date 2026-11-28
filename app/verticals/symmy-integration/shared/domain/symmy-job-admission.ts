@@ -125,7 +125,25 @@ export type AdmitSymmyJobPayload = typeof AdmitSymmyJobPayloadSchema.Type;
 export const AdmitSymmyJobResultSchema = Schema.Struct({
   jobId: SymmyJobIdSchema,
   phase: Schema.Literal('admitted'),
-});
+  sourceBindingCommitments: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)))),
+  sourcePreparationId: Schema.optionalKey(
+    Schema.String.check(Schema.isUUID()).pipe(
+      Schema.brand('SourceAdmissionPreparationId'),
+      Schema.decodeTo(Schema.String),
+    ),
+  ),
+}).check(
+  Schema.makeFilter(({ sourceBindingCommitments, sourcePreparationId }) => {
+    if (sourcePreparationId === undefined) {
+      return sourceBindingCommitments === undefined ? undefined : 'A selection must name its exact preparation';
+    }
+    return sourceBindingCommitments !== undefined &&
+      sourceBindingCommitments.length > 0 &&
+      new Set(sourceBindingCommitments).size === sourceBindingCommitments.length
+      ? undefined
+      : 'A preparation selects at least one distinct binding';
+  }),
+);
 
 export class AdmitSymmyJobRejected extends Schema.TaggedError<AdmitSymmyJobRejected>()('AdmitSymmyJobRejected', {
   code: Schema.Literals([

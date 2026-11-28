@@ -10,7 +10,7 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
-import { seedCommittedProfileSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
+import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
@@ -30,7 +30,7 @@ import {
   observeCustomerFixtureUntil,
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerFixtureUuid as uuid } from './support/symmy-c14-customer-native-authority.mts';
-import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
+import { customerIntakeContext, customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
 import { nameGroupDefinitionRouteReader } from './support/symmy-c14-group-definition-reader.mts';
 import { makeInternalMembershipPlan } from './support/symmy-c14-membership-plan.mts';
 import { prepareManualMembershipNativeFixture } from './support/symmy-c14-membership-manual.mts';
@@ -69,11 +69,11 @@ const effectSchema = Schema.Struct({
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
 
-const restartOwner = Effect.fn('SymmyC14Membership.restartOwner')(function* restartOwner(
+const restartSymmy = Effect.fn('SymmyC14Membership.restartSymmy')(function* restartSymmy(
   fixture: CustomerFixture,
-  appId: 'privacy' | 'symmy-integration',
   environment: Readonly<Record<string, string>>,
 ) {
+  const appId = 'symmy-integration';
   const runtime = fixture.ownerRuntimes.get(appId);
   if (runtime === undefined) {
     return yield* unavailable('The actual owner receiver is missing');
@@ -85,7 +85,7 @@ const restartOwner = Effect.fn('SymmyC14Membership.restartOwner')(function* rest
     contract: runtime.contract,
     environment: { ...environment, ONTOS_GATEWAY_MODULE_API_KEY: runtime.moduleKey },
     port: runtime.port,
-    prefix: appId === 'privacy' ? '/privacy-api' : '/symmy-integration-api',
+    prefix: '/symmy-integration-api',
   });
   fixture.ownerRuntimes.set(appId, { ...runtime, receiver });
   fixture.ownerDiagnostics.set(appId, receiver.diagnostic);
@@ -202,7 +202,7 @@ it.live(
             })),
           ]),
         };
-        yield* restartOwner(fixture, 'symmy-integration', environment);
+        yield* restartSymmy(fixture, environment);
         // The manual setup binds the human administrator's session, which then names the Group definition route reader:
         // the Shell reads each code's current definition as the API-key integration principal before it admits.
         const manual = yield* prepareManualMembershipNativeFixture(fixture);
@@ -292,48 +292,58 @@ it.live(
           recordType: 'CUSTOMER_GROUP_MEMBERSHIP',
           routeRef: sourceRouteId,
         };
-        const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
+        // The group route has its own standing policy. No membership, person or profile binding is seeded.
+        const intakeContext = customerIntakeContext(integration.principalId, source, null);
+        const dataPrivacy = yield* seedSourceProcessingNativeFixture({
           connections: isolated.connections,
-          contexts: [source, { ...source, occurrenceId: removalOccurrenceId }].flatMap((exactSource) => [
-            {
-              authMethod: 'api_key',
-              principalId: integration.principalId,
-              request: {
-                consumerModuleId: 'integration.symmy' as const,
-                operation: 'CUSTOMER_SOURCE_INTAKE',
-                source: exactSource,
-                target: {
-                  kind: 'RETAIL_CUSTOMER_PROFILE' as const,
-                  resourceId: fixture.profileReceipt.profileRef.resourceId,
-                },
-              },
-            },
-            ...(['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
-              authMethod: 'system' as const,
-              principalId: systemId,
-              request: {
-                consumerModuleId: 'commerce.customer-context' as const,
-                operation,
-                source: exactSource,
-                target: {
-                  kind: 'RETAIL_CUSTOMER_PROFILE' as const,
-                  resourceId: fixture.profileReceipt.profileRef.resourceId,
-                },
-              },
-            })),
-          ]),
-          contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_MEMBERSHIP_DATA_CONTRACT',
+          contexts: [intakeContext, { ...intakeContext, authMethod: 'system', principalId: systemId }],
+          contractEvidenceRef: 'INTERNAL_C14_MEMBERSHIP_ROUTE_CONTRACT',
           controllerRef: 'internal:membership-conformance',
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
           governancePrincipalId: fixture.governancePrincipalId,
+          grants: [
+            {
+              allowTargetless: false,
+              consumerModuleId: 'integration.symmy',
+              operation: 'CUSTOMER_SOURCE_INTAKE',
+              targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+            },
+            ...(['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
+              allowTargetless: false,
+              consumerModuleId: 'commerce.customer-context' as const,
+              operation,
+              targetKinds: ['RETAIL_CUSTOMER_PROFILE'] as const,
+            })),
+          ],
           legalEntityId,
-          meaning: 'Independent current internal DATA authority for this exact explicit Membership and receipt only',
-          profileReceipt: fixture.proofTransport,
+          meaning: 'Standing membership processing for the customer that Commerce proves owns the profile',
           tenantId,
         });
-        expect(dataPrivacy.personAdmission.partyRef).toEqual(fixture.partyReceipt.partyRef);
-        expect(dataPrivacy.profileReceipt.result.profileRef).toEqual(fixture.profileReceipt.profileRef);
-        yield* restartOwner(fixture, 'privacy', environment);
+        expect(dataPrivacy.plans).toEqual([]);
+        expect(dataPrivacy.subjectRefs).toEqual([]);
+        const effectiveAdmissions = admin<{ record_id: string; role: string; subject_id: string }>`select distinct
+          a.source_record->>'recordId' as record_id, a.role, a.privacy_subject_id as subject_id
+          from privacy.source_processing_admissions a
+          where a.tenant_id=${tenantId} and a.legal_entity_id=${legalEntityId}
+            and (a.symmy_invocation_id is null or exists (
+              select 1 from core.action_invocations i
+              join core.source_execution_fences f
+                on f.tenant_id=i.tenant_id and f.admission_invocation_id=i.action_invocation_id
+              where i.tenant_id=a.tenant_id and i.legal_entity_id=a.legal_entity_id
+                and i.principal_id=a.symmy_principal_id and i.action_invocation_id=a.symmy_invocation_id
+                and i.status='succeeded' and i.action_key='integration.symmy.admit-symmy-job'
+                and i.committed_reply_json->>'kind'='result'
+                and i.committed_reply_json->'encoded'->>'sourcePreparationId'=a.symmy_preparation_id::text
+            ))
+          order by role`;
+        const subjectKinds = admin`select subject_kind from privacy.privacy_subjects
+          where tenant_id=${tenantId} and legal_entity_id=${legalEntityId}`;
+        const initialAdmissions = yield* effectiveAdmissions;
+        expect(initialAdmissions).toHaveLength(1);
+        const [customer] = initialAdmissions;
+        assert.isDefined(customer);
+        expect(customer).toMatchObject({ record_id: fixture.recordId, role: 'SUBJECT' });
+        expect(Schema.is(Schema.String.check(Schema.isUUID()))(customer.subject_id)).toBe(true);
         const memberPlan = yield* makeInternalMembershipPlan({
           effectiveAt: DateTime.formatIso(yield* DateTime.now),
           groupRef: group.value.groupRef,
@@ -410,6 +420,11 @@ it.live(
           );
         }
         const admitted = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        expect(yield* effectiveAdmissions).toEqual([
+          { record_id: memberRecordId, role: 'CHILD', subject_id: customer.subject_id },
+          customer,
+        ]);
+        expect(yield* subjectKinds).toEqual([{ subject_kind: 'SOURCE_ASSERTED' }]);
         const replay = yield* submit();
         expect(replay.status).toBe(202);
         expect(yield* replay.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)))).toEqual(admitted);
@@ -572,6 +587,11 @@ it.live(
         expect(yield* membershipInvocations).toEqual(beforeRemoval);
         expect(yield* admittedJobs).toEqual(jobsBeforeRemoval);
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
+        // Queue one job while the grant is current; the worker and receipt reader must still recheck after retirement.
+        const deniedResponse = yield* submit(selectedCode, 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED');
+        expect(deniedResponse.status).toBe(202);
+        const deniedJob = yield* deniedResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        const jobsBeforeRetirement = yield* admittedJobs;
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: isolated.connections,
           governancePrincipalId: fixture.governancePrincipalId,
@@ -584,9 +604,9 @@ it.live(
         expect(retired.lifecycle).toBe('RETIRED');
         const deniedReceipt = yield* readReceipt.pipe(Effect.flip);
         expect(Schema.is(CustomerGroupMembershipSourceReceiptNotFoundProblemSchema)(deniedReceipt)).toBe(true);
-        const deniedResponse = yield* submit(selectedCode, 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED');
-        expect(deniedResponse.status).toBe(202);
-        const deniedJob = yield* deniedResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        const refused = yield* submit(selectedCode, 'INTERNAL_C14_MEMBERSHIP_RETIRED_PURPOSE');
+        expect(refused.status).toBe(403);
+        expect(yield* admittedJobs).toEqual(jobsBeforeRetirement);
         const deniedWorker = yield* startProductWorker(fixture.workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',

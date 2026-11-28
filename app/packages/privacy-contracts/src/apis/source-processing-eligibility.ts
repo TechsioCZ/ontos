@@ -91,6 +91,16 @@ const describedSubjectIssue = ({
     ? undefined
     : 'Only a personal Symmy intake names the customer record that a different record of the same route describes';
 
+export const SourceChildPreparationSchema = Schema.Struct({
+  invocationId: Schema.String.check(Schema.isUUID()).pipe(
+    Schema.brand('SourceAdmissionInvocationId'),
+    Schema.decodeTo(Schema.String),
+  ),
+  preparationId: Schema.String.check(Schema.isUUID()).pipe(
+    Schema.brand('SourceAdmissionPreparationId'),
+    Schema.decodeTo(Schema.String),
+  ),
+});
 export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
   consumerModuleId: Schema.Literals([
     'party.registry',
@@ -98,6 +108,12 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
     SymmyCustomerSourceIntakeConsumerModule,
     CommunicationsSourceProcessingConsumerModule,
   ]),
+  preparation: Schema.optionalKey(
+    Schema.Struct({
+      ...SourceChildPreparationSchema.fields,
+      bindingCommitment: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+    }),
+  ),
   /**
    * The customer record that the record of this use (a contact, an address) describes, while that binding is not
    * committed yet. Privacy evaluates the use for that customer's subject; the intake commits the binding only after
@@ -126,7 +142,21 @@ export const SourceProcessingEligibilityRequestSchema = Schema.Struct({
       }),
     ),
   ),
-}).check(Schema.makeFilter(sourceRequestIssue), Schema.makeFilter(describedSubjectIssue));
+}).check(
+  Schema.makeFilter(sourceRequestIssue),
+  Schema.makeFilter(describedSubjectIssue),
+  Schema.makeFilter(
+    ({ consumerModuleId, describedSubjectSource, organizationBusinessUse, preparation, source, target }) =>
+      preparation === undefined ||
+      (consumerModuleId === SymmyCustomerSourceIntakeConsumerModule &&
+        organizationBusinessUse === undefined &&
+        (describedSubjectSource !== undefined ||
+          (source?.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' &&
+            (target?.kind === 'RETAIL_CUSTOMER_PROFILE' || target?.kind === 'COUNTERPARTY_PURCHASING_PROFILE'))))
+        ? undefined
+        : 'Only a personal Symmy child or profile membership use can verify a preparation',
+  ),
+);
 export type SourceProcessingEligibilityRequest = typeof SourceProcessingEligibilityRequestSchema.Type;
 
 /**

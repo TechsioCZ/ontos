@@ -528,6 +528,12 @@ const runKnownOrganizationFollowup = Effect.fn('OrganizationSourceCustomer.known
     ONTOS_PRIVACY_ORGANIZATION_BUSINESS_CONTEXTS: JSON.stringify(fixture.prepared.flatMap((policy) => policy.contexts)),
   });
   const admitted = yield* fixture.submitFor('INTERNAL_ORGANIZATION_KNOWN_TARGET_JOB', plan);
+  // Both exact business uses were checked without admitting the organization as a personal source.
+  expect(
+    yield* fixture.admin`select 1 from privacy.source_processing_admissions
+    where tenant_id=${fixture.tenantId} and legal_entity_id=${fixture.legalEntityId}
+      and source_record->>'recordId'=${fixture.sourceReference.recordId}`,
+  ).toEqual([]);
   const observe = (effectKey: string) =>
     observeAcceptedEffectIdNativeFixture({
       adminConnectionString: Redacted.make(fixture.isolated.connections.admin.connectionString),

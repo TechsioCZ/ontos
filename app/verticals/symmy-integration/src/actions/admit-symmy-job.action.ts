@@ -80,7 +80,14 @@ const handleAdmitSymmyJob = Effect.fn('SymmyJobAdmission.handle')(function* admi
       consumerModuleKey: moduleKey,
     });
   }
-  return yield* Schema.decodeEffect(AdmitSymmyJobResultSchema)({ jobId: admitted.jobId, phase: admitted.phase }).pipe(
+  const receipt = { jobId: admitted.jobId, phase: admitted.phase };
+  if (admitted.sourcePreparationId !== undefined) {
+    Object.assign(receipt, {
+      sourceBindingCommitments: admitted.sourceBindingCommitments,
+      sourcePreparationId: admitted.sourcePreparationId,
+    });
+  }
+  return yield* Schema.decodeEffect(AdmitSymmyJobResultSchema)(receipt).pipe(
     Effect.catchTag('SchemaError', () => new AdmitSymmyJobRejected(rejected.unavailable)),
   );
 });

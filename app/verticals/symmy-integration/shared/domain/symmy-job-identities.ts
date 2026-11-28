@@ -12,3 +12,6 @@ export const SymmyDurableJobRouteKeySchema = Schema.Literals([
   'assortmentRulesFixtureBatch',
   'sellerVatDeclarationsFixtureBatch',
 ]);
+
+/** Both job routes can carry personal data; the pinned intents determine which Privacy checks apply. */
+export const isSymmyCustomerIntakeRoute = Schema.is(Schema.Literals(['customersBatch', 'customerGroupCustomersBatch']));

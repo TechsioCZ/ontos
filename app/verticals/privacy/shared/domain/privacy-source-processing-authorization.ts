@@ -1,5 +1,6 @@
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import {
+  SourceChildPreparationSchema,
   SymmyCustomerSourceIntakeConsumerModule,
   SymmyCustomerSourceIntakeOperation,
 } from '@app/privacy-contracts/source-processing-eligibility';
@@ -312,6 +313,7 @@ export const AdmitSourceProcessingSubjectPayloadSchema = Schema.Struct({
       resourceId: Schema.toEncoded(Uuid.pipe(Schema.brand('PrivacySourceTargetId'))),
     }),
   ),
+  preparation: Schema.optionalKey(SourceChildPreparationSchema),
   source: PrivacySourceRecordIdentitySchema,
 }).check(
   Schema.makeFilter(({ childSources, membershipProfile, source }) => {
@@ -339,6 +341,7 @@ export const AdmitSourceProcessingSubjectPayloadSchema = Schema.Struct({
 /** Which subject a source record of an authorization resolves to, and when the route last used it. */
 export const SourceProcessingAdmissionSchema = Schema.Struct({
   authorizationRef: SourceProcessingAuthorizationRefSchema,
+  bindingCommitments: Schema.Array(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))),
   childSources: AdmitSourceProcessingSubjectPayloadSchema.fields.childSources,
   firstAdmittedAt: PrivacyIsoTimestampSchema,
   lastAdmittedAt: PrivacyIsoTimestampSchema,

@@ -14,7 +14,10 @@ import {
   SymmyCustomerSourceIntakeConsumerModule,
   SymmyCustomerSourceIntakeOperation,
 } from '@app/privacy-contracts/source-processing-eligibility';
-import { sourceIsOnRoute } from '../../shared/domain/privacy-source-processing-authorization.ts';
+import {
+  sourceIsOnRoute,
+  sourceProcessingIdentityKey,
+} from '../../shared/domain/privacy-source-processing-authorization.ts';
 import { privacyOperationRepositoryForScope } from '../persistence/privacy-operation-postgres-repository.ts';
 import { PrivacyOperationPersistenceError } from '../persistence/privacy-operation-repository.ts';
 import type { PrivacyOperationRepositoryService } from '../persistence/privacy-operation-repository.ts';
@@ -29,6 +32,7 @@ import {
   requirePrivacyActionScope,
 } from './privacy-operation-action-support.ts';
 
+import { sourceChildBindingCommitment } from '../services/source-child-binding-commitment.ts';
 import { readProfileSubject } from '../services/source-profile-subject.ts';
 import type { ProfileTarget } from '../services/source-profile-subject.ts';
 import type { PrivacySourceRecordIdentity } from '../../shared/domain/privacy-subject.ts';
@@ -49,7 +53,7 @@ const rejected = (reason: string) => new PrivacyActionRejected({ code: 'privacy_
 
 /**
  * Creates or finds the SOURCE_ASSERTED subject of one source record under the active authorization of its route and
- * correlates the child records that describe the same subject. A replay with the same sources only refreshes when the
+ * prepares the child records that describe the same subject without binding them. A replay only refreshes when the
  * route last used them. It establishes no Party identity, legal basis or consent.
  */
 export const handleAdmitSourceProcessingSubject = Effect.fn('AdmitSourceProcessingSubjectAction.handle')(
@@ -59,6 +63,12 @@ export const handleAdmitSourceProcessingSubject = Effect.fn('AdmitSourceProcessi
   ) {
     const scope = yield* requirePrivacyActionScope(context.scope);
     const { authorizations } = context.services;
+    if (
+      (payload.membershipProfile !== undefined || payload.childSources.length > 0) !==
+      (payload.preparation !== undefined)
+    ) {
+      return yield* rejected('Child records require the exact intake preparation');
+    }
     const active = yield* authorizations.activeForRoute(payload.source, 'admission');
     const [authorization] = active;
     if (
@@ -120,12 +130,27 @@ export const handleAdmitSourceProcessingSubject = Effect.fn('AdmitSourceProcessi
       ],
       subjectId,
     };
+    if (payload.preparation !== undefined) {
+      Object.assign(input, { preparation: payload.preparation });
+    }
     if (Option.isSome(profileSource)) {
       Object.assign(input, { membershipRoot: profileSource.value });
     }
     const admission = yield* authorizations.admit(input);
     return yield* completePrivacyAction(context, 'admit-source-processing-subject', subjectId, {
       authorizationRef: authorization.authorizationRef,
+      bindingCommitments: input.sources.flatMap(({ role, source }) =>
+        role === 'CHILD'
+          ? [
+              sourceChildBindingCommitment(
+                authorizationId,
+                context.actionInvocationId,
+                sourceProcessingIdentityKey(source),
+                subjectId,
+              ),
+            ]
+          : [],
+      ),
       childSources: payload.childSources,
       firstAdmittedAt: admission.firstAdmittedAt,
       lastAdmittedAt: admission.lastAdmittedAt,
