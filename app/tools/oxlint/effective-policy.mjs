@@ -26,7 +26,7 @@ const pinned = [
   'eslint-plugin-sonarjs',
 ];
 const severity = (value) => (Array.isArray(value) ? value[0] : value);
-export function capture(root) {
+function capture(root) {
   const manifest = path.join(root, 'package.json');
   const req = createRequire(manifest);
   const output = execFileSync(path.join(root, 'node_modules/.bin/oxlint'), ['--print-config'], {
@@ -97,7 +97,7 @@ function scopeDelta(before, after) {
   const kept = new Set(retained.map(([, i]) => i));
   return { retained, removed, added: after.flatMap((value, index) => (kept.has(index) ? [] : [{ index, value }])) };
 }
-export function compare(before, after, baseCommit) {
+function compare(before, after, baseCommit) {
   const { rules: oldRules, overrides: oldScopes, ...oldOther } = before.config;
   const { rules, overrides, ...other } = after.config;
   return {

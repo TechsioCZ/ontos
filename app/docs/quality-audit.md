@@ -120,3 +120,7 @@ An unused export identifies an unnecessary exported name or forwarding surface; 
 ADR-0016 remains binding throughout. A clone between MicroVerticals never permits importing another deployment's private registration, handler, repository, worker, or business behavior. Repeat deliberate domain structure when ownership or type semantics require it and document the reason.
 
 Tool upgrades must rerun the report integrity tests and representative real-source scans. Compare discovery, findings, native exit behavior, and report schemas before updating policy. An audit implementation defect is fixed in the reporting tooling; existing application debt stays in the corresponding follow-up PR.
+
+### Compare effective lint policy
+
+Run `pnpm quality:lint-policy snapshot .` to print this checkout’s resolved rules, scopes, analyzer defaults and versions. For a preset upgrade, run `pnpm quality:lint-policy diff /absolute/base/app /absolute/candidate/app BASE_COMMIT` with dependencies installed in both checkouts. The delta records the policy content hashes; link the artifact at the reviewed commit so the evidence identifies the exact candidate.
