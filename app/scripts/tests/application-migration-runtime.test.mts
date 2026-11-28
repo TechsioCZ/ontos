@@ -20,6 +20,7 @@ import {
 
 import { PARTY_REGISTRY_WORKER_DATABASE_GRANTS } from '../../verticals/party-registry/src/db/database-grants.ts';
 
+const statementBreakpoint = '--> statement-breakpoint';
 const coreOwner = 'core-runtime';
 const first = { hash: 'a'.repeat(64), name: '20260101000000_first' };
 const second = { hash: 'b'.repeat(64), name: '20260102000000_second' };
@@ -101,7 +102,7 @@ it.effect('only pending migrations bootstrap roles named by executable PostgreSQ
     const ids = yield* migrationRuntimeIdentityIds(
       [
         'CREATE TABLE "audit TO !" (id integer)',
-        '--> statement-breakpoint',
+        statementBreakpoint,
         'GRANT SELECT ON TABLE "audit TO !" TO party_registry_worker;',
         'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO party_registry_runtime;',
         'GRANT shell_gateway_issuer TO analyst;',
@@ -121,6 +122,17 @@ it.effect('only pending migrations bootstrap roles named by executable PostgreSQ
     expect(pendingMigrationRuntimeIdentityIds(withRequirement, [second])).toEqual(['shared_runtime']);
     const failure = yield* migrationRuntimeIdentityIds('GRANT SELECT ON', first.name).pipe(Effect.flip);
     expect(failure.reason).toContain(first.name);
+  }),
+);
+
+it.effect('ignores empty and comment-only fragments including a trailing Drizzle breakpoint', () =>
+  Effect.gen(function* emptyBreakpointFragments() {
+    const sql = [' \n', '-- comment\n/* outer /* nested */ end */', 'GRANT analyst TO party_registry_worker;', ''].join(
+      statementBreakpoint,
+    );
+    expect(yield* migrationRuntimeIdentityIds(sql, first.name)).toEqual(['party_registry_worker']);
+    const failure = yield* migrationRuntimeIdentityIds(`${sql}/* unclosed`, first.name).pipe(Effect.flip);
+    expect(failure.reason).toContain('(fragment 4)');
   }),
 );
 
@@ -383,7 +395,7 @@ it.effect(
           import.meta.url,
         ).pathname,
       );
-      const statements = sql.split('--> statement-breakpoint').map((statement) => statement.trim());
+      const statements = sql.split(statementBreakpoint).map((statement) => statement.trim());
       const addColumn = statements.findIndex((statement) => statement.includes('ADD COLUMN "committed_reply_json"'));
       const revoke = statements.indexOf(
         'REVOKE SELECT ON TABLE "core"."action_invocations" FROM "party_registry_worker";',

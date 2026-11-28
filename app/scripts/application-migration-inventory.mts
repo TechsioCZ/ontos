@@ -197,20 +197,48 @@ const statementRoleNames = (node: Node): readonly (string | undefined)[] => {
   return [];
 };
 
+/** Only skip complete PostgreSQL trivia; leave malformed comments for the parser to reject. */
+const isEmptyFragment = (fragment: string): boolean => {
+  const trivia = /[ \t\n\r\f]+|--[^\r\n]*|\/\*/uy;
+  const blockDelimiter = /\/\*|\*\//gu;
+  while (trivia.lastIndex < fragment.length) {
+    const token = trivia.exec(fragment);
+    if (token === null) {
+      return false;
+    }
+    if (token[0] === '/*') {
+      blockDelimiter.lastIndex = trivia.lastIndex;
+      let depth = 1;
+      while (depth > 0) {
+        const delimiter = blockDelimiter.exec(fragment);
+        if (delimiter === null) {
+          return false;
+        }
+        depth += delimiter[0] === '/*' ? 1 : -1;
+      }
+      trivia.lastIndex = blockDelimiter.lastIndex;
+    }
+  }
+  return true;
+};
+
 /** PostgreSQL 18 resolves quoting, comments and statement boundaries before we inspect role-bearing clauses. */
 export const migrationRuntimeIdentityIds = Effect.fn('ApplicationMigrationInventory.runtimeIdentities')(
   function* migrationRuntimeIdentityIdsEffect(sql: string, source: string) {
     // Drizzle sends each breakpoint fragment separately, even when the preceding statement has no semicolon.
-    const names = yield* Effect.forEach(sql.split('--> statement-breakpoint'), (fragment, index) =>
-      Effect.tryPromise({
+    const names = yield* Effect.forEach(sql.split('--> statement-breakpoint'), (fragment, index) => {
+      if (isEmptyFragment(fragment)) {
+        return Effect.succeed([]);
+      }
+      return Effect.tryPromise({
         catch: () => invalid(`Cannot parse migration SQL: ${source} (fragment ${index + 1})`),
         try: async () => await parse(fragment),
       }).pipe(
         Effect.map(({ stmts }) =>
           (stmts ?? []).flatMap(({ stmt }) => (stmt === undefined ? [] : statementRoleNames(stmt))),
         ),
-      ),
-    );
+      );
+    });
     const roles = new Set(names.flat());
     return DATABASE_IDENTITIES.flatMap((identity) => (roles.has(identity.role) ? [identity.id] : []));
   },
