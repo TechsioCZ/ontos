@@ -1,5 +1,6 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'effect-rstest';
@@ -27,6 +28,28 @@ const project = (exactOptionalPropertyTypes: boolean) =>
     compilerOptions: { exactOptionalPropertyTypes, noImplicitReturns: true, strict: true, target: 'ES2022' },
     include: ['*.ts'],
   });
+
+// Run Sonar's own peer CLI against a typed fixture project; ESLint is an oracle here, not a production lint path.
+const runReferenceSonar = (cwd: string) => {
+  const req = createRequire(path.join(appRoot, 'package.json'));
+  const peer = createRequire(req.resolve('eslint-plugin-sonarjs'));
+  const cli = path.join(path.dirname(peer.resolve('eslint/package.json')), 'bin/eslint.js');
+  writeFileSync(
+    path.join(cwd, 'eslint.config.mjs'),
+    [
+      "import { createRequire } from 'node:module';",
+      "import sonar from 'eslint-plugin-sonarjs';",
+      "const peer = createRequire(import.meta.resolve('eslint-plugin-sonarjs'));",
+      "export default [{ files: ['**/*.ts'], plugins: { sonarjs: sonar },",
+      "languageOptions: { parser: peer('@typescript-eslint/parser'), parserOptions: { project: ['*/tsconfig.json'], tsconfigRootDir: import.meta.dirname } },",
+      "rules: { 'sonarjs/no-redundant-optional': 'error', 'sonarjs/no-inconsistent-returns': 'error' } }];",
+    ].join('\n'),
+  );
+  return spawnSync(process.execPath, [cli, '--format', 'json', 'legacy/*.ts', 'exact/*.ts'], {
+    cwd,
+    encoding: 'utf-8',
+  });
+};
 
 const runHook = (root: string, files: readonly string[], job: 'lint' | 'semantic-lint') => {
   const child = spawnSync(
@@ -141,20 +164,23 @@ it('compares the typed Sonar preset with the shipped tsrs rules on aliases, exac
       mkdirSync(path.dirname(target), { recursive: true });
       writeFileSync(target, source);
     }
-    const reference = execFileSync(
-      process.execPath,
-      [
-        path.join(appRoot, 'tools/oxlint/effect-native/tests/reference-sonar.mjs'),
-        path.join(app, 'packages'),
-        'legacy/*.ts',
-        'exact/*.ts',
-      ],
-      { encoding: 'utf-8' },
+    const { status, stderr, stdout } = runReferenceSonar(path.join(app, 'packages'));
+    expect(status, stderr).toBe(1);
+    const report: unknown = JSON.parse(stdout);
+    expect(report).toHaveLength(3);
+    expect(report).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          filePath: path.join(app, alias),
+          messages: [expect.objectContaining({ ruleId: 'sonarjs/no-redundant-optional' })],
+        }),
+        expect.objectContaining({
+          filePath: path.join(app, mixed),
+          messages: [expect.objectContaining({ ruleId: 'sonarjs/no-inconsistent-returns' })],
+        }),
+        expect.objectContaining({ filePath: path.join(app, exact), messages: [] }),
+      ]),
     );
-    expect(reference.trim().split('\n').toSorted()).toEqual([
-      'legacy/alias.ts sonarjs/no-redundant-optional',
-      'legacy/mixed.ts sonarjs/no-inconsistent-returns',
-    ]);
     // Neither an alias-provided undefined nor this compiler-valid mixed return is a .17 semantic diagnostic.
     const native = runHook(root, Object.keys(files), semanticJob);
     expect(native.output).toContain('Semantic lint checked 3 files');
