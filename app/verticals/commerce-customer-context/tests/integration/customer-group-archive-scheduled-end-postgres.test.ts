@@ -123,7 +123,6 @@ import {
   CommerceSourceProcessingRejected,
 } from '../../src/integrations/source-processing-eligibility.ts';
 import type { CommerceSourceProcessingRequest } from '../../src/integrations/source-processing-eligibility.ts';
-import { CommerceSourceProfileOwnerProof } from '../../src/integrations/source-profile-owner-proof.ts';
 import {
   enrollmentApplicationCompositionSnapshot,
   makeEnrollmentApplicationCompositionSnapshot,
@@ -698,15 +697,10 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
         ),
       ),
   });
-  // No membership of this suite names an ERP customer record, so its current customer read is never proved.
-  const noCustomerOwnerProof = Layer.succeed(CommerceSourceProfileOwnerProof, {
-    counterparty: () => Effect.succeed({ outcome: 'INDETERMINATE' as const }),
-    retail: () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
-  });
+  // Non-ERP assignments and their receipt recovery must run without an ERP customer proof service.
   const ordinary = Layer.mergeAll(
     role,
     sourcePrivacy,
-    noCustomerOwnerProof,
     organizationBusiness,
     profileReactivationEligibilityEvaluatorFactoryLive,
     partyRegistryGuestResolverFactoryLive,

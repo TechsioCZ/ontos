@@ -210,13 +210,17 @@ export interface CustomerProfileSourcePartiesReadServices {
   ) => Effect.Effect<CustomerProfileSourcePartiesResponse, ReadHandlerUnavailable | ReadPermissionDenied>;
 }
 
+const readPeers = Effect.all(
+  { privacy: CommerceSourceProcessingEligibility, proof: CommerceSourceProfileOwnerProof },
+  { concurrency: 2 },
+);
+type ReadPeers = Effect.Success<typeof readPeers>;
 const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(function* sourceProfileReadServices(
   requirements: SourceReadRequirements,
   transaction: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[0],
   scope: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[1],
+  { privacy, proof }: ReadPeers,
 ) {
-  const privacy = yield* CommerceSourceProcessingEligibility;
-  const proof = yield* CommerceSourceProfileOwnerProof;
   const organizationBusiness = yield* Effect.serviceOption(CommerceOrganizationBusinessEligibility);
   if (scope.legalEntityId === undefined) {
     return yield* new OperationContextUnavailable({
@@ -716,28 +720,32 @@ type SourceReadServiceRequirements = CommerceSourceProcessingEligibility | Comme
 export const membershipCustomerSourceReadServices = (
   transaction: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[0],
   scope: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[1],
+  peers: ReadPeers,
 ) =>
-  makeSourceReadServices(membershipSourceReadRequirements, transaction, scope).pipe(
+  makeSourceReadServices(membershipSourceReadRequirements, transaction, scope, peers).pipe(
     Effect.map(({ readSource }): CustomerProfileSourceReadServices => ({ readSource })),
   );
 export const customerProfileSourceReadServices: ReadServiceFactory<
   CustomerProfileSourceReadServices,
   SourceReadServiceRequirements
 > = (transaction, scope) =>
-  makeSourceReadServices(sourceReadRequirements, transaction, scope).pipe(
+  readPeers.pipe(
+    Effect.flatMap((peers) => makeSourceReadServices(sourceReadRequirements, transaction, scope, peers)),
     Effect.map(({ readSource }) => ({ readSource })),
   );
 export const customerProfileSourcePageReadServices: ReadServiceFactory<
   CustomerProfileSourcePageReadServices,
   SourceReadServiceRequirements
 > = (transaction, scope) =>
-  makeSourceReadServices(sourcePageReadRequirements, transaction, scope).pipe(
+  readPeers.pipe(
+    Effect.flatMap((peers) => makeSourceReadServices(sourcePageReadRequirements, transaction, scope, peers)),
     Effect.map(({ readPage }) => ({ readPage })),
   );
 export const customerProfileSourcePartiesReadServices: ReadServiceFactory<
   CustomerProfileSourcePartiesReadServices,
   SourceReadServiceRequirements
 > = (transaction, scope) =>
-  makeSourceReadServices(sourcePageReadRequirements, transaction, scope).pipe(
+  readPeers.pipe(
+    Effect.flatMap((peers) => makeSourceReadServices(sourcePageReadRequirements, transaction, scope, peers)),
     Effect.map(({ readParties }) => ({ readParties })),
   );

@@ -1,7 +1,7 @@
 import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
 import { holdSourceEligibilityStable } from '@app/privacy-contracts/source-processing-eligibility/commit-interlock';
 import { membershipCustomerSourceReadServices } from './customer-profile-source-persistence.ts';
-import type { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
+import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { defineScopedRoutine, ReadPermissionDenied, requireModuleOperation } from '@app/core-runtime';
@@ -174,10 +174,9 @@ export interface CustomerGroupMembershipSourceOperations {
 
 export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
   CustomerGroupMembershipSourceOperations,
-  CommerceSourceProcessingEligibility | CommerceSourceProfileOwnerProof
+  CommerceSourceProcessingEligibility
 > = Effect.fn('customerGroupMembershipSourceServiceFactory')(function* membershipSourceServices(transaction, scope) {
   const privacy = yield* CommerceSourceProcessingEligibility;
-  const customerSourceReader = yield* membershipCustomerSourceReadServices(transaction, scope);
   const checkPrivacy = Effect.fn('CustomerGroupMembershipSource.checkPrivacy')(function* checkPrivacy(
     input: Pick<CustomerGroupMembershipSourceReceiptRequest, 'manager' | 'profile' | 'route' | 'processingKind'>,
     source: (typeof ApplyCustomerGroupMembershipSourceResultSchema.Type)['source'],
@@ -278,6 +277,15 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
       payload: ApplyCustomerGroupMembershipSourcePayload,
       customerSource: typeof CustomerProfileSourceAssertionSchema.Type,
     ) {
+      // Legacy assignments, snapshot admission and ordinary receipt reads have no ERP customer to prove.
+      const proof = yield* Effect.serviceOption(CommerceSourceProfileOwnerProof);
+      if (Option.isNone(proof)) {
+        return yield* unavailable();
+      }
+      const customerSourceReader = yield* membershipCustomerSourceReadServices(transaction, scope, {
+        privacy,
+        proof: proof.value,
+      }).pipe(Effect.mapError(unavailable));
       const current = yield* customerSourceReader.readSource({ ...customerSource, mode: 'CURRENT' }).pipe(
         Effect.mapError((cause) =>
           Schema.is(ReadPermissionDenied)(cause)
