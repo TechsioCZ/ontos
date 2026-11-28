@@ -365,7 +365,7 @@ it.live(
           'INTERNAL_C14 actual committed Retail receipt admitted independent per-profile assignment and recovery Privacy policies',
         );
         expect(policy.profileReceipt.result.profileRef).toEqual(fixture.profileReceipt.profileRef);
-        yield* seedSourceProcessingNativeFixture({
+        const currentPolicy = yield* seedSourceProcessingNativeFixture({
           connections: fixture.isolated.connections,
           contexts: [
             {
@@ -721,13 +721,15 @@ it.live(
         yield* alteredScope.json.pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(CustomerPriceGroupAssignmentReceiptInvalidProblemSchema)),
         );
+        // The second seed renewed this route with merged grants and the current recovery purpose. Retiring the
+        // superseded per-profile purpose cannot revoke that route; retire the current purpose to test revocation.
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: fixture.isolated.connections,
           governancePrincipalId: fixture.governancePrincipalId,
           legalEntityId,
           ownedDatabase: fixture.isolated,
           purpose: 'implementation-1096-registered-workload-gateway',
-          purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(policy.purposeRef),
+          purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(currentPolicy.purposeRef),
           tenantId,
         });
         expect(retired.lifecycle).toBe('RETIRED');
