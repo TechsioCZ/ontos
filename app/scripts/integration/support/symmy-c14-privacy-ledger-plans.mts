@@ -1,5 +1,5 @@
 import type { PgClient } from '@effect/sql-pg';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect } from 'effect-rstest';
 
 interface PlanRow {
@@ -64,15 +64,28 @@ export const measurePartyReceiptCorrelation = Effect.fn('C14.measurePartyReceipt
     readonly routeRef: string;
   },
 ) {
-  const plan = yield* admin<PlanRow>`explain (analyze, buffers) select d.party_id, min(d.match_decision_id::text)
+  const plan = yield* admin<{
+    readonly 'QUERY PLAN': unknown;
+  }>`explain (analyze, buffers, format json) select d.party_id, min(d.match_decision_id::text)
     from party.party_match_decisions d join party.party_create_source_receipts r
       on r.tenant_id=d.tenant_id and r.action_invocation_id=d.action_invocation_id and r.match_decision_id=d.match_decision_id
     where d.tenant_id=${tenantId} and r.legal_entity_id=${legalEntityId} and d.outcome in ('CREATED','MATCHED')
       and d.evidence_evaluation->'evidence' @> jsonb_build_array(jsonb_build_object('kind','CLIENT_SOURCE_ASSERTION',
         'recordId',${recordId}::text,'source',jsonb_build_object('issuer',${source.issuer}::text,'namespace',${source.namespace}::text,
           'recordType',${source.recordType}::text,'routeRef',${source.routeRef}::text))) group by d.party_id limit 2`;
-  const lines = plan.map((row) => row['QUERY PLAN']);
-  // EXPLAIN ANALYZE must return a real, unambiguous owner. An empty lookup is not a receipt benchmark.
-  expect(lines[0]).toMatch(/actual time=[^)]*rows=1 loops=1/u);
-  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', plan: lines });
+  const [measurement] = yield* Schema.decodeUnknownEffect(
+    Schema.Tuple([
+      Schema.Struct({
+        'Execution Time': Schema.Number,
+        Plan: Schema.Struct({
+          'Actual Rows': Schema.Number,
+          'Shared Hit Blocks': Schema.Number,
+          'Shared Read Blocks': Schema.Number,
+        }),
+      }),
+    ]),
+  )(plan[0]?.['QUERY PLAN']);
+  // An empty or ambiguous owner lookup is not a receipt benchmark.
+  expect(measurement.Plan['Actual Rows']).toBe(1);
+  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', measurement });
 });
