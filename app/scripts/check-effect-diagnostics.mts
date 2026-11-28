@@ -46,7 +46,9 @@ const cli = Command.make(
           stdout: 'inherit',
         }),
       );
-      if (code !== 0) {yield* new EffectDiagnosticsFailed({ code, project });}
+      if (code !== 0) {
+        yield* new EffectDiagnosticsFailed({ code, project });
+      }
     }
   }),
 );
