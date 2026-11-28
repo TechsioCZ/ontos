@@ -258,6 +258,7 @@ const resolveStandingUse = Effect.fn('Privacy.resolveStandingUse')(function* sta
     return missing('NO_CONTEXT');
   }
   const { admittedAs, otherSubjectIds, subjectId } = resolvedSubject.value;
+  const subjectIds = [subjectId, ...otherSubjectIds];
   const template = authorization.scopeTemplate;
   const intendedScope = sourceProcessingIntendedScope(template, {
     moduleId: privacyModuleId,
@@ -284,16 +285,18 @@ const resolveStandingUse = Effect.fn('Privacy.resolveStandingUse')(function* sta
     authorityRevision: String(authorization.revision),
     contentScopeRefs: template.dataCategoryRefs,
     intendedScope,
-    // An objection or restriction follows the person, not the reference one use resolved. It is read for every other
-    // subject reference of the person under the current grant, and for all of them under each predecessor grant.
-    priorInterventionScopes: active.flatMap((prior) =>
-      [subjectId, ...otherSubjectIds].flatMap((id) =>
-        prior.lifecycle === 'ENDED' || id !== subjectId
-          ? [sourceProcessingIntendedScope(prior.scopeTemplate, { ...intendedScope.subjectRef, resourceId: id })]
-          : [],
-      ),
-    ),
     resourceRefs: [subjectId],
+    standingInterventions: {
+      operation: grant.operation,
+      priorScopes: active.flatMap((prior) =>
+        subjectIds.flatMap((id) =>
+          prior.lifecycle === 'ENDED' || id !== subjectId
+            ? [sourceProcessingIntendedScope(prior.scopeTemplate, { ...intendedScope.subjectRef, resourceId: id })]
+            : [],
+        ),
+      ),
+      subjectIds,
+    },
     targetAdmission,
   };
 });
@@ -346,7 +349,6 @@ const resolveSourceUse = Effect.fn('Privacy.resolveSourceUse')(function* resolve
     admittedAs: null,
     authority: { ...applicabilityAuthority, asOf: evaluatedAt },
     intendedScope,
-    priorInterventionScopes: [],
   };
 });
 
@@ -480,7 +482,7 @@ export const evaluateSourceProcessingEligibility = Effect.fn('Privacy.evaluateSo
         intendedScope,
         evaluatedAt,
         authority,
-        context.priorInterventionScopes,
+        context.admittedAs === null ? undefined : context.standingInterventions,
       )
       .pipe(Effect.mapError(unavailable));
     const outcome = evaluatePrivacyEligibility(resolved.input);

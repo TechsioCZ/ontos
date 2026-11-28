@@ -4,7 +4,7 @@ import { PrivacyOperationRepository, PrivacyOperationPersistenceError } from './
 import type { PrivacyOperationRepositoryService } from './privacy-operation-repository.ts';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { Crypto, DateTime, Effect, Option, Result, Schema } from 'effect';
 
 import {
@@ -101,9 +101,11 @@ import {
   validatePrivacyApplicabilityEligibilityAuthorityResult,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
 import type {
+  IntendedProcessingScope,
   PrivacyInputCurrentness,
   PrivacyProcessingIntervention,
   ProcessingInterventionAuthorityResult,
+  StandingInterventionUse,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
 import type { ProcessedRetentionEvaluationWork } from '../../shared/domain/privacy-retention-disposition.ts';
 import { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
@@ -477,6 +479,25 @@ const dsrDeliveryAccessAuthorityMatches = (
     authorityResult.receiptRef.length > 0,
     authorityResult.evidenceRefs.length > 0,
   ].every(Boolean);
+
+const interventionUsePredicate = (scope: IntendedProcessingScope, standing?: StandingInterventionUse) => {
+  if (standing === undefined) {
+    return eq(processingInterventions.processingScopeRef, scope.processingScopeRef.scopeId);
+  }
+  return and(
+    inArray(
+      sql<string>`${processingInterventions.interventionRecord}->'scope'->'subjectRef'->>'resourceId'`,
+      standing.subjectIds,
+    ),
+    or(
+      inArray(
+        processingInterventions.processingScopeRef,
+        [scope, ...standing.priorScopes].map((prior) => prior.processingScopeRef.scopeId),
+      ),
+      eq(sql<string>`${processingInterventions.interventionRecord}->'scope'->>'operation'`, standing.operation),
+    ),
+  );
+};
 
 const processingInterventionAuthorityMatches = (
   authorityResult: ProcessingInterventionAuthorityResult,
@@ -3308,14 +3329,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
     ),
     resolveEligibilityInputs: Effect.fn('PrivacyOperationPostgresRepository.resolveEligibilityInputs')(
       // fallow-ignore-next-line complexity -- Eligibility resolution atomically reconciles all independently versioned evidence streams before returning a decision input.
-      function* resolveEligibilityInputsEffect(
-        tenantId,
-        legalEntityId,
-        intendedScope,
-        asOf,
-        authority,
-        priorInterventionScopes,
-      ) {
+      function* resolveEligibilityInputsEffect(tenantId, legalEntityId, intendedScope, asOf, authority, standing) {
         yield* assertScope(tenantId, legalEntityId);
         const authorityResult = yield* decode(
           PrivacyApplicabilityEligibilityAuthorityResultSchema,
@@ -3347,12 +3361,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
                 and(
                   eq(processingInterventions.tenantId, tenantId),
                   eq(processingInterventions.legalEntityId, legalEntityId),
-                  inArray(
-                    processingInterventions.processingScopeRef,
-                    [intendedScope, ...(priorInterventionScopes ?? [])].map(
-                      (scope) => scope.processingScopeRef.scopeId,
-                    ),
-                  ),
+                  interventionUsePredicate(intendedScope, standing),
                 ),
               )
               .orderBy(desc(processingInterventions.observedAt))
@@ -3446,7 +3455,7 @@ const makeRepository = Effect.fn('PrivacyOperationPostgresRepository.make')(func
         }
 
         const currentIntervention = (kind: PrivacyProcessingIntervention['kind']) =>
-          currentProcessingIntervention(interventions, kind, intendedScope, asOf, priorInterventionScopes);
+          currentProcessingIntervention(interventions, kind, intendedScope, asOf, standing);
         const objectionRecord = currentIntervention('OBJECTION');
         const restrictionRecord = currentIntervention('RESTRICTION');
         const objection = {

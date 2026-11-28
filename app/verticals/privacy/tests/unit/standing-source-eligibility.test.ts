@@ -219,8 +219,8 @@ const person = (
       listApplicabilityDecisions: () => Effect.succeed([current.decision]),
       listApplicabilityPolicies: () => Effect.succeed([current.policy]),
       listResponsibilities: () => Effect.succeed([current.controller]),
-      resolveEligibilityInputs: (_tenant, _legalEntity, intended, asOf, _authority, priorScopes) => {
-        const restriction = currentProcessingIntervention(interventions, 'RESTRICTION', intended, asOf, priorScopes);
+      resolveEligibilityInputs: (_tenant, _legalEntity, intended, asOf, _authority, standing) => {
+        const restriction = currentProcessingIntervention(interventions, 'RESTRICTION', intended, asOf, standing);
         return Effect.succeed({
           authoritativeReferences: [],
           input: {
@@ -681,6 +681,29 @@ describe('standing source processing authorization', () => {
             person(reconciledId, assertedId, [restrictionFor(fixture.authorization, admitted.get('client:two') ?? '')]),
           )).outcome,
         ).toBe('ALLOWED');
+      }),
+    );
+    it.effect('keeps an exact-use restriction on the proven person without the old source configuration', () =>
+      Effect.gen(function* exactUseCutover() {
+        const restriction = restrictionFor(fixture.authorization, assertedId);
+        const exactScope = {
+          ...restriction.scope,
+          dataCategoryRefs: ['previous:customer-name'],
+          operation: fixture.request.operation,
+          processingScopeRef: { ...restriction.scope.processingScopeRef, scopeId: 'previous:exact' },
+          purposeRef: 'previous:purpose',
+          purposeVersionId: 'previous:purpose-version',
+          recipientRefs: ['previous:customer-registry'],
+        };
+        const result = (priorScope: IntendedProcessingScope) =>
+          run(person(reconciledId, assertedId, [{ ...restriction, scope: priorScope }]));
+        expect(yield* result(exactScope)).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
+        for (const unrelated of [
+          { ...exactScope, operation: 'READ' },
+          { ...exactScope, subjectRef: refOf(admitted.get('client:two') ?? '') },
+        ]) {
+          expect((yield* result(unrelated)).outcome).toBe('ALLOWED');
+        }
       }),
     );
     it.effect('never clears a predecessor restriction with an expired resolution', () =>

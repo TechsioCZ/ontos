@@ -55,6 +55,7 @@ import type {
   PrivacyProcessingIntervention,
   ResolvePrivacyEligibilityInputsInput,
   ProcessingInterventionAuthorityResult,
+  StandingInterventionUse,
 } from '../../shared/domain/privacy-processing-eligibility.ts';
 import type { PrivacyResponsibilityAssignmentSchema } from '../../shared/domain/privacy-responsibility-assignment.ts';
 import type {
@@ -370,7 +371,7 @@ export interface PrivacyOperationRepositoryService {
     intendedScope: ResolvePrivacyEligibilityInputsInput['intendedScope'],
     asOf: string,
     authority: PrivacyApplicabilityEligibilityAuthorityResult,
-    priorInterventionScopes?: readonly ResolvePrivacyEligibilityInputsInput['intendedScope'][],
+    standing?: StandingInterventionUse,
   ) => Effect.Effect<ResolvedPrivacyEligibilityInputs, PrivacyOperationPersistenceError>;
   /** Resolves a legal hold from a trusted governance authority; caller fields are never persisted as governance. */
   readonly resolveLegalHoldGovernance: (

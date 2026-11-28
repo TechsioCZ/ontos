@@ -144,26 +144,49 @@ const currentness = (value: PrivacyInputCurrentness | null, asOf: string): Priva
 
 const INTERVENTIONS_SOURCE = 'privacy.core.processing-interventions';
 
-/**
- * The Current objection or restriction of ONE exact intended scope among Privacy's retained interventions of that
- * processing scope (newest first or in any order), as of `asOf`. The latest record of that kind and exact scope observed at
- * or before `asOf` is Current; two at the same instant, or a non-authoritative one, cannot be resolved (a non-authoritative
- * ACTIVE record, so nothing reads it as absent); none at all is an authoritative ABSENT of a complete, empty snapshot.
- */
-export const currentProcessingIntervention = (
+/** A governed standing use and all owner-proven references of its subject. */
+export interface StandingInterventionUse {
+  readonly operation: string;
+  readonly priorScopes: readonly IntendedProcessingScope[];
+  readonly subjectIds: readonly string[];
+}
+
+const stableKey = (parts: readonly string[]): string => parts.map((part) => `${String(part.length)}:${part}`).join('|');
+
+const exactScopeIdentity = (scope: IntendedProcessingScope): string =>
+  stableKey([
+    scope.controllerRef,
+    stableKey(scope.dataCategoryRefs),
+    scope.operation,
+    scope.subjectRef.moduleId,
+    scope.subjectRef.resourceId,
+    scope.subjectRef.resourceType,
+    scope.subjectRef.tenantId,
+    scope.processingScopeRef.scopeId,
+    scope.processingScopeRef.scopeType,
+    scope.purposeRef,
+    scope.purposeVersionId,
+    stableKey(scope.recipientRefs),
+  ]);
+
+// The exact ledger retains the person and concrete operation, not the source route or a mapping from
+// old purpose, recipient and category identifiers to the new grant. Different labels cannot prove disjoint use.
+const couldCoverStandingUse = (
+  scope: IntendedProcessingScope,
+  intended: IntendedProcessingScope,
+  use: StandingInterventionUse,
+) =>
+  scope.operation !== SourceRouteProcessingOperation &&
+  scope.operation === use.operation &&
+  scope.subjectRef.tenantId === intended.subjectRef.tenantId &&
+  use.subjectIds.includes(scope.subjectRef.resourceId);
+
+const currentExactIntervention = (
   interventions: readonly PrivacyProcessingIntervention[],
   kind: PrivacyProcessingIntervention['kind'],
   intendedScope: IntendedProcessingScope,
   asOf: string,
-  predecessors: readonly IntendedProcessingScope[] = [],
 ): PrivacyProcessingIntervention => {
-  // An intervention remains governed by its original ledger until explicitly resolved there.
-  for (const previous of predecessors) {
-    const inherited = currentProcessingIntervention(interventions, kind, previous, asOf);
-    if (inherited.status === 'ACTIVE' || currentness(inherited.currentness, asOf).state !== 'CURRENT') {
-      return { ...inherited, scope: intendedScope };
-    }
-  }
   const matching = interventions
     .filter(
       (intervention) =>
@@ -200,6 +223,33 @@ export const currentProcessingIntervention = (
     scope: intendedScope,
     status: 'ABSENT',
   };
+};
+
+/** Resolve every applicable original ledger independently; a release in one cannot clear another. */
+export const currentProcessingIntervention = (
+  interventions: readonly PrivacyProcessingIntervention[],
+  kind: PrivacyProcessingIntervention['kind'],
+  intendedScope: IntendedProcessingScope,
+  asOf: string,
+  standing?: StandingInterventionUse,
+): PrivacyProcessingIntervention => {
+  if (standing !== undefined) {
+    const prior = new Set(standing.priorScopes.map((scope) => exactScopeIdentity(scope)));
+    const byScope = Map.groupBy(
+      interventions.filter((row) => row.kind === kind),
+      (row) => exactScopeIdentity(row.scope),
+    );
+    for (const [key, records] of byScope) {
+      const scope = records[0]?.scope;
+      if (scope !== undefined && (prior.has(key) || couldCoverStandingUse(scope, intendedScope, standing))) {
+        const inherited = currentExactIntervention(records, kind, scope, asOf);
+        if (inherited.status === 'ACTIVE' || currentness(inherited.currentness, asOf).state !== 'CURRENT') {
+          return { ...inherited, scope: intendedScope };
+        }
+      }
+    }
+  }
+  return currentExactIntervention(interventions, kind, intendedScope, asOf);
 };
 
 export const ProcessingInterventionAuthorityRequestSchema = Schema.Struct({
@@ -485,8 +535,6 @@ export const createPrivacyEligibilityEvidence = (
   trustedDecisionTime: input.outcome.evaluatedAt,
 });
 
-const stableKey = (parts: readonly string[]): string => parts.map((part) => `${String(part.length)}:${part}`).join('|');
-
 const applicabilityScopeKey = (scope: PrivacyApplicabilityScope): string =>
   stableKey([
     scope.operation,
@@ -512,20 +560,11 @@ const currentnessRevision = (outcome: PrivacyEligibilityOutcome): string =>
   );
 
 const scopeKey = (scope: IntendedProcessingScope): string =>
-  stableKey([
-    scope.controllerRef,
-    stableKey(scope.dataCategoryRefs.toSorted()),
-    scope.operation,
-    scope.subjectRef.moduleId,
-    scope.subjectRef.resourceId,
-    scope.subjectRef.resourceType,
-    scope.subjectRef.tenantId,
-    scope.processingScopeRef.scopeId,
-    scope.processingScopeRef.scopeType,
-    scope.purposeRef,
-    scope.purposeVersionId,
-    stableKey(scope.recipientRefs.toSorted()),
-  ]);
+  exactScopeIdentity({
+    ...scope,
+    dataCategoryRefs: scope.dataCategoryRefs.toSorted(),
+    recipientRefs: scope.recipientRefs.toSorted(),
+  });
 
 /** Stable revision for comparing a decision at a later consumer boundary. */
 export const privacyEligibilityDecisionRevision = (outcome: PrivacyEligibilityOutcome): string =>
