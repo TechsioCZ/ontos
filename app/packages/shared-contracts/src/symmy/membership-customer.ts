@@ -21,7 +21,7 @@ interface CurrentItem {
   readonly icoAuthority?: string;
   readonly partyRef: { readonly tenantId: string };
   readonly profile: {
-    readonly profileRef: { readonly kind: string; readonly tenantId: string; };
+    readonly profileRef: { readonly kind: string; readonly tenantId: string };
     readonly state: string;
     readonly subject: { readonly kind: string };
   };

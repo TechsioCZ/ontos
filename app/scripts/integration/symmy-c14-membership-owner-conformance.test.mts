@@ -751,49 +751,70 @@ it.live(
         });
         // The worker can read the customer successfully. Hold the mutation side while it reaches Commerce,
         // commit the customer grant end, then let Commerce re-evaluate. The membership grant remains active.
-        const barrierReady = yield* Deferred.make<boolean>();
+        const effectState = admin<{
+          dispatched: boolean;
+          owner_status: string | null;
+          state: string;
+        }>`select e.state,e.owner_request_hash is not null as dispatched,(select a.status from core.action_invocations a where a.action_key=${membershipActionKey} and a.tenant_id=e.tenant_id and a.idempotency_key=e.effect_id::text limit 1) as owner_status from symmy_integration.job_effects e where e.job_id=${deniedJob.jobId} and e.tenant_id=${tenantId}`;
+        yield* Effect.logInfo(
+          'Original ERP assignment and receipt recovered; starting independent customer grant race',
+        );
+        const barrierReady = yield* Deferred.make<number>();
+        const allowCommit = yield* Deferred.make<boolean>();
         const race = yield* Effect.forkScoped(
-          admin.withTransaction(
-            Effect.gen(function* revokeDuringWrite() {
-              const [holder] = yield* admin<{
-                pid: number;
-              }>`select pg_backend_pid() as pid, pg_advisory_xact_lock_shared(hashtextextended('privacy.source-eligibility:'||${tenantId}::text||':'||${legalEntityId}::text,0))`;
-              assert.isDefined(holder);
-              yield* Deferred.succeed(barrierReady, true);
-              yield* observeCustomerFixtureUntil(
-                admin<{
-                  waiting: boolean;
-                }>`select exists(select from pg_locks where locktype='advisory' and not granted and mode='ExclusiveLock' and ${holder.pid}=any(pg_blocking_pids(pid))) as waiting`,
-                ([row]) => row?.waiting ?? false,
-              );
-              yield* endSourceProcessingNativeGrant({
-                connections: isolated.connections,
-                governancePrincipalId: fixture.governancePrincipalId,
-                issuer: fixture.sourceIdentity.issuer,
-                legalEntityId,
-                namespace: fixture.sourceIdentity.namespace,
-                ownedDatabase: isolated,
-                purpose: 'implementation-1096-registered-workload-gateway',
-                purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(customerPrivacy.purposeRef),
-                routeRef: fixture.proofTransport.request.route.id,
-                tenantId,
-              });
-            }),
+          endSourceProcessingNativeGrant({
+            beforeCommit: (backend) =>
+              Deferred.succeed(barrierReady, backend).pipe(Effect.andThen(Deferred.await(allowCommit)), Effect.asVoid),
+            connections: isolated.connections,
+            governancePrincipalId: fixture.governancePrincipalId,
+            issuer: fixture.sourceIdentity.issuer,
+            legalEntityId,
+            namespace: fixture.sourceIdentity.namespace,
+            ownedDatabase: isolated,
+            purpose: 'implementation-1096-registered-workload-gateway',
+            purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(customerPrivacy.purposeRef),
+            routeRef: fixture.proofTransport.request.route.id,
+            tenantId,
+          }),
+        );
+        const holder = yield* Effect.raceFirst(
+          Deferred.await(barrierReady),
+          Fiber.join(race).pipe(
+            Effect.andThen(Effect.fail(unavailable('Revocation did not enter its commit barrier'))),
           ),
         );
-        yield* Deferred.await(barrierReady);
         const deniedWorker = yield* startProductWorker(fixture.workerArtifact, {
           ...environment,
           ONTOS_C14_WORKER_CLAIM_OWNER: 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED',
           ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
         });
+        const wait = admin<{
+          waiting: boolean;
+        }>`select exists(select from pg_locks l where l.locktype='advisory' and not l.granted and l.mode='ExclusiveLock' and ${holder}=any(pg_blocking_pids(l.pid))) as waiting`;
+        yield* observeCustomerFixtureUntil(wait, ([row]) => row?.waiting ?? false).pipe(
+          Effect.tapError(() =>
+            effectState.pipe(
+              Effect.flatMap((state) => Effect.logError({ stage: 'waiting-for-erp-owner-interlock', state })),
+            ),
+          ),
+        );
+        yield* Deferred.succeed(allowCommit, true);
         yield* Fiber.join(race);
+        yield* Effect.logInfo(
+          'Customer grant revoked after worker resolution and before Commerce acquired its write interlock',
+        );
         const deniedEffects = yield* observeCustomerFixtureUntil(
           admin<{
             state: string;
             status: string;
           }>`select state,outcome->>'status' as status from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${deniedJob.jobId}`,
           (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
+        ).pipe(
+          Effect.tapError(() =>
+            effectState.pipe(
+              Effect.flatMap((state) => Effect.logError({ stage: 'awaiting-revoked-erp-settlement', state })),
+            ),
+          ),
         );
         expect(deniedEffects).toEqual([{ state: 'settled', status: 'denied' }]);
         yield* deniedWorker.child.kill();

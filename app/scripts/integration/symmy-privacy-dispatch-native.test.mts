@@ -1,3 +1,4 @@
+import { findPostgresFailure } from '@app/core-runtime';
 import { GatewayContextV2ClaimsSchema } from '@app/shared-contracts';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { executeDispatchPrivacyMeasureWithAuthorization } from '@app/privacy/api/client';
@@ -514,31 +515,54 @@ it.live(
         expect(afterRace.tombstones).toBe(0);
         expect(Option.getOrNull(afterRace.fence)).toBe('open');
         expect(afterRace.owner_commands).toBe(3);
-        // Model the two durable crash boundaries with the worker stopped: only the lease/delivery is
-        // rewound, never the source fence or owner invocation. Recovery and disposition use real processes.
-        const committed = (yield* fixture.submit('INTERNAL_RECONCILE_COMMITTED')).receipt.jobId;
-        yield* observePrivacyDispatchUntil(
-          'The original Catalog command did not commit',
-          observation(fixture.admin, fixture.tenantId, committed),
-          ({ effects, settled }) => effects > 0 && settled === effects,
-        );
+        // Keep the real delivery unfinished when simulating the lost acknowledgement. Core correctly
+        // forbids changing a completed delivery back to pending; do not fabricate a second delivery.
         yield* fixture.worker.child.kill();
         yield* fixture.worker.child.exitCode;
+        const committed = (yield* fixture.submit('INTERNAL_RECONCILE_COMMITTED')).receipt.jobId;
         const unsent = (yield* fixture.submit('INTERNAL_RECONCILE_UNSENT')).receipt.jobId;
-        const retargetDelivery = (id: string, defer: boolean) =>
-          fixture.admin`update core.outbox_deliveries d set available_at=clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end,status='pending',claimed_at=null,claimed_by=null,claim_expires_at=null from core.outbox_messages m where m.outbox_message_id=d.outbox_message_id and m.tenant_id=${fixture.tenantId} and d.worker_key='integration.symmy.execute-symmy-job' and m.payload_json->>'jobId'=${id} returning d.outbox_delivery_id`;
+        const scheduleDelivery = (id: string, defer: boolean) =>
+          fixture.admin`update core.outbox_deliveries d set available_at=clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end,claim_expires_at=case when d.status='processing' then clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end else d.claim_expires_at end from core.outbox_messages m where m.outbox_message_id=d.outbox_message_id and m.tenant_id=${fixture.tenantId} and d.worker_key='integration.symmy.execute-symmy-job' and d.status in ('pending','processing') and m.payload_json->>'jobId'=${id} returning d.outbox_delivery_id`;
+        expect(yield* scheduleDelivery(unsent, true)).toHaveLength(1);
+        yield* Effect.logInfo('Held the original pending unsent job delivery');
+        // Fault only the private acknowledgement of this one already-admitted job. Its real Commerce
+        // transaction can commit; neither its invocation nor its owner receipt is manufactured or changed.
+        yield* fixture.admin`create table public.retention_fixture_ack_gate(job_id uuid primary key)`;
+        yield* fixture.admin`insert into public.retention_fixture_ack_gate values(${committed})`;
+        yield* fixture.admin`create function public.retention_fixture_defer_ack() returns trigger language plpgsql as $$ begin if exists(select from public.retention_fixture_ack_gate where job_id=NEW.job_id) then return null; end if; return NEW; end $$`;
+        yield* fixture.admin`create trigger retention_fixture_ack before update of state on symmy_integration.job_effects for each row when (NEW.state='settled') execute function public.retention_fixture_defer_ack()`;
+        const initialCommands = (yield* observation(fixture.admin, fixture.tenantId, committed)).owner_commands;
+        const firstWorker = yield* fixture.startWorker();
+        yield* observePrivacyDispatchUntil(
+          'Real Commerce command did not commit before the private acknowledgement',
+          observation(fixture.admin, fixture.tenantId, committed),
+          ({ owner_commands, settled }) => owner_commands === initialCommands + 1 && settled === 0,
+        );
+        yield* firstWorker.child.kill();
+        yield* firstWorker.child.exitCode;
+        expect(yield* scheduleDelivery(committed, true)).toHaveLength(1);
+        // The original request for the other job has not been sent; take a real claim but never hand it to an adapter.
+        yield* fixture.admin.withTransaction(
+          Effect.gen(function* claimWithoutSending() {
+            yield* fixture.admin`select set_config('ontos.tenant_id',${fixture.tenantId},true)`;
+            const claims = yield* fixture.admin<{
+              mode: string;
+            }>`select c.mode from symmy_integration.job_effects e cross join lateral symmy_integration.claim_symmy_job_effect(e.tenant_id,e.job_id,e.effect_id,gen_random_uuid(),1) c where e.job_id=${unsent} and e.tenant_id=${fixture.tenantId} and e.effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product'`;
+            expect(claims).toEqual([{ mode: 'execute' }]);
+          }),
+        );
         for (const id of [committed, unsent]) {
-          expect(yield* retargetDelivery(id, true)).toHaveLength(1);
-          const requested = yield* fixture.admin<{
+          const expired = yield* fixture.admin<{
             request_hash: string | null;
-          }>`update symmy_integration.job_effects set state='attempting',outcome=null,claim_token=gen_random_uuid(),lease_until=clock_timestamp()-interval '1 second',version=version+1 where tenant_id=${fixture.tenantId} and job_id=${id} and effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product' returning owner_request_hash as request_hash`;
-          expect(requested).toHaveLength(1);
+          }>`update symmy_integration.job_effects set lease_until=clock_timestamp()-interval '1 second' where tenant_id=${fixture.tenantId} and job_id=${id} and state='attempting' and effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product' returning owner_request_hash as request_hash`;
+          expect(expired).toHaveLength(1);
           if (id === unsent) {
-            expect(requested[0]?.request_hash).toBeNull();
+            expect(expired[0]?.request_hash).toBeNull();
           } else {
-            expect(requested[0]?.request_hash).toBeTruthy();
+            expect(expired[0]?.request_hash).toBeTruthy();
           }
         }
+        yield* fixture.admin`drop trigger retention_fixture_ack on symmy_integration.job_effects`;
         const beforeRecovery = (yield* observation(fixture.admin, fixture.tenantId, unsent)).owner_commands;
         yield* fixture.startWorker();
         for (const id of [committed, unsent]) {
@@ -560,7 +584,7 @@ it.live(
           const blockedRecovery = yield* observation(fixture.admin, fixture.tenantId, id);
           expect(Option.getOrNull(blockedRecovery.fence)).toBe('open');
           expect(blockedRecovery.private_present).toBe(true);
-          expect(yield* retargetDelivery(id, false)).toHaveLength(1);
+          expect(yield* scheduleDelivery(id, false)).toHaveLength(1);
           yield* observePrivacyDispatchUntil(
             'Production recovery must settle the effect before real erasure',
             policy.observe(),
@@ -588,6 +612,7 @@ it.live(
             message,
             type: name,
           })),
+          postgres: Option.getOrNull(findPostgresFailure(failure)),
           stage: 'native-privacy-dispatch-cause',
         }),
       ),

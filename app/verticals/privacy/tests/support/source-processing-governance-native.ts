@@ -258,8 +258,12 @@ export const retireSourceProcessingNativePurpose = Effect.fn('PrivacySourceGover
 );
 
 /** End only this fixture's customer grant; the membership grant, purpose, basis and profile stay active. */
-export const endSourceProcessingNativeGrant = Effect.fn('PrivacySourceGovernanceNative.endGrant')(function* endGrant(
+export const endSourceProcessingNativeGrant = Effect.fn('PrivacySourceGovernanceNative.endGrant')(function* endGrant<
+  E,
+  R,
+>(
   input: SourceProcessingGovernanceNativeInput & {
+    readonly beforeCommit: (backend: number) => Effect.Effect<void, E, R>;
     readonly issuer: string;
     readonly namespace: string;
     readonly routeRef: string;
@@ -312,7 +316,11 @@ export const endSourceProcessingNativeGrant = Effect.fn('PrivacySourceGovernance
       if (result.length !== 1) {
         return yield* unavailable();
       }
-      return yield* Effect.void;
+      const [backend] = yield* tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`, 'objects');
+      if (backend === undefined) {
+        return yield* unavailable();
+      }
+      return yield* input.beforeCommit(backend.pid);
     }),
   );
 });
