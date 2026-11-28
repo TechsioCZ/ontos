@@ -128,7 +128,6 @@ export const OrganizationMembershipProfileSchema = Schema.Struct({
 });
 
 const fields = {
-  customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
   effectiveAt: CustomerGroupIsoTimestampSchema,
   manager: MembershipSourceManagerSchema,
   processingKind: OrganizationMembershipProcessingKindSchema,
@@ -153,6 +152,8 @@ export const OrganizationCompleteMembershipSnapshotSchema = Schema.Struct({
 export const OrganizationMembershipSourcePayloadSchema = Schema.Union([
   Schema.Struct({
     ...fields,
+    // An ERP assignment names the exact customer record its profile was resolved from; only an assignment does.
+    customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
     groupRef: CustomerGroupRefSchema,
     operation: Schema.Literal('ASSIGN'),
     reasonCode: Schema.Literal('SOURCE_MEMBERSHIP_ASSERTED'),

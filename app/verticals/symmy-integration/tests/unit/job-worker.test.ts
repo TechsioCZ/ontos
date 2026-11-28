@@ -20,7 +20,10 @@ import type {
   SymmyOwnerReceipt,
 } from '../../shared/domain/symmy-job-execution.ts';
 import type { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
-import { projectSymmyExecutionJob } from '../../src/persistence/symmy-job-execution-store.ts';
+import {
+  SymmyJobExecutionStoreError,
+  projectSymmyExecutionJob,
+} from '../../src/persistence/symmy-job-execution-store.ts';
 import {
   collectSymmyWorkerDefectFrames,
   makeSymmyJobWorker,
@@ -145,6 +148,7 @@ const claimMode = (state: string): SymmyEffectClaim['mode'] => {
 const harness = () => {
   let job = initialJob;
   let jobPresent = true;
+  let loadsBeforeOutage = Number.POSITIVE_INFINITY;
   let originalEligible = true;
   let systemEligible = true;
   let routeEligible = true;
@@ -216,7 +220,13 @@ const harness = () => {
         };
         return { effect: Option.some(entry.effect), mode, version };
       }),
-    load: () => Effect.succeed(jobPresent ? Option.some(job) : Option.none()),
+    load: () =>
+      Effect.suspend(() => {
+        loadsBeforeOutage -= 1;
+        return loadsBeforeOutage < 0
+          ? Effect.fail(new SymmyJobExecutionStoreError({ code: 'unavailable' }))
+          : Effect.succeed(jobPresent ? Option.some(job) : Option.none());
+      }),
     markBlocked: (_jobId: string, markedId: string) =>
       Effect.sync(() => {
         job = {
@@ -429,8 +439,12 @@ const harness = () => {
     jobPresent: (value: boolean) => {
       jobPresent = value;
     },
+    /** The store answers this many more job loads, then fails every later one as unavailable. */
     lineage: (claimedId: string, state: 'waiting' | 'refused') => {
       lineage.set(claimedId, state);
+    },
+    loadsBeforeOutage: (value: number) => {
+      loadsBeforeOutage = value;
     },
     makeWorker,
     notificationFails: (value: boolean) => {
@@ -582,6 +596,29 @@ describe('Symmy durable execution and original-effect recovery', () => {
           ['settled', 'unresolved'],
         ]);
       }),
+  );
+
+  it.effect('keeps a waiting membership deferred when the job refresh after its wave fails', () =>
+    Effect.gen(function* refreshFailsBesideWaitingOrder() {
+      const fixture = harness();
+      fixture.replaceJob({
+        ...initialJob,
+        effects: initialJob.effects.map((saved) => ({ ...saved, outcome: Option.none(), state: 'planned' as const })),
+      });
+      fixture.lineage(effectId, 'waiting');
+      // The first load starts the delivery; the refresh after the first wave is the one that fails.
+      fixture.loadsBeforeOutage(1);
+      const now = DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-20T10:00:00.000Z'));
+      yield* TestClock.setTime(now);
+      const deferred = yield* Effect.flip((yield* fixture.makeWorker()).execute({ jobId }, context));
+      expect(Schema.is(OutboxWorkerDeferred)(deferred)).toBe(true);
+      expect(deferred).toMatchObject({ wakeAtMs: now + 30_000 });
+      // Without a waiting membership the same refresh failure still fails the delivery.
+      const plain = harness();
+      plain.loadsBeforeOutage(1);
+      const failed = yield* Effect.flip((yield* plain.makeWorker()).execute({ jobId }, context));
+      expect(Schema.is(OutboxWorkerDeferred)(failed)).toBe(false);
+    }),
   );
 
   it.effect('shows fresh revoked authority as blocked and reactivates only the same effect', () =>

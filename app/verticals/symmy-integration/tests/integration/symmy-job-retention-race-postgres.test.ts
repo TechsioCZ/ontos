@@ -307,6 +307,64 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
 }
 
 it.effect(
+  'erases an admitted job that pins no owner effect, and blocks one whose plan pins effects it never wrote',
+  () =>
+    Effect.gen(function* zeroEffectJob() {
+      const state = yield* fixture;
+      const { routeId } = state.purgeInput.policy;
+      const insertJob = (items: readonly unknown[]) =>
+        Effect.gen(function* insertPlannedJob() {
+          const jobId = crypto.randomUUID();
+          const plan = JSON.stringify({ items });
+          yield* state.admin`insert into symmy_integration.import_jobs(job_id,tenant_id,route_id,route_key,route_revision,mapping_version,principal_id,fixture_id,idempotency_digest,intent_digest,phase,execution_plan)
+          values(${jobId},${state.scope.tenantId},${routeId},'productsBatch','v1','v1',${state.scope.principalId},'internal-race',${jobId},${jobId},'admitted',${plan}::jsonb)`;
+          return jobId;
+        });
+      const purgeJob = (jobId: string) =>
+        state.secondDb.transaction((tx) =>
+          installOperationalScope(tx, state.governanceScope).pipe(
+            Effect.flatMap((executor) =>
+              symmyJobRetentionStore(executor).purge({
+                ...state.purgeInput,
+                authority: {
+                  ...state.purgeInput.authority,
+                  contentScopeRef: symmyJobIntentContentRef(jobId),
+                  resourceRef: symmyJobResourceRef(jobId),
+                },
+                jobId,
+              }),
+            ),
+          ),
+        );
+      // An ERP batch of customers the owner never named: one item, refused for missing context, and no effect row.
+      const unsupported = yield* insertJob([
+        {
+          effects: [],
+          itemId: crypto.randomUUID(),
+          itemKey: 'membership-0',
+          unsupportedBranches: [{ branchId: crypto.randomUUID(), branchKey: 'customer', kind: 'CustomerHint' }],
+        },
+      ]);
+      expect(yield* purgeJob(unsupported)).toBe('PURGED');
+      const [tombstone] = yield* state.adminDb
+        .select({ retained: symmyJobRetentionTombstones.retainedEffectIds })
+        .from(symmyJobRetentionTombstones)
+        .where(eq(symmyJobRetentionTombstones.jobId, unsupported));
+      expect(tombstone?.retained).toEqual([]);
+      const [erased] = yield* state.admin<{
+        plan: unknown;
+      }>`select execution_plan as plan from symmy_integration.import_jobs where job_id=${unsupported}`;
+      expect(erased?.plan).toMatchObject({ items: [{ effects: [], unsupportedBranches: [{ kind: 'CustomerHint' }] }] });
+      expect(JSON.stringify(erased?.plan)).not.toContain('membership-0');
+      // A plan that pins an effect with no effect row is inconsistent: retention refuses it rather than guess.
+      const inconsistent = yield* insertJob([
+        { effects: [{ effectKey: 'catalog' }], itemId: crypto.randomUUID(), itemKey: 'internal-row' },
+      ]);
+      expect(yield* purgeJob(inconsistent)).toBe('BLOCKED');
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
+
+it.effect(
   'binds the immutable target scope and explicit verified Privacy governance scope before consulting Privacy',
   () =>
     Effect.gen(function* scopeBoundary() {

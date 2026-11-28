@@ -22,7 +22,6 @@ import {
 } from '../domain/organization-membership-source.ts';
 
 const baseFields = {
-  customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
   effectiveAt: CustomerGroupIsoTimestampSchema,
   manager: MembershipSourceManagerSchema,
   processingKind: Schema.optionalKey(Schema.Never),
@@ -55,6 +54,8 @@ export type CompleteCustomerGroupMembershipSnapshot = typeof CompleteCustomerGro
 export const ApplyCustomerGroupMembershipSourcePayloadSchema = Schema.Union([
   Schema.Struct({
     ...baseFields,
+    // An ERP assignment names the exact customer record its profile was resolved from; only an assignment does.
+    customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
     groupRef: CustomerGroupRefSchema,
     operation: Schema.Literal('ASSIGN'),
   }),

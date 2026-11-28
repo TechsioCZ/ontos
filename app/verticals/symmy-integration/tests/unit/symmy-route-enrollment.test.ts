@@ -175,16 +175,7 @@ const valid = {
   adminRegions: () => ({ configuration: { items: [item('REGION', [currentMarkets, currencies])] }, legalEntityId }),
   customerGroupCustomersBatch: () => ({
     ...write,
-    configuration: {
-      items: [
-        item('CUSTOMER', [
-          applyMembership,
-          operation('commerce.customer-context', 'commerce.customer-context.api.customer-profile-source'),
-        ]),
-      ],
-      selector,
-      sourceRouteId,
-    },
+    configuration: { items: [item('CUSTOMER', [applyMembership])], selector, sourceRouteId },
     routeCode: 'VIP',
   }),
   customerGroupsBatch: () => ({
@@ -332,8 +323,28 @@ describe('Symmy route inventories', () => {
   it('enrolls the ERP membership contract alone exactly on a membership route of a namespace reserved for it', () => {
     // A membership route of any other namespace keeps the contract it always had and never admits an ERP customer id.
     expect(symmyPlannedRouteRow(request('customerGroupCustomersBatch')).fixtureIds).toEqual(['INTERNAL_C14']);
+    expect(codes(request('customerGroupCustomersBatch'))).toEqual([]);
     const [membership] = valid.customerGroupCustomersBatch().configuration.items;
-    const erp = withConfiguration('customerGroupCustomersBatch', { items: [reserved(membership)] });
+    // An ERP membership route reads each customer's current profile, so it cannot enroll without that read.
+    const withoutRead = withConfiguration('customerGroupCustomersBatch', { items: [reserved(membership)] });
+    expect(codes(withoutRead)).toEqual(['required_operation_missing']);
+    const erp = withConfiguration('customerGroupCustomersBatch', {
+      items: [
+        reserved({
+          ...membership,
+          effects: [
+            ...membership.effects,
+            {
+              effectKey: 'authority-customer-read',
+              operation: operation(
+                'commerce.customer-context',
+                'commerce.customer-context.api.customer-profile-source',
+              ),
+            },
+          ],
+        }),
+      ],
+    });
     expect(codes(erp)).toEqual([]);
     expect(symmyPlannedRouteRow(erp).fixtureIds).toEqual(['ERP_MEMBERSHIP_V1']);
     // The reserved namespace means nothing on any other route: only the membership route's ledger orders it.

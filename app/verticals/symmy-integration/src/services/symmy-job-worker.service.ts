@@ -669,12 +669,24 @@ const executeWave = Effect.fn('SymmyJobWorker.executeWave')(function* wave(
     (soFar, saved) => executeReadyEffect(context, state.current, soFar, saved),
   );
   const persistence = yield* SymmyJobExecutionPersistence;
-  const refreshed = yield* inScope(context, (scope) => persistence.storeFor(scope.routineInvoker).load(jobId));
+  const attempted = new Set([...state.attempted, ...ready.map(({ effect }) => effect.ref.effectId)]);
+  const loaded = yield* Effect.result(
+    inScope(context, (scope) => persistence.storeFor(scope.routineInvoker).load(jobId)),
+  );
+  if (Result.isFailure(loaded)) {
+    // A membership waiting for an earlier order keeps its deferral even when the refresh fails: the job ends this
+    // delivery on what it last read, which still holds the waiting effect, so the wake is never lost.
+    if (!progress.waiting) {
+      return yield* loaded.failure;
+    }
+    return { ...state, ...progress, attempted, done: true };
+  }
+  const refreshed = loaded.success;
   if (Option.isNone(refreshed) || !validJob(refreshed.value, context)) {
     return yield* symmyJobWorkerInvalid();
   }
   return {
-    attempted: new Set([...state.attempted, ...ready.map(({ effect }) => effect.ref.effectId)]),
+    attempted,
     current: refreshed.value,
     done: false,
     ...progress,

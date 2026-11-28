@@ -23,7 +23,10 @@ import { Array as EffectArray, Context, Effect, Match, Option, Predicate, Redact
 import { SecureRandom } from 'effect/crypto';
 
 import type { SymmyPinnedEffect, SymmyPinnedJobPlan } from '../../shared/domain/symmy-job-execution.ts';
-import { SymmyPartyCommerceIntentSchema } from '../../shared/domain/symmy-party-commerce-intents.ts';
+import {
+  SymmyPartyCommerceIntentSchema,
+  symmyMembershipCustomerSource,
+} from '../../shared/domain/symmy-party-commerce-intents.ts';
 import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { projectSymmyOrganizationAcceptedEffect } from '../../shared/domain/symmy-source-organization-projections.ts';
 import { SymmyJobStoreError } from '../persistence/symmy-job-store.ts';
@@ -331,7 +334,7 @@ export const projectSymmyCustomerIntakeAdmissions = Effect.fn('SymmyCustomerInta
         Schema.is(SymmyPartyCommerceIntentSchema)(intent)
           ? Match.value(intent).pipe(
               Match.tag('CustomerGroupMembership', ({ payload: membership }) => {
-                const { customerSource } = membership;
+                const customerSource = symmyMembershipCustomerSource(membership);
                 const membershipProfile = profileTarget(membership.profile.profileRef);
                 // An ERP membership also names the exact customer record the owner resolved it from.
                 return [

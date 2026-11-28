@@ -59,8 +59,9 @@ $$;
 SET LOCAL row_security = off;
 --> statement-breakpoint
 -- Route enrollments are rare operator writes: hold them out while the reserved namespace is proved unused and the
--- guard that keeps it reserved is installed. Jobs and effects are not held: writes to job effects pause only for the
--- instant their trigger is installed below.
+-- guard that keeps it reserved is installed. The ledger's foreign key above already holds a write-conflicting lock on
+-- job effects, and it lasts until this migration commits: Symmy effect writes wait for the whole migration. Run it with
+-- the Symmy workers drained (runbook), never beside live delivery.
 LOCK TABLE symmy_integration.job_routes IN SHARE ROW EXCLUSIVE MODE;
 --> statement-breakpoint
 -- Nothing may hold the contract or its namespace before the ledger exists: abort rather than adopt unknown history.
@@ -470,10 +471,15 @@ BEGIN
   OR p_authority->>'resourceRef' IS DISTINCT FROM 'integration.symmy.job:'||p_job::text
   OR p_authority->>'contentScopeRef' IS DISTINCT FROM 'integration.symmy.job:'||p_job::text||'#integration.symmy.job-intent'
   OR nullif(p_authority->>'authorityReceiptRef','') IS NULL OR nullif(p_authority->>'authorityRevision','') IS NULL
-  OR NOT EXISTS(SELECT 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job) THEN
+  OR jsonb_typeof(v_job.execution_plan->'items') IS DISTINCT FROM 'array'
+  -- A job without effect rows is erasable only when its plan pins none: an ERP batch of customers the owner never named.
+  OR (NOT EXISTS(SELECT 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job)
+   AND EXISTS(SELECT 1 FROM jsonb_array_elements(v_job.execution_plan->'items') i
+    WHERE jsonb_array_length(coalesce(i->'effects','[]'::jsonb))>0)) THEN
   RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
  -- Claimers lock an effect before publishing its lease. Acquire the same row locks before deciding.
  PERFORM 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job ORDER BY e.effect_id FOR UPDATE;
+ -- An expired lease or an uncertain owner call may already be committed at the owner: recovery settles it first.
  IF EXISTS(SELECT 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job
    AND e.state IN ('attempting','indeterminate')) THEN
   RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
@@ -484,9 +490,26 @@ BEGIN
   lifecycle_policy=coalesce(j.lifecycle_policy,jsonb_build_object('policyId',p_policy->>'policyId','revision',p_policy->>'revision')) WHERE j.tenant_id=p_tenant AND j.job_id=p_job;
  INSERT INTO symmy_integration.job_retention_tombstones(tenant_id,job_id,policy_id,policy_revision,authority_receipt_ref,authority_revision,retained_effect_ids)
  SELECT p_tenant,p_job,p_policy->>'policyId',p_policy->>'revision',p_authority->>'authorityReceiptRef',p_authority->>'authorityRevision',
-  jsonb_agg(e.effect_id ORDER BY e.effect_id) FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job;
+  coalesce(jsonb_agg(e.effect_id ORDER BY e.effect_id),'[]'::jsonb) FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job;
  RETURN QUERY SELECT 'PURGED'::text;
 END; $$;
+--> statement-breakpoint
+-- An erased item keeps its (possibly empty) effect list, so a plan of unsupported customers erases to a valid plan.
+CREATE OR REPLACE FUNCTION symmy_integration.erase_symmy_plan_payload(p_plan jsonb)
+RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,symmy_integration,pg_temp AS $$
+ SELECT jsonb_strip_nulls(jsonb_build_object(
+  'sourceRouteId',CASE WHEN coalesce(p_plan->>'sourceRouteId','') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN p_plan->'sourceRouteId' ELSE NULL END,'sourceRouteRevision',p_plan->'sourceRouteRevision',
+  'sourceMappingVersion',p_plan->'sourceMappingVersion',
+  'items',jsonb_agg(jsonb_build_object(
+   'itemId',item.value->'itemId','itemKey','erased.'||(item.value->>'itemId'),
+   'effects',coalesce((SELECT jsonb_agg(symmy_integration.erase_symmy_effect_payload(effect.value) ORDER BY effect.ordinality)
+    FROM jsonb_array_elements(item.value->'effects') WITH ORDINALITY effect(value,ordinality)),'[]'::jsonb),
+   'unsupportedBranches',(SELECT jsonb_agg(jsonb_build_object('branchId',branch.value->'branchId',
+      'branchKey','erased.'||(branch.value->>'branchId'),'kind',branch.value->'kind') ORDER BY branch.ordinality)
+     FROM jsonb_array_elements(coalesce(item.value->'unsupportedBranches','[]'::jsonb)) WITH ORDINALITY branch(value,ordinality))
+  ) ORDER BY item.ordinality)))
+ FROM jsonb_array_elements(p_plan->'items') WITH ORDINALITY item(value,ordinality);
+$$;
 --> statement-breakpoint
 RESET row_security;
 --> statement-breakpoint

@@ -419,10 +419,6 @@ describe('membership fresh admission owner reads', () => {
       'Party tenant',
       { ...baseline, item: { ...baseline.item, partyRef: { ...baseline.item.partyRef, tenantId: profileId } } },
     ],
-    [
-      'inactive profile',
-      { ...baseline, item: { ...baseline.item, profile: { ...baseline.item.profile, state: 'SUSPENDED' } } },
-    ],
     ['missing Counterparty processing authority', { ...baseline, item: unproven }],
     ['non-CURRENT owner projection', { _tag: 'PAGE', items: [], nextCursor: null }],
   ] as const) {
@@ -435,6 +431,20 @@ describe('membership fresh admission owner reads', () => {
       }),
     );
   }
+  it.effect('refuses an inactive profile for its item alone and admits the request', () =>
+    Effect.gen(function* inactiveProfile() {
+      const current = fixture({
+        response: {
+          ...baseline,
+          item: { ...baseline.item, profile: { ...baseline.item.profile, state: 'SUSPENDED' } },
+        },
+      });
+      expect(yield* current.submit('person')).toBe(jobId);
+      const admitted = Schema.decodeUnknownSync(AdmitSymmyJobPayloadSchema)(current.calls.at(-1)?.body);
+      expect(admitted.groupCustomerFacts).toEqual({ authority: customerSource, profiles: [] });
+      expect(admitted.groupCustomers?.map(({ customerId }) => customerId)).toEqual(['person']);
+    }),
+  );
   it.effect('requires an explicitly enrolled current-profile read before obtaining owner credentials', () =>
     Effect.gen(function* missingEnrollment() {
       const selected = membershipRoute();

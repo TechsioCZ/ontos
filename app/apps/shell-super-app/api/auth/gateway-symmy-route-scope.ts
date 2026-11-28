@@ -224,7 +224,9 @@ export const readSymmyRouteScope = Effect.fn('SymmyRouteScope.read')(function* r
 type InstalledContract = ShellInstalledCatalog['contracts'][number];
 /**
  * The one owner read an admission route makes before it admits: the customer groups route reads Commerce's
- * definition of each group code it names, or Inventory’s current position of a stock key pair. Other admission routes reach no owner read.
+ * definition of each group code it names, an ERP membership route reads the current Commerce profile of each customer
+ * id it names, or Inventory’s current position of a stock key pair. Other admission routes reach no owner read. A
+ * membership route whose callers order their own memberships enrolls no profile read, so it is signed none.
  */
 const admissionOwnerReads = [
   {
@@ -232,6 +234,13 @@ const admissionOwnerReads = [
     moduleId: 'commerce.customer-context',
     requiresCompany: true,
     routeKey: 'customerGroupsBatch',
+    schemaVersion: '1',
+  },
+  {
+    entrypointKey: 'commerce.customer-context.api.customer-profile-source',
+    moduleId: 'commerce.customer-context',
+    requiresCompany: true,
+    routeKey: 'customerGroupCustomersBatch',
     schemaVersion: '1',
   },
   {

@@ -232,9 +232,14 @@ const verification = Effect.gen(function* verifySymmySchema() {
     select (select count(*) from pg_catalog.pg_trigger t where t.tgenabled = 'O' and (
         (t.tgrelid = 'symmy_integration.job_effects'::regclass
           and t.tgname = 'symmy_membership_reservation_at_commit' and t.tgdeferrable and t.tginitdeferred
+          and t.tgtype = 21 -- row-level AFTER INSERT and UPDATE
+          and (select array_agg(a.attname order by a.attname) from unnest(t.tgattr) k(attnum)
+            join pg_catalog.pg_attribute a on a.attrelid = t.tgrelid and a.attnum = k.attnum) = array['effect']::name[]
+          and position('CustomerGroupMembership' in pg_catalog.pg_get_triggerdef(t.oid)) > 0
           and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_reservation()'))
         or (t.tgrelid = 'symmy_integration.membership_source_orders'::regclass
           and t.tgname = 'symmy_membership_order_bound_at_commit' and t.tgdeferrable and t.tginitdeferred
+          and t.tgtype = 5 -- row-level AFTER INSERT
           and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_binding()'))
         or (t.tgrelid = 'symmy_integration.job_routes'::regclass
           and t.tgname = 'symmy_job_routes_membership_contract'

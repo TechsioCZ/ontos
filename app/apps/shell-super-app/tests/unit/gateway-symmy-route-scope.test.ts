@@ -514,7 +514,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
     const groupCreate = 'commerce.customer-context.create-customer-group';
     const commerce = makeModuleContractFixture({ appId: 'commerce-customer-context', moduleId });
     // The catalog publishes the group create as a write and the definition read with the access under test.
-    const publish = (definitionAccess: 'historical_read' | 'read') =>
+    const publish = (definitionAccess: 'historical_read' | 'read', extraReads: readonly string[] = []) =>
       Effect.gen(function* publishedCommerce() {
         const snapshot = yield* makeCompositionSnapshot([
           {
@@ -545,11 +545,15 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
                   },
                 ],
                 api: [
-                  { key: 'commerce.customer-context.api.reads', operationKeys: ['read0.execute', 'read1.execute'] },
+                  {
+                    key: 'commerce.customer-context.api.reads',
+                    operationKeys: [definitionRead, otherRead, ...extraReads].map((_, index) => `read${index}.execute`),
+                  },
                 ],
                 operationContracts: [
                   { access: definitionAccess, entrypointKey: definitionRead },
                   { access: 'read' as const, entrypointKey: otherRead },
+                  ...extraReads.map((entrypointKey) => ({ access: 'read' as const, entrypointKey })),
                 ].map(({ access, entrypointKey }, index) => ({
                   apiKey: 'commerce.customer-context.api.reads',
                   entrypoint: defineTenantModuleEntrypoint({
@@ -576,7 +580,7 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       readonly company?: string;
       readonly companyless?: boolean;
       readonly entrypointKeys: readonly string[];
-      readonly routeKey: 'customerGroupsBatch' | 'customersBatch';
+      readonly routeKey: 'customerGroupCustomersBatch' | 'customerGroupsBatch' | 'customersBatch';
     }) =>
       Effect.gen(function* issueCommerceRead() {
         const current = yield* fixture({
@@ -642,6 +646,29 @@ it.effect('signs on the customer groups admission route only its enrolled Commer
       const refused = yield* Effect.flip(issue(refusedInput));
       expect(refused).toMatchObject({ code: 'forbidden' });
     }
+    // An ERP membership route reads each customer's current profile before it admits, and nothing else of Commerce.
+    const profileRead = 'commerce.customer-context.api.customer-profile-source';
+    const membershipWrite = 'commerce.customer-context.apply-customer-group-membership-source';
+    const withProfile = yield* publish('read', [profileRead]);
+    const membership = yield* issue({
+      catalog: withProfile,
+      entrypointKeys: [membershipWrite, definitionRead, profileRead],
+      routeKey: 'customerGroupCustomersBatch',
+    });
+    expect(membership.payload['routeScope']).toMatchObject({
+      legalEntityId,
+      operations: [{ entrypointKey: profileRead, schemaVersion: '1' }],
+      routeKey: 'customerGroupCustomersBatch',
+    });
+    // A membership route whose callers order their own memberships enrolls no profile read and is signed none.
+    const internal = yield* Effect.flip(
+      issue({
+        catalog: withProfile,
+        entrypointKeys: [membershipWrite, definitionRead],
+        routeKey: 'customerGroupCustomersBatch',
+      }),
+    );
+    expect(internal).toMatchObject({ code: 'forbidden' });
   }),
 );
 

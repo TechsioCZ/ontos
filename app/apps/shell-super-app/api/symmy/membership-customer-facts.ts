@@ -45,7 +45,8 @@ const digest = (value: string) =>
 
 /**
  * The fact of one current profile, when it is exactly the queried customer source's, of the route's tenant, active
- * and of the kind it states. Anything else is not evidence about the customer and admits nothing.
+ * and of the kind it states. Evidence about another source, tenant or kind admits nothing at all. An inactive profile
+ * is exact evidence that this one customer cannot be assigned: its item alone is refused, as for an absent one.
  */
 const currentFact = Effect.fn('SymmyMembershipIntake.currentFact')(function* currentFact(
   { item }: CurrentProfile,
@@ -63,11 +64,13 @@ const currentFact = Effect.fn('SymmyMembershipIntake.currentFact')(function* cur
     source.route.revision !== request.route.revision ||
     profile.profileRef.tenantId !== tenantId ||
     partyRef.tenantId !== tenantId ||
-    profile.state !== 'ACTIVE' ||
     profile.subject.kind !== profile.profileRef.kind ||
     (profile.profileRef.kind === 'COUNTERPARTY' && item.icoAuthority === undefined)
   ) {
     return yield* unavailable();
+  }
+  if (profile.state !== 'ACTIVE') {
+    return Option.none();
   }
   const fact = yield* Schema.decodeUnknownEffect(customerFactSchema)({
     customerSource: source,

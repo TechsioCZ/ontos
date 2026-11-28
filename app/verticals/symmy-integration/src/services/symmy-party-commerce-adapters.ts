@@ -129,6 +129,7 @@ import {
   resolveSymmyCounterpartySavedAddress,
   resolveSymmyCounterpartySavedAddressFromProfile,
   resolveSymmyOrganizationProfileIco,
+  symmyMembershipCustomerSource,
 } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import type { SymmyPartyCommerceIntent } from '../../shared/domain/symmy-party-commerce-intents.ts';
 import { SymmyPinnedEffectSchema } from '../../shared/domain/symmy-job-execution.ts';
@@ -1565,7 +1566,7 @@ const currentMembershipCustomer = Effect.fn('SymmyPartyCommerceAdapters.currentM
       return yield* symmyJobWorkerUnavailable();
     }
     const { payload } = membership.value;
-    const { customerSource: source } = payload;
+    const source = symmyMembershipCustomerSource(payload);
     // Only an ERP-id assignment pins a customer source; explicit internal plans already name their profile.
     if (source === undefined) {
       return true;

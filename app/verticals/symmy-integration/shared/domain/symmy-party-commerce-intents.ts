@@ -181,6 +181,16 @@ export const SymmyPartyCommerceIntentSchema = Schema.Union([
   }),
 ]);
 export type SymmyPartyCommerceIntent = typeof SymmyPartyCommerceIntentSchema.Type;
+type MembershipIntentPayload = Extract<
+  SymmyPartyCommerceIntent,
+  { readonly _tag: 'CustomerGroupMembership' }
+>['payload'];
+/** The exact customer record an ERP assignment was resolved from. Only an assignment names one. */
+export const symmyMembershipCustomerSource = (payload: MembershipIntentPayload) =>
+  Match.value(payload).pipe(
+    Match.when({ operation: 'ASSIGN' }, ({ customerSource }) => customerSource),
+    Match.orElse(() => {}),
+  );
 
 const invocationId = Schema.optionalKey(ResolvePartyCommandCommitPayloadSchema.fields.invocationId);
 /** Minimal private dependency receipts; no names, contacts or source document bodies. */

@@ -314,7 +314,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       companyRequired: true,
       family: 'customerGroups',
       operations: [
-        shellRead(customerModule, customerProfileSourceRead, true),
+        shellRead(customerModule, customerProfileSourceRead),
         executor(customerGroupOperation('commerce.customer-context.apply-customer-group-membership-source'), {
           reads: [
             read('commerce.customer-context.api.customer-group-definition-source'),
@@ -590,6 +590,16 @@ export const symmyRouteRequestRefusals = (
         'required_operation_missing',
         `${request.routeKey} cannot serve a request without ${symmyOperationName(operation)}`,
       ),
+    ),
+    // An ERP membership route names customers by their ERP id, so the Shell reads each one's current profile.
+    ...refuseWhen(
+      admissionFixtureIds(request).includes(SYMMY_ERP_MEMBERSHIP_CONTRACT) &&
+        !enrolled.some(
+          ({ operation }) =>
+            operation.moduleId === customerModule && operation.entrypointKey === customerProfileSourceRead,
+        ),
+      'required_operation_missing',
+      `${request.routeKey} of an ERP membership namespace cannot serve a request without ${customerProfileSourceRead}`,
     ),
     ...refuseWhen(
       inventory.admission !== 'read' &&

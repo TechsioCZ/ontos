@@ -20,6 +20,7 @@ import {
 import {
   SymmyPartyCommerceIntentSchema,
   SymmyPartyCommerceOwnerReceiptSchema,
+  symmyMembershipCustomerSource,
 } from './symmy-party-commerce-intents.ts';
 
 import { SymmyPolicyFixtureIntentSchema } from './symmy-policy-fixture-intents.ts';
@@ -251,7 +252,10 @@ export const SymmyInternalExecutionPlanSchema = executionPlanDefinition.check(
                 intent !== undefined &&
                 Match.value(intent).pipe(
                   // Only an ERP admission pins the customer record its membership was resolved from.
-                  Match.tag('CustomerGroupMembership', ({ payload }) => payload.customerSource === undefined),
+                  Match.tag(
+                    'CustomerGroupMembership',
+                    ({ payload }) => symmyMembershipCustomerSource(payload) === undefined,
+                  ),
                   Match.orElse(() => true),
                 ),
             ),

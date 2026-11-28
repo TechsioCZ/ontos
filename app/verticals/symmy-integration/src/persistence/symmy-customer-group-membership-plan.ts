@@ -93,8 +93,9 @@ export interface SymmyGroupMembershipPlanInput<Failure, ResolveFailure, ReserveF
   readonly reserve: (lineage: SymmyGroupMembershipLineage) => Effect.Effect<SymmyGroupMembershipOrder, ReserveFailure>;
   /**
    * Current Commerce source profiles read before admission, fenced against the actual customers source route.
-   * Only what the owner answers about the record itself, no current profile or Privacy's refusal of it, becomes a
-   * missing entry; an owner failure aborts admission.
+   * A record the owner names no current profile for, or an inactive one, is a missing entry and its item alone is
+   * refused. Privacy's refusal of a customer is no missing entry: it fails the whole request before this plan is built,
+   * and an owner failure aborts admission.
    */
   readonly resolveProfiles: (
     source: SymmyGroupMembershipCustomerSource,

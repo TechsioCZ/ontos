@@ -320,8 +320,8 @@ export const AdmitSourceProcessingSubjectPayloadSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(({ childSources, membershipCustomer, membershipProfile, source }) => {
     if (
-      (membershipCustomer !== undefined &&
-        (membershipProfile === undefined || !['CUSTOMER', 'PERSON'].includes(membershipCustomer.recordType))) ||
+      // The customer's record type is the one its own route authorizes; the admission checks it on that route.
+      (membershipCustomer !== undefined && membershipProfile === undefined) ||
       (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP') !== (membershipProfile !== undefined) ||
       (membershipProfile !== undefined && childSources.length !== 0) ||
       [source, ...childSources].some((entry) => entry.recordType === 'CUSTOMER_GROUP') ||

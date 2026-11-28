@@ -273,7 +273,7 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
   const requireCurrentCustomerSource = Effect.fn('CustomerGroupMembershipSource.requireCurrentCustomerSource')(
     function* requireCurrentCustomerSource(
       payload: ApplyCustomerGroupMembershipSourcePayload,
-      customerSource: NonNullable<ApplyCustomerGroupMembershipSourcePayload['customerSource']>,
+      customerSource: typeof CustomerProfileSourceAssertionSchema.Type,
     ) {
       const current = yield* customerSourceReader
         .readSource({ ...customerSource, mode: 'CURRENT' })
@@ -332,8 +332,12 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
             ? ORG_WRITE_PRIVACY_REQUIREMENT
             : WRITE_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
-        if (payload.customerSource !== undefined) {
-          yield* requireCurrentCustomerSource(payload, payload.customerSource);
+        const customerSource = Match.value(payload).pipe(
+          Match.when({ operation: 'ASSIGN' }, (assignment) => assignment.customerSource),
+          Match.orElse(() => {}),
+        );
+        if (customerSource !== undefined) {
+          yield* requireCurrentCustomerSource(payload, customerSource);
         }
         yield* checkPrivacy(payload, payload.source, WRITE_PRIVACY_OPERATION, requirement, payload);
         const [row] = yield* transaction

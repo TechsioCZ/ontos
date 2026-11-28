@@ -14,6 +14,7 @@ import { sourceProcessingIdentityKey } from '../../shared/domain/privacy-source-
 import type { SourceProcessingAuthorization } from '../../shared/domain/privacy-source-processing-authorization.ts';
 import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
 import type { SourceProcessingAdmissionRow } from '../../src/persistence/source-processing-authorization-repository.ts';
+import { PrivacyActionRejected } from '../../src/actions/privacy-action-rejected.ts';
 import { makeStandingSourceFixture } from '../support/standing-source-fixture.ts';
 
 const ids = {
@@ -253,18 +254,24 @@ describe('source processing subject admission', () => {
         admitContext(renewed, '30000000-0000-4000-8000-0000000000a6'),
       );
       const before = new Map(admissions);
-      for (const membershipCustomer of [
+      const candidatesBefore = new Map(candidates);
+      for (const [index, membershipCustomer] of [
         other,
         customer('customer:never-admitted'),
         { ...root, namespace: 'foreign-customers' },
-      ]) {
-        expect(
-          yield* handleAdmitSourceProcessingSubject({ ...member, membershipCustomer }, ownerLinked).pipe(
-            Effect.isFailure,
+      ].entries()) {
+        // A fresh context per attempt: a refusal must come from the customer check, never from a reused collector.
+        const refused = yield* handleAdmitSourceProcessingSubject(
+          { ...member, membershipCustomer },
+          admitContext(
+            { ...renewed, profileSource: () => Effect.succeed(Option.some(root)) },
+            `30000000-0000-4000-8000-0000000000b${String(index + 5)}`,
           ),
-        ).toBe(true);
+        ).pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(PrivacyActionRejected);
       }
       expect(admissions).toEqual(before);
+      expect(candidates).toEqual(candidatesBefore);
       expect(subjects.size).toBe(2);
     }),
   );
