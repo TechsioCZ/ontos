@@ -6,7 +6,7 @@ import {
   inventoryPublicOperationBoundaries,
   inventoryPublicOperations,
 } from '../../shared/inventory-public-operations.ts';
-// oxlint-disable-next-line import/no-namespace -- The public-barrel contract test must enumerate runtime exports to reject extras; expires: 2027-03-31.
+// oxlint-disable-next-line import/no-namespace, sonarjs/no-wildcard-import -- The public-barrel contract test must enumerate runtime exports to reject extras; expires: 2027-03-31.
 import * as inventoryPublicClient from '../../src/api/inventory-client.ts';
 import {
   executeCurrentRelevantStockPositionSet,

@@ -660,7 +660,21 @@ const manifestDifferences = (
   snapshot: DatabaseTrustBoundarySnapshot,
   grants: DatabaseRoleGrants,
 ): ManifestDifferences => {
-  const declaredTables = new Map(grants.tables.map((grant) => [grant.table, grant]));
+  const declaredSchemas = new Set(grants.schemas);
+  const declaredTables = new Map(
+    grants.tables.map(
+      (grant) =>
+        [
+          grant.table,
+          new Map(
+            grant.privileges.map((privilege) => {
+              const columns = columnGrantFor(grant, privilege);
+              return [privilege, columns === undefined ? undefined : new Set(columns)] as const;
+            }),
+          ),
+        ] as const,
+    ),
+  );
   const declaredSequences = new Map(grants.sequences.map((grant) => [grant.sequence, grant]));
   const declaredRoutines = new Set(grants.routines.map(canonicalRoutineSignature));
   const hasColumnPrivilege = (table: string, column: string, privilege: string): boolean =>
@@ -672,7 +686,7 @@ const manifestDifferences = (
     );
 
   const extraSchemas = snapshot.schemas.flatMap(({ schema, usage }) =>
-    usage && schema !== 'public' && !grants.schemas.includes(schema) ? [schema] : [],
+    usage && schema !== 'public' && !declaredSchemas.has(schema) ? [schema] : [],
   );
   const extraTables = snapshot.tables.flatMap((table) => {
     const grant = declaredTables.get(`${table.schema}.${table.table}`);
@@ -683,8 +697,7 @@ const manifestDifferences = (
       truncate ||
       TABLE_GRANT_PRIVILEGES.some(
         (privilege) =>
-          table.tableGrants[privilege] &&
-          (grant?.privileges.includes(privilege) !== true || columnGrantFor(grant, privilege) !== undefined),
+          table.tableGrants[privilege] && (grant?.has(privilege) !== true || grant.get(privilege) !== undefined),
       )
       ? [tableName(table)]
       : [];
@@ -692,9 +705,7 @@ const manifestDifferences = (
   const extraColumns = snapshot.columnPrivileges.flatMap(({ column, privilege, schema, table }) => {
     const grant = declaredTables.get(`${schema}.${table}`);
     const declared = TABLE_GRANT_PRIVILEGES.find((candidate) => candidate === privilege);
-    return declared === undefined ||
-      grant?.privileges.includes(declared) !== true ||
-      columnGrantFor(grant, declared)?.includes(column) !== true
+    return declared === undefined || grant?.get(declared)?.has(column) !== true
       ? [`${schema}.${table}(${column})`]
       : [];
   });
@@ -968,13 +979,12 @@ const buildIdentityFindings = (
     objects: retainedSettings,
     severity: 'critical',
   });
+  const revokedSchemas = new Set(entry?.kind === 'legacy_shared' ? entry.revokedSchemas : []);
   const dmlSchemas = new Set(dmlTables.map(({ schema }) => schema));
   addFinding(findings, entry?.kind === 'legacy_shared' && dmlSchemas.size > 1, {
     code: 'runtime_role_has_cross_schema_dml',
     evidence: 'One runtime role has DML privileges in more than one audited application schema.',
-    objects: dmlTables.flatMap((table) =>
-      entry?.kind === 'legacy_shared' && entry.revokedSchemas.includes(table.schema) ? [] : [tableName(table)],
-    ),
+    objects: dmlTables.flatMap((table) => (revokedSchemas.has(table.schema) ? [] : [tableName(table)])),
     severity: 'high',
   });
   addFinding(findings, snapshot.databasePrivileges.temporary, {

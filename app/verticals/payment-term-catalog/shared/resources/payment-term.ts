@@ -2,5 +2,5 @@
 // @ontos-resource-owner payment.term-catalog
 // @ontos-resource-slug payment-term
 // @ontos-public-contract @app/payment-term-catalog-contracts/resources/payment-term
-/* eslint-disable oxc/no-barrel-file -- This owner shim preserves one canonical Payment Term ResourceRef contract without copying schemas; expires: 2027-03-31. */
+/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- This owner shim preserves one canonical Payment Term ResourceRef contract without copying schemas; expires: 2027-03-31. */
 export * from '@app/payment-term-catalog-contracts/resources/payment-term';

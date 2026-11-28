@@ -128,7 +128,7 @@ class ClosedSelectParser {
     if (!this.consume('select')) {
       return undefined;
     }
-    const fields: string[] = [];
+    const fields = new Set<string>();
     do {
       if (!this.expression() || !this.consume('as')) {
         return undefined;
@@ -139,13 +139,13 @@ class ClosedSelectParser {
         alias === undefined ||
         alias.length > 63 ||
         unsafeAliases.has(alias) ||
-        fields.includes(alias)
+        fields.has(alias)
       ) {
         return undefined;
       }
-      fields.push(alias);
+      fields.add(alias);
     } while (this.consume(','));
-    return this.cursor === this.input.length ? fields : undefined;
+    return this.cursor === this.input.length ? [...fields] : undefined;
   }
 }
 
@@ -1354,13 +1354,13 @@ export const describeNativeSqlTextSelection = (
   ) {
     return undefined;
   }
-  const fields: string[] = [];
+  const fields = new Set<string>();
   for (const property of parts.fields.expression.properties) {
     const key = selectedTextKey(environment, request, parts, property);
-    if (key === undefined || fields.includes(key)) {
+    if (key === undefined || fields.has(key)) {
       return undefined;
     }
-    fields.push(key);
+    fields.add(key);
   }
-  return fields.length === 0 ? undefined : fields;
+  return fields.size === 0 ? undefined : [...fields];
 };

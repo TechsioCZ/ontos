@@ -122,7 +122,7 @@ export const makePermissionRelationshipMutationLive = <Failure, Service>({
     onSuccess: (configuration) =>
       acquireSpiceDbClientResource(() => clientFactory(configuration, SPICEDB_CHECK_TIMEOUT_MS), unavailable).pipe(
         Effect.map(makeService),
-        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Effect.catch handles the typed Effect failure channel; this is not Promise chaining or callback-based Promise control flow.
+        // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect.catch handles the typed Effect failure channel; this is not Promise chaining or callback-based Promise control flow.
         Effect.catch((error) => Effect.succeed(unavailableService(error))),
       ),
   });

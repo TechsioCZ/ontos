@@ -305,6 +305,11 @@ export default defineConfig({
   },
   overrides: [
     {
+      // Preserve Ultracite 7.11's test-only Promise-chain scope; the blocking rule remains on in authored modules.
+      files: ['**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}', '**/__tests__/**/*.{ts,tsx,js,jsx}'],
+      rules: { 'promise/prefer-await-to-then': 'off' },
+    },
+    {
       files: ['**/*.{test,spec}.{ts,tsx,mts}'],
       rules: {
         // Sonar's hard-coded runner APIs do not recognize it.effect/it.live/it.layer.
@@ -1404,6 +1409,10 @@ export default defineConfig({
     'perfectionist/sort-jsx-props': 'error',
     'perfectionist/sort-object-types': 'error',
     'perfectionist/sort-objects': ['error', { partitionByComment: true }],
+    // Ultracite 8 disabled these three checks. Preserve the blocking 7.11 policy, including its named-component style.
+    'promise/prefer-await-to-then': 'error',
+    'react/function-component-definition': ['error', { namedComponents: 'arrow-function' }],
+    'sonarjs/no-wildcard-import': 'error',
     'react/no-unknown-property': 'error',
     // The base rule conflicts with the type-aware promise-function-async rule:
     // removing `async` immediately recreates the type-aware diagnostic.

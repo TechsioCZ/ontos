@@ -133,11 +133,12 @@ const validateObservation = Effect.fn('ApplicationMigrationPlan.validateObservat
     owner: ApplicationMigrationOwnerInventory,
     observation: ApplicationMigrationObservation,
   ) {
+    const ownerSchemas = new Set(owner.schemas);
     if (
       observation.journalName !== owner.journalName ||
       !unique(observation.entries.map((entry) => entry.name)) ||
       !unique(observation.schemasPresent) ||
-      observation.schemasPresent.some((name) => !owner.schemas.includes(name)) ||
+      observation.schemasPresent.some((name) => !ownerSchemas.has(name)) ||
       observation.entries.some((entry) => {
         const source = owner.migrations.find((migration) => migration.name === entry.name);
         return source === undefined || entry.name !== source.name || entry.hash !== source.hash;
@@ -170,6 +171,7 @@ const planOwner = Effect.fn('ApplicationMigrationPlan.planOwner')(function* plan
     requirement.throughMigration === undefined
       ? owner.migrations.length
       : owner.migrations.findIndex((entry) => entry.name === requirement.throughMigration) + 1;
+  const presentSchemas = new Set(before.schemasPresent);
   const appliedNames = new Set(before.entries.map((entry) => entry.name));
   if (requirement.migrate && owner.migrations.slice(targetIndex).some((entry) => appliedNames.has(entry.name))) {
     return yield* invalid(`Durable journal exceeds the reviewed migration target for ${owner.ownerId}`);
@@ -185,7 +187,7 @@ const planOwner = Effect.fn('ApplicationMigrationPlan.planOwner')(function* plan
     before: {
       ...before,
       entries: owner.migrations.filter((entry) => appliedNames.has(entry.name)),
-      schemasPresent: owner.schemas.filter((name) => before.schemasPresent.includes(name)),
+      schemasPresent: owner.schemas.filter((name) => presentSchemas.has(name)),
     },
     migrate: requirement.migrate,
     ownerId: owner.ownerId,

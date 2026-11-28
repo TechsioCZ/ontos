@@ -89,6 +89,7 @@ const reject = (message: string) => Effect.fail(new QualityAuditGateError({ mess
 const sum = (counts: Readonly<Record<string, number>>) =>
   Object.values(counts).reduce((total, count) => total + count, 0);
 
+const modeledKnipCategories = new Set(['unlisted', 'dependencies', 'devDependencies', 'duplicates']);
 const consistent = (entry: typeof ResultSchema.Type) =>
   Match.value(entry).pipe(
     Match.when({ name: 'knip' }, (result) => {
@@ -98,9 +99,7 @@ const consistent = (entry: typeof ResultSchema.Type) =>
       const modeled = knip.modeledFindingCounts ?? { unlisted: knip.modeledUsages };
       return (
         keys.length > 0 &&
-        Object.keys(modeled).every(
-          (key) => ['unlisted', 'dependencies', 'devDependencies', 'duplicates'].includes(key) && keys.includes(key),
-        ) &&
+        Object.keys(modeled).every((key) => modeledKnipCategories.has(key) && Object.hasOwn(knip.findingCounts, key)) &&
         sum(modeled) === knip.modeledUsages &&
         keys.length === Object.keys(knip.nativeFindingCounts).length &&
         keys.every((key) => knip.nativeFindingCounts[key] === (knip.findingCounts[key] ?? 0) + (modeled[key] ?? 0)) &&

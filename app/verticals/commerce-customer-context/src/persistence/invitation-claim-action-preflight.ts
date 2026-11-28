@@ -160,7 +160,7 @@ export const makeInvitationClaimActionAuthorizationPreflight = (
             principalId: input.principal.principalId,
           }),
         })),
-        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Effect's typed catch combinator is not Promise chaining.
+        // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
         Effect.catch((error: InvitationClaimPreflightFailure) =>
           isContractDenial(error)
             ? Effect.succeed({ outcome: 'denied' } as const)

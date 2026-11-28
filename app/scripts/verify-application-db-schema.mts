@@ -112,13 +112,17 @@ export const applicationCatalogMismatch = (
   actual: { readonly journals: readonly string[]; readonly schemas: readonly string[] },
   expected: ApplicationCatalogExpectation,
 ): string | undefined => {
-  const missingSchemas = expected.requiredSchemas.filter((name) => !actual.schemas.includes(name));
-  const unknownSchemas = actual.schemas.filter((name) => !expected.allowedSchemas.includes(name));
+  const actualSchemas = new Set(actual.schemas);
+  const allowedSchemas = new Set(expected.allowedSchemas);
+  const missingSchemas = expected.requiredSchemas.filter((name) => !actualSchemas.has(name));
+  const unknownSchemas = actual.schemas.filter((name) => !allowedSchemas.has(name));
   if (missingSchemas.length > 0 || unknownSchemas.length > 0) {
     return `Application schema mismatch; missing=[${missingSchemas.join(', ')}], unknown=[${unknownSchemas.join(', ')}]`;
   }
-  const missingJournals = expected.requiredJournals.filter((name) => !actual.journals.includes(name));
-  const unknownJournals = actual.journals.filter((name) => !expected.allowedJournals.includes(name));
+  const actualJournals = new Set(actual.journals);
+  const allowedJournals = new Set(expected.allowedJournals);
+  const missingJournals = expected.requiredJournals.filter((name) => !actualJournals.has(name));
+  const unknownJournals = actual.journals.filter((name) => !allowedJournals.has(name));
   return missingJournals.length > 0 || unknownJournals.length > 0
     ? `Migration journal mismatch; missing=[${missingJournals.join(', ')}], unknown=[${unknownJournals.join(', ')}]`
     : undefined;
