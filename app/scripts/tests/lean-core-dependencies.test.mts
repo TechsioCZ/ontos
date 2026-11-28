@@ -24,6 +24,7 @@ const commercePrivateFixtureExport = './src/api/private.ts';
 const commerceFixtureManifest = 'verticals/commerce-customer-context/package.json';
 
 for (const [importer, suffixes] of [
+  ['apps/shell-super-app/api/symmy/membership-customer-facts.ts', ['customer-profile-source/client']],
   [
     'verticals/symmy-integration/src/services/symmy-party-commerce-adapters.ts',
     [
