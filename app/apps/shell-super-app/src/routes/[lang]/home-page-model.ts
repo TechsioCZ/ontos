@@ -43,6 +43,8 @@ import {
 import { modulePageProps, prepareModulePage } from '../remote-page-loader.ts';
 import { redirectToSignIn } from '../sign-in-return.ts';
 import type { SignInReason } from '../sign-in-return.ts';
+import { readShellTheme, shellThemeOf } from '../tenant-theme.ts';
+import type { ShellTheme } from '../tenant-theme.ts';
 
 interface HomeLoaderArguments {
   readonly request: Request;
@@ -75,6 +77,7 @@ export interface ServerBrowserReads {
   readonly composition: Extract<ShellComposition, { readonly state: 'available' }>;
   readonly legalEntities: AvailableLegalEntitiesResponse;
   readonly tenants: AvailableTenantsResponse;
+  readonly theme: ShellTheme;
 }
 
 export interface AuthenticatedHomePageModel {
@@ -125,6 +128,8 @@ export interface AuthenticatedHomePageModel {
         readonly items: readonly [AvailableTenant];
         readonly state: 'unavailable';
       };
+  /** The tenant's theme, as Core answers it: Business for a tenant without an attachment. */
+  readonly theme: ShellTheme;
 }
 
 export type HomePageModel =
@@ -206,6 +211,15 @@ const browserTenantsCache = browserStaleWhileRevalidateCache(
   },
 );
 
+/** The tenant's theme: shared like the other reads; the open Shell re-reads it itself (use-live-tenant-theme.ts). */
+const browserThemeCache = browserStaleWhileRevalidateCache(
+  (key: string) => readShellTheme({ baseUrl: baseUrlOfKey(key) }),
+  {
+    capacity: 4,
+    keep: keepSuccess,
+  },
+);
+
 /** Permission hints share concurrent preloads; actual people reads and writes always reauthorize server-side. */
 const browserPeopleCapabilityCache = browserStaleWhileRevalidateCache(
   (key: string) => canManageDemoAccounts({ baseUrl: baseUrlOfKey(key) }),
@@ -226,6 +240,7 @@ export const resetBrowserSessionCache = Effect.all(
     browserLegalEntitiesCache.invalidateAll,
     browserTenantsCache.invalidateAll,
     browserPeopleCapabilityCache.invalidateAll,
+    browserThemeCache.invalidateAll,
   ],
   { concurrency: 1, discard: true },
 );
@@ -280,6 +295,13 @@ const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationCl
     : browserTenantsCache.get(browserReadKey(cacheBaseUrl, identity));
 };
 
+const themeFor = (identity: SafeTenantIdentity, options: ShellAuthenticationClientOptions) => {
+  const cacheBaseUrl = browserBaseUrl(options);
+  return cacheBaseUrl === undefined
+    ? readShellTheme(options)
+    : browserThemeCache.get(browserReadKey(cacheBaseUrl, identity));
+};
+
 /** The reads this document primed: each server-rendered model is primed once, never again after a session boundary. */
 const primedReads = MutableRef.make(Option.none<ServerBrowserReads>());
 
@@ -311,6 +333,7 @@ export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(fu
   yield* browserPeopleCapabilityCache.prime(key, reads.canManagePeople);
   yield* browserLegalEntitiesCache.prime(key, reads.legalEntities);
   yield* browserTenantsCache.prime(key, reads.tenants);
+  yield* browserThemeCache.prime(key, reads.theme);
 });
 
 /**
@@ -321,6 +344,7 @@ export const primeBrowserReads = Effect.fn('HomePageModel.primeBrowserReads')(fu
 const serverBrowserReads = (
   context: ShellDocumentContext,
   composition: ServerBrowserReads['composition'],
+  theme: ShellTheme,
 ): ServerBrowserReads | undefined =>
   context.legalEntities === undefined ||
   context.tenants?.state !== 'available' ||
@@ -332,6 +356,7 @@ const serverBrowserReads = (
         composition,
         legalEntities: context.legalEntities,
         tenants: { tenants: context.tenants.tenants },
+        theme,
       };
 
 export interface ResolvedHomeContribution {
@@ -446,6 +471,11 @@ const serverHomePageModel = (context: ShellDocumentContext): HomePageModel => {
   if (session.state === 'anonymous') {
     return anonymousModel;
   }
+  // Every signed-in page renders in its tenant's theme; a theme Core could not answer makes the page unavailable.
+  if (context.theme === undefined) {
+    return unavailableModel;
+  }
+  const theme = shellThemeOf(context.theme);
   const tenants =
     context.tenants?.state === 'available'
       ? { items: context.tenants.tenants, state: 'available' as const }
@@ -471,6 +501,7 @@ const serverHomePageModel = (context: ShellDocumentContext): HomePageModel => {
       navigation: emptyNavigation,
       state: 'authenticated',
       tenants,
+      theme,
     };
     return tenantRevision === undefined ? base : { ...base, compositionRevision: tenantRevision };
   }
@@ -504,8 +535,9 @@ const serverHomePageModel = (context: ShellDocumentContext): HomePageModel => {
     selectedLegalEntityId: session.identity.legalEntityId,
     state: 'authenticated',
     tenants,
+    theme,
   };
-  const browserReads = serverBrowserReads(context, composition);
+  const browserReads = serverBrowserReads(context, composition, theme);
   return {
     ...(browserReads === undefined ? model : { ...model, browserReads }),
     ...homeFields(Option.fromUndefinedOr(context.home)),
@@ -575,10 +607,11 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
               onSuccess: Effect.succeed,
             }),
           ),
+          theme: themeFor(session.identity, options),
         },
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(
-        Effect.map(({ legalEntities, tenants }): HomePageModel => {
+        Effect.map(({ legalEntities, tenants, theme }): HomePageModel => {
           if (tenants.state === 'stale') {
             return sessionEndedModel;
           }
@@ -589,6 +622,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
             navigation: emptyNavigation,
             state: 'authenticated' as const,
             tenants,
+            theme,
           };
           return tenantRevision === undefined ? base : { ...base, compositionRevision: tenantRevision };
         }),
@@ -619,8 +653,9 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
               onSuccess: Effect.succeed,
             }),
           ),
+          theme: themeFor(session.identity, options),
         },
-        { concurrency: 2 },
+        { concurrency: 3 },
       ),
       { startImmediately: true },
     );
@@ -653,7 +688,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
       },
       { concurrency: 2 },
     ).pipe(
-      Effect.map(({ choices: { legalEntities, tenants }, homeContribution }): HomePageModel => {
+      Effect.map(({ choices: { legalEntities, tenants, theme }, homeContribution }): HomePageModel => {
         if (tenants.state === 'stale') {
           return sessionEndedModel;
         }
@@ -669,6 +704,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
           state: 'authenticated',
           tenants,
           ...homeFields(homeContribution),
+          theme,
         };
       }),
     );

@@ -1273,7 +1273,7 @@ const shellListReadProblem = (error: ReadCoreError) => {
 };
 
 const logShellReadFailure = (
-  operation: 'composition' | 'module_target' | 'resource' | 'search',
+  operation: 'composition' | 'module_target' | 'resource' | 'search' | 'tenant_theme',
   request: RequestWithHeaders,
   error: ReadCoreError,
   targetDiagnostics: Readonly<Record<string, LogAnnotation>> = {},
@@ -1804,6 +1804,25 @@ const documentTarget = Effect.fn('shell.composition.documentTarget')(function* d
   );
 });
 
+/** The caller as a tenant-wide principal, for a company-free operation (a tenant's theme, a reserved upload's row). */
+const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
+
+/** The signed-in tenant's effective theme; none when it could not be read, which the document then reports. */
+const documentTheme = (request: RequestWithHeaders, principal: TrustedPrincipalContext) =>
+  Effect.gen(function* readDocumentTheme() {
+    const runtime = yield* ReadRuntime;
+    return yield* runtime.runRead({
+      input: {},
+      principal: withoutSelectedLegalEntity(principal),
+      registration: tenantThemeRead,
+      transport: { correlationId: correlationFromRequest(request) },
+    });
+  }).pipe(
+    Effect.tapError((failure) => logShellReadFailure('tenant_theme', request, failure)),
+    Effect.option,
+    observeGatewayPhase('document-theme'),
+  );
+
 /**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
@@ -1846,6 +1865,8 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
       }),
       onSuccess: ({ tenants: available }) => ({ state: 'available' as const, tenants: available }),
     });
+    // The tenant's theme reads beside the rest of the document, for every signed-in state.
+    const theme = yield* Effect.forkChild(documentTheme(request, context.principal), { startImmediately: true });
     // The company-switcher hint grants no composition or people access. Join it only when assembling the document.
     const { document, tenantContextAvailable } = yield* Effect.all(
       {
@@ -1989,9 +2010,11 @@ export const documentContextHandler = Effect.fn('shell.composition.documentConte
       ),
     };
     // The switcher hint shows "no tenant context" when its check could not answer, and says so.
-    const result = Option.isNone(tenantContextAvailable)
+    const answered = Option.isNone(tenantContextAvailable)
       ? { ...assembled, tenantContextUnavailable: true as const }
       : assembled;
+    const themeAnswer = yield* Fiber.join(theme);
+    const result = Option.isSome(themeAnswer) ? { ...answered, theme: themeAnswer.value } : answered;
     if (Option.isNone(tenantRelease)) {
       return result;
     }
@@ -2011,7 +2034,7 @@ const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
       ),
     ),
   ),
-);
+).pipe(Layer.provide(TenantThemeKitLive));
 
 const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
   handlers
@@ -4201,9 +4224,6 @@ const coreReadAssetMetadataGroupLive = HttpApiBuilder.group(
       ),
     ),
 );
-
-/** The caller as a tenant-wide principal, for a company-free operation (a tenant's theme, a reserved upload's row). */
-const withoutSelectedLegalEntity = ({ legalEntityId: _selected, ...tenantWide }: TrustedPrincipalContext) => tenantWide;
 
 // @ontos-core-read tenant-theme
 const coreReadTenantThemeGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'coreReadTenantTheme', (handlers) =>

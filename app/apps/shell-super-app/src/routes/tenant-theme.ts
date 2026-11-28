@@ -4,6 +4,7 @@ import { Effect, Schema } from 'effect';
 
 import { executeTenantTheme } from '../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions } from '../api/auth-client.ts';
+import type { TenantThemeResponse } from '../../shared/core-reads/tenant-theme.ts';
 
 /*
  * The tenant's theme as the Shell renders it: the kit brand Core answers for the signed-in tenant and the revision
@@ -16,9 +17,12 @@ export type ShellTheme = typeof ShellThemeSchema.Type;
 /** What a page without a session renders in. */
 export const businessShellTheme: ShellTheme = { brand: businessBrand, revision: 'business' };
 
+/** The theme as Core's tenant-theme read answers it. */
+export const shellThemeOf = ({ revision, theme }: TenantThemeResponse): ShellTheme => ({ brand: theme, revision });
+
 /** The signed-in tenant's effective theme. */
 export const readShellTheme = (options: ShellAuthenticationClientOptions = {}) =>
-  executeTenantTheme({}, options).pipe(Effect.map(({ revision, theme }): ShellTheme => ({ brand: theme, revision })));
+  executeTenantTheme({}, options).pipe(Effect.map(shellThemeOf));
 
 /* A page model that carries a theme: Home's own, or the Shell model every other signed-in page embeds. */
 const ThemedModelSchema = Schema.Struct({ theme: ShellThemeSchema });

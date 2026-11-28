@@ -6,6 +6,7 @@ import {
   ReadRuntime,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { TenantThemeKitLive } from '@app/core-runtime/themes/kit';
 import { Deferred, Effect, Exit, Layer, Result, Schema } from 'effect';
 import { HttpServerRequest } from 'effect/http';
 import { expect, it, rs } from 'effect-rstest';
@@ -30,6 +31,7 @@ import { makeCompositionSnapshot } from '../fixtures/application-composition.ts'
 import { makeShellTestAccessGate } from '../support/access-decision-double.ts';
 import { makeAuthenticationServiceDouble } from '../support/impersonation-service-doubles.ts';
 import { tenantModuleTargetTestCarrier } from '../support/tenant-module-target-carrier.ts';
+import { businessThemeRead } from '../support/shell-bff-double.ts';
 
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: '40000000-0000-4000-8000-000000000001',
@@ -144,7 +146,9 @@ const documentTest = Effect.fn('test.documentContext')(function* documentTest(
           HttpServerRequest.fromWeb(new Request('https://shell.test/shell/document-context')),
         ),
         Layer.mock(LegalEntityContext, {}),
-        Layer.mock(ReadRuntime, {}),
+        // The tenant has no theme attached: Core answers Business.
+        Layer.mock(ReadRuntime, { runRead: () => Effect.succeed(businessThemeRead) }),
+        TenantThemeKitLive,
         Layer.succeed(ShellInstalledModuleCatalog, { load: Effect.succeed(catalog) }),
         Layer.mock(ShellGovernedReads, {
           composition: readComposition,

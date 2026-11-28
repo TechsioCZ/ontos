@@ -5,7 +5,12 @@ import { expect, it } from 'effect-rstest';
 import { ResolvedModuleTargetSchema, ShellTargetForbiddenProblemSchema } from '../../../../shared/browser-api.ts';
 import type { ShellDocumentContext, ShellDocumentTarget } from '../../../../shared/browser-api.ts';
 import { loadModulePageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
-import { adaSignedIn, makeShellBff, shellCompositionRevision } from '../../../support/shell-bff-double.ts';
+import {
+  adaSignedIn,
+  businessThemeRead,
+  makeShellBff,
+  shellCompositionRevision,
+} from '../../../support/shell-bff-double.ts';
 
 const approvedTarget = Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
   appId: 'party-registry',
@@ -43,6 +48,7 @@ const signedInDocument = (target?: ShellDocumentTarget): ShellDocumentContext =>
       unavailableDeployments: [],
     },
     session: adaSignedIn,
+    theme: businessThemeRead,
   };
   return target === undefined ? document : { ...document, target };
 };

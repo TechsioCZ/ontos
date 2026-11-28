@@ -10,7 +10,12 @@ import { HttpRouter, HttpServer } from 'effect/http';
 import { AvailableLegalEntitiesResponseSchema, ShellDocumentContextSchema } from '../../../../shared/browser-api.ts';
 import type { ShellSearchPayload } from '../../../../shared/browser-api.ts';
 import { loader } from '../../../../src/routes/[lang]/search/search-page-model.ts';
-import { adaSignedIn, makeShellBff, shellCompositionRevision } from '../../../support/shell-bff-double.ts';
+import {
+  adaSignedIn,
+  businessThemeRead,
+  makeShellBff,
+  shellCompositionRevision,
+} from '../../../support/shell-bff-double.ts';
 
 /** The document context the BFF answers server rendering with: Ada, signed in, one available composition. */
 const signedInDocument = Schema.decodeUnknownSync(ShellDocumentContextSchema)({
@@ -36,6 +41,7 @@ const signedInDocument = Schema.decodeUnknownSync(ShellDocumentContextSchema)({
   ),
   session: { identity: adaSignedIn.identity, state: 'authenticated' },
   tenants: { state: 'available', tenants: [] },
+  theme: businessThemeRead,
 });
 
 /** Every search payload the BFF received, in order. */
