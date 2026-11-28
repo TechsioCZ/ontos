@@ -557,8 +557,16 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
         .update(symmyImportJobs)
         .set({ intentDigest: legacyIntentDigest })
         .where(eq(symmyImportJobs.jobId, legacyJobId));
-      const retainedRows = admin.select().from(symmyJobEffects).where(eq(symmyJobEffects.tenantId, tenantId));
-      const retainedJobs = admin.select().from(symmyImportJobs).where(eq(symmyImportJobs.tenantId, tenantId));
+      const retainedRows = admin
+        .select()
+        .from(symmyJobEffects)
+        .where(eq(symmyJobEffects.tenantId, tenantId))
+        .orderBy(symmyJobEffects.effectId);
+      const retainedJobs = admin
+        .select()
+        .from(symmyImportJobs)
+        .where(eq(symmyImportJobs.tenantId, tenantId))
+        .orderBy(symmyImportJobs.jobId);
       const beforeJobs = yield* retainedJobs;
       const beforeUpgrade = yield* retainedRows;
       expect(beforeUpgrade).toHaveLength(5);

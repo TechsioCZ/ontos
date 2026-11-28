@@ -4,7 +4,7 @@ import { membershipCustomerSourceReadServices } from './customer-profile-source-
 import type { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
 import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
+import { defineScopedRoutine, ReadPermissionDenied, requireModuleOperation } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { Effect, Match, Option, Schema } from 'effect';
 import type { ApplyCustomerGroupMembershipSourcePayload } from '../../shared/actions/apply-customer-group-membership-source.ts';
@@ -277,9 +277,16 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
       payload: ApplyCustomerGroupMembershipSourcePayload,
       customerSource: typeof CustomerProfileSourceAssertionSchema.Type,
     ) {
-      const current = yield* customerSourceReader
-        .readSource({ ...customerSource, mode: 'CURRENT' })
-        .pipe(Effect.mapError(unavailable));
+      const current = yield* customerSourceReader.readSource({ ...customerSource, mode: 'CURRENT' }).pipe(
+        Effect.mapError((cause) =>
+          Schema.is(ReadPermissionDenied)(cause)
+            ? new CustomerGroupMembershipSourceRejected({
+                code: 'SOURCE_AUTHORITY_DENIED',
+                reason: rejectionReasons.SOURCE_AUTHORITY_DENIED,
+              })
+            : unavailable(cause),
+        ),
+      );
       const item = Match.value(current).pipe(
         Match.tag('CURRENT', ({ item: currentItem }) => currentItem),
         Match.orElse(() => null),

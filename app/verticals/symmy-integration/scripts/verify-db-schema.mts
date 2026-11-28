@@ -239,11 +239,11 @@ const verification = Effect.gen(function* verifySymmySchema() {
           and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_reservation()'))
         or (t.tgrelid = 'symmy_integration.membership_source_orders'::regclass
           and t.tgname = 'symmy_membership_order_bound_at_commit' and t.tgdeferrable and t.tginitdeferred
-          and t.tgtype = 5 -- row-level AFTER INSERT
+          and t.tgtype = 5 and t.tgqual is null -- unconditional row-level AFTER INSERT
           and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_binding()'))
         or (t.tgrelid = 'symmy_integration.job_routes'::regclass
           and t.tgname = 'symmy_job_routes_membership_contract'
-          and t.tgtype = 23 -- row-level BEFORE INSERT and UPDATE
+          and t.tgqual is null and cardinality(t.tgattr::smallint[])=0 and t.tgtype = 23 -- row-level BEFORE INSERT and UPDATE
           and t.tgfoid = to_regprocedure('symmy_integration.guard_symmy_membership_route()'))
       )) = 3 as enabled`;
   if (!(membershipLedger?.enabled ?? false)) {

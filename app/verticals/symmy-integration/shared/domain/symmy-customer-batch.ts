@@ -87,7 +87,11 @@ const [emailContact, phoneContact] = AddContactPointPayloadSchema.fields.contact
 const [postalAddress] = AddSavedAddressPayloadSchema.fields.origin.members[1].fields.postalAddress.schema.members;
 const candidate = CreatePartyPayloadSchema.fields.candidate.fields;
 const personName = candidate.firstName.schema;
-const customerId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const customerId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+  Schema.makeFilter((id) => id.isWellFormed() || 'Customer IDs must contain only Unicode scalar values'),
+);
 
 const SymmyCustomerAddressSchema = Schema.Struct({
   label: Schema.optionalKey(AddSavedAddressPayloadSchema.fields.label.schema),

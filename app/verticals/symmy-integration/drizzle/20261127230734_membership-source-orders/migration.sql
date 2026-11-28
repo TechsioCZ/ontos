@@ -149,10 +149,10 @@ BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('symmy-membership-order:' || v_lineage, 0));
   END IF;
   -- The ledger is the lineage's only issuer, so its own last order and time are the whole floor.
-  SELECT max(o.effective_at), coalesce(max(o.source_order), 0) + 1
-  INTO v_effective_at, v_order
+  SELECT o.effective_at, o.source_order + 1 INTO v_effective_at, v_order
   FROM symmy_integration.membership_source_orders o
-  WHERE o.tenant_id = p_tenant AND o.lineage_digest = v_lineage;
+  WHERE o.tenant_id = p_tenant AND o.lineage_digest = v_lineage ORDER BY o.source_order DESC LIMIT 1;
+  v_order := coalesce(v_order,1);
   v_effective_at := greatest(date_trunc('milliseconds', clock_timestamp()), v_effective_at);
   -- The reservation belongs to the admission's route and idempotency digest: only the job admitted under both binds it.
   -- Preflight projects the same customer identities but commits no order or intent.

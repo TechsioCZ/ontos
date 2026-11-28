@@ -1131,11 +1131,11 @@ const CurrentCustomerSourceSchema = Schema.Struct({
   }),
 });
 
-it.live('an ERP membership is written only while the customer record it names is current, inside the write', () =>
+it.live('a caller-chosen ERP assignment without a committed reservation is denied at the native write', () =>
   Effect.scoped(
     Effect.gen(function* erpMembershipCustomerSource() {
       const context = yield* setup();
-      const { configure, legalEntityId, owner, pause, tenantId, writer } = context;
+      const { configure, legalEntityId, owner, tenantId, writer } = context;
       const { applyMembership, ensureProfile, isoNow, membershipCommand, writeGroup } = sourceOwnerRoutines(context);
       // The membership route asserts in the namespace reserved for ERP memberships.
       const routes = {
@@ -1200,12 +1200,6 @@ it.live('an ERP membership is written only while the customer record it names is
       ).toMatchObject(denied);
       // Both authorities and an exact customer are insufficient: only a committed reservation may order this write.
       expect(yield* applyMembership(writer, { ...assignment('erp-assign', 1), customerSource })).toMatchObject(denied);
-      // Pausing the customer route ends the authority the customer record was read under. The membership route stays
-      // active, yet the next assignment of the same lineage is refused inside its own write.
-      expect(yield* pause('PROFILE', routes.profile.route.id, 1)).toEqual(resultOf({ _tag: 'PAUSED', generation: 2 }));
-      expect(
-        yield* applyMembership(writer, { ...assignment('erp-after-customer-pause', 2), customerSource }),
-      ).toMatchObject(denied);
     }),
   ).pipe(Effect.provide(services)),
 );

@@ -6,7 +6,8 @@ import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure
 import { seedMeasureExecutionNativeFixture } from '@app/privacy/testing/measure-execution-native';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { NodeChildProcessSpawner, NodeCrypto, NodeServices } from '@effect/platform-node';
-import type { PgClient } from '@effect/sql-pg';
+import { PgClient } from '@effect/sql-pg';
+import { matchTestCoreOutbox } from '@app/core-runtime/testing/owner-evidence';
 import { assert, expect, it } from 'effect-rstest';
 import { Cause, Duration, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient, HttpBody } from 'effect/http';
@@ -521,6 +522,12 @@ it.live(
         yield* fixture.worker.child.exitCode;
         const committed = (yield* fixture.submit('INTERNAL_RECONCILE_COMMITTED')).receipt.jobId;
         const unsent = (yield* fixture.submit('INTERNAL_RECONCILE_UNSENT')).receipt.jobId;
+        const runtime = yield* PgClient.make({
+          url: Redacted.make(fixture.isolated.connections.runtime.connectionString),
+        });
+        yield* matchTestCoreOutbox(fixture.snapshot.composition.revision).pipe(
+          Effect.provideService(PgClient.PgClient, runtime),
+        );
         const scheduleDelivery = (id: string, defer: boolean) =>
           fixture.admin`update core.outbox_deliveries d set available_at=clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end,claim_expires_at=case when d.status='processing' then clock_timestamp()+case when ${defer} then interval '1 hour' else interval '0' end else d.claim_expires_at end from core.outbox_messages m where m.outbox_message_id=d.outbox_message_id and m.tenant_id=${fixture.tenantId} and d.worker_key='integration.symmy.execute-symmy-job' and d.status in ('pending','processing') and m.payload_json->>'jobId'=${id} returning d.outbox_delivery_id`;
         expect(yield* scheduleDelivery(unsent, true)).toHaveLength(1);
@@ -529,7 +536,7 @@ it.live(
         // transaction can commit; neither its invocation nor its owner receipt is manufactured or changed.
         yield* fixture.admin`create table public.retention_fixture_ack_gate(job_id uuid primary key)`;
         yield* fixture.admin`insert into public.retention_fixture_ack_gate values(${committed})`;
-        yield* fixture.admin`create function public.retention_fixture_defer_ack() returns trigger language plpgsql as $$ begin if exists(select from public.retention_fixture_ack_gate where job_id=NEW.job_id) then return null; end if; return NEW; end $$`;
+        yield* fixture.admin`create function public.retention_fixture_defer_ack() returns trigger language plpgsql as $$ begin if exists(select from public.retention_fixture_ack_gate where job_id=NEW.job_id) then raise exception 'Simulated loss of the private acknowledgement' using errcode='40001'; end if; return NEW; end $$`;
         yield* fixture.admin`create trigger retention_fixture_ack before update of state on symmy_integration.job_effects for each row when (NEW.state='settled') execute function public.retention_fixture_defer_ack()`;
         const initialCommands = (yield* observation(fixture.admin, fixture.tenantId, committed)).owner_commands;
         const firstWorker = yield* fixture.startWorker();
@@ -592,6 +599,10 @@ it.live(
           );
           const recovered = yield* observation(fixture.admin, fixture.tenantId, id);
           expect(recovered.settled).toBe(recovered.effects);
+          const accepted = yield* fixture.admin<{
+            accepted: boolean;
+          }>`select bool_and(e.outcome->>'status'='accepted_change' and e.outcome->>'effectId'=e.effect_id::text) as accepted from symmy_integration.job_effects e where e.job_id=${id} and e.tenant_id=${fixture.tenantId} and e.effect#>>'{ref,operation,entrypointKey}'='commerce.catalog.create-product'`;
+          expect(accepted).toEqual([{ accepted: true }]);
           expect(recovered.private_present).toBe(false);
           expect(Option.getOrNull(recovered.fence)).toBe('cancelled');
           expect(recovered.owner_commands).toBe(beforeRecovery + (id === unsent ? 1 : 0));

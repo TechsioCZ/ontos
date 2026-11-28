@@ -419,25 +419,34 @@ it.live(
         // An ERP membership names its customer by the customer id, so the customer route's standing authorization also
         // covers the current customer read: Shell's at admission and Commerce's again inside the membership write.
         // Renewing the route keeps its principals and grants; the read grant names a target kind, not a customer.
-        const customerPrivacy = yield* seedSourceProcessingNativeFixture({
-          connections: isolated.connections,
-          contexts: [customerIntakeContext(integration.principalId, fixture.flatSource, null)],
-          contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
-          controllerRef: 'internal:customer-conformance',
-          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-          governancePrincipalId: fixture.governancePrincipalId,
-          grants: [
-            {
-              allowTargetless: false,
-              consumerModuleId: commerceModuleId,
-              operation: 'customer-profile-source.read',
-              targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
-            },
-          ],
-          legalEntityId,
-          meaning: 'Current customer read for the ERP membership admission and its Commerce write',
-          tenantId,
-        });
+        const enrollCustomerGrant = () =>
+          seedSourceProcessingNativeFixture({
+            connections: isolated.connections,
+            contexts: [
+              customerIntakeContext(integration.principalId, fixture.flatSource, null),
+              {
+                ...customerIntakeContext(integration.principalId, fixture.flatSource, null),
+                authMethod: 'system',
+                principalId: systemId,
+              },
+            ],
+            contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
+            controllerRef: 'internal:customer-conformance',
+            dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+            governancePrincipalId: fixture.governancePrincipalId,
+            grants: [
+              {
+                allowTargetless: false,
+                consumerModuleId: commerceModuleId,
+                operation: 'customer-profile-source.read',
+                targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+              },
+            ],
+            legalEntityId,
+            meaning: 'Current customer read for the ERP membership admission and its Commerce write',
+            tenantId,
+          });
+        const customerPrivacy = yield* enrollCustomerGrant();
         // The membership route has its own standing policy, as the customer route has the one the customer fixture
         // seeds for the customer read. No membership, person or profile binding is seeded.
         const intakeContext = customerIntakeContext(integration.principalId, source, null);
@@ -820,6 +829,36 @@ it.live(
         yield* deniedWorker.child.kill();
         yield* deniedWorker.child.exitCode;
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
+        // Restore the customer grant and prove fresh intake before independently retiring membership authority.
+        yield* enrollCustomerGrant();
+        const probe = yield* submit(selectedCode, 'INTERNAL_VERIFIED_CUSTOMER_BEFORE_RETIREMENT');
+        expect(probe.status).toBe(202);
+        const prepared = yield* probe.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        const [pinnedCommand] = yield* pinnedMemberships(prepared.jobId);
+        assert.isDefined(pinnedCommand);
+        // Native guard control: the pending command is genuine, and both Privacy grants are still active.
+        // Temporarily pause only the Commerce customer route in this disposable transaction, then restore it.
+        yield* admin.withTransaction(
+          Effect.gen(function* exactReservedRouteProbe() {
+            yield* admin`select set_config('ontos.tenant_id',${tenantId},true),set_config('ontos.legal_entity_id',${legalEntityId},true)`;
+            const [job] = yield* admin<{
+              admission: string;
+            }>`select admission_invocation_id as admission from symmy_integration.import_jobs where job_id=${prepared.jobId} and tenant_id=${tenantId}`;
+            assert.isDefined(job);
+            const encoded = yield* Schema.encodeEffect(membershipAssignmentSchema)(pinnedCommand.payload);
+            expect(
+              yield* admin`select trust.hold_admitted_source_effect(${tenantId},${legalEntityId},${job.admission},'integration.symmy.admit-symmy-job',${membershipActionKey},${yield* json(encoded)}::jsonb) as exact`,
+            ).toEqual([{ exact: true }]);
+            yield* admin`savepoint before_customer_route_pause`;
+            expect(
+              yield* admin`update commerce_customer_context.customer_profile_source_routes set active=false where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and route_id=${fixture.sourceRouteId} and active returning route_id`,
+            ).toHaveLength(1);
+            expect(
+              yield* admin`select outcome from commerce_customer_context.apply_customer_group_membership_source(${tenantId},${legalEntityId},${systemId},gen_random_uuid(),clock_timestamp(),${yield* json({ ...encoded, _sourceAdmission: job.admission })}::jsonb)`,
+            ).toEqual([{ outcome: 'SOURCE_AUTHORITY_DENIED' }]);
+            yield* admin`rollback to savepoint before_customer_route_pause`;
+          }),
+        );
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: isolated.connections,
           governancePrincipalId: fixture.governancePrincipalId,

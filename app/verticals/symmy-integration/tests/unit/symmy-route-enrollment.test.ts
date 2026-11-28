@@ -357,11 +357,12 @@ describe('Symmy route inventories', () => {
     expect(executorReads(erp)).toContain('commerce.customer-context.api.customer-profile-source');
     expect(codes(erp)).toEqual([]);
     expect(symmyPlannedRouteRow(erp).fixtureIds).toEqual(['ERP_MEMBERSHIP_V1']);
-    // The reserved namespace means nothing on any other route: only the membership route's ledger orders it.
+    // The reserved namespace cannot be enrolled on other routes, before any SQL is issued.
     const [customer] = valid.customersBatch().configuration.items;
-    expect(
-      symmyPlannedRouteRow(withConfiguration('customersBatch', { items: [reserved(customer)] })).fixtureIds,
-    ).toEqual(['INTERNAL_C14']);
+    expect(codes(withConfiguration('customersBatch', { items: [reserved(customer)] }))).toContain(
+      'configuration_field_not_allowed',
+    );
+    expect(codes(request('customersBatch'))).toEqual([]);
   });
   it('inventories dynamic stock resolution and names no inventory for an operator fixture route', () => {
     const stock = symmyRouteInventoryOf('inventoryStockBatch');

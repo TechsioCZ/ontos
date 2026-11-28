@@ -293,7 +293,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
       return result.currentAdmission;
     },
   );
-  const admitItem = Effect.fn('CustomerProfileSourceRead.admitItem')(function* admitItem(
+  const requireItemScope = Effect.fn('CustomerProfileSourceRead.requireItemScope')(function* requireItemScope(
     item: CustomerProfileSourceItem,
   ) {
     yield* requireModuleOperation(requirements.privacy).pipe(Effect.mapError(unavailable));
@@ -304,6 +304,11 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
     ) {
       return yield* unavailable();
     }
+    return yield* Effect.void;
+  });
+  const admitItem = Effect.fn('CustomerProfileSourceRead.admitItem')(function* admitItem(
+    item: CustomerProfileSourceItem,
+  ) {
     const currentAdmission = yield* currentAdmissionForItem(item);
     if (
       currentAdmission.partyRef.resourceId !== item.partyRef.resourceId ||
@@ -318,6 +323,7 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
   const checkItem = Effect.fn('CustomerProfileSourceRead.checkItem')(function* checkItem(
     item: CustomerProfileSourceItem,
   ) {
+    yield* requireItemScope(item);
     const currentAdmission = yield* admitItem(item);
     yield* privacyCheck(item.source, item, SOURCE_READ_ROUTINE_KEY);
     return currentAdmission;
@@ -326,11 +332,13 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
   const checkRefusableItem = Effect.fn('CustomerProfileSourceRead.checkRefusableItem')(function* checkRefusableItem(
     item: CustomerProfileSourceItem,
   ) {
-    const currentAdmission = yield* admitItem(item);
+    yield* requireItemScope(item);
+    // Ask Privacy before resolving further personal data at Party. After a customer-only grant end,
+    // its definitive REFUSED is not a transient failure to obtain the dependent Party projection.
     yield* privacyDecision(item.source, item, SOURCE_READ_ROUTINE_KEY).pipe(
       Effect.mapError(customerProfileSourcePrivacyFailure),
     );
-    return currentAdmission;
+    return yield* admitItem(item);
   });
   const checkOriginalRecovery = Effect.fn('CustomerProfileSourceRead.checkOriginalRecovery')(
     function* checkOriginalRecovery(

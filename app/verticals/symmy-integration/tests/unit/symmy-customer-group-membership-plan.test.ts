@@ -283,6 +283,12 @@ describe('Symmy group membership plan from the public customers', () => {
   it.effect('names a customer by the same source record the customers plan derives from its customer id', () =>
     Effect.gen(function* sharesCustomerRecord() {
       const book = ledger();
+      expect(Schema.decodeUnknownOption(SymmyGroupCustomerRowsSchema)([{ customerId: '\uD800' }])).toEqual(
+        Option.none(),
+      );
+      expect(Option.isSome(Schema.decodeUnknownOption(SymmyGroupCustomerRowsSchema)([{ customerId: '\uFFFD' }]))).toBe(
+        true,
+      );
       const literalInDerivedForm = `symmy-customer:${'a'.repeat(64)}`;
       const ids = ['customer-1', 'x'.repeat(200), 'ž'.repeat(201), ' padded ', 'e\u0301', 'é', literalInDerivedForm];
       const template = Schema.decodeUnknownSync(SymmyFixtureExecutionPlanSchema)({

@@ -569,6 +569,12 @@ export const symmyRouteRequestRefusals = (
       'Catalog readiness is a Product route policy with the tenant-local Inventory Unit',
     ),
     ...selectorRefusals(request, inventory),
+    ...refuseWhen(
+      request.routeKey !== 'customerGroupCustomersBatch' &&
+        configuration.items.some(({ source }) => isSymmyErpMembershipNamespace(source.sourceNamespace)),
+      'configuration_field_not_allowed',
+      'Only an ERP membership route may enroll the ledger namespace',
+    ),
     ...enrolled.flatMap(({ entityKind, operation }) => {
       const listed = inventory.operations.find((candidate) => sameOperation(candidate, operation));
       if (listed === undefined) {
