@@ -582,9 +582,12 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
       expect(yield* admin.select().from(symmyMembershipSourceOrders)).toEqual([]);
       expect(yield* retainedJobs).toEqual(beforeJobs);
       // Use PostgreSQL's actual spelling. A reversed predicate still names the tag but must fail readiness.
-      const [reservation] = yield* admin.execute<{ definition: string }>(
-        sql`select pg_get_triggerdef(oid) as definition from pg_trigger where tgname='symmy_membership_reservation_at_commit' and tgrelid='symmy_integration.job_effects'::regclass`,
-      );
+      const [reservation] = yield* admin
+        .select({ definition: sql<string>`pg_get_triggerdef(oid)` })
+        .from(sql`pg_catalog.pg_trigger`)
+        .where(
+          sql`tgname='symmy_membership_reservation_at_commit' and tgrelid='symmy_integration.job_effects'::regclass`,
+        );
       assert.isDefined(reservation);
       expect(reservation.definition).toContain(MEMBERSHIP_RESERVATION_WHEN);
       expect(
