@@ -16,7 +16,8 @@ const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
-const tsrsCompilerInstance = resolveEffectTsrsCompiler({
+// UltraModern .17's source inspector recognizes this binding by name; its executable is tsrs.
+const tsgoCompilerInstance = resolveEffectTsrsCompiler({
   from: import.meta.url,
 });
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
@@ -25,7 +26,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   dts: {
     displayErrorInTerminal: true,
-    generateTypes: { compilerInstance: tsrsCompilerInstance },
+    generateTypes: { compilerInstance: tsgoCompilerInstance },
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
