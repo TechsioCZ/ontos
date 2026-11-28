@@ -1762,7 +1762,7 @@ it('keeps every check in the source, unit or format gates without repeating the 
   const typecheck = readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
     ({ name }) => name === 'Typecheck the workspace',
   );
-  expect(typecheck?.env).toEqual({ GOMEMLIMIT: '4GiB', ULTRAMODERN_TYPECHECK_BUILDERS: '1' });
+  expect(typecheck?.env).toEqual({ ULTRAMODERN_TYPECHECK_BUILDERS: '1' });
   const apiAndGeneration =
     readGateCommandJobs()[FORMAT_AND_LINT_JOB].steps.find(
       ({ name }) => name === 'Check OntOS APIs and generator behavior',
