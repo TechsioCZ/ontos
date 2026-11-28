@@ -13,6 +13,7 @@ import type {
 import { Schema } from 'effect';
 
 import type { ConsentDecision } from './privacy-consent-decision.ts';
+import { comparePrivacyNoticeInstants } from './privacy-notice-version.ts';
 import {
   SourceRouteProcessingOperation,
   PrivacyApplicabilityAuthoritySchema,
@@ -171,6 +172,7 @@ const exactScopeIdentity = (scope: IntendedProcessingScope): string =>
 
 // The exact ledger retains the person and concrete operation, not the source route or a mapping from
 // old purpose, recipient and category identifiers to the new grant. Different labels cannot prove disjoint use.
+// Controller succession is not inferred: operators must reconcile outstanding interventions before enabling a successor.
 const couldCoverStandingUse = (
   scope: IntendedProcessingScope,
   intended: IntendedProcessingScope,
@@ -178,6 +180,7 @@ const couldCoverStandingUse = (
 ) =>
   scope.operation !== SourceRouteProcessingOperation &&
   scope.operation === use.operation &&
+  scope.controllerRef === intended.controllerRef &&
   scope.subjectRef.tenantId === intended.subjectRef.tenantId &&
   use.subjectIds.includes(scope.subjectRef.resourceId);
 
@@ -187,19 +190,28 @@ const currentExactIntervention = (
   intendedScope: IntendedProcessingScope,
   asOf: string,
 ): PrivacyProcessingIntervention => {
-  const matching = interventions
-    .filter(
-      (intervention) =>
-        intervention.kind === kind &&
-        intervention.currentness.observedAt <= asOf &&
-        interventionScopeEquivalent(intervention.scope, intendedScope),
-    )
-    .toSorted((left, right) => right.currentness.observedAt.localeCompare(left.currentness.observedAt));
-  const current = matching.at(0);
-  const sameTime = matching.filter(
-    ({ currentness: observed }) => observed.observedAt === current?.currentness.observedAt,
+  let current: PrivacyProcessingIntervention | undefined;
+  let conflict = false;
+  const matching = interventions.filter(
+    (record) => record.kind === kind && interventionScopeEquivalent(record.scope, intendedScope),
   );
-  if (sameTime.length > 1 || (current !== undefined && !current.currentness.authoritative)) {
+  for (const record of matching) {
+    const { observedAt } = record.currentness;
+    const relativeToEvaluation = comparePrivacyNoticeInstants(observedAt, asOf);
+    if (relativeToEvaluation === undefined) {
+      conflict = true;
+      break;
+    }
+    if (relativeToEvaluation <= 0) {
+      const order =
+        current === undefined ? 1 : (comparePrivacyNoticeInstants(observedAt, current.currentness.observedAt) ?? 0);
+      if (order >= 0) {
+        current = record;
+        conflict = order === 0;
+      }
+    }
+  }
+  if (conflict || (current !== undefined && !current.currentness.authoritative)) {
     return {
       currentness: { authoritative: false, observedAt: asOf, revision: 'conflict', sourceRef: INTERVENTIONS_SOURCE },
       interventionRef: `privacy-${kind.toLowerCase()}:unresolved:${intendedScope.processingScopeRef.scopeId}`,
