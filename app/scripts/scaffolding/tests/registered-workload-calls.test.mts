@@ -80,6 +80,9 @@ const expectOneRecoveryPerLostWrite = (
     ['catalog', 'commerce.catalog.update-product-recovery.read', 'commerce.catalog.update-product'],
     [partyRegistry, partySourceEffectReceipt, 'party.registry.create-party'],
     [partyRegistry, partySourceEffectReceipt, 'party.registry.update-party'],
+    [partyRegistry, partySourceEffectReceipt, 'party.registry.add-contact-point'],
+    [partyRegistry, partySourceEffectReceipt, 'party.registry.update-contact-point'],
+    [partyRegistry, partySourceEffectReceipt, 'party.registry.end-contact-point'],
     [partyRegistry, partySourceEffectReceipt, 'party.registry.counterparty-customer-onboard'],
     [
       customerContext,
@@ -107,6 +110,71 @@ const expectOneRecoveryPerLostWrite = (
     ).map(({ entrypoint }) => entrypoint.entrypointKey);
     expect(actions, write).toContain(write);
     expect(actions, write).not.toContain(recoveries[0]?.entrypointKey);
+  }
+};
+
+/** Contact lifecycle enrollment is worker-only, with one exact optional-scope recovery per native write. */
+const expectOptionalContactLifecycle = (contracts: readonly Contract[]) => {
+  const calls =
+    contracts.find(({ deployment }) => deployment.appId === symmyIntegration)?.manifest.registeredWorkloadCalls ?? [];
+  for (const [declarationKey, actionKey] of [
+    ['party.registry.contact-point.update', 'party.registry.update-contact-point'],
+    ['party.registry.contact-point.end', 'party.registry.end-contact-point'],
+  ] as const) {
+    const writes = calls.filter((call) => call.declarationKey === declarationKey);
+    const recoveries = calls.filter(
+      (call) => call.declarationKey === partySourceEffectReceipt && call.recoveryOf?.actionKey === actionKey,
+    );
+    const common = {
+      audience: partyRegistry,
+      jobKey: symmyJob,
+      legalEntityScope: 'optional',
+      schemaVersion: '1',
+      workerKey: symmyJob,
+    };
+    expect(writes).toEqual([
+      {
+        ...common,
+        declarationKey,
+        entrypointKey: actionKey,
+        workloadKey: 'party.registry.source-write',
+      },
+    ]);
+    expect(recoveries).toEqual([
+      {
+        ...common,
+        allowHistoricalDeliveryRecovery: true,
+        declarationKey: partySourceEffectReceipt,
+        entrypointKey: 'party.registry.api.party-source-effect-receipt',
+        recoveryOf: { actionKey, jobKey: symmyJob },
+        workloadKey: 'party.registry.source-read',
+      },
+    ]);
+    // Action contracts publish legal scope; Read operation contracts publish version and workload carrier only.
+    for (const call of writes) {
+      expect(
+        refusal(
+          replacingCalls(contracts, symmyIntegration, [
+            ...calls.filter((candidate) => candidate !== call),
+            { ...call, legalEntityScope: 'required' },
+          ]),
+        ),
+      ).toContain(`${call.declarationKey} with scope optional, not required`);
+    }
+    for (const call of recoveries) {
+      const others = calls.filter((candidate) => candidate !== call);
+      expect(
+        refusal(replacingCalls(contracts, symmyIntegration, [...others, { ...call, schemaVersion: '9' }])),
+      ).toContain('the receiver publishes no such operation version');
+      expect(
+        refusal(
+          replacingCalls(contracts, symmyIntegration, [
+            ...others,
+            { ...call, workloadKey: 'party.registry.source-write' },
+          ]),
+        ),
+      ).toContain('the receiver does not declare');
+    }
   }
 };
 
@@ -286,6 +354,7 @@ it.live(
       ).toMatch(/symmy-integration .*party\.registry\.party\.create with scope optional, not required/u);
 
       expectOneRecoveryPerLostWrite(built);
+      expectOptionalContactLifecycle(contracts);
     }),
   { timeout: 600_000 },
 );

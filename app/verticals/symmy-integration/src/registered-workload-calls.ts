@@ -55,9 +55,11 @@ const partyRegistryAddContactPoint = 'party.registry.add-contact-point';
 const partyRegistryApiPartySourceEffectReceipt = 'party.registry.api.party-source-effect-receipt';
 const partyRegistryCounterpartyCustomerOnboard = 'party.registry.counterparty-customer-onboard';
 const partyRegistryCreateParty = 'party.registry.create-party';
+const partyRegistryEndContactPoint = 'party.registry.end-contact-point';
 const partyRegistryPartySourceEffectReceiptRead = 'party.registry.party-source-effect-receipt.read';
 const partyRegistrySourceRead = 'party.registry.source-read';
 const partyRegistrySourceWrite = 'party.registry.source-write';
+const partyRegistryUpdateContactPoint = 'party.registry.update-contact-point';
 const partyRegistryUpdateParty = 'party.registry.update-party';
 const priceGroupCatalog = 'price-group-catalog';
 const pricingPriceGroupCatalogApiPriceGroupResultLookup = 'pricing.price-group-catalog.api.price-group-result-lookup';
@@ -500,6 +502,51 @@ export const symmyIntegrationRegisteredWorkloadCalls = [
     jobKey: integrationSymmyExecuteSymmyJob,
     legalEntityScope: 'optional',
     recoveryOf: { actionKey: partyRegistryAddContactPoint, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceRead,
+  },
+  // Native proof: symmy-c14-contact-lifecycle-conformance.test.mts (CI execution pending).
+  {
+    audience: partyRegistry,
+    declarationKey: 'party.registry.contact-point.update',
+    entrypointKey: partyRegistryUpdateContactPoint,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceWrite,
+  },
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryPartySourceEffectReceiptRead,
+    entrypointKey: partyRegistryApiPartySourceEffectReceipt,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryUpdateContactPoint, jobKey: integrationSymmyExecuteSymmyJob },
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceRead,
+  },
+  {
+    audience: partyRegistry,
+    declarationKey: 'party.registry.contact-point.end',
+    entrypointKey: partyRegistryEndContactPoint,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    schemaVersion: '1',
+    workerKey: integrationSymmyExecuteSymmyJob,
+    workloadKey: partyRegistrySourceWrite,
+  },
+  {
+    allowHistoricalDeliveryRecovery: true,
+    audience: partyRegistry,
+    declarationKey: partyRegistryPartySourceEffectReceiptRead,
+    entrypointKey: partyRegistryApiPartySourceEffectReceipt,
+    jobKey: integrationSymmyExecuteSymmyJob,
+    legalEntityScope: 'optional',
+    recoveryOf: { actionKey: partyRegistryEndContactPoint, jobKey: integrationSymmyExecuteSymmyJob },
     schemaVersion: '1',
     workerKey: integrationSymmyExecuteSymmyJob,
     workloadKey: partyRegistrySourceRead,
