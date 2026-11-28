@@ -1,6 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import {
   SaveBar,
   dialogCloseLabel,
@@ -14,11 +14,20 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { DateTime, Effect, Option } from 'effect';
+import {
+  FlaggedTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { useEffect, useRef, useState } from 'react';
 import type { AccountingExport, Invoice } from '../../../../shared/apis/records.ts';
 import { outcomeMessage } from './finance-ui.tsx';
@@ -94,11 +103,7 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
             <li className="flex items-start gap-100" key={step}>
               <span
                 aria-hidden
-                className="mt-[5px] size-[10px] shrink-0 rounded-full"
-                style={{
-                  background: reached(step) ? 'var(--color-success)' : 'transparent',
-                  border: `2px solid ${reached(step) ? 'var(--color-success)' : 'var(--color-fg-secondary)'}`,
-                }}
+                className={`mt-[5px] size-2.5 shrink-0 rounded-full border-2 ${reached(step) ? 'border-success bg-success' : 'border-fg-secondary bg-transparent'}`}
               />
               <span className="flex min-w-0 flex-col">
                 <span className={reached(step) ? 'font-medium' : 'text-fg-secondary'}>
@@ -199,12 +204,13 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
             <ul className="flex flex-col divide-y divide-border-primary">
               {settlement.entries.map((entry) => (
                 <li className="flex flex-wrap items-center justify-between gap-100 py-50" key={entry.invoiceResourceId}>
-                  <a
-                    className="inline-flex items-center gap-50 font-medium underline"
+                  <Link
+                    className="inline-flex items-center gap-50 font-medium"
                     href={`?resourceId=${encodeURIComponent(entry.invoiceResourceId)}`}
+                    size="current"
                   >
                     {entry.number}
-                  </a>
+                  </Link>
                   <span className="tabular-nums">− {formatMoney(entry.amountMinor)}</span>
                 </li>
               ))}
@@ -237,9 +243,68 @@ export const PriorSettlementCard = (props: { readonly invoice: Invoice; readonly
   );
 };
 
-/** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
-const invalidField = (invalid: boolean, message: string) =>
-  invalid ? { helpText: message, validateStatus: 'error' as const } : {};
+/** The help text of a field the terms rule marks invalid. */
+const hintWhen = (invalid: boolean, message: string) => (invalid ? message : undefined);
+
+/** The terms as typed; the record draft below owns the save, the form only shows and edits them. */
+const paymentTermsForm = FormReact.make(
+  FormBuilder.empty
+    .addField('lateAmount', Schema.String)
+    .addField('lateText', Schema.String)
+    .addField('skontoAmount', Schema.String)
+    .addField('skontoText', Schema.String),
+  {
+    fields: {
+      lateAmount: FlaggedTextField,
+      lateText: FlaggedTextField,
+      skontoAmount: FlaggedTextField,
+      skontoText: FlaggedTextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+/** Exactly the same text in every field; the draft's own equality ignores surrounding spaces. */
+const sameText = (left: PaymentTermsDraft, right: PaymentTermsDraft) =>
+  left.lateAmount === right.lateAmount &&
+  left.lateText === right.lateText &&
+  left.skontoAmount === right.skontoAmount &&
+  left.skontoText === right.skontoText;
+
+/**
+ * Keeps the form's values and the record draft the same: typing goes into the draft, and a draft the record replaced
+ * (Zahodit změny, Načíst aktuální verzi, a newer server version) goes back into the form.
+ */
+const DraftValues = ({
+  draft,
+  onTyped,
+}: {
+  readonly draft: PaymentTermsDraft;
+  readonly onTyped: (value: PaymentTermsDraft) => void;
+}) => {
+  const setValues = useAtomSet(paymentTermsForm.setValues);
+  const shown = useRef(draft);
+  // Reading the values links them to the form's state, so the subscription below hears every change.
+  useAtomValue(paymentTermsForm.values);
+  useAtomSubscribe(
+    paymentTermsForm.values,
+    (values) => {
+      if (Option.isSome(values) && !sameText(values.value, shown.current)) {
+        shown.current = values.value;
+        onTyped(values.value);
+      }
+    },
+    { immediate: false },
+  );
+  useEffect(() => {
+    if (!sameText(draft, shown.current)) {
+      shown.current = draft;
+      setValues(draft);
+    }
+  }, [draft, setValues]);
+  return null;
+};
 const AMOUNT_HINT = 'Zadejte číslo, např. 1 250 nebo 1 250,50.';
 const CONDITION_HINT = 'Ke schválené částce uveďte i sjednanou podmínku textem.';
 
@@ -304,8 +369,6 @@ const PaymentTermsDialog = ({
   }, [base, server, settledOnServer]);
   const { draft } = record;
   const problems = paymentTermsProblems(draft);
-  const change = (field: keyof PaymentTermsDraft) => (value: string) =>
-    record.setDraft((current) => ({ ...current, [field]: value }));
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const close = () => {
@@ -314,6 +377,7 @@ const PaymentTermsDialog = ({
   const labels = saveLabelsFor(language);
   const handleReloadLatest = record.reloadLatest;
   const handleSave = record.save;
+  const handleTyped = record.setDraft;
   return (
     <>
       <Dialog
@@ -338,49 +402,46 @@ const PaymentTermsDialog = ({
         size="md"
         title={`Skonto a úrok z prodlení · ${numberOf(invoice)}`}
       >
-        <div className="flex flex-col gap-150">
+        <FormRoot className="flex flex-col gap-150" defaultValues={draft} form={paymentTermsForm} translateMessage={t}>
+          <DraftValues draft={draft} onTyped={handleTyped} />
           {error !== undefined && (
             <StatusText showIcon size="sm" status="error">
               {error}
             </StatusText>
           )}
-          <FormInput
+          <paymentTermsForm.skontoText
+            helpText={hintWhen(problems.skontoText, CONDITION_HINT)}
             id="terms-skonto-text"
+            invalid={problems.skontoText}
             label={t('finance-billing.financeUi.paymentTerms.discountCondition')}
-            onChange={(event) => change('skontoText')(event.target.value)}
             placeholder={t('finance-billing.financeUi.paymentTerms.discountExample')}
             size="sm"
-            value={draft.skontoText}
-            {...invalidField(problems.skontoText, CONDITION_HINT)}
           />
-          <FormInput
+          <paymentTermsForm.skontoAmount
+            helpText={hintWhen(problems.skontoAmount, AMOUNT_HINT)}
             id="terms-skonto-amount"
             inputMode="decimal"
+            invalid={problems.skontoAmount}
             label={t('finance-billing.financeUi.paymentTerms.discountAmount')}
-            onChange={(event) => change('skontoAmount')(event.target.value)}
             size="sm"
-            value={draft.skontoAmount}
-            {...invalidField(problems.skontoAmount, AMOUNT_HINT)}
           />
-          <FormInput
+          <paymentTermsForm.lateText
+            helpText={hintWhen(problems.lateText, CONDITION_HINT)}
             id="terms-late-text"
+            invalid={problems.lateText}
             label={t('finance-billing.financeUi.paymentTerms.interestCondition')}
-            onChange={(event) => change('lateText')(event.target.value)}
             placeholder={t('finance-billing.financeUi.paymentTerms.interestExample')}
             size="sm"
-            value={draft.lateText}
-            {...invalidField(problems.lateText, CONDITION_HINT)}
           />
-          <FormInput
+          <paymentTermsForm.lateAmount
+            helpText={hintWhen(problems.lateAmount, AMOUNT_HINT)}
             id="terms-late-amount"
             inputMode="decimal"
+            invalid={problems.lateAmount}
             label={t('finance-billing.financeUi.paymentTerms.interestAmount')}
-            onChange={(event) => change('lateAmount')(event.target.value)}
             size="sm"
-            value={draft.lateAmount}
-            {...invalidField(problems.lateAmount, AMOUNT_HINT)}
           />
-        </div>
+        </FormRoot>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

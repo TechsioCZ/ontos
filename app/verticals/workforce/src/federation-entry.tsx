@@ -15,12 +15,12 @@ const WorkforceRouteContent = () => {
 
   return (
     <section
-      className="workforce:rounded-2xl workforce:bg-white/90 workforce:p-5 workforce:shadow-xl workforce:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalWorkforce"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="workforce:text-2xl workforce:font-black">{t('workforce.title')}</h2>
-      <p className="workforce:mt-2 workforce:text-stone-600">{t('workforce.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('workforce.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('workforce.routeSurface')}</p>
     </section>
   );
 };

@@ -232,6 +232,14 @@ beforeEach(() => {
   accessReads.length = 0;
 });
 
+/** A choice of the open dialog is picked from its list: the kit select opens on its trigger. */
+const chooseOption = (user: ReturnType<typeof userEvent.setup>, name: string, option: string) =>
+  Effect.gen(function* pickOption() {
+    const dialog = yield* Effect.promise(() => screen.findByRole('dialog'));
+    yield* Effect.promise(async () => await user.click(within(dialog).getByRole('combobox', { name })));
+    yield* Effect.promise(async () => await user.click(await within(dialog).findByRole('option', { name: option })));
+  });
+
 /** Row actions live in the compact ⋯ menu of each row. */
 const chooseRowAction = (user: ReturnType<typeof userEvent.setup>, name: string, action: string) =>
   Effect.gen(function* rowAction() {
@@ -258,7 +266,7 @@ it.live('invites a person by email and explicit affiliation, never by principal 
     expect(screen.queryByLabelText('Druh přihlášení')).toBeNull();
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Jméno a příjmení/u), 'Jana Nováková'));
     yield* Effect.promise(() => user.type(screen.getByLabelText(/E-mail/u), 'jana@example.test'));
-    yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Zařazení ve firmě'), 'external'));
+    yield* chooseOption(user, 'Zařazení ve firmě', 'Externí osoba');
     // Typing sends nothing; the one shared Save button sends the invitation once.
     yield* networkIdle;
     expect(invites).toHaveLength(0);
@@ -339,7 +347,7 @@ it.live('confirms a committed membership change from the organisation row it rea
     });
     yield* render(<PeoplePanel companyId={companyId} />);
     yield* chooseRowAction(user, person.displayName, 'Upravit členství');
-    yield* Effect.promise(() => user.selectOptions(screen.getByLabelText('Stav členství'), 'departed'));
+    yield* chooseOption(user, 'Stav členství', 'Odešel / odešla');
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Odchod z firmy'));
     listAnswer = Schema.decodeUnknownSync(PeopleListResponseSchema)({
       ...list,
@@ -380,7 +388,7 @@ it.live('assigns a named canonical role by its identity, never by a role key', (
     yield* chooseRowAction(user, person.displayName, 'Spravovat role');
     expect(screen.queryByLabelText('Klíč role')).toBeNull();
     expect(screen.queryByText(/SpiceDB/u)).toBeNull();
-    yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
+    yield* chooseOption(user, 'Role', 'Obchodník');
     yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí klientů'));
     yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
     yield* waitUntil(() => roles.length === 1);
@@ -438,7 +446,7 @@ it.live('uses Czech cardinal forms as pending canonical role changes accumulate'
       ['1 změna.', '2 změny.', '3 změny.', '4 změny.', '5 změn.'],
       Effect.fn(function* advancePendingCount(expected: string) {
         yield* chooseRowAction(user, person.displayName, 'Spravovat role');
-        yield* Effect.promise(() => user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), roleId));
+        yield* chooseOption(user, 'Role', 'Obchodník');
         yield* Effect.promise(() => user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy'));
         yield* Effect.promise(() => user.click(screen.getByRole('button', { name: labels.save })));
         const matchesExpectedCount = (text: string) => text.startsWith(`Zpracovává se ${expected}`);

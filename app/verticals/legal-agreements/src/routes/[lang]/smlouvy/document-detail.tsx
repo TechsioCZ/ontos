@@ -4,6 +4,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Contract, Document } from '../../../../shared/apis/records.ts';
 import type { AgreementDocumentFound, AgreementDocumentState, AgreementSelectorIssue } from './document-selection.ts';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 interface DocumentDetailLabels {
   readonly archived: string;
@@ -156,8 +157,8 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
         </LinkButton>
       </div>
       <PageHeader description={document.kind} title={document.title} />
-      <div className="legalagreements:grid legalagreements:grid-cols-1 legalagreements:items-start legalagreements:gap-6 legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="legalagreements:min-w-0 legalagreements:space-y-6">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0 space-y-6">
           <SectionCard title={labels.document}>
             <DetailList
               items={[
@@ -170,12 +171,10 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
           </SectionCard>
           <SectionCard title={labels.parent}>
             {parent === undefined ? (
-              <p className="legalagreements:text-sm">{labels.unlinked}</p>
+              <p className="text-sm">{labels.unlinked}</p>
             ) : (
-              <div className="legalagreements:space-y-4">
-                <p className="legalagreements:text-sm legalagreements:font-medium">
-                  {parent.subject ?? labels.kinds[parent.kind]}
-                </p>
+              <div className="space-y-4">
+                <p className="text-sm font-medium">{parent.subject ?? labels.kinds[parent.kind]}</p>
                 <DetailList
                   items={[
                     { label: labels.contractKind, value: labels.kinds[parent.kind] },
@@ -186,19 +185,20 @@ export const AgreementDocumentDetail = ({ archived, document, language, parent }
                     { label: labels.parentPeriod, value: contractPeriod(parent, labels) },
                   ]}
                 />
-                <a
-                  className="legalagreements:inline-flex legalagreements:items-center legalagreements:text-sm legalagreements:underline legalagreements:underline-offset-4"
+                <Link
+                  className="inline-flex items-center text-sm underline-offset-4"
                   href={`/${language}/smlouvy?resourceId=${parent.contractRef.resourceId}`}
+                  size="current"
                 >
                   {labels.openParent}
-                </a>
+                </Link>
               </div>
             )}
           </SectionCard>
         </div>
-        <div className="legalagreements:min-w-0 legalagreements:space-y-6">
+        <div className="min-w-0 space-y-6">
           <SectionCard title={labels.status}>
-            <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
+            <div className="flex flex-wrap gap-2">
               <Badge severity={document.lifecycleState === 'ARCHIVED' ? 'neutral' : 'success'} size="sm">
                 {labels.documentLifecycle[document.lifecycleState]}
               </Badge>

@@ -1,135 +1,195 @@
-// The market definition and price-list fields, shared by "Nový trh", "Upravit" and the price-list editor.
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import type { MarketChannel } from './eshops-model.ts';
-import type {
-  DefinitionField,
-  JurisdictionKind,
-  MarketDefinitionForm,
-  MarketPricingForm,
-  PricingField,
+// The market definition and price-list fields, shared by "Nový trh", "Upravit" and the price-list editor. Each form
+// that shows them builds its effect-form state from the field groups below and renders its own controls here.
+import {
+  ChoiceField,
+  FormRootError,
+  MemberCheckboxField,
+  TextField,
+  UpperCaseTextField,
+  fromPayload,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { FormBuilder, FormReact, PayloadFormFields } from '@app/core-runtime/ui/form';
+import { Option } from 'effect';
+import type { Atom } from 'effect/reactivity';
+import { useEffect, useState } from 'react';
+import type { ComponentProps, FC } from 'react';
+import {
+  jurisdictionKinds,
+  MarketDefinitionInputSchema,
+  MarketPricingInputSchema,
+  marketChannels,
+  marketCurrencies,
+  offerModes,
 } from './market-form.ts';
-import { jurisdictionKinds, marketChannels, marketCurrencies, offerModes, reasonValid } from './market-form.ts';
 import { useMarketText } from './market-ui.tsx';
 
-const item = (value: string, label: string) => ({ displayValue: label, label, value });
+/** The definition fields of a market form, each checked by the definition rules. */
+export const definitionFields: FormBuilder.FormBuilder<
+  PayloadFormFields<typeof MarketDefinitionInputSchema.fields>,
+  never
+> = fromPayload(MarketDefinitionInputSchema);
+/** The binding of each definition field. */
+export interface DefinitionBindings {
+  readonly channels: typeof MemberCheckboxField;
+  readonly code: typeof UpperCaseTextField;
+  readonly jurisdictionCodes: typeof TextField;
+  readonly jurisdictionKind: typeof ChoiceField;
+  readonly locales: typeof TextField;
+  readonly purpose: typeof TextField;
+  readonly validFrom: typeof TextField;
+  readonly validTo: typeof TextField;
+}
+export const definitionControls: DefinitionBindings = {
+  channels: MemberCheckboxField,
+  code: UpperCaseTextField,
+  jurisdictionCodes: TextField,
+  jurisdictionKind: ChoiceField,
+  locales: TextField,
+  purpose: TextField,
+  validFrom: TextField,
+  validTo: TextField,
+};
 
-const errorProps = (shown: boolean, message: string) =>
-  shown ? { helpText: message, validateStatus: 'error' as const } : {};
+/** The price-list fields of a market form, each checked by the price-list rules. */
+export const pricingFields: FormBuilder.FormBuilder<
+  PayloadFormFields<typeof MarketPricingInputSchema.fields>,
+  never
+> = fromPayload(MarketPricingInputSchema);
+/** The binding of each price-list field. */
+export interface PricingBindings {
+  readonly currency: typeof ChoiceField;
+  readonly exchangeRate: typeof TextField;
+  readonly offerMode: typeof ChoiceField;
+  readonly roundingMinor: typeof TextField;
+}
+export const pricingControls: PricingBindings = {
+  currency: ChoiceField,
+  exchangeRate: TextField,
+  offerMode: ChoiceField,
+  roundingMinor: TextField,
+};
+
+/** The rendered controls of a built form for the given bindings. */
+type Controls<Bindings> = { readonly [Key in keyof Bindings]: FC<FormReact.ExtractExtraProps<Bindings[Key]>> };
+
+/** The parts of a built form whose checks the fields follow. */
+interface CheckedForm<Values> {
+  readonly validate: Atom.AtomResultFn<void, void>;
+  readonly validationCount: Atom.Atom<number>;
+  readonly values: Atom.Atom<Option.Option<Values>>;
+}
+
+/**
+ * Field messages follow the values: once `checking` turns true (the draft is invalid), the form is checked on every
+ * change, so each field names its own issue and drops it as soon as it is fixed. Render it inside the form's
+ * `FormRoot`.
+ */
+export const LiveChecks = <Values,>({
+  checking,
+  form,
+}: {
+  readonly checking: boolean;
+  readonly form: CheckedForm<Values>;
+}) => {
+  const validate = useAtomSet(form.validate);
+  const checked = useAtomValue(form.validationCount) > 0;
+  const values = Option.getOrNull(useAtomValue(form.values));
+  useEffect(() => {
+    if (values !== null && (checking || checked)) {
+      validate();
+    }
+  }, [checked, checking, validate, values]);
+  return null;
+};
+
+/** Rendered inside `FormRoot`, which renders its children only once this mount initialized the form. */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
+/**
+ * The form's values once this mount initialized them, `opened` until then: the atoms of a module-level form can still
+ * hold what an earlier mount left. Render `ready` inside the form's `FormRoot`.
+ */
+export const useOpenedValues = <Values,>(values: Atom.Atom<Option.Option<Values>>, opened: Values) => {
+  const [ready, setReady] = useState(false);
+  const shown = Option.getOrElse(
+    Option.filter(useAtomValue(values), () => ready),
+    () => opened,
+  );
+  return { ready: <FormReady onReady={setReady} />, values: shown };
+};
+
+const choice = (value: string, label: string) => ({ label, value });
 
 interface DefinitionFieldsProps {
   /** The market code is fixed once the market exists. */
   readonly codeEditable: boolean;
-  readonly form: MarketDefinitionForm;
-  readonly issues: readonly DefinitionField[];
-  readonly onChange: (form: MarketDefinitionForm) => void;
+  readonly form: Controls<typeof definitionControls> & ComponentProps<typeof FormRootError>['form'];
   readonly prefix: string;
-  /** Validation messages appear after the first submit attempt. */
-  readonly showIssues: boolean;
 }
 
-export const DefinitionFields = ({
-  codeEditable,
-  form,
-  issues,
-  onChange,
-  prefix,
-  showIssues,
-}: DefinitionFieldsProps) => {
+export const DefinitionFields = ({ codeEditable, form, prefix }: DefinitionFieldsProps) => {
   const { text } = useMarketText();
-  const shown = (field: DefinitionField) => showIssues && issues.includes(field);
-  const toggleChannel = (channel: MarketChannel, checked: boolean) =>
-    onChange({
-      ...form,
-      channels: checked ? [...form.channels, channel] : form.channels.filter((candidate) => candidate !== channel),
-    });
   return (
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-      <FormInput
+      <form.code
         disabled={!codeEditable}
+        helpText={text('form.codeHelp')}
         id={`${prefix}-code`}
         label={text('form.code')}
         maxLength={64}
         name="marketCode"
-        onChange={(event) => onChange({ ...form, code: event.target.value.toUpperCase() })}
-        value={form.code}
-        {...(shown('code') ? errorProps(true, text('form.codeError')) : { helpText: text('form.codeHelp') })}
       />
-      <FormInput
-        id={`${prefix}-purpose`}
-        label={text('form.purpose')}
-        maxLength={500}
-        name="purpose"
-        onChange={(event) => onChange({ ...form, purpose: event.target.value })}
-        value={form.purpose}
-        {...errorProps(shown('purpose'), text('form.purposeError'))}
-      />
+      <form.purpose id={`${prefix}-purpose`} label={text('form.purpose')} maxLength={500} name="purpose" />
       <fieldset className="flex flex-col gap-100 sm:col-span-2">
         <legend className="font-medium text-sm">{text('form.channels')}</legend>
         <div className="flex flex-wrap gap-200">
           {marketChannels.map((channel) => (
-            <FormCheckbox
-              checked={form.channels.includes(channel)}
+            <form.channels
               id={`${prefix}-channel-${channel}`}
               key={channel}
               label={text(`form.channel${channel}`)}
-              onCheckedChange={(checked: boolean) => toggleChannel(channel, checked)}
+              member={channel}
             />
           ))}
         </div>
-        {shown('channels') && <p className="text-danger text-sm">{text('form.channelsError')}</p>}
+        {/* The definition's one form-level issue is a missing channel. */}
+        <FormRootError form={form} />
       </fieldset>
-      <SelectTemplate
-        items={jurisdictionKinds.map((kind) => item(kind, text(`form.jurisdictionKind${kind}`)))}
+      <form.jurisdictionKind
+        items={jurisdictionKinds.map((kind) => choice(kind, text(`form.jurisdictionKind${kind}`)))}
         label={text('form.jurisdictionKind')}
-        name="jurisdictionKind"
-        onValueChange={(details: { readonly value: readonly string[] }) => {
-          const kind = jurisdictionKinds.find((candidate: JurisdictionKind) => candidate === details.value[0]);
-          if (kind !== undefined) {
-            onChange({ ...form, jurisdictionKind: kind });
-          }
-        }}
-        value={[form.jurisdictionKind]}
       />
-      <FormInput
+      <form.jurisdictionCodes
+        helpText={text('form.jurisdictionsHelp')}
         id={`${prefix}-jurisdictions`}
         label={text('form.jurisdictions')}
         name="jurisdictions"
-        onChange={(event) => onChange({ ...form, jurisdictionCodes: event.target.value })}
-        value={form.jurisdictionCodes}
-        {...(shown('jurisdictions')
-          ? errorProps(true, text('form.jurisdictionsError'))
-          : { helpText: text('form.jurisdictionsHelp') })}
       />
-      <FormInput
+      <form.locales
+        helpText={text('form.localesHelp')}
         id={`${prefix}-locales`}
         label={text('form.locales')}
         name="locales"
-        onChange={(event) => onChange({ ...form, locales: event.target.value })}
-        value={form.locales}
-        {...(shown('locales') ? errorProps(true, text('form.localesError')) : { helpText: text('form.localesHelp') })}
       />
       <div className="grid grid-cols-2 gap-200">
-        <FormInput
+        <form.validFrom
+          helpText={text('form.validFromHelp')}
           id={`${prefix}-valid-from`}
           label={text('form.validFrom')}
           name="validFrom"
-          onChange={(event) => onChange({ ...form, validFrom: event.target.value })}
           type="date"
-          value={form.validFrom}
-          {...(shown('validFrom')
-            ? errorProps(true, text('form.validFromError'))
-            : { helpText: text('form.validFromHelp') })}
         />
-        <FormInput
+        <form.validTo
+          helpText={text('form.validToHelp')}
           id={`${prefix}-valid-to`}
           label={text('form.validTo')}
           name="validTo"
-          onChange={(event) => onChange({ ...form, validTo: event.target.value })}
           type="date"
-          value={form.validTo}
-          {...(shown('validTo') ? errorProps(true, text('form.validToError')) : { helpText: text('form.validToHelp') })}
         />
       </div>
     </div>
@@ -137,94 +197,40 @@ export const DefinitionFields = ({
 };
 
 interface PricingFieldsProps {
-  readonly form: MarketPricingForm;
-  readonly issues: readonly PricingField[];
-  readonly onChange: (form: MarketPricingForm) => void;
+  readonly form: Controls<typeof pricingControls>;
   readonly prefix: string;
-  readonly showIssues: boolean;
   /** The new-market dialog keeps md; the market detail section uses sm. */
   readonly size?: 'sm' | 'md';
 }
 
-export const PricingFields = ({ form, issues, onChange, prefix, showIssues, size = 'md' }: PricingFieldsProps) => {
+export const PricingFields = ({ form, prefix, size = 'md' }: PricingFieldsProps) => {
   const { text } = useMarketText();
-  const shown = (field: PricingField) => showIssues && issues.includes(field);
   return (
     <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-      <SelectTemplate
-        items={marketCurrencies.map((currency) => item(currency, currency))}
+      <form.currency
+        items={marketCurrencies.map((currency) => choice(currency, currency))}
         label={text('form.currency')}
-        name="currency"
-        onValueChange={(details: { readonly value: readonly string[] }) => {
-          const currency = marketCurrencies.find((candidate) => candidate === details.value[0]);
-          if (currency !== undefined) {
-            onChange({ ...form, currency });
-          }
-        }}
-        size={size}
-        value={[form.currency]}
       />
-      <SelectTemplate
-        items={offerModes.map((mode) => item(mode, text(`form.offerMode${mode}`)))}
+      <form.offerMode
+        items={offerModes.map((mode) => choice(mode, text(`form.offerMode${mode}`)))}
         label={text('form.offerMode')}
-        name="offerMode"
-        onValueChange={(details: { readonly value: readonly string[] }) => {
-          const mode = offerModes.find((candidate) => candidate === details.value[0]);
-          if (mode !== undefined) {
-            onChange({ ...form, offerMode: mode });
-          }
-        }}
-        size={size}
-        value={[form.offerMode]}
       />
-      <FormInput
+      <form.exchangeRate
+        helpText={text('form.exchangeRateHelp')}
         id={`${prefix}-rate`}
         inputMode="decimal"
         label={text('form.exchangeRate')}
         name="exchangeRate"
-        onChange={(event) => onChange({ ...form, exchangeRate: event.target.value })}
         size={size}
-        value={form.exchangeRate}
-        {...(shown('exchangeRate')
-          ? errorProps(true, text('form.exchangeRateError'))
-          : { helpText: text('form.exchangeRateHelp') })}
       />
-      <FormInput
+      <form.roundingMinor
+        helpText={text('form.roundingHelp')}
         id={`${prefix}-rounding`}
         inputMode="numeric"
         label={text('form.rounding')}
         name="roundingMinor"
-        onChange={(event) => onChange({ ...form, roundingMinor: event.target.value })}
         size={size}
-        value={form.roundingMinor}
-        {...(shown('roundingMinor')
-          ? errorProps(true, text('form.roundingError'))
-          : { helpText: text('form.roundingHelp') })}
       />
     </div>
-  );
-};
-
-interface ReasonFieldProps {
-  readonly id: string;
-  readonly label: string;
-  readonly onChange: (value: string) => void;
-  readonly showIssue: boolean;
-  readonly value: string;
-}
-
-/** The mandatory reason of a recorded change. */
-export const ReasonField = ({ id, label, onChange, showIssue, value }: ReasonFieldProps) => {
-  const { text } = useMarketText();
-  return (
-    <FormInput
-      id={id}
-      label={label}
-      maxLength={500}
-      name="reason"
-      onChange={(event) => onChange(event.target.value)}
-      value={value}
-      {...errorProps(showIssue && !reasonValid(value), text('form.reasonError'))}
-    />
   );
 };

@@ -12,21 +12,21 @@ const TABLE_ROWS = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8'] as const;
 export const ModulePageSkeleton = () => {
   const { t } = useModernI18n();
   return (
-    <div aria-busy="true" className="shell:flex shell:w-full shell:flex-col shell:gap-6" data-module-page-skeleton="">
-      <span className="shell:sr-only">{t('shell.moduleTarget.loading')}</span>
-      <Skeleton aria-hidden="true" className="shell:flex shell:w-full shell:flex-col shell:gap-6" isLoaded={false}>
-        <div className="shell:flex shell:flex-col shell:gap-2">
-          <Skeleton.Rectangle className="shell:h-8 shell:w-64 shell:max-w-full" />
-          <Skeleton.Rectangle className="shell:h-4 shell:w-96 shell:max-w-full" />
+    <div aria-busy="true" className="flex w-full flex-col gap-6" data-module-page-skeleton="">
+      <span className="sr-only">{t('shell.moduleTarget.loading')}</span>
+      <Skeleton aria-hidden="true" className="flex w-full flex-col gap-6" isLoaded={false}>
+        <div className="flex flex-col gap-2">
+          <Skeleton.Rectangle className="h-8 w-64 max-w-full" />
+          <Skeleton.Rectangle className="h-4 w-96 max-w-full" />
         </div>
-        <div className="shell:grid shell:grid-cols-2 shell:gap-4 shell:lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {STAT_TILES.map((tile) => (
-            <Skeleton.Rectangle className="shell:h-24 shell:w-full" key={tile} />
+            <Skeleton.Rectangle className="h-24 w-full" key={tile} />
           ))}
         </div>
-        <div className="shell:flex shell:flex-col shell:gap-2">
+        <div className="flex flex-col gap-2">
           {TABLE_ROWS.map((row) => (
-            <Skeleton.Rectangle className="shell:h-10 shell:w-full" key={row} />
+            <Skeleton.Rectangle className="h-10 w-full" key={row} />
           ))}
         </div>
       </Skeleton>

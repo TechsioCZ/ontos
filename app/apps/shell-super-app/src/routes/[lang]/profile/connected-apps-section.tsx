@@ -67,11 +67,17 @@ const RowActions = ({
   readonly onEdit: (c: ConnectionSummary) => void;
   readonly onRevoke: (c: ConnectionSummary) => void;
 }) => (
-  <div className="flex flex-wrap justify-end gap-100 [&_button]:whitespace-nowrap">
-    <Button appearance="outline" onClick={() => onEdit(connection)} severity="secondary" size="sm">
+  <div className="flex flex-wrap justify-end gap-100">
+    <Button
+      appearance="outline"
+      className="whitespace-nowrap"
+      onClick={() => onEdit(connection)}
+      severity="secondary"
+      size="sm"
+    >
       Upravit přístup
     </Button>
-    <Button onClick={() => onRevoke(connection)} severity="danger" size="sm">
+    <Button className="whitespace-nowrap" onClick={() => onRevoke(connection)} severity="danger" size="sm">
       Odpojit
     </Button>
   </div>
@@ -190,7 +196,7 @@ export const ConnectedAppsSection = () => {
   const connections = connectionsView?.connections ?? [];
 
   return (
-    <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full min-w-0 max-w-6xl gap-200 p-300">
+    <section className="surface-card grid w-full min-w-0 max-w-6xl gap-200 p-300">
       <div className="grid min-w-0 gap-100">
         <h2 className="font-semibold text-lg">Připojené aplikace</h2>
         <p className="text-fg-secondary text-sm">
@@ -280,7 +286,7 @@ export const ConnectedAppsSection = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li className="ontos-tile grid min-w-0 gap-150 rounded-md bg-surface p-200" key={c.grantId}>
+              <li className="grid min-w-0 gap-150 rounded-md bg-surface p-200" key={c.grantId}>
                 <AppIdentity connection={c} />
                 <Field label={t('shell.connect.company.title')}>{c.legalName}</Field>
                 <Field label={t('shell.profile.connections.acting')}>

@@ -4,12 +4,55 @@ import { CalendarDateSchema } from '@app/shared-contracts';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { OpportunityNoteSchema, OpportunityTitleSchema } from '../../../../../shared/model/opportunity.ts';
 import type { Opportunity, OpportunityLine } from '../../../../../shared/model/opportunity.ts';
-import { PartyIdSchema } from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import {
+  EmployeeIdSchema,
+  PartyIdSchema,
+} from '../../../../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
-import type { LineEntry } from './pipeline-line-editor.tsx';
-import { isSafeOpportunityAmount } from './pipeline-model.ts';
+import { isSafeOpportunityAmount, isValidQuantity } from './pipeline-model.ts';
 
 export type UpdateCommand = Extract<PipelineCommand, { _tag: 'UpdateOpportunity' }>;
+export type CreateCommand = Extract<PipelineCommand, { _tag: 'CreateOpportunity' }>;
+
+/** One product line of the draft, with the quantity typed into its row when that quantity cannot be used. */
+export interface LineEntry {
+  readonly invalidAmount?: boolean;
+  /**
+   * The number typed into the quantity field when it is not a whole number of at least 1. The field keeps showing
+   * it and the line reports it; `line` keeps the last valid quantity.
+   */
+  readonly invalidQuantity?: number;
+  readonly key: string;
+  readonly line: OpportunityLine;
+}
+
+/** The quantity a line's row shows: what was typed when it could not be used, else the line's own. */
+export const shownQuantity = (entry: LineEntry): number => entry.invalidQuantity ?? entry.line.quantity;
+
+/**
+ * The lines after a quantity was typed into the row `key`. A valid quantity updates the line; any other number stays
+ * as typed and is reported, never replaced. A field that is empty or mid-edit remains invalid until a valid quantity
+ * is entered.
+ */
+export const withQuantity = (lines: readonly LineEntry[], key: string, value: number): readonly LineEntry[] =>
+  lines.map((entry): LineEntry => {
+    if (entry.key !== key) {
+      return entry;
+    }
+    if (!isValidQuantity(value)) {
+      return { invalidQuantity: value, key: entry.key, line: entry.line };
+    }
+    const nextLine = { ...entry.line, quantity: value };
+    const nextLines = lines.map((item) => (item.key === key ? nextLine : item.line));
+    return isSafeOpportunityAmount(nextLines)
+      ? { key: entry.key, line: nextLine }
+      : { invalidAmount: true, invalidQuantity: value, key: entry.key, line: entry.line };
+  });
+
+/** Every line has a usable quantity and the total stays within range. */
+const linesValid = (lines: readonly LineEntry[]): boolean =>
+  lines.every((entry) => entry.invalidAmount !== true && entry.invalidQuantity === undefined) &&
+  isSafeOpportunityAmount(lines.map((entry) => entry.line));
 
 export interface FormDraft {
   /** Calendar date as typed; decoded to a CalendarDate only when sent. */
@@ -72,10 +115,7 @@ export const updateCommandOf = (id: Opportunity['id'], draft: FormDraft): Option
   const title = draft.title.trim();
   const note = draft.note.trim();
   const lines = draft.lines.map((entry) => entry.line);
-  const linesValid =
-    draft.lines.every((entry) => entry.invalidAmount !== true && entry.invalidQuantity === undefined) &&
-    isSafeOpportunityAmount(lines);
-  if (!isValidTitle(title) || !isValidNote(note) || !linesValid || draft.customerId === null) {
+  if (!isValidTitle(title) || !isValidNote(note) || !linesValid(draft.lines) || draft.customerId === null) {
     return Option.none();
   }
   return Option.all({
@@ -87,6 +127,32 @@ export const updateCommandOf = (id: Opportunity['id'], draft: FormDraft): Option
       id,
       patch: { expectedCloseDate, lines, note, partyId, title },
     })),
+  );
+};
+
+/** The CreateOpportunity of a complete, valid draft; none while a field is missing or invalid. */
+export const createCommandOf = (draft: FormDraft): Option.Option<CreateCommand> => {
+  const title = draft.title.trim();
+  const note = draft.note.trim();
+  if (!isValidTitle(title) || !isValidNote(note) || !linesValid(draft.lines) || draft.customerId === null) {
+    return Option.none();
+  }
+  const owner = draft.ownerId === null ? Option.none() : Schema.decodeOption(EmployeeIdSchema)(draft.ownerId);
+  return Option.all({
+    expectedCloseDate: Schema.decodeOption(CalendarDateSchema)(draft.closeText),
+    partyId: Schema.decodeOption(PartyIdSchema)(draft.customerId),
+  }).pipe(
+    Option.map(({ expectedCloseDate, partyId }): CreateCommand => {
+      const base: CreateCommand = {
+        _tag: 'CreateOpportunity',
+        expectedCloseDate,
+        lines: draft.lines.map((entry) => entry.line),
+        note,
+        partyId,
+        title,
+      };
+      return Option.isSome(owner) ? { ...base, ownerEmployeeId: owner.value } : base;
+    }),
   );
 };
 

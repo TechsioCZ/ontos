@@ -10,10 +10,19 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Schema } from 'effect';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import {
+  CheckboxSettingField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import { Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import csResource from '../../../../../locales/cs/commerce-market-catalog.json';
 import enResource from '../../../../../locales/en/commerce-market-catalog.json';
@@ -36,9 +45,8 @@ import {
   storefrontsData,
 } from '../../../../market-admin/page-data.ts';
 import type { WriteFailure } from '../../../../market-admin/page-data.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import '../../../index.css';
 
 const commerceMarketCatalogI18nResources = {
   cs: { 'commerce-market-catalog': csResource },
@@ -78,6 +86,57 @@ const useCompanyData = <A, E>(
   );
   useEffect(() => store.ensure(legalEntityId), [store, legalEntityId]);
   return snapshot;
+};
+
+/**
+ * The listing preference of one e-shop; every e-shop card has its own. Ticking changes only this form: the card's
+ * Save sends it, so the form itself is never submitted.
+ */
+const listingFormOf = Atom.family((_appId: string) => {
+  const form = FormReact.make(FormBuilder.empty.addField('mainSourceProductsOnly', Schema.Boolean), {
+    fields: { mainSourceProductsOnly: CheckboxSettingField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  });
+  return { form, preference: form.getFieldAtoms(form.fields.mainSourceProductsOnly) };
+});
+
+/**
+ * Keeps the checkbox and the card's draft one value: a tick changes the draft, and a draft that moves without a tick
+ * (a refresh, the latest version) moves the checkbox. Rendered inside the form, after it started.
+ */
+const ListingDraft = ({
+  appId,
+  draft,
+  onTick,
+}: {
+  readonly appId: string;
+  readonly draft: boolean;
+  readonly onTick: (value: boolean) => void;
+}) => {
+  const { preference } = listingFormOf(appId);
+  const ticked = useAtomValue(preference.value);
+  const setTicked = useAtomSet(preference.setValue);
+  useAtomSubscribe(
+    preference.value,
+    (next) => {
+      if (Option.isSome(next)) {
+        onTick(next.value);
+      }
+    },
+    { immediate: false },
+  );
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    if (Option.exists(ticked, (value) => value !== draft)) {
+      setTicked(draft);
+    }
+  }, [draft, setTicked, ticked]);
+  return null;
 };
 
 /** Whether the e-shop lists only main source products; it needs the merchandise settings read, which may be refused. */
@@ -123,7 +182,8 @@ export const StorefrontListingSetting = ({
     server: mainSourceProductsOnlyFor(settings.storefrontCatalogSettings ?? {}, appId),
   });
   const saving = record.status === 'saving';
-  const handleCheckedChange = record.setDraft;
+  const { form: listingForm } = listingFormOf(appId);
+  const handleTick = record.setDraft;
   const handleSave = record.save;
   const handleReload = () => {
     setFailure(null);
@@ -131,15 +191,20 @@ export const StorefrontListingSetting = ({
   };
   return (
     <div className="flex flex-col items-start gap-150 border-border-primary border-t pt-200">
-      <FormCheckbox
-        checked={record.draft}
-        disabled={saving}
-        helpText={text('eshops.listing.help')}
-        label={text('eshops.listing.label')}
-        name={`main-source-products-${appId}`}
-        onCheckedChange={handleCheckedChange}
-        readOnly={settings.canManageCatalog !== true}
-      />
+      <FormRoot
+        defaultValues={{ mainSourceProductsOnly: record.draft }}
+        form={listingForm}
+        translateMessage={(message) => text(message)}
+      >
+        <ListingDraft appId={appId} draft={record.draft} onTick={handleTick} />
+        <listingForm.mainSourceProductsOnly
+          disabled={saving}
+          helpText={text('eshops.listing.help')}
+          label={text('eshops.listing.label')}
+          name={`main-source-products-${appId}`}
+          readOnly={settings.canManageCatalog !== true}
+        />
+      </FormRoot>
       {settings.canManageCatalog === true && (
         <Button disabled={!record.canSave} onClick={handleSave} severity="primary" size="sm">
           {text(saving ? 'eshops.listing.saving' : 'eshops.listing.save')}

@@ -16,6 +16,7 @@ import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
@@ -307,13 +308,14 @@ const BuildingContents = ({
         <div className="flex flex-wrap items-center gap-100 text-sm">
           <span className="text-fg-secondary">{k('card.units')}</span>
           {units.map((unit) => (
-            <a
-              className="rounded-md border border-border-primary px-100 py-50 hover:bg-fill-hover"
+            <Link
+              className="rounded-md border border-border-primary px-100 py-50 text-inherit no-underline hover:bg-fill-hover"
               href={propertyHref(language, unit.id)}
               key={unit.id}
+              size="current"
             >
               {unit.label.split(' › ').at(-1)}
-            </a>
+            </Link>
           ))}
         </div>
       )}
@@ -322,25 +324,29 @@ const BuildingContents = ({
           const next = nextDueOf(entry);
           return (
             <li key={entry.id}>
-              <button
-                className="flex w-full flex-wrap items-center justify-between gap-100 py-100 text-left hover:bg-fill-hover"
+              <Button
+                className="block w-full py-100 text-left hover:bg-fill-hover"
+                composition
                 onClick={() => onOpenAsset(entry)}
-                type="button"
+                size="current"
+                unstyled
               >
-                <span className="flex min-w-0 flex-col">
-                  <span className="font-medium">{entry.name}</span>
-                  <span className="text-fg-secondary text-xs tabular-nums">
-                    {entry.inventoryNumber} · {entry.location?.label.split(' › ').at(-1) ?? ''}
+                <span className="flex flex-wrap items-center justify-between gap-100">
+                  <span className="flex min-w-0 flex-col">
+                    <span className="font-medium">{entry.name}</span>
+                    <span className="text-fg-secondary text-xs tabular-nums">
+                      {entry.inventoryNumber} · {entry.location?.label.split(' › ').at(-1) ?? ''}
+                    </span>
                   </span>
+                  {next?.nextDueOn === undefined ? (
+                    <span className="text-fg-secondary text-xs">{k('due.none')}</span>
+                  ) : (
+                    <Badge severity={dueBadgeVariant(dueState(next.nextDueOn, today))} size="sm">
+                      {`${next.title} · ${isoDateLabel(next.nextDueOn)}`}
+                    </Badge>
+                  )}
                 </span>
-                {next?.nextDueOn === undefined ? (
-                  <span className="text-fg-secondary text-xs">{k('due.none')}</span>
-                ) : (
-                  <Badge severity={dueBadgeVariant(dueState(next.nextDueOn, today))} size="sm">
-                    {`${next.title} · ${isoDateLabel(next.nextDueOn)}`}
-                  </Badge>
-                )}
-              </button>
+              </Button>
             </li>
           );
         })}
@@ -365,9 +371,13 @@ const AssetLocation = ({
     return asset.location.label;
   }
   return (
-    <a className="text-primary underline-offset-2 hover:underline" href={propertyHref(language, asset.location.id)}>
+    <Link
+      className="text-primary no-underline underline-offset-2 hover:underline"
+      href={propertyHref(language, asset.location.id)}
+      size="current"
+    >
       {asset.location.label}
-    </a>
+    </Link>
   );
 };
 
@@ -633,20 +643,20 @@ const AssetDetailContent = ({
     ),
     Match.when({ kind: 'view' }, () => (
       <Tabs appearance="line" onValueChange={setTab} value={tab}>
-        <Tabs.List style={{ overflowX: 'auto', whiteSpace: 'nowrap' }}>
-          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="card">
+        <Tabs.List className="overflow-x-auto whitespace-nowrap">
+          <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="card">
             {k('detail.tabs.card')}
           </Tabs.Trigger>
-          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="history">
+          <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="history">
             {k('detail.tabs.history', { count: (asset.events ?? []).length })}
           </Tabs.Trigger>
-          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="services">
+          <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="services">
             {k('detail.tabs.services', { count: (asset.services ?? []).length })}
           </Tabs.Trigger>
-          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
+          <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="depreciation">
             {k('detail.tabs.depreciation')}
           </Tabs.Trigger>
-          <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="documents">
+          <Tabs.Trigger className="shrink-0 whitespace-nowrap" value="documents">
             {k('detail.tabs.documents')}
           </Tabs.Trigger>
           <Tabs.Indicator />

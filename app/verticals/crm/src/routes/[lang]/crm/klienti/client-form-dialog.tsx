@@ -1,7 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { Effect } from 'effect';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Effect, Option, Schema } from 'effect';
 import { assignableSalespeople } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 // Create / edit a client (company or person). On create, contact persons can be entered right away (C01-01) and
@@ -13,20 +13,31 @@ import {
   UnsavedChangesDialog,
   dialogCloseLabel,
   foldSearchText,
+  requiredLabelFor,
   saveLabelsFor,
   surfaceTileClassName,
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome, SaveState } from '@app/admin-ui';
+import {
+  EntryTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  RichRadioField,
+  SelectTemplateField,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormTextarea, RadioGroup } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { useState } from 'react';
-import type { ComponentProps } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
@@ -35,7 +46,77 @@ import { clientSegments, segmentLabels } from './clients-model.ts';
 import { EMAIL, NONE, draftOf, patchOf, sameClientDraft, validClientDraft } from './client-draft.ts';
 import type { Draft } from './client-draft.ts';
 
-type InputHelp = Pick<ComponentProps<typeof FormInput>, 'helpText'>;
+const kinds = ['organization', 'person'] as const;
+const kindOf = (value: string): Draft['kind'] => kinds.find((kind) => kind === value) ?? 'organization';
+
+/** A text a person types; its check and message, when it has one, are the schema's. */
+const checkedText = (valid: (text: string) => boolean, message: string) =>
+  Schema.String.check(Schema.makeFilter((text: string) => valid(text.trim()) || message));
+
+/** One text per contact person of a new client, keyed by the contact's row. */
+const ContactTextsSchema = Schema.Record(Schema.String, Schema.String);
+
+/**
+ * The client as the panel edits it, and the contact persons of a new company, one record per contact field keyed by
+ * the contact's row. The field checks show their messages on the fields; Enter sends nothing (the form has no submit
+ * button): only Uložit does.
+ */
+const makeClientForm = () =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('address', Schema.String)
+      .addField('contactEmail', ContactTextsSchema)
+      .addField('contactName', ContactTextsSchema)
+      .addField('contactPhone', ContactTextsSchema)
+      .addField('contactRole', ContactTextsSchema)
+      .addField(
+        'email',
+        checkedText((email) => email === '' || EMAIL.test(email), 'Neplatný e-mail'),
+      )
+      .addField('kind', Schema.String)
+      .addField(
+        'name',
+        checkedText((name) => name !== '', 'Vyplňte název'),
+      )
+      .addField('note', Schema.String)
+      .addField('owner', Schema.String)
+      .addField('phone', Schema.String)
+      .addField(
+        'regNo',
+        checkedText((regNo) => regNo === '' || /^\d{8}$/u.test(regNo), 'IČO má 8 číslic'),
+      )
+      .addField('segment', Schema.String)
+      .addField('vatNo', Schema.String)
+      .addField('website', Schema.String),
+    {
+      fields: {
+        address: TextField,
+        contactEmail: EntryTextField,
+        contactName: EntryTextField,
+        contactPhone: EntryTextField,
+        contactRole: EntryTextField,
+        email: TextField,
+        kind: RichRadioField,
+        name: TextField,
+        note: TextAreaField,
+        owner: SelectTemplateField,
+        phone: TextField,
+        regNo: TextField,
+        segment: SelectTemplateField,
+        vatNo: TextField,
+        website: TextField,
+      },
+      mode: { validation: 'onChange' },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  );
+
+type ClientForm = ReturnType<typeof makeClientForm>;
+type ClientValues = ClientForm['schema']['Encoded'];
+
+/** A new client and an edited one can be on screen together, so each mode has its own form. */
+const clientForms = { create: makeClientForm(), edit: makeClientForm() };
 
 interface ContactDraft {
   readonly email: string;
@@ -45,7 +126,65 @@ interface ContactDraft {
   readonly role: string;
 }
 
-const emptyContact = (key: number): ContactDraft => ({ email: '', key, name: '', phone: '', role: '' });
+/** The contact rows of the form, in the order they were added. */
+const contactsOf = (values: ClientValues): readonly ContactDraft[] =>
+  Object.keys(values.contactName)
+    .map(Number)
+    .toSorted((left, right) => left - right)
+    .map((key) => ({
+      email: values.contactEmail[key] ?? '',
+      key,
+      name: values.contactName[key] ?? '',
+      phone: values.contactPhone[key] ?? '',
+      role: values.contactRole[key] ?? '',
+    }));
+
+const draftFromValues = (values: ClientValues): Draft => ({
+  address: values.address,
+  email: values.email,
+  kind: kindOf(values.kind),
+  name: values.name,
+  note: values.note,
+  owner: values.owner,
+  phone: values.phone,
+  regNo: values.regNo,
+  segment: values.segment,
+  vatNo: values.vatNo,
+  website: values.website,
+});
+
+const emptyTexts = (keys: readonly number[]) => Object.fromEntries(keys.map((key) => [String(key), '']));
+
+const valuesOf = (draft: Draft, contactKeys: readonly number[]): ClientValues => ({
+  ...draft,
+  contactEmail: emptyTexts(contactKeys),
+  contactName: emptyTexts(contactKeys),
+  contactPhone: emptyTexts(contactKeys),
+  contactRole: emptyTexts(contactKeys),
+});
+
+/** The contact texts with one more row, or without one. */
+const withContact = (values: ClientValues, key: number): ClientValues => {
+  const add = (texts: Readonly<Record<string, string>>) => ({ ...texts, [String(key)]: '' });
+  return {
+    ...values,
+    contactEmail: add(values.contactEmail),
+    contactName: add(values.contactName),
+    contactPhone: add(values.contactPhone),
+    contactRole: add(values.contactRole),
+  };
+};
+const withoutContact = (values: ClientValues, key: number): ClientValues => {
+  const drop = (texts: Readonly<Record<string, string>>) =>
+    Object.fromEntries(Object.entries(texts).filter(([entry]) => entry !== String(key)));
+  return {
+    ...values,
+    contactEmail: drop(values.contactEmail),
+    contactName: drop(values.contactName),
+    contactPhone: drop(values.contactPhone),
+    contactRole: drop(values.contactRole),
+  };
+};
 
 const optionalField = <K extends string>(key: K, value: string) => {
   const field: Partial<Record<K, string>> = {};
@@ -127,58 +266,52 @@ const createCommandOf = (
 
 const ContactDraftFields = ({
   entry,
+  form,
   index,
   onRemove,
-  patchContact,
   removable,
   touched,
 }: {
   readonly entry: ContactDraft;
+  readonly form: ClientForm;
   readonly index: number;
   readonly onRemove: (key: number) => void;
-  readonly patchContact: (key: number, next: Partial<ContactDraft>) => void;
   readonly removable: boolean;
   readonly touched: boolean;
 }) => {
   const { t } = useModernI18n();
-  const contactHelp: InputHelp = {};
-  if (touched && incompleteContact(entry)) {
-    contactHelp.helpText = 'Doplňte jméno kontaktní osoby.';
-  }
+  const row = String(entry.key);
+  const incomplete = touched && incompleteContact(entry);
   return (
     <div className={`${surfaceTileClassName} relative grid grid-cols-1 gap-150 p-200 sm:grid-cols-2`}>
-      <FormInput
+      <form.contactName
         autoComplete="off"
-        id={`crm-new-contact-${entry.key}-name`}
+        entry={row}
+        helpText={incomplete ? 'Doplňte jméno kontaktní osoby.' : undefined}
+        id={`crm-new-contact-${row}-name`}
+        invalid={incomplete}
         label={index === 0 ? 'Jméno (hlavní kontakt)' : 'Jméno'}
-        onChange={(event) => patchContact(entry.key, { name: event.target.value })}
-        validateStatus={touched && incompleteContact(entry) ? 'error' : 'default'}
-        {...contactHelp}
-        value={entry.name}
       />
-      <FormInput
+      <form.contactRole
         autoComplete="off"
-        id={`crm-new-contact-${entry.key}-role`}
+        entry={row}
+        id={`crm-new-contact-${row}-role`}
         label={t('crm.ciClientsVisits.fields.jobRole')}
-        onChange={(event) => patchContact(entry.key, { role: event.target.value })}
         placeholder={t('crm.ciClientsVisits.contacts.roleExample')}
-        value={entry.role}
       />
-      <FormInput
+      <form.contactPhone
         autoComplete="off"
-        id={`crm-new-contact-${entry.key}-phone`}
+        entry={row}
+        id={`crm-new-contact-${row}-phone`}
         label={t('crm.ciClientsVisits.fields.phone')}
-        onChange={(event) => patchContact(entry.key, { phone: event.target.value })}
         type="tel"
-        value={entry.phone}
       />
-      <FormInput
+      <form.contactEmail
         autoComplete="off"
-        id={`crm-new-contact-${entry.key}-email`}
+        entry={row}
+        id={`crm-new-contact-${row}-email`}
         label={t('crm.ciClientsVisits.fields.email')}
-        onChange={(event) => patchContact(entry.key, { email: event.target.value })}
         type="email"
-        value={entry.email}
       />
       {removable && (
         <ActionIcon
@@ -195,15 +328,31 @@ const ContactDraftFields = ({
   );
 };
 
-const useClientForm = ({
-  busy,
-  client,
-  mode,
-  onClose,
-  onSaved,
-  records,
-  submit,
-}: {
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier panel left, so its values are read only after this.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
+
+/** Built when rendered, not at module load: the module contract generator imports this module without a JSX runtime. */
+const kindChoices = () =>
+  kinds.map((kind) => ({
+    label: (
+      <>
+        <span
+          aria-hidden
+          className={`${kind === 'organization' ? 'icon-[mdi--office-building-outline]' : 'icon-[mdi--account-outline]'} me-50 inline-block size-200 align-middle`}
+        />
+        {kind === 'organization' ? 'Firma' : 'Fyzická osoba'}
+      </>
+    ),
+    value: kind,
+  }));
+
+interface ClientFormDialogProps {
   readonly busy: boolean;
   readonly client?: Client;
   readonly mode: 'create' | 'edit';
@@ -211,14 +360,28 @@ const useClientForm = ({
   readonly onSaved: (clientId: string) => void;
   readonly records: RecordsResponse;
   readonly submit: CrmCommandSubmit;
-}) => {
+}
+
+const useClientForm = ({ busy, client, mode, onClose, onSaved, records, submit }: ClientFormDialogProps) => {
   const toaster = useToast();
   const { viewer } = records;
   const defaultOwner = viewer.salespersonId ?? NONE;
   const editing = mode === 'edit' && client !== undefined;
+  const form = clientForms[mode];
   const [failure, setFailure] = useState<string | undefined>();
-  const [contacts, setContacts] = useState<readonly ContactDraft[]>(() => (mode === 'create' ? [emptyContact(0)] : []));
-  const [touched, setTouched] = useState(editing);
+  // The values the panel opens with; the form reads them once, when it starts.
+  const opened = valuesOf(draftOf(client, defaultOwner), mode === 'create' ? [0] : []);
+  const [ready, setReady] = useState(false);
+  const values = Option.getOrElse(
+    Option.filter(useAtomValue(form.values), () => ready),
+    () => opened,
+  );
+  const setValues = useAtomSet(form.setValues);
+  const validate = useAtomSet(form.validate);
+  const validateName = useAtomSet(form.getFieldAtoms(form.fields.name).validate);
+  const reset = useAtomSet(form.reset);
+  const checked = useAtomValue(form.validationCount) > 0;
+  const contacts = contactsOf(values);
 
   // Edit: sends only the changed fields (UpdateClient is a patch; the CRM submit retries it on the latest revision).
   const sendUpdate = (value: Draft): Effect.Effect<SaveOutcome> => {
@@ -239,7 +402,7 @@ const useClientForm = ({
   const sendCreate = (value: Draft): Effect.Effect<SaveOutcome> => {
     if (!validClientDraft(value) || contactsBlock(value, contacts)) {
       return Effect.sync(() => {
-        setTouched(true);
+        validate();
         return 'failed' as const;
       });
     }
@@ -272,12 +435,28 @@ const useClientForm = ({
     save: (value) => (editing ? sendUpdate(value) : sendCreate(value)),
     server: draftOf(client, defaultOwner),
   });
-  const { draft } = record;
-  const patch = (next: Partial<Draft>) => record.setDraft((current) => ({ ...current, ...next }));
-  const patchContact = (key: number, next: Partial<ContactDraft>) =>
-    setContacts((current) => current.map((entry) => (entry.key === key ? { ...entry, ...next } : entry)));
-
-  const handleRemoveContact = (key: number) => setContacts((current) => current.filter((item) => item.key !== key));
+  const { draft, setDraft } = record;
+  // Typing is the draft: a change of the form changes it at once.
+  useAtomSubscribe(
+    form.values,
+    (next) => {
+      if (Option.isSome(next)) {
+        setDraft(draftFromValues(next.value));
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also moves without typing (a newer server version, Zahodit změny): the form follows it.
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    if (ready && !sameClientDraft(draftFromValues(values), draft)) {
+      setValues({ ...values, ...draft });
+    }
+  }, [draft, ready, setValues, shownDraft, values]);
 
   // A new client's contact persons are not part of the draft, but they are typed input that a leave would lose.
   const otherChanges = mode === 'create' && contacts.some(contactFilled);
@@ -290,12 +469,23 @@ const useClientForm = ({
 
   const organization = draft.kind === 'organization';
   const status = shownStatus(mode, record.status, { contacts, draft, otherChanges });
-  // A new client shows its field messages once the draft cannot be sent or Uložit was refused.
-  const shown = touched || status === 'invalid';
-  const nameError = shown && draft.name.trim() === '' ? 'Vyplňte název' : undefined;
-  const emailError = draft.email.trim() !== '' && !EMAIL.test(draft.email.trim()) ? 'Neplatný e-mail' : undefined;
-  const regNoError =
-    organization && draft.regNo.trim() !== '' && !/^\d{8}$/u.test(draft.regNo.trim()) ? 'IČO má 8 číslic' : undefined;
+  // A new client shows its field messages once the draft cannot be sent or Uložit was refused; an edited one always.
+  const shown = editing || checked || status === 'invalid';
+  useEffect(() => {
+    if (ready && shown) {
+      validateName();
+    }
+  }, [ready, shown, validateName]);
+  // Back at the values it opened with, the form shows no messages.
+  useAtomSubscribe(
+    form.isDirty,
+    (dirty) => {
+      if (!dirty) {
+        reset();
+      }
+    },
+    { immediate: false },
+  );
   // C01-02: never merged automatically — only a visible hint about clients that look the same.
   const lookalikes =
     mode === 'create'
@@ -310,80 +500,58 @@ const useClientForm = ({
 
   const close = () => guard.request(onClose);
 
-  const nameHelp: InputHelp = {};
-  if (nameError !== undefined) {
-    nameHelp.helpText = nameError;
-  }
-  const emailHelp: InputHelp = {};
-  if (emailError !== undefined) {
-    emailHelp.helpText = emailError;
-  }
-  const regNoHelp: InputHelp = {};
-  if (regNoError !== undefined) {
-    regNoHelp.helpText = regNoError;
-  }
-
   const owners = [
     ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
     { label: 'Zatím bez obchodníka', value: NONE },
   ];
+
+  const handleAddContact = () => setValues(withContact(values, (contacts.at(-1)?.key ?? 0) + 1));
+  const handleRemoveContact = (key: number) => setValues(withoutContact(values, key));
 
   return {
     busy,
     close,
     contactEmailError,
     contacts,
-    draft,
-    emailError,
-    emailHelp,
     failure,
+    form,
     guard,
+    handleAddContact,
     handleRemoveContact,
     lookalikes,
     mode,
-    nameError,
-    nameHelp,
     onClose,
+    opened,
     organization,
     owners,
-    patch,
-    patchContact,
     record,
-    regNoError,
-    regNoHelp,
-    setContacts,
+    setReady,
     shown,
     status,
     viewer,
   };
 };
 
-export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => {
+export const ClientFormDialog = (props: ClientFormDialogProps) => {
   const { language, t } = useModernI18n();
   const {
     busy,
     close,
     contactEmailError,
     contacts,
-    draft,
-    emailError,
-    emailHelp,
     failure,
+    form,
     guard,
+    handleAddContact,
     handleRemoveContact,
     lookalikes,
     mode,
-    nameError,
-    nameHelp,
     onClose,
+    opened,
     organization,
     owners,
-    patch,
-    patchContact,
     record,
-    regNoError,
-    regNoHelp,
-    setContacts,
+    setReady,
     shown,
     status,
     viewer,
@@ -420,146 +588,98 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
       size="lg"
       title={mode === 'create' ? 'Nový klient' : `Upravit klienta`}
     >
-      <form
+      <FormRoot
         className="flex flex-col gap-250 py-100"
-        // Enter never sends the client: only Uložit does.
-        onSubmit={(event) => event.preventDefault()}
+        defaultValues={opened}
+        form={form}
+        translateMessage={(message) => t(message, { defaultValue: message })}
       >
-        <RadioGroup
-          onValueChange={(next) => {
-            const kind = (['organization', 'person'] as const).find((candidate) => candidate === next);
-            if (kind !== undefined) {
-              patch({ kind });
-            }
-          }}
+        <FormReady onReady={setReady} />
+        <form.kind
+          itemGroupClassName="inline-flex w-fit gap-150 rounded-lg border border-border-primary p-100"
+          items={kindChoices()}
+          label="Typ klienta"
           size="sm"
-          value={draft.kind}
-        >
-          <RadioGroup.Label>Typ klienta</RadioGroup.Label>
-          <RadioGroup.ItemGroup className="inline-flex w-fit gap-150 rounded-lg border border-border-primary p-100">
-            {(['organization', 'person'] as const).map((kind) => (
-              <RadioGroup.Item key={kind} value={kind}>
-                <RadioGroup.ItemHiddenInput />
-                <RadioGroup.ItemControl />
-                <RadioGroup.ItemText>
-                  <span
-                    aria-hidden
-                    className={`${kind === 'organization' ? 'icon-[mdi--office-building-outline]' : 'icon-[mdi--account-outline]'} me-50 inline-block size-200 align-middle`}
-                  />
-                  {kind === 'organization' ? 'Firma' : 'Fyzická osoba'}
-                </RadioGroup.ItemText>
-              </RadioGroup.Item>
-            ))}
-          </RadioGroup.ItemGroup>
-        </RadioGroup>
+        />
         <div className="grid grid-cols-1 gap-150 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <FormInput
+            <form.name
               autoComplete="off"
               id="crm-client-name"
               label={organization ? 'Název firmy' : 'Jméno a příjmení'}
               name="name"
-              onChange={(event) => patch({ name: event.target.value })}
               required
-              validateStatus={nameError === undefined ? 'default' : 'error'}
-              {...nameHelp}
-              value={draft.name}
+              requiredLabel={requiredLabelFor(language)}
             />
           </div>
           {organization && (
             <>
-              <FormInput
+              <form.regNo
                 autoComplete="off"
                 id="crm-client-regno"
                 inputMode="numeric"
                 label={t('crm.ciClientsVisits.fields.registrationNumber')}
                 name="regNo"
-                onChange={(event) => patch({ regNo: event.target.value })}
-                validateStatus={regNoError === undefined ? 'default' : 'error'}
-                {...regNoHelp}
-                value={draft.regNo}
               />
-              <FormInput
+              <form.vatNo
                 autoComplete="off"
                 id="crm-client-vatno"
                 label={t('crm.ciClientsVisits.fields.taxId')}
                 name="vatNo"
-                onChange={(event) => patch({ vatNo: event.target.value })}
-                value={draft.vatNo}
               />
             </>
           )}
-          <SelectTemplate
+          <form.segment
             items={[
               { label: 'Neuvedeno', value: NONE },
               ...clientSegments.map((key) => ({ label: segmentLabels[key], value: key })),
             ]}
             label={t('crm.ciClientsVisits.fields.segment')}
             name="segment"
-            onValueChange={(details) => patch({ segment: details.value[0] ?? NONE })}
-            value={[draft.segment]}
           />
           {mode === 'create' && viewer.assign ? (
-            <SelectTemplate
-              items={owners}
-              label={t('crm.ciClientsVisits.fields.salesperson')}
-              name="owner"
-              onValueChange={(details) => patch({ owner: details.value[0] ?? NONE })}
-              value={[draft.owner]}
-            />
+            <form.owner items={owners} label={t('crm.ciClientsVisits.fields.salesperson')} name="owner" />
           ) : (
             <div />
           )}
-          <FormInput
+          <form.phone
             autoComplete="off"
             id="crm-client-phone"
             label={organization ? 'Pracovní telefon' : 'Telefon'}
             name="phone"
-            onChange={(event) => patch({ phone: event.target.value })}
             type="tel"
-            value={draft.phone}
           />
-          <FormInput
+          <form.email
             autoComplete="off"
             id="crm-client-email"
             label={t('crm.ciClientsVisits.fields.email')}
             name="email"
-            onChange={(event) => patch({ email: event.target.value })}
             type="email"
-            validateStatus={emailError === undefined ? 'default' : 'error'}
-            {...emailHelp}
-            value={draft.email}
           />
           <div className="sm:col-span-2">
-            <FormInput
+            <form.address
               autoComplete="off"
               id="crm-client-address"
               label={t('crm.ciClientsVisits.fields.address')}
               name="address"
-              onChange={(event) => patch({ address: event.target.value })}
               placeholder={t('crm.ciClientsVisits.fields.addressPlaceholder')}
-              value={draft.address}
             />
           </div>
           <div className="sm:col-span-2">
-            <FormInput
+            <form.website
               autoComplete="off"
               id="crm-client-website"
               label={t('crm.ciClientsVisits.fields.website')}
               name="website"
-              onChange={(event) => patch({ website: event.target.value })}
-              value={draft.website}
             />
           </div>
           <div className="sm:col-span-2">
-            <FormTextarea
+            <form.note
               id="crm-client-note"
               label={t('crm.ciClientsVisits.fields.note')}
               maxLength={4000}
               name="note"
-              onChange={(event) => patch({ note: event.target.value })}
               rows={3}
-              value={draft.note}
             />
           </div>
         </div>
@@ -570,7 +690,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
               <Button
                 appearance="ghost"
                 icon="icon-[mdi--account-plus-outline]"
-                onClick={() => setContacts((current) => [...current, emptyContact((current.at(-1)?.key ?? 0) + 1)])}
+                onClick={handleAddContact}
                 severity="secondary"
                 size="sm"
                 type="button"
@@ -581,10 +701,10 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
             {contacts.map((entry, index) => (
               <ContactDraftFields
                 entry={entry}
+                form={form}
                 index={index}
                 key={entry.key}
                 onRemove={handleRemoveContact}
-                patchContact={patchContact}
                 removable={contacts.length > 1}
                 touched={shown}
               />
@@ -606,7 +726,7 @@ export const ClientFormDialog = (props: Parameters<typeof useClientForm>[0]) => 
             {failure}
           </StatusText>
         )}
-      </form>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );

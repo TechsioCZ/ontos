@@ -28,8 +28,7 @@ interface SearchPageSearch {
   q?: string;
 }
 
-const cardClassName =
-  'ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0';
+const cardClassName = 'surface-card';
 
 /** The current URL search state; the loader decodes the same q/families shape on the server. */
 const RouteSearch = Schema.Struct({

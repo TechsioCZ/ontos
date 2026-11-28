@@ -1,9 +1,11 @@
 export {
+  type DraftRules,
   type DraftSave,
-  DraftSaveController,
+  DraftForm,
   type DraftSaveOptions,
   type DraftSaveEnd,
   type DraftSaveOutcome,
+  DraftSaveOutcomeSchema,
   type DraftSaveResult,
   type KeptDraft,
   type PartlySaved,
@@ -18,7 +20,6 @@ export {
   draftPending,
   draftSavable,
   draftUnsaved,
-  startDraftSave,
   useDraftSave,
   type UseDraftSaveOptions,
   useRecordDraft,
@@ -71,7 +72,6 @@ export {
   datePickerSegmentsClassName,
   dividedListClassName,
   dividerColorClassName,
-  sidePanelSurfaceClassName,
   surfaceCardClassName,
   surfaceTileClassName,
 } from './ui-kit-classes.ts';

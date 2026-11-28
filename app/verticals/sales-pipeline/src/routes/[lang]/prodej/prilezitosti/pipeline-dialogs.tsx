@@ -8,18 +8,28 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { Effect, Option, Predicate } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
+import { AsyncResult } from 'effect/reactivity';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
+import { OpportunityNoteSchema } from '../../../../../shared/model/opportunity.ts';
 import { isOpportunityStage, opportunityStages, permittedStageTransitions } from './pipeline-model.ts';
 import type { EmployeeId, OpportunityStage } from './pipeline-model.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { draftFrom, opportunityUnchangedSince, sameOpportunityDraft, updateCommandOf } from './opportunity-draft.ts';
 import type { FormDraft, UpdateCommand } from './opportunity-draft.ts';
 import type { EmployeeOption } from './pipeline-references.ts';
@@ -28,18 +38,28 @@ import type { OpportunityCreate } from './opportunity-create-panel.tsx';
 import {
   K,
   NONE,
-  OpportunityFields,
+  OpportunityForm,
   RESIZE_LABEL_KEY,
   SELECT_PLACEHOLDER,
-  formClassName,
-  formLabelProps,
-  isValidNote,
-  statusOf,
+  formLabelClassName,
+  useCheckOpportunity,
+  useOpportunityDraftSync,
 } from './opportunity-fields.tsx';
 import type { OpportunityReferences } from './opportunity-fields.tsx';
 import { useCommandInputGuard } from './command-input-guard.tsx';
 
 export type { CreateCommand } from './opportunity-fields.tsx';
+
+const isValidNote = Schema.is(OpportunityNoteSchema);
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier panel left, so the panel follows the form only after `onReady`.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
 
 /** Saves one edit against the revision its draft builds on; `unchanged` decides whether a revision race is resent. */
 export type OpportunitySave = (
@@ -106,7 +126,16 @@ const OpportunityEditPanel = ({
     }
   }, [base, server, settledOnServer]);
   const labels = saveLabelsFor(language);
-  const handleChange = (next: Partial<FormDraft>) => record.setDraft((current) => ({ ...current, ...next }));
+  const [ready, setReady] = useState(false);
+  const validate = useCheckOpportunity();
+  const { draft, setDraft } = record;
+  useOpportunityDraftSync({ draft, ready, setDraft });
+  // While editing, every field shows its message from the start.
+  useEffect(() => {
+    if (ready) {
+      validate();
+    }
+  }, [ready, validate]);
   const handleReloadLatest = record.reloadLatest;
   const handleSave = record.save;
   return (
@@ -137,19 +166,14 @@ const OpportunityEditPanel = ({
         size="xl"
         title={t(`${K}.edit.title`)}
       >
-        <form
-          className={formClassName}
-          noValidate
-          // Enter never saves the edit: only Uložit does.
-          onSubmit={(event) => event.preventDefault()}
-        >
+        <OpportunityForm {...references} isEdit opened={draft}>
+          <FormReady onReady={setReady} />
           {serverError !== undefined && (
             <StatusText showIcon status="error">
               {serverError}
             </StatusText>
           )}
-          <OpportunityFields {...references} draft={record.draft} isEdit onChange={handleChange} showErrors />
-        </form>
+        </OpportunityForm>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>
@@ -202,6 +226,34 @@ interface StageDialogProps {
   readonly showNote: boolean;
 }
 
+const stageOf = (value: string): OpportunityStage | '' => (isOpportunityStage(value) ? value : '');
+
+/** The stage change: a stage the transition allows, and a note while one is asked for. */
+const stageForm = FormReact.make(
+  FormBuilder.empty
+    .addField(
+      'stage',
+      Schema.String.check(
+        Schema.makeFilter((value: string) => stageOf(value) !== '', { message: `${K}.stageDialog.stageRequired` }),
+      ),
+    )
+    .addField(
+      'note',
+      Schema.String.check(
+        Schema.makeFilter((value: string) => isValidNote(value.trim()), {
+          message: `${K}.create.errors.noteTooLong`,
+        }),
+      ),
+    ),
+  {
+    fields: { note: TextAreaField, stage: ChoiceField },
+    onSubmit: (_submit, { decoded }) => Effect.succeed(decoded),
+    runtime: browserAtomRuntime,
+  },
+);
+const stageNote = stageForm.getFieldAtoms(stageForm.fields.note);
+const openedStage = { note: '', stage: '' } satisfies typeof stageForm.schema.Encoded;
+
 // A command, not a form: a stage change is a state transition with its own button, not an edit of stored fields.
 /**
  * Change stage for one opportunity (with note) or for a bulk selection (stage only). Leaving with a typed note asks
@@ -218,9 +270,8 @@ export const StageDialog = ({
   showNote,
 }: StageDialogProps) => {
   const { t } = useModernI18n();
-  const [stage, setStage] = useState<OpportunityStage | ''>('');
-  const [note, setNote] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const shown = Option.getOrElse(useAtomValue(stageForm.values), () => openedStage);
+  const setNote = useAtomSet(stageNote.setValue);
   const formId = useId();
   const allowedStages = permittedStageTransitions(
     selectedStages ?? (currentStage === undefined ? opportunityStages : [currentStage]),
@@ -229,21 +280,25 @@ export const StageDialog = ({
     label: statusPresentation('opportunity', candidate).label,
     value: candidate,
   }));
-  const noteText = note.trim();
-  const noteError = isValidNote(noteText) ? undefined : t(`${K}.create.errors.noteTooLong`);
+  const noteText = shown.note.trim();
   const { dialog, guard } = useCommandInputGuard(showNote && noteText !== '', () => setNote(''));
   const close = () => guard.request(() => onOpenChange(false));
 
-  const submit = () => {
-    if (busy) {
-      return;
-    }
-    setSubmitted(true);
-    if (stage === '' || !allowedStages.includes(stage) || noteError !== undefined) {
-      return;
-    }
-    onSubmit(stage, showNote && noteText !== '' ? noteText : undefined);
-  };
+  // The form checked the stage and the note; the command takes an allowed stage only.
+  useAtomSubscribe(
+    stageForm.submit,
+    (result) => {
+      if (busy || !AsyncResult.isSuccess(result) || result.waiting) {
+        return;
+      }
+      const stage = stageOf(result.value.stage);
+      const note = result.value.note.trim();
+      if (stage !== '' && allowedStages.includes(stage)) {
+        onSubmit(stage, showNote && note !== '' ? note : undefined);
+      }
+    },
+    { immediate: false },
+  );
 
   return (
     <SidePanel
@@ -276,14 +331,12 @@ export const StageDialog = ({
       size="lg"
       title={t(`${K}.stageDialog.title`)}
     >
-      <form
+      <FormRoot
         className="flex flex-col gap-200 py-200"
+        defaultValues={openedStage}
+        form={stageForm}
         id={formId}
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
+        translateMessage={(message) => t(message, { defaultValue: message })}
       >
         {serverError !== undefined && (
           <StatusText showIcon status="error">
@@ -291,43 +344,18 @@ export const StageDialog = ({
           </StatusText>
         )}
         {items.length === 0 && <StatusText status="warning">{t(`${K}.errors.closed`)}</StatusText>}
-        <SelectTemplate
+        <stageForm.stage
           items={items}
-          label={t(`${K}.stageDialog.stage`)}
-          labelProps={formLabelProps}
-          name="stage"
-          onValueChange={(details) => {
-            const [next] = details.value;
-            setStage(isOpportunityStage(next) ? next : '');
-          }}
+          label={<span className={formLabelClassName}>{t(`${K}.stageDialog.stage`)}</span>}
           placeholder={t(SELECT_PLACEHOLDER)}
-          size="md"
-          value={stage === '' ? [] : [stage]}
         />
-        {submitted && stage === '' && (
-          <StatusText showIcon status="error">
-            {t(`${K}.stageDialog.stageRequired`)}
-          </StatusText>
-        )}
-        {stage === 'WON' && (
+        {shown.stage === 'WON' && (
           <StatusText showIcon status="warning">
             {t(`${K}.stageDialog.wonWarning`)}
           </StatusText>
         )}
-        {showNote && (
-          <FormTextarea
-            autoComplete="off"
-            helpText={submitted ? noteError : undefined}
-            id="stage-note"
-            label={t(`${K}.stageDialog.note`)}
-            name="note"
-            onChange={(event) => setNote(event.target.value)}
-            rows={3}
-            validateStatus={statusOf(submitted ? noteError : undefined)}
-            value={note}
-          />
-        )}
-      </form>
+        {showNote && <stageForm.note autoComplete="off" id="stage-note" label={t(`${K}.stageDialog.note`)} rows={3} />}
+      </FormRoot>
       {dialog}
     </SidePanel>
   );
@@ -344,6 +372,13 @@ interface OwnerDialogProps {
   readonly serverError?: string | undefined;
 }
 
+/** The owner to assign; `NONE` clears it. */
+const ownerForm = FormReact.make(FormBuilder.empty.addField('owner', Schema.String), {
+  fields: { owner: ChoiceField },
+  onSubmit: (_submit, { decoded }) => Effect.succeed(decoded.owner),
+  runtime: browserAtomRuntime,
+});
+
 // A command, not a form: the owner action reassigns from one pick, with nothing typed that a draft would keep.
 /** Assign or clear the owner (`Nepřiřazeno` clears it). */
 export const OwnerDialog = ({
@@ -356,22 +391,22 @@ export const OwnerDialog = ({
   serverError,
 }: OwnerDialogProps) => {
   const { t } = useModernI18n();
-  const [owner, setOwner] = useState<string>(currentOwner ?? NONE);
   const formId = useId();
   const items = [
     { label: t(`${K}.owner.none`), value: NONE },
     ...employees.map((employee) => ({ label: employee.fullName, value: employee.id })),
   ];
-  const submit = () => {
-    if (busy) {
-      return;
-    }
-    if (owner === NONE) {
-      onSubmit(null);
-      return;
-    }
-    onSubmit(employees.find((item) => item.id === owner)?.id ?? null);
-  };
+  useAtomSubscribe(
+    ownerForm.submit,
+    (result) => {
+      if (busy || !AsyncResult.isSuccess(result) || result.waiting) {
+        return;
+      }
+      const owner = result.value;
+      onSubmit(owner === NONE || owner === '' ? null : (employees.find((item) => item.id === owner)?.id ?? null));
+    },
+    { immediate: false },
+  );
 
   return (
     <SidePanel
@@ -398,34 +433,24 @@ export const OwnerDialog = ({
       size="lg"
       title={t(`${K}.owner.title`)}
     >
-      <form
+      <FormRoot
         className="flex flex-col gap-200 py-200"
+        defaultValues={{ owner: currentOwner ?? NONE }}
+        form={ownerForm}
         id={formId}
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          submit();
-        }}
+        translateMessage={(message) => t(message, { defaultValue: message })}
       >
         {serverError !== undefined && (
           <StatusText showIcon status="error">
             {serverError}
           </StatusText>
         )}
-        <SelectTemplate
+        <ownerForm.owner
           items={items}
-          label={t(`${K}.owner.label`)}
-          labelProps={formLabelProps}
-          name="owner"
-          onValueChange={(details) => {
-            const [next] = details.value;
-            setOwner(next ?? NONE);
-          }}
+          label={<span className={formLabelClassName}>{t(`${K}.owner.label`)}</span>}
           placeholder={t(SELECT_PLACEHOLDER)}
-          size="md"
-          value={[owner]}
         />
-      </form>
+      </FormRoot>
     </SidePanel>
   );
 };

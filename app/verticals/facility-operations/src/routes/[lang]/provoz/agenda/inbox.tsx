@@ -12,19 +12,34 @@ import {
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import {
+  ChoiceField,
+  FormReact,
+  FormRoot,
+  SwitchField,
+  fromPayload,
+  makeMemberCheckboxField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { Switch } from '@techsio/ui-kit/molecules/switch';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import type { Effect } from 'effect';
-import { DateTime } from 'effect';
-import { useState } from 'react';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { Link } from '@techsio/ui-kit/atoms/link';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
+import { useEffect, useRef, useState } from 'react';
+import { agendaCommandSchemas } from '../../../../../shared/commands/agenda.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useEditGuard } from '../../../../ui/edit-guard.tsx';
-import type { Notification, NotificationPreference, AgendaState } from '../../../../../shared/domain/agenda.ts';
+import type {
+  AgendaState,
+  Notification,
+  NotificationCategory,
+  NotificationPreference,
+} from '../../../../../shared/domain/agenda.ts';
 import {
   DEFAULT_LEAD_DAYS,
   MANDATORY_EMAIL_CATEGORIES,
+  NotificationCategorySchema,
   OPTIONAL_EMAIL_CATEGORIES,
 } from '../../../../../shared/domain/agenda.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
@@ -45,7 +60,6 @@ import type { AgendaEmailReceipts, EmailProviderState } from './agenda-email.tsx
 import { agendaEmailKey, useAgendaEmailReceipts, useEmailProvider } from './agenda-email.tsx';
 
 const k = 'facility-operations.agenda';
-const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 
 const notificationTone = {
   ASSIGNED: 'primary',
@@ -152,25 +166,19 @@ export const NotificationCenter = ({
     <SectionCard
       actions={
         <>
-          <div
-            className="facilityoperations:inline-flex facilityoperations:rounded-lg facilityoperations:p-0.5"
-            style={{ background: 'var(--color-surface-subtle, #f1f5f9)' }}
-          >
+          <div className="inline-flex rounded-lg bg-surface p-0.5">
             {(['all', 'unread'] as const).map((value) => (
-              <button
+              <Button
                 aria-pressed={filter === value}
-                className="facilityoperations:cursor-pointer facilityoperations:rounded-md facilityoperations:border-0 facilityoperations:px-3 facilityoperations:py-1 facilityoperations:text-sm facilityoperations:font-medium"
+                className={`rounded-md border-0 px-3 py-1 text-sm font-medium text-inherit ${filter === value ? 'bg-base shadow-sm' : 'bg-transparent'}`}
+                composition
                 key={value}
                 onClick={() => setFilter(value)}
-                style={{
-                  background: filter === value ? '#ffffff' : 'transparent',
-                  boxShadow: filter === value ? '0 1px 2px rgba(0,0,0,.08)' : 'none',
-                  color: 'inherit',
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
                 {t(`${k}.notifications.filter.${value}`, { count: value === 'all' ? all.length : unread.length })}
-              </button>
+              </Button>
             ))}
           </div>
           {canWrite && (
@@ -187,21 +195,7 @@ export const NotificationCenter = ({
       }
       title={t(`${k}.notifications.title`)}
     >
-      <style>{`
-        .ops-inbox-card { display: grid; grid-template-columns: 36px minmax(0, 1fr); }
-        .ops-inbox-actions { grid-column: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-width: 0; }
-        .ops-inbox-title { overflow-wrap: anywhere; }
-        @media (min-width: 768px) {
-          .ops-inbox-card { grid-template-columns: 36px minmax(0, 1fr) auto; }
-          .ops-inbox-actions { grid-column: 3; grid-row: 1; max-width: 260px; justify-content: flex-end; }
-        }
-        @media (max-width: 639px) {
-          .ops-inbox-title { font-size: 16px; line-height: 1.5; }
-          .ops-inbox-meta { font-size: 14px; line-height: 1.5; }
-          .ops-inbox-actions > a, .ops-inbox-actions > button { min-height: 44px; }
-        }
-      `}</style>
-      <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+      <p className="m-0 text-xs text-fg-secondary">
         {canWrite ? t(`${k}.notifications.explain`) : t(`${k}.notifications.readOnly`)}
       </p>
       {rows.length === 0 ? (
@@ -210,36 +204,32 @@ export const NotificationCenter = ({
           title={filter === 'unread' ? t(`${k}.notifications.emptyUnread`) : t(`${k}.notifications.empty`)}
         />
       ) : (
-        <ul
-          className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:p-0"
-          data-testid="notification-list"
-        >
+        <ul className="m-0 flex list-none flex-col gap-2 p-0" data-testid="notification-list">
           {rows.map((entry) => {
             const tone = notificationTone[entry.category];
             const isUnread = entry.readAt === undefined;
             const from = personOf(entry.createdBy.principalId);
             return (
               <li
-                className="ops-inbox-card facilityoperations:items-start facilityoperations:gap-3 facilityoperations:rounded-xl facilityoperations:p-3"
+                className={[
+                  'items-start gap-3 rounded-lg border p-3',
+                  ...(isUnread
+                    ? [toneColors(tone).tint, toneColors(tone).ringBorder]
+                    : ['border-transparent bg-surface']),
+                ].join(' ')}
                 data-event-key={entry.eventKey}
                 data-unread={isUnread}
                 key={entry.id}
-                style={{
-                  background: isUnread ? toneColors(tone).bg : 'var(--color-surface)',
-                  border: `1px solid ${isUnread ? toneColors(tone).ring : 'transparent'}`,
-                }}
               >
                 <IconBadge name={notificationIcon[entry.category]} size={36} tone={tone} />
-                <div className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col facilityoperations:gap-0.5">
-                  <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-2">
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Pill solid={isUnread} tone={tone}>
                       {t(`${k}.notifications.category.${entry.category}`)}
                     </Pill>
-                    <span className="ops-inbox-title facilityoperations:w-full facilityoperations:font-medium">
-                      {entry.title}
-                    </span>
+                    <span className="w-full font-medium">{entry.title}</span>
                   </div>
-                  <span className="ops-inbox-meta facilityoperations:text-xs" style={muted}>
+                  <span className="text-xs text-fg-secondary">
                     {[
                       t(`${k}.sources.${entry.source}`),
                       entry.dueDate === undefined
@@ -257,15 +247,16 @@ export const NotificationCenter = ({
                       .join(' · ')}
                   </span>
                 </div>
-                <div className="ops-inbox-actions">
+                <div className="">
                   {entry.href !== undefined && (
-                    <a
-                      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium"
+                    <Link
+                      className="inline-flex items-center gap-1 text-sm font-medium text-inherit no-underline"
                       href={`/${lang}${entry.href}`}
+                      size="current"
                     >
                       {t(`${k}.open`)}
                       <Icon name="arrowRight" size={14} />
-                    </a>
+                    </Link>
                   )}
                   {isUnread && canWrite && (
                     <Button appearance="ghost" onClick={() => onMarkRead(entry.id)} severity="secondary" size="sm">
@@ -280,9 +271,8 @@ export const NotificationCenter = ({
                     const label = notificationEmailLabel(receipt, lang, t);
                     return (
                       <span
-                        className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
+                        className="inline-flex items-center gap-1 text-xs text-fg-secondary"
                         data-testid="notification-email"
-                        style={muted}
                       >
                         <Icon name="mail" size={14} />
                         {label}
@@ -290,10 +280,7 @@ export const NotificationCenter = ({
                     );
                   })()}
                   {!isUnread && entry.readAt !== undefined && (
-                    <span
-                      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
-                      style={muted}
-                    >
+                    <span className="inline-flex items-center gap-1 text-xs text-fg-secondary">
                       <Icon name="check" size={14} />
                       {t(`${k}.notifications.readAt`, { time: fmt.stamp(lang, DateTime.formatIso(entry.readAt)) })}
                     </span>
@@ -341,57 +328,45 @@ export const MyAgenda = ({
   const person = personOf(me);
   const list = (rows: readonly Deadline[], empty: string) =>
     rows.length === 0 ? (
-      <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
-        {empty}
-      </p>
+      <p className="m-0 text-sm text-fg-secondary">{empty}</p>
     ) : (
-      <ul className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-1.5 facilityoperations:p-0">
+      <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
         {rows.slice(0, 12).map((row) => {
           const urgency = urgencyOf(row, today);
           return (
             <li key={row.key}>
-              <button
-                className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-3 facilityoperations:rounded-lg facilityoperations:px-2 facilityoperations:py-2 facilityoperations:text-left facilityoperations:hover:shadow-sm"
+              <Button
+                className="block w-full rounded-lg border-0 bg-surface px-2 py-2 text-left text-inherit hover:shadow-sm"
+                composition
                 data-key={row.key}
                 onClick={() => onOpen(row)}
-                style={{
-                  background: 'var(--color-surface-subtle, #f8fafc)',
-                  border: 0,
-                  color: 'inherit',
-                  font: 'inherit',
-                }}
-                type="button"
+                size="current"
+                unstyled
               >
-                <span
-                  className="facilityoperations:flex facilityoperations:h-10 facilityoperations:w-10 facilityoperations:shrink-0 facilityoperations:flex-col facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-lg facilityoperations:text-xs facilityoperations:font-semibold"
-                  style={{
-                    background: toneColors(urgencyTone[urgency]).bg,
-                    color: toneColors(urgencyTone[urgency]).fg,
-                  }}
-                >
-                  <span className="facilityoperations:text-base facilityoperations:leading-none">
-                    {Number(row.date.slice(8, 10))}
+                <span className="flex items-center gap-3">
+                  <span
+                    className={`flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg text-xs font-semibold ${toneColors(urgencyTone[urgency]).tint} ${toneColors(urgencyTone[urgency]).fg}`}
+                  >
+                    <span className="text-base leading-none">{Number(row.date.slice(8, 10))}</span>
+                    <span className="text-[10px] uppercase">{fmt.weekday(lang, row.date)}</span>
                   </span>
-                  <span className="facilityoperations:text-[10px] facilityoperations:uppercase">
-                    {fmt.weekday(lang, row.date)}
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate font-medium">{row.title}</span>
+                    <span className="truncate text-xs text-fg-secondary">
+                      {row.location ?? t(`${k}.sources.${row.source}`)}
+                    </span>
                   </span>
+                  <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
                 </span>
-                <span className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col">
-                  <span className="facilityoperations:truncate facilityoperations:font-medium">{row.title}</span>
-                  <span className="facilityoperations:truncate facilityoperations:text-xs" style={muted}>
-                    {row.location ?? t(`${k}.sources.${row.source}`)}
-                  </span>
-                </span>
-                <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
-              </button>
+              </Button>
             </li>
           );
         })}
       </ul>
     );
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
-      <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
+    <div className="flex flex-col gap-4">
+      <p className="m-0 text-sm text-fg-secondary">
         {t(`${k}.mine.intro`, { who: person?.displayName ?? t(`${k}.mine.you`) })}
       </p>
       <StatRow>
@@ -400,21 +375,19 @@ export const MyAgenda = ({
         <StatCard label={t(`${k}.mine.week`)} value={formatNumber(week.length)} />
         <StatCard label={t(`${k}.mine.unread`)} value={formatNumber(unread.length)} />
       </StatRow>
-      <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <SectionCard
           actions={
-            <a className="facilityoperations:text-sm facilityoperations:font-medium" href={`/${lang}/ukoly`}>
+            <Link className="text-sm font-medium text-inherit no-underline" href={`/${lang}/ukoly`} size="current">
               {t(`${k}.mine.allTasks`)}
-            </a>
+            </Link>
           }
           title={t(`${k}.mine.tasks`, { count: tasks.length })}
         >
           {workStatus === 'ready' ? (
             list(tasks, t(`${k}.mine.noTasks`))
           ) : (
-            <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
-              {t(`${k}.state.${workStatus}`)}
-            </p>
+            <p className="m-0 text-sm text-fg-secondary">{t(`${k}.state.${workStatus}`)}</p>
           )}
         </SectionCard>
         <SectionCard title={t(`${k}.mine.events`, { count: events.length })}>
@@ -422,17 +395,13 @@ export const MyAgenda = ({
         </SectionCard>
       </div>
       <SectionCard title={t(`${k}.mine.byCategory`)}>
-        <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-2">
+        <div className="flex flex-wrap gap-2">
           {[...new Set(mine.map((row) => row.category))].map((category) => (
             <Pill key={category} tone={categoryTone[category]}>
               {t(`${k}.category.${category}`)}: {mine.filter((row) => row.category === category).length}
             </Pill>
           ))}
-          {mine.length === 0 && (
-            <span className="facilityoperations:text-sm" style={muted}>
-              {t(`${k}.mine.nothing`)}
-            </span>
-          )}
+          {mine.length === 0 && <span className="text-sm text-fg-secondary">{t(`${k}.mine.nothing`)}</span>}
         </div>
       </SectionCard>
     </div>
@@ -464,6 +433,42 @@ const samePreferenceDraft = (left: PreferenceDraft, right: PreferenceDraft): boo
   left.optional.length === right.optional.length &&
   left.optional.every((category, index) => category === right.optional[index]);
 
+const leadDayChoices = ['3', '7', '14', '30', '60'];
+
+/**
+ * The notification settings as the panel edits them: the lead time, whether e-mail is on and the categories e-mailed
+ * (the mandatory ones always ticked). Uložit sends the draft through the save bar, so the form itself submits nothing.
+ */
+const preferencesForm = FormReact.make(
+  // The e-mail switch is the `AgendaPreferencesSet` payload's own field.
+  fromPayload(agendaCommandSchemas[6].mapFields(Struct.pick(['emailOptIn'])))
+    .addField('emailCategories', Schema.Array(NotificationCategorySchema))
+    .addField('leadDays', Schema.String),
+  {
+    fields: {
+      emailCategories: makeMemberCheckboxField((category: NotificationCategory) => category),
+      emailOptIn: SwitchField,
+      leadDays: ChoiceField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type PreferenceValues = typeof preferencesForm.schema.Encoded;
+
+const preferenceValuesOf = (draft: PreferenceDraft): PreferenceValues => ({
+  emailCategories: [...MANDATORY_EMAIL_CATEGORIES, ...draft.optional],
+  emailOptIn: draft.email,
+  leadDays: draft.leadDays,
+});
+
+const preferenceDraftFrom = (values: PreferenceValues): PreferenceDraft => ({
+  email: values.emailOptIn,
+  leadDays: values.leadDays === '' ? String(DEFAULT_LEAD_DAYS) : values.leadDays,
+  optional: OPTIONAL_EMAIL_CATEGORIES.filter((category) => values.emailCategories.includes(category)),
+});
+
 export const SettingsPanel = ({
   canWrite,
   me,
@@ -490,13 +495,30 @@ export const SettingsPanel = ({
     server: preferenceDraftOf(current),
   });
   const { draft, setDraft } = record;
-  const { email, leadDays, optional } = draft;
-  const setLeadDays = (value: string) => setDraft({ ...draft, leadDays: value });
-  const setEmail = (value: boolean) => setDraft({ ...draft, email: value });
-  const setOptional = (update: (previous: ReadonlySet<OptionalCategory>) => ReadonlySet<OptionalCategory>) => {
-    const next = update(new Set(optional));
-    setDraft({ ...draft, optional: OPTIONAL_EMAIL_CATEGORIES.filter((category) => next.has(category)) });
-  };
+  const shown = useAtomValue(preferencesForm.values);
+  const setValues = useAtomSet(preferencesForm.setValues);
+  // The fields are the draft: a change in the form changes it at once.
+  useAtomSubscribe(
+    preferencesForm.values,
+    (next) => {
+      if (Option.isSome(next)) {
+        setDraft(preferenceDraftFrom(next.value));
+      }
+    },
+    { immediate: false },
+  );
+  // The draft also moves without the form (a newer read while nothing is pending, Zahodit změny, the latest version):
+  // the fields follow it.
+  const shownDraft = useRef(draft);
+  useEffect(() => {
+    if (shownDraft.current === draft) {
+      return;
+    }
+    shownDraft.current = draft;
+    if (Option.exists(shown, (values) => !samePreferenceDraft(preferenceDraftFrom(values), draft))) {
+      setValues(preferenceValuesOf(draft));
+    }
+  }, [draft, setValues, shown]);
   const labels = saveLabelsFor(language);
   const guard = useEditGuard(record, record.discard);
   const provider = useEmailProvider();
@@ -509,82 +531,61 @@ export const SettingsPanel = ({
   const handleReloadLatest = record.reloadLatest;
   const handleSave = record.save;
   return (
-    <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
-      <div className="facilityoperations:xl:col-span-2">
+    <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+      <div className="xl:col-span-2">
         <SectionCard title={t(`${k}.settings.title`)}>
-          <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
-            <Select
-              disabled={!canWrite}
-              items={['3', '7', '14', '30', '60'].map((value) => ({
-                displayValue: t(`${k}.settings.days`, { count: Number(value) }),
-                label: t(`${k}.settings.days`, { count: Number(value) }),
-                value,
-              }))}
-              label={t(`${k}.settings.leadDays`)}
-              name="leadDays"
-              onValueChange={({ value }) => setLeadDays(value[0] ?? String(DEFAULT_LEAD_DAYS))}
-              size="md"
-              value={[leadDays]}
-            />
-            <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1">
-              <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
-                {t(`${k}.settings.email`)}
-              </Switch>
-              <span
-                className="facilityoperations:flex facilityoperations:flex-col facilityoperations:items-start facilityoperations:gap-1 facilityoperations:text-xs"
-                data-testid="email-provider"
-                style={muted}
-              >
-                {providerPill}
-                <span>{providerText}</span>
-              </span>
-            </div>
-            {email && (
-              <fieldset
-                className="facilityoperations:m-0 facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:border-0 facilityoperations:p-0"
-                data-testid="email-events"
-              >
-                <legend className="facilityoperations:mb-1 facilityoperations:p-0 facilityoperations:text-sm facilityoperations:font-medium">
-                  {t(`${k}.settings.emailEvents`)}
-                </legend>
-                {MANDATORY_EMAIL_CATEGORIES.map((category) => (
-                  <FormCheckbox
-                    checked
-                    disabled
-                    helpText={t(`${k}.settings.mandatory`)}
-                    id={`email-category-${category}`}
-                    key={category}
-                    label={t(`${k}.notifications.category.${category}`)}
-                    size="sm"
-                  />
-                ))}
-                {OPTIONAL_EMAIL_CATEGORIES.map((category) => (
-                  <FormCheckbox
-                    checked={optional.includes(category)}
-                    disabled={!canWrite}
-                    id={`email-category-${category}`}
-                    key={category}
-                    label={t(`${k}.notifications.category.${category}`)}
-                    onCheckedChange={(checked) =>
-                      setOptional((previous) => {
-                        const next = new Set(previous);
-                        if (checked) {
-                          next.add(category);
-                        } else {
-                          next.delete(category);
-                        }
-                        return next;
-                      })
-                    }
-                    size="sm"
-                  />
-                ))}
-                <span className="facilityoperations:text-xs" style={muted}>
-                  {t(`${k}.settings.optionalHint`)}
+          <div className="flex flex-col gap-4">
+            <FormRoot
+              className="flex flex-col gap-4"
+              defaultValues={preferenceValuesOf(draft)}
+              form={preferencesForm}
+              translateMessage={(message) => t(message)}
+            >
+              <preferencesForm.leadDays
+                disabled={!canWrite}
+                items={leadDayChoices.map((value) => ({
+                  label: t(`${k}.settings.days`, { count: Number(value) }),
+                  value,
+                }))}
+                label={t(`${k}.settings.leadDays`)}
+              />
+              <div className="flex flex-col gap-1">
+                <preferencesForm.emailOptIn disabled={!canWrite}>{t(`${k}.settings.email`)}</preferencesForm.emailOptIn>
+                <span
+                  className="flex flex-col items-start gap-1 text-xs text-fg-secondary"
+                  data-testid="email-provider"
+                >
+                  {providerPill}
+                  <span>{providerText}</span>
                 </span>
-              </fieldset>
-            )}
-            <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
+              </div>
+              {draft.email && (
+                <fieldset className="m-0 flex flex-col gap-2 border-0 p-0" data-testid="email-events">
+                  <legend className="mb-1 p-0 text-sm font-medium">{t(`${k}.settings.emailEvents`)}</legend>
+                  {MANDATORY_EMAIL_CATEGORIES.map((category) => (
+                    <preferencesForm.emailCategories
+                      disabled
+                      helpText={t(`${k}.settings.mandatory`)}
+                      id={`email-category-${category}`}
+                      key={category}
+                      label={t(`${k}.notifications.category.${category}`)}
+                      member={category}
+                    />
+                  ))}
+                  {OPTIONAL_EMAIL_CATEGORIES.map((category) => (
+                    <preferencesForm.emailCategories
+                      disabled={!canWrite}
+                      id={`email-category-${category}`}
+                      key={category}
+                      label={t(`${k}.notifications.category.${category}`)}
+                      member={category}
+                    />
+                  ))}
+                  <span className="text-xs text-fg-secondary">{t(`${k}.settings.optionalHint`)}</span>
+                </fieldset>
+              )}
+            </FormRoot>
+            <p className="m-0 text-xs text-fg-secondary">
               {current === undefined
                 ? t(`${k}.settings.default`, { count: DEFAULT_LEAD_DAYS })
                 : t(`${k}.settings.savedAt`, { time: fmt.stamp(lang, DateTime.formatIso(current.updatedAt)) })}
@@ -604,51 +605,34 @@ export const SettingsPanel = ({
           </div>
         </SectionCard>
       </div>
-      <div className="facilityoperations:xl:col-span-3">
+      <div className="xl:col-span-3">
         <SectionCard title={t(`${k}.exportsLog.title`)}>
           {exports.length === 0 ? (
             <EmptyState description={t(`${k}.exportsLog.emptyDescription`)} title={t(`${k}.exportsLog.empty`)} />
           ) : (
-            <table
-              className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm"
-              data-testid="export-log"
-            >
+            <table className="w-full border-collapse text-sm" data-testid="export-log">
               <thead>
-                <tr className="facilityoperations:text-left" style={muted}>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.when`)}
-                  </th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.who`)}
-                  </th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.list`)}
-                  </th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:font-medium">
-                    {t(`${k}.exportsLog.rows`)}
-                  </th>
+                <tr className="text-left text-fg-secondary">
+                  <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.when`)}</th>
+                  <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.who`)}</th>
+                  <th className="px-2 py-1.5 font-medium">{t(`${k}.exportsLog.list`)}</th>
+                  <th className="px-2 py-1.5 text-right font-medium">{t(`${k}.exportsLog.rows`)}</th>
                 </tr>
               </thead>
               <tbody>
                 {exports.map((entry) => (
-                  <tr key={entry.id} style={{ borderTop: '1px solid var(--color-border-muted, #f1f5f9)' }}>
-                    <td className="facilityoperations:whitespace-nowrap facilityoperations:px-2 facilityoperations:py-1.5">
+                  <tr className="border-t border-border-primary/60" key={entry.id}>
+                    <td className="whitespace-nowrap px-2 py-1.5">
                       {fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}
                     </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5">
-                      {personOf(entry.exportedBy.principalId)?.displayName ?? ''}
-                    </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5">
+                    <td className="px-2 py-1.5">{personOf(entry.exportedBy.principalId)?.displayName ?? ''}</td>
+                    <td className="px-2 py-1.5">
                       <div>{exportListLabel(entry.list, t)}</div>
                       {entry.filter !== undefined && !entry.filter.startsWith('kpi=') && (
-                        <div className="facilityoperations:text-xs" style={muted}>
-                          {entry.filter}
-                        </div>
+                        <div className="text-xs text-fg-secondary">{entry.filter}</div>
                       )}
                     </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:tabular-nums">
-                      {entry.rowCount}
-                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{entry.rowCount}</td>
                   </tr>
                 ))}
               </tbody>

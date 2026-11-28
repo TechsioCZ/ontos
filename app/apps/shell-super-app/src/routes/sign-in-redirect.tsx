@@ -22,7 +22,7 @@ export const SignInRedirect = ({ reason }: { readonly reason?: SignInReason | un
     });
   }, [language, navigate, reason]);
   return (
-    <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:justify-items-start shell:gap-4 shell:px-4 shell:py-8">
+    <main className="mx-auto grid w-full max-w-5xl justify-items-start gap-4 px-4 py-8">
       <StatusText aria-live="polite" showIcon status="default">
         {t('shell.moduleTarget.sign_in_required')}
       </StatusText>

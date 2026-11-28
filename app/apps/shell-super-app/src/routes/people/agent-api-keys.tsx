@@ -4,10 +4,9 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { moduleChangeEvent } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Fiber, Option, Redacted, Schedule, Schema } from 'effect';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useId, useRef, useState } from 'react';
 
 import {
   ApiKeyIssueResponseSchema,
@@ -314,24 +313,34 @@ const OneTimeSecret = ({
   readonly secret: Redacted.Redacted;
 }) => {
   const { t } = useModernI18n();
-  const field = useRef<HTMLTextAreaElement | null>(null);
+  const labelId = useId();
+  const shown = useRef<HTMLOutputElement | null>(null);
   return (
     <section className="flex min-w-0 flex-col gap-150 rounded-md border border-warning p-200">
       <StatusText showIcon status="warning">
         {t(`${copyKey}.oneTime`)}
       </StatusText>
-      <FormTextarea
-        autoComplete="off"
-        label={t(`${copyKey}.secret`)}
-        readOnly
-        ref={field}
-        rows={3}
-        value={Redacted.value(secret)}
-      />
+      {/* Shown, never edited: an output, so the value is no form input and leaves with the detail. */}
+      <div className="flex min-w-0 flex-col gap-50">
+        <span className="text-label-md" id={labelId}>
+          {t(`${copyKey}.secret`)}
+        </span>
+        <output
+          aria-labelledby={labelId}
+          className="block select-all rounded-md border border-border-primary p-150 font-mono text-sm vertical-navigation-control"
+          ref={shown}
+        >
+          {Redacted.value(secret)}
+        </output>
+      </div>
       <div className="flex flex-wrap gap-100">
         <Button
           appearance="outline"
-          onClick={() => field.current?.select()}
+          onClick={() => {
+            if (shown.current !== null) {
+              globalThis.getSelection()?.selectAllChildren(shown.current);
+            }
+          }}
           severity="secondary"
           size="sm"
           type="button"
@@ -361,7 +370,7 @@ const ManagedKeyRow = ({
   return (
     <li className="flex min-w-0 flex-col gap-100 border-border-primary/60 border-b py-150 last:border-b-0">
       <div className="flex min-w-0 flex-wrap items-center gap-100">
-        <span className="font-medium text-sm [overflow-wrap:anywhere]">{item.name ?? t(`${copyKey}.unnamed`)}</span>
+        <span className="font-medium text-sm vertical-navigation-control">{item.name ?? t(`${copyKey}.unnamed`)}</span>
         <Badge severity={item.bindingStatus === 'active' ? 'success' : 'neutral'} size="sm">
           {t(`${copyKey}.status.${item.bindingStatus}`)}
         </Badge>

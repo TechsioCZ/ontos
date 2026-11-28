@@ -15,8 +15,12 @@ import type { NativePdfRenderTask } from './pdf-render-lifecycle.ts';
 const k = 'facility-operations.documents';
 const pdfOperationTimeout = '30 seconds';
 
+/** Preview heights of the documents pages: a detail panel, or most of the viewport. */
+const previewMaxHeight = { panel: 'max-h-96', viewport: 'max-h-[70vh]' } as const;
+export type PreviewHeight = keyof typeof previewMaxHeight;
+
 interface PdfPreviewProps {
-  readonly height: string;
+  readonly height: PreviewHeight;
   readonly name: string;
   readonly url: string;
 }
@@ -219,25 +223,15 @@ export const PdfPreview = ({ height, name, url }: PdfPreviewProps) => {
         <>
           <ScrollRegion
             busy={pdf === undefined || rendering}
+            className={`overflow-auto rounded-sm border border-border-primary bg-base ${previewMaxHeight[height]}`}
             label={name}
-            style={{
-              background: '#fff',
-              border: '1px solid var(--color-border-primary, #d4d4d8)',
-              borderRadius: '0.5rem',
-              maxHeight: height,
-              overflow: 'auto',
-            }}
           >
             {(pdf === undefined || rendering) && (
               <output className="block py-200 text-center text-fg-secondary text-sm">
                 {t('facility-operations.common.loading')}
               </output>
             )}
-            <canvas
-              aria-label={canvasLabel}
-              ref={canvas}
-              style={{ display: rendering ? 'none' : 'block', maxWidth: '100%' }}
-            >
+            <canvas aria-label={canvasLabel} className={`max-w-full ${rendering ? 'hidden' : 'block'}`} ref={canvas}>
               {canvasLabel}
             </canvas>
           </ScrollRegion>

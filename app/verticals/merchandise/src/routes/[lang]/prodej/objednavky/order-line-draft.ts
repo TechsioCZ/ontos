@@ -5,6 +5,7 @@ import { classificationChoice } from '../../provoz/produkty/product-tax-classifi
 import type { ClassificationChoice, CompanyVat } from '../../provoz/produkty/product-tax-classification.ts';
 import type { DateTime } from 'effect';
 
+/** One line of the new order form as the dialog reads it: the form's values with the picked product's record. */
 export interface DraftLine {
   readonly key: string;
   /** The picked list row; its full record arrives in `record`. */
@@ -17,8 +18,6 @@ export interface DraftLine {
   /** Chosen variant of a product with sellable variants. */
   readonly variantId: VariantId | null;
 }
-
-export type DraftLinePatch = Partial<Pick<DraftLine, 'picked' | 'quantity' | 'quantityText' | 'record' | 'variantId'>>;
 
 /** The full record of a line's product once it has loaded. */
 export const lineProduct = (line: DraftLine): ProductRecord | null =>

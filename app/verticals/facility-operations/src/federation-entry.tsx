@@ -14,14 +14,12 @@ const FacilityOperationsRouteContent = () => {
 
   return (
     <section
-      className="facilityoperations:rounded-2xl facilityoperations:bg-white/90 facilityoperations:p-5 facilityoperations:shadow-xl facilityoperations:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalFacilityOperations"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="facilityoperations:text-2xl facilityoperations:font-black">{t('facility-operations.title')}</h2>
-      <p className="facilityoperations:mt-2 facilityoperations:text-stone-600">
-        {t('facility-operations.routeSurface')}
-      </p>
+      <h2 className="text-2xl font-bold">{t('facility-operations.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('facility-operations.routeSurface')}</p>
     </section>
   );
 };

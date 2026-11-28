@@ -1,6 +1,8 @@
-import type { StockMovementReason } from '../../../../../shared/domain/merchandise-model.ts';
+import { Schema } from 'effect';
 
-export type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
+/** The stock movements staff record by hand; an order's movement is the order's own. */
+export const ManualReasonSchema = Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT']);
+export type ManualReason = typeof ManualReasonSchema.Type;
 
 /** Typed movement fields. The product panel owns them, so Esc and outside clicks can see an unsent movement. */
 export interface MovementDraft {

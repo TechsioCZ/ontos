@@ -136,6 +136,8 @@ const pickVersionFile = (file: File) =>
     const transfer = new DataTransfer();
     transfer.items.add(file);
     input.files = transfer.files;
+    // A browser announces a picked file with `input`, then `change`.
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   });
 

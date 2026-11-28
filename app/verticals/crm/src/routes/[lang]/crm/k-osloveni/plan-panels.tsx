@@ -1,21 +1,41 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Option } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
 import { assignableSalespeople } from '../../../../crm/records.ts';
 import { CrmFormSaveActions, useCrmFormSave } from '../../../../crm/form-save.tsx';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // AREA: visits (C06) — owned by the crm-visits lane. Plan a contact / reschedule it / complete it (+ visit).
-import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
+import { DetailList, SidePanel, comboboxTranslations, requiredLabelFor, surfaceTileClassName } from '@app/admin-ui';
+import {
+  CheckboxField,
+  ChoiceField,
+  ComboboxField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextAreaField,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { Field } from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Combobox, FormInput, FormTextarea } from '@app/admin-ui/form-controls';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { lastVisitOf } from '../../../../../shared/domain/visits.ts';
 import type { PlanItem } from '../../../../../shared/domain/visits.ts';
 
-import { VisitFields, emptyVisitDraft } from '../navstevy/visit-panels.tsx';
+import {
+  ClientPickSchema,
+  VisitFields,
+  emptyVisitDraft,
+  useMessageTranslator,
+  useMessagesWhileInvalid,
+  visitControls,
+  visitFields,
+  visitKindLabel,
+  visitKindOf,
+} from '../navstevy/visit-panels.tsx';
 import type { Submit, VisitDraft } from '../navstevy/visit-panels.tsx';
 
 import {
@@ -28,12 +48,10 @@ import {
   relativeDay,
   salespersonLabel,
   shiftDay,
-  visitKindMeta,
   writableClients,
 } from '../navstevy/visits-model.ts';
 
 const RESIZE_LABEL = 'Změnit šířku panelu (šipky vlevo a vpravo)';
-const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
 
 const quickDays = [
   { days: 1, label: 'Zítra' },
@@ -42,13 +60,55 @@ const quickDays = [
   { days: 30, label: 'Za měsíc' },
 ];
 
-/** A planned contact as typed. */
-export interface PlanDraft {
-  readonly client: string;
-  readonly dueDate: Extract<CrmCommandInput, { readonly _tag: 'PlanContact' }>['dueDate'];
-  readonly note: string;
-  readonly salespersonId: string;
+/** The schema of each field of a plan form. */
+interface PlanFieldSchemas {
+  readonly client: typeof ClientPickSchema;
+  readonly dueDate: Schema.String;
+  readonly note: Schema.String;
+  readonly salespersonId: Schema.String;
 }
+
+/** The fields of a plan form. */
+type PlanFormFields = {
+  readonly [Key in keyof PlanFieldSchemas]: Field.FieldDef<Key, PlanFieldSchemas[Key]>;
+};
+
+/** A planned contact as typed: the client (`""` until picked), the day, a note and the responsible salesperson. */
+export type PlanDraft = Field.EncodedFromFields<PlanFormFields>;
+
+/** The fields of a plan form: the client, the day, a note and the responsible salesperson. */
+export const planFields: FormBuilder.FormBuilder<PlanFormFields, never> = FormBuilder.empty
+  .addField('client', ClientPickSchema)
+  .addField('dueDate', Schema.String)
+  .addField('note', Schema.String)
+  .addField('salespersonId', Schema.String);
+
+/** The kit controls of the plan fields. */
+interface PlanControls {
+  readonly client: typeof ComboboxField;
+  readonly dueDate: typeof TextField;
+  readonly note: typeof TextAreaField;
+  readonly salespersonId: typeof ChoiceField;
+}
+
+/** The kit controls of the plan fields (`""` salesperson is the client's assigned one). */
+export const planControls: PlanControls = {
+  client: ComboboxField,
+  dueDate: TextField,
+  note: TextAreaField,
+  salespersonId: ChoiceField,
+};
+
+/**
+ * Planning a contact in the side panel (`""` salesperson is the client's assigned one). Enter never sends the plan:
+ * only Uložit does.
+ */
+const planContactForm = FormReact.make(planFields, {
+  fields: planControls,
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const planDueDate = planContactForm.getFieldAtoms(planContactForm.fields.dueDate);
 
 /** PlanContact for a new contact, UpdatePlanItem with the changed fields for `item`; none while incomplete. */
 export const planCommandOf = (
@@ -94,8 +154,9 @@ export const PlanContactPanel = ({
   readonly records: RecordsResponse;
   readonly submit: Submit;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toaster = useToast();
+  const translate = useMessageTranslator();
   const today = localDay(records.now);
   const editing = item !== undefined;
   const fixedClient = editing || clientId !== undefined;
@@ -105,8 +166,8 @@ export const PlanContactPanel = ({
     note: item?.note ?? '',
     salespersonId: '',
   };
-  const [draft, setDraft] = useState<PlanDraft>(opened);
-  const patch = (next: Partial<PlanDraft>) => setDraft((current) => ({ ...current, ...next }));
+  const draft = Option.getOrElse(useAtomValue(planContactForm.values), () => opened);
+  const setDueDate = useAtomSet(planDueDate.setValue);
   const form = useCrmFormSave<PlanDraft>({
     command: (value) => planCommandOf(value, item, records.viewer.writeAll),
     failureText: (message) => czechError(message, 'Uložení se nezdařilo.'),
@@ -123,8 +184,7 @@ export const PlanContactPanel = ({
     submit,
     value: draft,
   });
-  const submitted = form.record.status === 'invalid';
-  const { client, dueDate, note, salespersonId } = draft;
+  useMessagesWhileInvalid(planContactForm, form.record.status === 'invalid');
 
   return (
     <SidePanel
@@ -141,44 +201,45 @@ export const PlanContactPanel = ({
       size="lg"
       title={editing ? 'Přeplánovat kontakt' : 'Naplánovat kontakt'}
     >
-      {/* Enter never sends the plan: only Uložit does. */}
-      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+      <FormRoot
+        className="flex flex-col gap-200 py-200"
+        defaultValues={opened}
+        form={planContactForm}
+        translateMessage={translate}
+      >
         {fixedClient ? (
-          <DetailList items={[{ label: 'Klient', value: clientLabel(records, client) }]} />
+          <DetailList items={[{ label: 'Klient', value: clientLabel(records, draft.client) }]} />
         ) : (
-          <Combobox
+          <planContactForm.client
             clearable={false}
-            helpText={submitted && client === '' ? 'Vyberte klienta.' : 'Jen klienti, ke kterým smíte zapisovat.'}
+            helpText="Jen klienti, ke kterým smíte zapisovat."
             items={writableClients(records).map((entry) => ({ label: entry.name, value: entry.id }))}
             label={t('crm.ciWorkflow.client')}
             noResultsMessage="Žádný klient neodpovídá"
-            onChange={(values) => patch({ client: firstValue(values) ?? '' })}
             placeholder={t('crm.ciWorkflow.searchClient')}
             required
+            requiredLabel={requiredLabelFor(language)}
             size="sm"
             translations={comboboxTranslations}
-            validateStatus={submitted && client === '' ? 'error' : 'default'}
-            value={client === '' ? [] : [client]}
           />
         )}
-        <FormInput
-          helpText={`${formatDay(dueDate)} · ${relativeDay(dueDate, today)}`}
+        <planContactForm.dueDate
+          helpText={`${formatDay(draft.dueDate)} · ${relativeDay(draft.dueDate, today)}`}
           id="crm-plan-due"
           label={t('crm.ciWorkflow.contactOn')}
           min={today}
           name="dueDate"
-          onChange={(event) => patch({ dueDate: event.target.value })}
           required
+          requiredLabel={requiredLabelFor(language)}
           size="sm"
           type="date"
-          value={dueDate}
         />
         <div className="flex flex-wrap gap-100">
           {quickDays.map((entry) => (
             <Button
               appearance="outline"
               key={entry.days}
-              onClick={() => patch({ dueDate: shiftDay(today, entry.days) })}
+              onClick={() => setDueDate(shiftDay(today, entry.days))}
               severity="secondary"
               size="sm"
             >
@@ -186,58 +247,49 @@ export const PlanContactPanel = ({
             </Button>
           ))}
         </div>
-        <FormTextarea
+        <planContactForm.note
           id="crm-plan-note"
           label={t('crm.ciWorkflow.note')}
           maxLength={4000}
           name="note"
-          onChange={(event) => patch({ note: event.target.value })}
           placeholder={t('crm.ciWorkflow.planNotePlaceholder')}
           rows={3}
           size="sm"
-          value={note}
         />
         {!editing && records.viewer.writeAll && (
-          <SelectTemplate
+          <planContactForm.salespersonId
             items={[
               { label: 'Přidělený obchodník klienta', value: '' },
               ...assignableSalespeople(records).map((person) => ({ label: person.name, value: person.id })),
             ]}
             label={t('crm.ciWorkflow.responsibleSalesperson')}
-            name="salesperson"
-            onValueChange={(details) => patch({ salespersonId: details.value[0] ?? '' })}
-            size="sm"
-            value={[salespersonId]}
+            placeholder="Přidělený obchodník klienta"
           />
         )}
-      </form>
+      </FormRoot>
     </SidePanel>
   );
 };
 
 /** Completing a planned contact as typed: the outcome, and the visit that fulfilled it when one is recorded. */
-interface CompletionDraft {
-  readonly doneNote: string;
-  readonly visit: VisitDraft;
-  readonly withVisit: boolean;
-}
+type CompletionDraft = VisitDraft & { readonly doneNote: string; readonly withVisit: boolean };
 
 /** CompletePlanItem with the outcome and the visit; none while a recorded visit lacks its result or time. */
-const completionCommandOf = (value: CompletionDraft, item: PlanItem): Option.Option<CrmCommandInput> => {
-  const { visit: draft } = value;
+const completionCommandOf = (draft: CompletionDraft, item: PlanItem): Option.Option<CrmCommandInput> => {
   const occurredAt = isoFromLocal(draft.date, draft.time);
-  if (value.withVisit && (draft.result.trim() === '' || occurredAt === undefined)) {
+  const kind = visitKindOf(draft.kind);
+  if (draft.withVisit && (draft.result.trim() === '' || occurredAt === undefined || Option.isNone(kind))) {
     return Option.none();
   }
   const command: Extract<CrmCommandInput, { readonly _tag: 'CompletePlanItem' }> = {
     _tag: 'CompletePlanItem',
     planItemId: item.id,
   };
-  if (value.doneNote.trim() !== '') {
-    Object.assign(command, { doneNote: value.doneNote.trim() });
+  if (draft.doneNote.trim() !== '') {
+    Object.assign(command, { doneNote: draft.doneNote.trim() });
   }
-  if (value.withVisit && occurredAt !== undefined) {
-    const visit: NonNullable<typeof command.visit> = { kind: draft.kind, occurredAt, result: draft.result.trim() };
+  if (draft.withVisit && occurredAt !== undefined && Option.isSome(kind)) {
+    const visit: NonNullable<typeof command.visit> = { kind: kind.value, occurredAt, result: draft.result.trim() };
     if (draft.note.trim() !== '') {
       Object.assign(visit, { note: draft.note.trim() });
     }
@@ -245,6 +297,16 @@ const completionCommandOf = (value: CompletionDraft, item: PlanItem): Option.Opt
   }
   return Option.some(command);
 };
+
+/** Completing a planned contact. Enter never completes it: only Uložit does. */
+const completePlanForm = FormReact.make(
+  visitFields.addField('doneNote', Schema.String).addField('withVisit', Schema.Boolean),
+  {
+    fields: { ...visitControls, doneNote: TextField, withVisit: CheckboxField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
 
 /** Mark a planned contact done; optionally record the visit / call that fulfilled it (C06). */
 export const CompletePlanPanel = ({
@@ -260,17 +322,19 @@ export const CompletePlanPanel = ({
 }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [draft, setDraft] = useState<CompletionDraft>(() => ({
+  const translate = useMessageTranslator();
+  const opened: CompletionDraft = {
+    ...emptyVisitDraft(records, item.clientId, 'call'),
     doneNote: '',
-    visit: { ...emptyVisitDraft(records, item.clientId, 'call'), result: '' },
     withVisit: true,
-  }));
+  };
+  const draft = Option.getOrElse(useAtomValue(completePlanForm.values), () => opened);
   const form = useCrmFormSave<CompletionDraft>({
     command: (value) => completionCommandOf(value, item),
     failureText: (message) => czechError(message, 'Uložení se nezdařilo.'),
     onSaved: (value) => {
       toaster.create({
-        description: value.withVisit ? `${visitKindMeta[value.visit.kind].label} je v historii návštěv.` : undefined,
+        description: value.withVisit ? `${visitKindLabel(value.kind)} je v historii návštěv.` : undefined,
         title: 'Kontakt vyřízen',
         type: 'success',
       });
@@ -279,6 +343,7 @@ export const CompletePlanPanel = ({
     submit,
     value: draft,
   });
+  useMessagesWhileInvalid(completePlanForm, form.record.status === 'invalid');
   const last = lastVisitOf(records.state.visits.items, item.clientId);
   return (
     <SidePanel
@@ -295,8 +360,12 @@ export const CompletePlanPanel = ({
       size="lg"
       title={t('crm.ciWorkflow.completeContact')}
     >
-      {/* Enter never completes the contact: only Uložit does. */}
-      <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+      <FormRoot
+        className="flex flex-col gap-200 py-200"
+        defaultValues={opened}
+        form={completePlanForm}
+        translateMessage={translate}
+      >
         <DetailList
           items={[
             { label: 'Poznámka k plánu', value: item.note ?? <span className="text-fg-secondary">bez poznámky</span> },
@@ -312,40 +381,27 @@ export const CompletePlanPanel = ({
             },
           ]}
         />
-        <FormInput
+        <completePlanForm.doneNote
           autoComplete="off"
           id="crm-plan-done-note"
           label={t('crm.ciWorkflow.contactOutcome')}
           name="doneNote"
-          onChange={(event) => {
-            const doneNote = event.target.value;
-            setDraft((current) => ({ ...current, doneNote }));
-          }}
-          size="sm"
-          value={draft.doneNote}
-        />
-        <FormCheckbox
-          checked={draft.withVisit}
-          id="crm-plan-with-visit"
-          label={t('crm.ciWorkflow.recordVisit')}
-          onCheckedChange={(withVisit) => setDraft((current) => ({ ...current, withVisit }))}
           size="sm"
         />
+        <completePlanForm.withVisit id="crm-plan-with-visit" label={t('crm.ciWorkflow.recordVisit')} />
         {draft.withVisit && (
           <div className={`${surfaceTileClassName} flex flex-col gap-200 p-200`}>
             <VisitFields
-              draft={draft.visit}
+              form={completePlanForm}
               idPrefix="crm-plan-visit"
-              onChange={(patch) => setDraft((current) => ({ ...current, visit: { ...current.visit, ...patch } }))}
               records={records}
               showClient={false}
               showNextStep={false}
               showSalesperson={false}
-              submitted={form.record.status === 'invalid'}
             />
           </div>
         )}
-      </form>
+      </FormRoot>
     </SidePanel>
   );
 };

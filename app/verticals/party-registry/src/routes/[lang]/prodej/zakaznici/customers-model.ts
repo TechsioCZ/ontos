@@ -165,17 +165,6 @@ export const prefillFromAres = (evidence: AresSubjectEvidence): AresPrefill => {
   return prefill;
 };
 
-export interface CreateDraft {
-  readonly city: string;
-  readonly email: string;
-  readonly ico: string;
-  readonly name: string;
-  readonly phone: string;
-  readonly postalCode: string;
-  readonly street: string;
-  readonly vatId: string;
-}
-
 /**
  * Longest name the create form accepts. A customer without an IČO uses its name as the subject key, and the
  * owner caps subject keys at 200 characters.
@@ -192,47 +181,69 @@ export const CreateValidationKeySchema = Schema.Literals([
 ]);
 export type CreateValidationKey = typeof CreateValidationKeySchema.Type;
 
-/** Failing create-form fields mapped to their translation key under `create.validation`. */
-export interface CreateDraftErrors {
-  city?: CreateValidationKey;
-  email?: CreateValidationKey;
-  ico?: CreateValidationKey;
-  name?: CreateValidationKey;
-  phone?: CreateValidationKey;
-  postalCode?: CreateValidationKey;
-  street?: CreateValidationKey;
-  vatId?: CreateValidationKey;
-}
+/** The translation key of a failed create-form check: the form shows it under the field it names. */
+const createValidationMessage = (key: CreateValidationKey) => `party-registry.pages.customers.create.validation.${key}`;
 
-/** Returns translation keys (under `create.validation`) for every failing field. */
-export const validateCreateDraft = (draft: CreateDraft): CreateDraftErrors => {
-  const errors: CreateDraftErrors = {};
-  const ico = draft.ico.trim();
-  const vatId = draft.vatId.trim().toUpperCase();
-  const email = draft.email.trim();
-  if (draft.name.trim().length === 0) {
-    errors.name = 'nameRequired';
-  }
-  if (ico.length > 0 && !/^\d{8}$/u.test(ico)) {
-    errors.ico = 'icoInvalid';
-  } else if (ico.length > 0 && !isValidCzechIco(ico)) {
+const filled = (value: string) => value.trim().length > 0;
+
+const CreateNameSchema = Schema.String.check(
+  Schema.makeFilter((name: string) => filled(name) || createValidationMessage('nameRequired')),
+);
+
+const CreateIcoSchema = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    const ico = value.trim();
+    if (ico.length === 0) {
+      return true;
+    }
+    if (!/^\d{8}$/u.test(ico)) {
+      return createValidationMessage('icoInvalid');
+    }
     // The owner rejects a bad mod-11 checksum with a generic error, so the form names the field first.
-    errors.ico = 'icoChecksum';
-  }
-  if (vatId.length > 0 && !/^CZ\d{8,10}$/u.test(vatId)) {
-    errors.vatId = 'vatIdInvalid';
-  }
-  if (email.length > 0 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
-    errors.email = 'emailInvalid';
-  }
-  // The owner (domain rule and database check) keeps an address only with two parts; the client drops a lone one.
-  const addressFields = (['street', 'city', 'postalCode'] as const).filter((field) => draft[field].trim().length > 0);
-  const [onlyAddressField] = addressFields;
-  if (addressFields.length === 1 && onlyAddressField !== undefined) {
-    errors[onlyAddressField] = 'addressIncomplete';
-  }
-  return errors;
-};
+    return isValidCzechIco(ico) || createValidationMessage('icoChecksum');
+  }),
+);
+
+const CreateVatIdSchema = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    const vatId = value.trim().toUpperCase();
+    return vatId.length === 0 || /^CZ\d{8,10}$/u.test(vatId) || createValidationMessage('vatIdInvalid');
+  }),
+);
+
+const CreateEmailSchema = Schema.String.check(
+  Schema.makeFilter((value: string) => {
+    const email = value.trim();
+    return email.length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) || createValidationMessage('emailInvalid');
+  }),
+);
+
+const createAddressFields = ['street', 'city', 'postalCode'] as const;
+
+/**
+ * The create form: every field is text, and each check names the field it fails with its translation key. The owner
+ * (domain rule and database check) keeps an address only with two parts and the client drops a lone one, so a lone
+ * part fails on its own field.
+ */
+export const CreateDraftSchema = Schema.Struct({
+  city: Schema.String,
+  email: CreateEmailSchema,
+  ico: CreateIcoSchema,
+  name: CreateNameSchema,
+  phone: Schema.String,
+  postalCode: Schema.String,
+  street: Schema.String,
+  vatId: CreateVatIdSchema,
+}).check(
+  Schema.makeFilter((draft) => {
+    const parts = createAddressFields.filter((field) => filled(draft[field]));
+    const [only] = parts;
+    return parts.length === 1 && only !== undefined
+      ? { issue: createValidationMessage('addressIncomplete'), path: [only] }
+      : undefined;
+  }),
+);
+export type CreateDraft = typeof CreateDraftSchema.Type;
 
 /** Explicit fields for contact editing; structured addresses never pass through a display string. */
 export type CustomerContactFields = Readonly<Record<string, string>>;

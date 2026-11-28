@@ -4,7 +4,9 @@ import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Tables of the sales report (crm-reports lane): grouped summary, order rows, status mapping, items by SKU.
 import { EmptyState, SectionCard, formatDate, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Meter } from '@techsio/ui-kit/atoms/meter';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 
@@ -121,23 +123,25 @@ const GroupLabel = ({
 }) => {
   if (grouping === 'client') {
     return (
-      <a className={linkClass} href={clientCardHref(lang, group.key)}>
+      <Link className={linkClass} href={clientCardHref(lang, group.key)} size="current">
         {group.label}
-      </a>
+      </Link>
     );
   }
   if (grouping === 'month' && group.count === 0) {
     return <span>{group.label}</span>;
   }
   return (
-    <button
+    <Button
       aria-label={`${group.label}: Zúžit přehled na tuto skupinu`}
       className={`${linkClass} cursor-pointer text-left ${group.key === UNASSIGNED ? 'text-fg-secondary' : ''}`}
+      composition
       onClick={() => onPick(grouping, group.key)}
-      type="button"
+      size="current"
+      unstyled
     >
       {group.label}
-    </button>
+    </Button>
   );
 };
 
@@ -233,18 +237,10 @@ export const SummaryTable = ({
                       <GroupLabel group={group} grouping={grouping} lang={lang} onPick={onPick} />
                     </th>
                     <td aria-label={formatNumber(group.count)} className="py-100 pr-200">
-                      <span className="flex items-center gap-150">
+                      <div className="flex items-center gap-150">
                         <span className="w-8 text-right tabular-nums">{formatNumber(group.count)}</span>
-                        <span aria-hidden className="h-2 w-28 rounded-sm bg-surface-secondary">
-                          <span
-                            className="block h-full rounded-sm"
-                            style={{
-                              backgroundColor: 'var(--color-chart-series-1)',
-                              width: `${(group.count / maxCount) * 100}%`,
-                            }}
-                          />
-                        </span>
-                      </span>
+                        <Meter aria-hidden className="w-28" max={maxCount} severity="info" value={group.count} />
+                      </div>
                     </td>
                     {report.currencies.map((currency) => {
                       const total = totalIn(group.totals, currency);
@@ -351,9 +347,9 @@ const orderColumns = (
   {
     accessorKey: 'clientName',
     cell: (info) => (
-      <a className={linkClass} href={clientCardHref(lang, info.row.original.clientId)}>
+      <Link className={linkClass} href={clientCardHref(lang, info.row.original.clientId)} size="current">
         {info.getValue<string>()}
-      </a>
+      </Link>
     ),
     header: 'Klient',
     meta: { type: 'string', width: 230 },

@@ -1,31 +1,49 @@
 import { isStockQuantity, MAX_QUANTITY, MIN_STOCK_QUANTITY } from '../../../../../shared/domain/order-quantity.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { DateTime, Effect } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
+import { Atom } from 'effect/reactivity';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput, FormNumericInput } from '@app/admin-ui/form-controls';
 import { SelectTemplate } from '@app/admin-ui/select-template';
 import {
   SaveBar,
   SidePanel,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveLabels, SaveOutcome, SaveState, UnsavedChangesGuard } from '@app/admin-ui';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  NumberTextSchema,
+  NumericField,
+  TextField,
+  unrenderedField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useState } from 'react';
+import { CategoryTrailSchema } from '../../../../../shared/apis/records.ts';
 import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
+import {
+  ProductIdSchema,
+  ProductUnitSchema,
+  VariantIdSchema,
+  sameSku,
+} from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductUnit } from '../../../../../shared/domain/merchandise-model.ts';
+import { CzVatClassificationCodeSchema } from '@app/shared-contracts/cz-vat-classifications';
 import type { CzVatClassificationCode } from '@app/shared-contracts/cz-vat-classifications';
-import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, QUANTITY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { productCommandOutcome, runCommand } from './products-api.ts';
 import type { CommandOutcome, ProductCommand } from './products-api.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { selectItem } from '../../../../ui/select-item.ts';
 import { ProductSearchCombobox } from './product-search.tsx';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
@@ -37,6 +55,7 @@ import {
   PRODUCT_LIMITS,
   UNITS,
   fieldError,
+  fieldVerdict,
   focusFirstInvalid,
   lowStockErrorKey,
   priceErrorKey,
@@ -95,38 +114,58 @@ const ErrorLine = ({ message }: { readonly message: string | null }) =>
     </StatusText>
   );
 
-/** What the create form holds until Uložit. The texts are what the inputs show; the numbers are their parsed values. */
-interface ProductDraft {
-  readonly category: string;
-  readonly lowStock: number;
-  readonly lowStockText: string;
-  readonly name: string;
-  // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0.
-  readonly priceCzk: number;
-  readonly priceText: string;
-  readonly sku: string;
-  /** Picked by staff; until then the form uses the first classification with a rate in force. */
-  readonly taxClassificationCode?: CzVatClassificationCode;
-  readonly unit: ProductUnit;
-}
+/**
+ * What the create form holds until Uložit. The number inputs keep the text as typed with the number it reads as; the
+ * unit and the VAT classification are picked in selects that write the form's fields. Uložit sends it, so the form
+ * itself is never submitted.
+ */
+const createForm = FormReact.make(
+  FormBuilder.empty
+    .addField('category', Schema.String)
+    .addField('lowStock', NumberTextSchema)
+    .addField('name', Schema.String)
+    // NaN until typed: an empty price is refused by priceErrorKey instead of starting at 0.
+    .addField('price', NumberTextSchema)
+    .addField('sku', Schema.String)
+    // Picked by staff; until then (null) the form uses the first classification with a rate in force.
+    .addField('taxClassificationCode', Schema.OptionFromNullOr(CzVatClassificationCodeSchema))
+    .addField('unit', ProductUnitSchema),
+  {
+    fields: {
+      category: TextField,
+      lowStock: NumericField,
+      name: TextField,
+      price: NumericField,
+      sku: TextField,
+      taxClassificationCode: unrenderedField<CzVatClassificationCode | null>(),
+      unit: unrenderedField<ProductUnit>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type ProductDraft = typeof createForm.schema.Encoded;
 
 const blankProduct: ProductDraft = {
   category: '',
-  lowStock: 0,
-  lowStockText: '0',
+  lowStock: { number: 0, text: '0' },
   name: '',
-  priceCzk: Number.NaN,
-  priceText: '',
+  price: { number: Number.NaN, text: '' },
   sku: '',
+  taxClassificationCode: null,
   unit: 'ks',
 };
+
+const productDraft = createForm.values.pipe(Atom.map(Option.getOrElse(() => blankProduct)));
+const unitField = createForm.getFieldAtoms(createForm.fields.unit);
+const classificationField = createForm.getFieldAtoms(createForm.fields.taxClassificationCode);
 
 /** The texts carry the numbers, so two drafts with the same texts are the same draft. */
 const sameProduct = (left: ProductDraft, right: ProductDraft): boolean =>
   left.category === right.category &&
-  left.lowStockText === right.lowStockText &&
+  left.lowStock.text === right.lowStock.text &&
   left.name === right.name &&
-  left.priceText === right.priceText &&
+  left.price.text === right.price.text &&
   left.sku === right.sku &&
   left.taxClassificationCode === right.taxClassificationCode &&
   left.unit === right.unit;
@@ -240,25 +279,18 @@ const FormSaveActions = ({ form }: { readonly form: FormSave }) => {
   );
 };
 
-/**
- * Create product: SKU, name, unit, category, VAT classification, price, minimum stock. Sends CreateProduct. The server refuses a
- * SKU the catalog already has; the field then shows that message until the SKU changes.
- */
-export const CreateProductDialog = ({
-  onCommitted,
-  onOpenChange,
-  onReload,
-  open,
-  revision,
-  vat,
-}: FormDialogProps & {
+type CreateProductDialogProps = FormDialogProps & {
   /** The company's VAT rates from the staff records read; they name the classifications the select offers. */
   readonly vat: CompanyVat;
-}) => {
+};
+
+const CreateProductPanel = ({ onCommitted, onOpenChange, onReload, open, revision, vat }: CreateProductDialogProps) => {
   const k = useProductLabel();
-  const { t } = useModernI18n();
-  const [draft, setDraft] = useState<ProductDraft>(blankProduct);
-  const update = (patch: Partial<ProductDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const { language, t } = useModernI18n();
+  const draft = useAtomValue(productDraft);
+  const setValues = useAtomSet(createForm.setValues);
+  const setUnit = useAtomSet(unitField.setValue);
+  const setClassification = useAtomSet(classificationField.setValue);
   // The SKU the server refused as a duplicate. Only that exact value shows the message, so editing it clears it.
   const [takenSku, setTakenSku] = useState<string | null>(null);
 
@@ -279,8 +311,8 @@ export const CreateProductDialog = ({
   };
   const errorsOf = (value: ProductDraft) => {
     const skuTakenError = takenSku !== null && sameSku(takenSku, value.sku) ? k('validation.skuTaken') : undefined;
-    const priceKey = priceErrorKey(value.priceCzk);
-    const lowStockKey = lowStockErrorKey(value.lowStock);
+    const priceKey = priceErrorKey(value.price.number);
+    const lowStockKey = lowStockErrorKey(value.lowStock.number);
     return {
       category:
         value.category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, value.category, PRODUCT_LIMITS.category),
@@ -297,9 +329,9 @@ export const CreateProductDialog = ({
       _tag: 'CreateProduct',
       active: true,
       category: value.category.trim(),
-      lowStockThreshold: value.lowStock,
+      lowStockThreshold: value.lowStock.number,
       name: value.name.trim(),
-      priceMinor: Math.round(value.priceCzk * 100),
+      priceMinor: Math.round(value.price.number * 100),
       sku: value.sku.trim(),
       taxClassificationCode: classificationOf(value),
       unit: value.unit,
@@ -320,7 +352,7 @@ export const CreateProductDialog = ({
       return k('validation.skuTaken');
     },
     reset: (value) => {
-      setDraft(value);
+      setValues(value);
       setTakenSku(null);
     },
     revision,
@@ -329,6 +361,7 @@ export const CreateProductDialog = ({
   const errors = errorsOf(draft);
   // Field messages show once the draft cannot be sent, or after the server refused it.
   const shown = form.record.status === 'invalid' || form.record.status === 'error';
+  const requiredLabel = requiredLabelFor(language);
 
   return (
     <>
@@ -345,36 +378,33 @@ export const CreateProductDialog = ({
         size="md"
         title={k('create.title')}
       >
-        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
-          <FormInput
+        <div className="flex flex-col gap-200 py-200">
+          <createForm.sku
             autoComplete="off"
             id="product-sku"
             label={k('fields.sku')}
             name="sku"
-            onChange={(event) => update({ sku: event.target.value })}
             required
-            value={draft.sku}
-            {...fieldError(shown, errors.sku)}
+            requiredLabel={requiredLabel}
+            {...fieldVerdict(shown, errors.sku)}
           />
-          <FormInput
+          <createForm.name
             autoComplete="off"
             id="product-name"
             label={k('fields.name')}
             name="name"
-            onChange={(event) => update({ name: event.target.value })}
             required
-            value={draft.name}
-            {...fieldError(shown, errors.name)}
+            requiredLabel={requiredLabel}
+            {...fieldVerdict(shown, errors.name)}
           />
-          <FormInput
+          <createForm.category
             autoComplete="off"
             id="product-category"
             label={k('fields.category')}
             name="category"
-            onChange={(event) => update({ category: event.target.value })}
             required
-            value={draft.category}
-            {...fieldError(shown, errors.category)}
+            requiredLabel={requiredLabel}
+            {...fieldVerdict(shown, errors.category)}
           />
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
             <SelectTemplate
@@ -385,7 +415,7 @@ export const CreateProductDialog = ({
                 const [next] = details.value;
                 const picked = UNITS.find((value) => value === next);
                 if (picked !== undefined) {
-                  update({ unit: picked });
+                  setUnit(picked);
                 }
               }}
               placeholder={k('selectPlaceholder')}
@@ -393,51 +423,56 @@ export const CreateProductDialog = ({
             />
             <TaxClassificationSelect
               error={errors.taxClassification}
-              onChange={(taxClassificationCode) => update({ taxClassificationCode })}
+              onChange={setClassification}
               value={classificationOf(draft)}
               vat={vat}
             />
           </div>
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-            <FormNumericInput
+            <createForm.price
               formatOptions={MONEY_FORMAT}
+              hideValueMax
               id="product-price"
               label={k('fields.price')}
               locale="cs-CZ"
               min={0}
               name="price"
-              onValueChange={(details) => update({ priceCzk: details.valueAsNumber, priceText: details.value })}
               required
+              requiredLabel={requiredLabel}
               step={1}
-              value={draft.priceText}
-              {...fieldError(shown, errors.price)}
-            >
-              <NumericInput.Control>
-                <NumericInput.Input aria-valuemax={undefined} />
-              </NumericInput.Control>
-            </FormNumericInput>
-            <FormNumericInput
+              {...fieldVerdict(shown, errors.price)}
+            />
+            <createForm.lowStock
               clampValueOnBlur={false}
               formatOptions={WHOLE_NUMBER_FORMAT}
+              hideValueMax
               id="product-low-stock"
               label={k('fields.lowStock')}
               locale="cs-CZ"
               min={0}
               name="lowStock"
-              onValueChange={(details) => update({ lowStock: details.valueAsNumber, lowStockText: details.value })}
               step={1}
-              value={draft.lowStockText}
-              {...fieldError(shown, errors.lowStock)}
-            >
-              <NumericInput.Control>
-                <NumericInput.Input aria-valuemax={undefined} />
-              </NumericInput.Control>
-            </FormNumericInput>
+              {...fieldVerdict(shown, errors.lowStock)}
+            />
           </div>
-        </form>
+        </div>
       </SidePanel>
       <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
     </>
+  );
+};
+
+/**
+ * Create product: SKU, name, unit, category, VAT classification, price, minimum stock. Sends CreateProduct. The server refuses a
+ * SKU the catalog already has; the field then shows that message until the SKU changes. The panel, its footer and its
+ * leave question render inside the form, so they read this mount's draft.
+ */
+export const CreateProductDialog = (props: CreateProductDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot defaultValues={blankProduct} form={createForm} translateMessage={t}>
+      <CreateProductPanel {...props} />
+    </FormRoot>
   );
 };
 
@@ -452,75 +487,113 @@ const receiptReadStatus = (
   return read.loading ? { helpText: k('states.loading') } : {};
 };
 
-interface ReceiptPick {
-  readonly product: ProductRecord;
+/** The picked list row (no variants): what the product field shows and whose full record is read. */
+const ReceiptProductSchema = Schema.toType(
+  Schema.Struct({ id: ProductIdSchema, name: Schema.String, sku: Schema.String }),
+);
+
+/**
+ * The receipt being typed. Its button records it; Enter in a field does not, so the form itself is never submitted.
+ * The product and the variant are picked in a combobox and a select that write the form's fields.
+ */
+const receiptForm = FormReact.make(
+  FormBuilder.empty
+    .addField('note', Schema.String)
+    .addField('product', Schema.OptionFromNullOr(ReceiptProductSchema))
+    .addField('quantity', NumberTextSchema)
+    .addField('variantId', Schema.OptionFromNullOr(VariantIdSchema)),
+  {
+    fields: {
+      note: TextField,
+      product: unrenderedField<typeof ReceiptProductSchema.Type | null>(),
+      quantity: NumericField,
+      variantId: unrenderedField<string | null>(),
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type ReceiptDraft = typeof receiptForm.schema.Encoded;
+
+const blankReceipt: ReceiptDraft = { note: '', product: null, quantity: { number: 1, text: '1' }, variantId: null };
+
+/** True when the receipt holds a picked product or typed input. */
+const isReceiptDirty = (draft: ReceiptDraft) =>
+  draft.product !== null || draft.quantity.text !== blankReceipt.quantity.text || draft.note !== '';
+
+const receiptDraft = receiptForm.values.pipe(Atom.map(Option.getOrElse(() => blankReceipt)));
+const receiptProductField = receiptForm.getFieldAtoms(receiptForm.fields.product);
+const receiptVariantField = receiptForm.getFieldAtoms(receiptForm.fields.variantId);
+
+/** The full record (variants) of one picked product, read when it is picked or retried. */
+interface ReceiptRead {
+  readonly productId: ProductRecord['id'];
   readonly record: ProductRecordState;
 }
 
 /**
- * The picked product with its full record (variants), read when it is picked or retried. A record that arrives after
- * another pick is dropped, so a receipt never takes its variants from the previously picked product.
+ * The picked product of the receipt form with its full record. A record that arrives after another pick is dropped,
+ * so a receipt never takes its variants from the previously picked product.
  */
-const useReceiptSelection = () => {
-  const [pick, setPick] = useState<ReceiptPick | null>(null);
-  const [variantId, setVariantId] = useState('');
-  const read = (product: ProductRecord) => {
-    setPick({ product, record: { status: 'loading' } });
-    loadProductRecord(product.id, (record) =>
-      setPick((current) => (current?.product.id === product.id ? { ...current, record } : current)),
+const useReceiptSelection = (draft: ReceiptDraft) => {
+  const setProduct = useAtomSet(receiptProductField.setValue);
+  const setVariant = useAtomSet(receiptVariantField.setValue);
+  const [read, setRead] = useState<ReceiptRead | null>(null);
+  const startRead = (productId: ProductRecord['id']) => {
+    setRead({ productId, record: { status: 'loading' } });
+    loadProductRecord(productId, (record) =>
+      setRead((current) => (current?.productId === productId ? { productId, record } : current)),
     );
   };
   const handleProductSelect = (picked: ProductRecord | null) => {
-    setVariantId('');
+    setVariant(null);
     if (picked === null) {
-      setPick(null);
+      setProduct(null);
       return;
     }
-    read(picked);
+    setProduct({ id: picked.id, name: picked.name, sku: picked.sku });
+    startRead(picked.id);
   };
+  const { product, variantId } = draft;
   const handleRetry = () => {
-    if (pick !== null) {
-      read(pick.product);
+    if (product !== null) {
+      startRead(product.id);
     }
   };
-  const clearSelection = () => {
-    setPick(null);
-    setVariantId('');
-  };
-  const fullProduct = pick?.record.status === 'ready' ? pick.record.product : undefined;
+  const record = product !== null && read?.productId === product.id ? read.record : undefined;
+  const fullProduct = record?.status === 'ready' ? record.product : undefined;
   const variants = fullProduct?.variantRecords ?? [];
   const variant = variants.find((entry) => entry.id === variantId);
   return {
-    clearSelection,
-    failed: pick?.record.status === 'error',
+    failed: record?.status === 'error',
     fullProduct,
     handleProductSelect,
     handleRetry,
-    handleVariantSelect: setVariantId,
-    loading: pick?.record.status === 'loading',
-    product: pick?.product ?? null,
+    handleVariantSelect: (next: string | undefined) =>
+      setVariant(variants.find((entry) => entry.id === next)?.id ?? null),
+    loading: record?.status === 'loading',
+    product,
     variant,
-    variantId,
     variantMissing: variants.length > 0 && variant === undefined,
     variants,
   };
 };
 
-/** Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. */
-export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
+const ReceiptPanel = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const failure = useCommandFailure();
-  const selection = useReceiptSelection();
-  const { fullProduct, product, variant, variantId, variantMissing, variants } = selection;
+  const draft = useAtomValue(receiptDraft);
+  const setValues = useAtomSet(receiptForm.setValues);
+  const selection = useReceiptSelection(draft);
+  const { fullProduct, product, variant, variantMissing, variants } = selection;
+  const { note, variantId } = draft;
+  const quantity = draft.quantity.number;
   const productId = product?.id ?? null;
-  const [quantity, setQuantity] = useState(1);
-  const [quantityText, setQuantityText] = useState('1');
-  const [note, setNote] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const dirty = productId !== null || quantityText !== '1' || note !== '';
+  const dirty = isReceiptDirty(draft);
 
   const productError = productId === null ? k(REQUIRED_KEY) : undefined;
   const quantityError = isStockQuantity(quantity) && quantity > 0 ? undefined : k('validation.quantity');
@@ -536,10 +609,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
     noteError === undefined;
 
   const clearForm = () => {
-    selection.clearSelection();
-    setQuantity(1);
-    setQuantityText('1');
-    setNote('');
+    setValues(blankReceipt);
     setSubmitted(false);
   };
   // The receipt keeps its own button; leaving with typed input asks the shared leave question first.
@@ -601,13 +671,7 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
         size="md"
         title={k('receipt.title')}
       >
-        <form
-          className="flex flex-col gap-200 py-200"
-          // Enter in a field does not record the receipt; only its button does.
-          onSubmit={(event) => {
-            event.preventDefault();
-          }}
-        >
+        <div className="flex flex-col gap-200 py-200">
           <ErrorLine message={serverError} />
           {symmy && (
             <StatusText showIcon status="error">
@@ -639,103 +703,120 @@ export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revis
               items={variants.map((entry) => selectItem(entry.id, `${entry.name} (${entry.sku})`))}
               label={t('merchandise.ui.variant')}
               name="receiptVariant"
-              onValueChange={(details) => selection.handleVariantSelect(details.value[0] ?? '')}
+              onValueChange={(details) => selection.handleVariantSelect(details.value[0])}
               placeholder={t('merchandise.ui.selectVariant')}
               required
-              value={variantId === '' ? [] : [variantId]}
+              value={variantId === null ? [] : [variantId]}
               {...fieldError(submitted && variantMissing, k(REQUIRED_KEY))}
             />
           )}
-          <FormNumericInput
+          <receiptForm.quantity
             clampValueOnBlur={false}
             formatOptions={QUANTITY_FORMAT}
+            hideValueMax
             id="receipt-quantity"
             label={k('fields.quantity')}
             locale="cs-CZ"
             max={MAX_QUANTITY}
             min={MIN_STOCK_QUANTITY}
             name="quantity"
-            onValueChange={(details) => {
-              setQuantity(details.valueAsNumber);
-              setQuantityText(details.value);
-            }}
             step={1}
-            value={quantityText}
-            {...fieldError(submitted, quantityError)}
-          >
-            <NumericInput.Control>
-              <NumericInput.Input aria-valuemax={undefined} />
-            </NumericInput.Control>
-          </FormNumericInput>
-          <FormInput
+            {...fieldVerdict(submitted, quantityError)}
+          />
+          <receiptForm.note
             autoComplete="off"
             id="receipt-note"
             label={k('fields.note')}
             name="note"
-            onChange={(event) => setNote(event.target.value)}
-            value={note}
-            {...fieldError(submitted, noteError)}
+            {...fieldVerdict(submitted, noteError)}
           />
-        </form>
+        </div>
       </SidePanel>
       {dialog}
     </>
   );
 };
 
+/**
+ * Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. The panel renders
+ * inside the form, so its button and leave question read this mount's receipt.
+ */
+export const ReceiptDialog = (props: FormDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot defaultValues={blankReceipt} form={receiptForm} translateMessage={t}>
+      <ReceiptPanel {...props} />
+    </FormRoot>
+  );
+};
+
 const PERCENT_MIN = -90;
 const PERCENT_MAX = 1000;
 
-interface PercentDraft {
-  readonly percent: number;
-  // The text is what the input shows; "5,5" reaches validation as 5.5 instead of silently becoming 55.
-  readonly percentText: string;
-}
+/**
+ * The bulk price change. The percent's text is what the input shows; "5,5" reaches validation as 5.5 instead of
+ * silently becoming 55. Uložit sends it, so the form itself is never submitted.
+ */
+const percentForm = FormReact.make(FormBuilder.empty.addField('percent', NumberTextSchema), {
+  fields: { percent: NumericField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+type PercentDraft = typeof percentForm.schema.Encoded;
 
 /** Empty, so the 5 % the form opens with is already a change Uložit sends. */
-const noPercent: PercentDraft = { percent: Number.NaN, percentText: '' };
-const openingPercent: PercentDraft = { percent: 5, percentText: '5' };
+const noPercent: PercentDraft = { percent: { number: Number.NaN, text: '' } };
+const openingPercent: PercentDraft = { percent: { number: 5, text: '5' } };
+
+const percentDraft = percentForm.values.pipe(Atom.map(Option.getOrElse(() => openingPercent)));
 
 const validPercent = (percent: number) =>
   Number.isInteger(percent) && percent >= PERCENT_MIN && percent <= PERCENT_MAX && percent !== 0;
 
-/**
- * Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. Products priced by their
- * variants cannot take it (each variant has its own price); the selected ones the list shows are named before
- * anything is typed, and the server refuses any others.
- */
-export const PriceChangeDialog = ({
+const NO_PRODUCTS: readonly Pick<ProductRecord, 'id' | 'name'>[] = [];
+
+type PriceChangeDialogProps = FormDialogProps & {
+  readonly ids: readonly ProductRecord['id'][];
+  /** Selected products imported through Symmy: their price is written to the ERP only by the detail save. */
+  readonly symmyProducts?: readonly Pick<ProductRecord, 'id' | 'name'>[];
+  /** Selected products the list knows to be priced by sellable variants. */
+  readonly variantProducts: readonly Pick<ProductRecord, 'id' | 'name'>[];
+};
+
+const PriceChangePanel = ({
   ids,
   onCommitted,
   onOpenChange,
   onReload,
   open,
   revision,
-  symmyProducts = [],
+  symmyProducts = NO_PRODUCTS,
   variantProducts,
-}: FormDialogProps & {
-  readonly ids: readonly ProductRecord['id'][];
-  /** Selected products imported through Symmy: their price is written to the ERP only by the detail save. */
-  readonly symmyProducts?: readonly Pick<ProductRecord, 'id' | 'name'>[];
-  /** Selected products the list knows to be priced by sellable variants. */
-  readonly variantProducts: readonly Pick<ProductRecord, 'id' | 'name'>[];
-}) => {
+}: PriceChangeDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
-  const [draft, setDraft] = useState<PercentDraft>(openingPercent);
+  const draft = useAtomValue(percentDraft);
+  const setValues = useAtomSet(percentForm.setValues);
   const form = useFormSave<PercentDraft>({
-    command: (value) => ({ _tag: 'BulkUpdateProducts', ids: [...ids], patch: { priceChangePercent: value.percent } }),
-    equals: (left, right) => left.percentText === right.percentText,
+    command: (value) => ({
+      _tag: 'BulkUpdateProducts',
+      ids: [...ids],
+      patch: { priceChangePercent: value.percent.number },
+    }),
+    equals: (left, right) => left.percent.text === right.percent.text,
     initial: noPercent,
     isValid: (value) =>
-      validPercent(value.percent) && ids.length > 0 && variantProducts.length === 0 && symmyProducts.length === 0,
+      validPercent(value.percent.number) &&
+      ids.length > 0 &&
+      variantProducts.length === 0 &&
+      symmyProducts.length === 0,
     onOpenChange,
     onReload,
     onSaved: () => onCommitted(k('messages.priceChanged')),
     open,
     opened: openingPercent,
     // The next open starts at 5 % again.
-    reset: () => setDraft(openingPercent),
+    reset: () => setValues(openingPercent),
     revision,
     value: draft,
   });
@@ -756,7 +837,7 @@ export const PriceChangeDialog = ({
         size="md"
         title={k('priceDialog.title')}
       >
-        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+        <div className="flex flex-col gap-200 py-200">
           <p className="text-fg-secondary text-sm tabular-nums">
             {t('merchandise.pages.products.priceDialog.affected', { total: ids.length })}
           </p>
@@ -774,7 +855,7 @@ export const PriceChangeDialog = ({
             </StatusText>
           )}
           {/* The real -90..1000 range for ARIA, without clamping on blur, so validation still sees an out-of-range value. */}
-          <FormNumericInput
+          <percentForm.percent
             clampValueOnBlur={false}
             formatOptions={WHOLE_NUMBER_FORMAT}
             id="price-percent"
@@ -783,50 +864,68 @@ export const PriceChangeDialog = ({
             max={PERCENT_MAX}
             min={PERCENT_MIN}
             name="priceChangePercent"
-            onValueChange={(details) => setDraft({ percent: details.valueAsNumber, percentText: details.value })}
             step={1}
-            value={draft.percentText}
-            {...fieldError(form.record.status === 'invalid' && !validPercent(draft.percent), k('validation.percent'))}
-          >
-            <NumericInput.Control>
-              <NumericInput.Input />
-            </NumericInput.Control>
-          </FormNumericInput>
+            {...fieldVerdict(
+              form.record.status === 'invalid' && !validPercent(draft.percent.number),
+              k('validation.percent'),
+            )}
+          />
           <StatusText showIcon status="warning">
             {k('priceDialog.warning')}
           </StatusText>
-        </form>
+        </div>
       </SidePanel>
       <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
     </>
   );
 };
 
-interface CategoryDraft {
-  /** The picked storefront tree category (a company with a tree). */
-  readonly category: CategoryTrail | null;
-  /** The typed category label (a company without a tree). */
-  readonly label: string;
-}
+/**
+ * Bulk price change by a whole percent. Sends BulkUpdateProducts with priceChangePercent. Products priced by their
+ * variants cannot take it (each variant has its own price); the selected ones the list shows are named before
+ * anything is typed, and the server refuses any others.
+ */
+export const PriceChangeDialog = (props: PriceChangeDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot defaultValues={openingPercent} form={percentForm} translateMessage={t}>
+      <PriceChangePanel {...props} />
+    </FormRoot>
+  );
+};
+
+/**
+ * The bulk category change: a picked storefront tree category (a company with a tree) or a typed category label (a
+ * company without a tree). Uložit sends it, so the form itself is never submitted.
+ */
+const categoryForm = FormReact.make(
+  FormBuilder.empty
+    .addField('category', Schema.OptionFromNullOr(Schema.toType(CategoryTrailSchema)))
+    .addField('label', Schema.String),
+  {
+    fields: { category: unrenderedField<CategoryTrail | null>(), label: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type CategoryDraft = typeof categoryForm.schema.Encoded;
 
 const noCategory: CategoryDraft = { category: null, label: '' };
 
-/**
- * Bulk category change. A company with a storefront tree picks a tree category and sends its identity, so the server
- * derives each product's category path; a company without a tree types the category label as before.
- */
-export const CategoryDialog = ({
-  hasTree,
-  ids,
-  onCommitted,
-  onOpenChange,
-  onReload,
-  open,
-  revision,
-}: FormDialogProps & { readonly hasTree: boolean; readonly ids: readonly ProductRecord['id'][] }) => {
+const categoryDraft = categoryForm.values.pipe(Atom.map(Option.getOrElse(() => noCategory)));
+const categoryField = categoryForm.getFieldAtoms(categoryForm.fields.category);
+
+type CategoryDialogProps = FormDialogProps & {
+  readonly hasTree: boolean;
+  readonly ids: readonly ProductRecord['id'][];
+};
+
+const CategoryPanel = ({ hasTree, ids, onCommitted, onOpenChange, onReload, open, revision }: CategoryDialogProps) => {
   const k = useProductLabel();
-  const { t } = useModernI18n();
-  const [draft, setDraft] = useState<CategoryDraft>(noCategory);
+  const { language, t } = useModernI18n();
+  const draft = useAtomValue(categoryDraft);
+  const setValues = useAtomSet(categoryForm.setValues);
+  const setCategory = useAtomSet(categoryField.setValue);
   const errorOf = (value: CategoryDraft) => {
     if (hasTree) {
       return value.category === null ? k(REQUIRED_KEY) : undefined;
@@ -848,11 +947,11 @@ export const CategoryDialog = ({
     open,
     // With a tree the only business refusal is a category that no longer exists (deleted or moved meanwhile).
     refused: (outcome) => (hasTree && outcome.reason === 'rejected' ? k('category.missing') : null),
-    reset: setDraft,
+    reset: setValues,
     revision,
     value: draft,
   });
-  const fieldState = fieldError(form.record.status === 'invalid', errorOf(draft));
+  const shown = form.record.status === 'invalid';
 
   return (
     <>
@@ -869,37 +968,51 @@ export const CategoryDialog = ({
         size="md"
         title={k('category.title')}
       >
-        <form className="flex flex-col gap-200 py-200" onSubmit={(event) => event.preventDefault()}>
+        <div className="flex flex-col gap-200 py-200">
           {hasTree ? (
             <CategorySearchCombobox
               errorMessage={k('filters.categoryError')}
               id="bulk-category"
               label={k('category.field')}
               loadingMessage={t(LOADING_KEY)}
-              moreMessage={(shown, total) => t('merchandise.pages.products.filters.categoryMore', { shown, total })}
+              moreMessage={(count, total) =>
+                t('merchandise.pages.products.filters.categoryMore', { shown: count, total })
+              }
               noResultsMessage={k('filters.categoryNoResults')}
-              onSelect={(category) => setDraft({ ...draft, category })}
+              onSelect={setCategory}
               placeholder={k('filters.categorySearch')}
               required
               retryLabel={k('filters.categoryRetry')}
               selected={draft.category}
-              {...fieldState}
+              {...fieldError(shown, errorOf(draft))}
             />
           ) : (
-            <FormInput
+            <categoryForm.label
               autoComplete="off"
               id="bulk-category"
               label={k('category.field')}
               name="category"
-              onChange={(event) => setDraft({ ...draft, label: event.target.value })}
               required
-              value={draft.label}
-              {...fieldState}
+              requiredLabel={requiredLabelFor(language)}
+              {...fieldVerdict(shown, errorOf(draft))}
             />
           )}
-        </form>
+        </div>
       </SidePanel>
       <UnsavedChangesDialog labels={form.labels} prompt={form.guard.prompt} />
     </>
+  );
+};
+
+/**
+ * Bulk category change. A company with a storefront tree picks a tree category and sends its identity, so the server
+ * derives each product's category path; a company without a tree types the category label as before.
+ */
+export const CategoryDialog = (props: CategoryDialogProps) => {
+  const { t } = useModernI18n();
+  return (
+    <FormRoot defaultValues={noCategory} form={categoryForm} translateMessage={t}>
+      <CategoryPanel {...props} />
+    </FormRoot>
   );
 };

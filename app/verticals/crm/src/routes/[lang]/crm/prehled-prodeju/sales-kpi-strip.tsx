@@ -1,4 +1,5 @@
 import { pipe } from 'effect';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { orderDateText } from '../../../../../shared/domain/imports.ts';
 // Compact sales KPI strip (crm-reports lane) for the CRM home and the report page. Facts over the ACL-projected
 // records only: confirmed order count, value per currency (never summed across currencies), excluded orders.
@@ -105,9 +106,9 @@ export const CrmSalesKpiStrip = ({ records }: { readonly records: RecordsRespons
     <section aria-label={t('crm.ciWorkflow.salesAtAGlance')} className="flex min-w-0 flex-col gap-100">
       <div className="flex flex-wrap items-baseline justify-between gap-150">
         <h2 className="font-semibold text-md">Prodeje v kostce</h2>
-        <a className="text-sm underline underline-offset-2" href={`/${language ?? 'cs'}/crm/prehled-prodeju`}>
+        <Link className="text-sm" href={`/${language ?? 'cs'}/crm/prehled-prodeju`}>
           Přehled prodejů →
-        </a>
+        </Link>
       </div>
       <SalesKpiTiles report={report} scopeAll={scopeAll} />
     </section>

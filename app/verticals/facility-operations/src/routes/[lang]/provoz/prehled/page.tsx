@@ -6,6 +6,7 @@
 import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { useEffect, useState } from 'react';
 import { Array as EffectArray, Option, Order, Schema } from 'effect';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
@@ -29,6 +30,7 @@ import {
   OpsAgendas,
   SearchResults,
   UpcomingTimeline,
+  useOverviewSearch,
 } from './dashboard-parts.tsx';
 
 // The Shell supplies this raw query string on both server and client renders.
@@ -54,7 +56,9 @@ const OverviewView = ({
   const { loadSearch, names, sources } = useRentalOverviewSources();
   const [view, setView] = useState(() => ({ selected: readKpiParam(search), today: pragueToday() }));
   const { selected, today } = view;
-  const [query, setQuery] = useState('');
+  const overviewSearch = useOverviewSearch();
+  const { query } = overviewSearch;
+  const handleClearSearch = overviewSearch.clear;
 
   // Search rows of the provoz records are fetched only when someone actually searches.
   useEffect(() => {
@@ -102,19 +106,19 @@ const OverviewView = ({
     <>
       <PageHeader
         actions={
-          <a
-            className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:rounded-lg facilityoperations:px-3 facilityoperations:py-1.5 facilityoperations:text-sm facilityoperations:font-medium facilityoperations:no-underline"
+          <Link
+            className="inline-flex items-center gap-2 rounded-lg border border-border-primary px-3 py-1.5 text-sm font-medium text-inherit no-underline"
             href={`/${lang}/provoz/agenda`}
-            style={{ border: '1px solid var(--color-border-primary, #d1d5db)', color: 'inherit' }}
+            size="current"
           >
             <Icon name="calendar" size={18} />
             {t('facility-operations.agenda.overview.openCalendar')}
-          </a>
+          </Link>
         }
         description={t('facility-operations.agenda.overview.description')}
         meta={
           lastRead === undefined ? undefined : (
-            <span className="facilityoperations:text-xs" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
+            <span className="text-xs text-fg-secondary">
               {t('facility-operations.agenda.overview.dataAt', { time: fmt.stamp(lang, lastRead) })}
             </span>
           )
@@ -125,8 +129,7 @@ const OverviewView = ({
         deadlines={deadlines}
         displayName={displayName}
         kpis={kpis}
-        onQuery={setQuery}
-        query={query}
+        searchReady={overviewSearch.ready}
         sources={sources}
         today={today}
         unread={unread}
@@ -136,7 +139,7 @@ const OverviewView = ({
           agendaRevision={agendaEnvelope?.revision ?? 0}
           canLog={agendaEnvelope?.canWrite === true}
           index={index}
-          onClear={() => setQuery('')}
+          onClear={handleClearSearch}
           query={query}
           sources={sources}
         />
@@ -155,11 +158,11 @@ const OverviewView = ({
           onClose={() => select()}
         />
       )}
-      <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
-        <div className="facilityoperations:xl:col-span-3">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-5">
+        <div className="xl:col-span-3">
           <UpcomingTimeline deadlines={deadlines} sources={sources} today={today} />
         </div>
-        <div className="facilityoperations:xl:col-span-2">
+        <div className="xl:col-span-2">
           <OccupancyByBuilding sources={sources} today={today} />
         </div>
       </div>

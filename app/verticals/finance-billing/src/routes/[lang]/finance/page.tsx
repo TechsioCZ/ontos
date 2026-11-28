@@ -11,6 +11,7 @@ import {
   dialogCloseLabel,
 } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
@@ -20,7 +21,6 @@ import { useState } from 'react';
 import { Option, Result, Schema, SchemaGetter } from 'effect';
 import csResource from '../../../../locales/cs/finance-billing.json';
 import enResource from '../../../../locales/en/finance-billing.json';
-import '../../index.css';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { CreateInvoiceDialog } from './create-invoice-dialog.tsx';
 import { FinanceDocumentDetail } from './document-detail.tsx';
@@ -260,9 +260,9 @@ const RecordsPageContent = ({ scope }: { readonly scope: string | undefined }) =
             {vm.relatedCustomer && (
               <p className="text-fg-secondary text-sm">
                 {t(`${ns}.relatedFilter`)}{' '}
-                <a className="underline" href="?">
+                <Link href="?" size="current">
                   {t(`${ns}.clearRelatedFilter`)}
-                </a>
+                </Link>
               </p>
             )}
             <StatRow>

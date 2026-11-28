@@ -1,11 +1,11 @@
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecords as agreementRecords } from '@app/legal-agreements/clients/records';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { SelectTemplate } from '@app/admin-ui/select-template';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Effect, Random, Schedule } from 'effect';
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { ContextRef, LookupAccess } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 
@@ -19,12 +19,56 @@ interface ContextOption {
   readonly ref: ContextRef;
 }
 
+/** One picker of a kind of reference: the list it offers and how a choice reads from and writes into the references. */
+export interface ContextPicker {
+  readonly disabled: boolean;
+  readonly id: string;
+  readonly items: readonly { readonly displayValue: string; readonly label: string; readonly value: string }[];
+  readonly label: string;
+  readonly read: (refs: readonly ContextRef[]) => string;
+  readonly write: (refs: readonly ContextRef[], choice: string) => readonly ContextRef[];
+}
+
 interface ContextPickerProps {
   readonly disabled: boolean;
   readonly lookupAccess: LookupAccess | undefined;
-  readonly onChange: (refs: readonly ContextRef[]) => void;
+  /** The task form's references as they are on screen. */
   readonly refs: readonly ContextRef[];
+  /** Renders one picker as a field of the task form, which holds the references. */
+  readonly renderPicker: (picker: ContextPicker) => ReactNode;
 }
+
+interface PickerField {
+  readonly items: readonly ContextOption[];
+  readonly type: string;
+}
+
+/**
+ * The references after choosing `choice` in one picker: the kind it picks is replaced, a new property drops its units,
+ * and a unit always carries its owning property as well. "None" and an id no list offers remove the kind.
+ */
+const chooseContext = (
+  refs: readonly ContextRef[],
+  field: PickerField,
+  choice: string,
+  properties: readonly ContextOption[],
+): readonly ContextRef[] => {
+  const item = field.items.find((candidate) => candidate.ref.resourceId === choice);
+  let updated = refs.filter((ref) => ref.resourceType !== field.type);
+  if (field.type === propertyResourceType) {
+    updated = updated.filter((ref) => ref.resourceType !== unitResourceType);
+  }
+  if (item !== undefined) {
+    updated = [...updated, item.ref];
+  }
+  if (field.type === unitResourceType && item?.propertyId !== undefined) {
+    const parent = properties.find((candidate) => candidate.ref.resourceId === item.propertyId);
+    if (parent !== undefined) {
+      updated = [...updated.filter((ref) => ref.resourceType !== propertyResourceType), parent.ref];
+    }
+  }
+  return updated;
+};
 
 const propertyContextOptions = (records: Effect.Success<ReturnType<typeof propertyRecords>>) => ({
   properties: records.properties.map((item) => ({ label: `${item.code} · ${item.name}`, ref: item.propertyRef })),
@@ -48,9 +92,9 @@ const contractContextOptions = (
 const ContextPickerRequest = ({
   disabled,
   lookupAccess,
-  onChange,
   onRetry,
   refs,
+  renderPicker,
 }: ContextPickerProps & { readonly onRetry: () => void }) => {
   const { t } = useModernI18n();
   const [properties, setProperties] = useState<readonly ContextOption[]>([]);
@@ -158,39 +202,22 @@ const ContextPickerRequest = ({
             });
           }
           return (
-            <SelectTemplate
-              disabled={disabled || field.state !== 'ready'}
-              id={field.id}
-              items={[{ displayValue: t(`${key}.noContext`), label: t(`${key}.noContext`), value: NONE }, ...options]}
-              key={field.id}
-              label={field.label}
-              labelProps={{ className: 'font-label text-label-md' }}
-              onValueChange={({ value }) => {
-                const item = field.items.find((candidate) => candidate.ref.resourceId === value[0]);
-                let updated = refs.filter((ref) => ref.resourceType !== field.type);
-                if (field.type === propertyResourceType) {
-                  updated = updated.filter((ref) => ref.resourceType !== unitResourceType);
-                }
-                if (item !== undefined) {
-                  updated = [...updated, item.ref];
-                }
-                // A unit always carries its owning property as well.
-                if (field.type === unitResourceType && item?.propertyId !== undefined) {
-                  const parent = properties.find((candidate) => candidate.ref.resourceId === item.propertyId);
-                  if (parent !== undefined) {
-                    updated = [...updated.filter((ref) => ref.resourceType !== propertyResourceType), parent.ref];
-                  }
-                }
-                onChange(updated);
-              }}
-              value={[selected?.resourceId ?? NONE]}
-            />
+            <Fragment key={field.id}>
+              {renderPicker({
+                disabled: disabled || field.state !== 'ready',
+                id: field.id,
+                items: [{ displayValue: t(`${key}.noContext`), label: t(`${key}.noContext`), value: NONE }, ...options],
+                label: field.label,
+                read: (current) => current.find((ref) => ref.resourceType === field.type)?.resourceId ?? NONE,
+                write: (current, choice) => chooseContext(current, field, choice, properties),
+              })}
+            </Fragment>
           );
         })}
       {(propertyState === 'failed' || contractState === 'failed') && (
         <div className="flex flex-wrap items-center gap-150">
           <StatusText status="warning">{t(`${key}.contextUnavailable`)}</StatusText>
-          <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm">
+          <Button appearance="outline" onClick={onRetry} severity="secondary" size="sm" type="button">
             {t(`${key}.contextRetry`)}
           </Button>
         </div>

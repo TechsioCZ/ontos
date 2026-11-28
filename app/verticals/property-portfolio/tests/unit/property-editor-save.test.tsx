@@ -1,7 +1,8 @@
 // @rstest-environment happy-dom
-// The new-property form as the user sees the editor state: typing changes only the draft, nothing is sent until its
+// The new-property form as the user sees the editor state: typing changes only the form, nothing is sent until its
 // Save runs, and that one save sends exactly one command. The generated clients run for real: the Shell's gateway
 // issuer and the property owner's Action and records endpoints answer in process through their HttpApi contracts.
+import { FormRoot, useAtomSet } from '@app/core-runtime/ui/form';
 import { EmployeeIdSchema } from '@app/workforce/resources/employee';
 import { waitUntil } from '@app/admin-ui/testing/module-ui';
 import {
@@ -21,8 +22,12 @@ import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts'
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
 import { ApplyCommandActionApi } from '../../shared/apis/apply-command-action.ts';
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import type { PropertyEditor } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
-import { usePropertyEditor } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
+import type { PropertyEditor, RecordValues } from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
+import {
+  createRecordForm,
+  emptyRecordValues,
+  usePropertyEditor,
+} from '../../src/routes/[lang]/nemovitosti/use-property-editor.ts';
 
 const employeeId = '75000000-0000-4000-8000-000000000001';
 const employees = [
@@ -70,11 +75,20 @@ const network = browserNetwork(
   ),
 );
 
-const rendered: PropertyEditor[] = [];
-const Harness = ({ onRender }: { readonly onRender: (editor: PropertyEditor) => void }) => {
+/** The editor as one render saw it, with the way that render types into the open create form. */
+interface Rendered {
+  readonly editor: PropertyEditor;
+  readonly type: (values: RecordValues) => void;
+}
+const rendered: Rendered[] = [];
+const Harness = ({ onRender }: { readonly onRender: (render: Rendered) => void }) => {
   const editor = usePropertyEditor(registerRecords, employees, () => {});
-  onRender(editor);
-  return null;
+  onRender({ editor, type: useAtomSet(createRecordForm.setValues) });
+  return editor.draft === undefined ? null : (
+    <FormRoot defaultValues={emptyRecordValues} form={createRecordForm} translateMessage={(message) => message}>
+      {null}
+    </FormRoot>
+  );
 };
 
 /** Mounts the harness and returns the unmount; every React update runs inside `act`. */
@@ -85,8 +99,8 @@ const mountHarness = (): (() => void) => {
   act(() => {
     root.render(
       <Harness
-        onRender={(editor) => {
-          rendered.push(editor);
+        onRender={(render) => {
+          rendered.push(render);
         }}
       />,
     );
@@ -99,7 +113,7 @@ const mountHarness = (): (() => void) => {
   };
 };
 
-const current = (): PropertyEditor => {
+const current = (): Rendered => {
   const latest = rendered.at(-1);
   if (latest === undefined) {
     throw new Error('the editor is not mounted');
@@ -108,7 +122,7 @@ const current = (): PropertyEditor => {
 };
 
 /** Runs editor calls inside `act` so their state updates land before the next step. */
-const perform = (action: (editor: PropertyEditor) => void) =>
+const perform = (action: (render: Rendered) => void) =>
   Effect.sync(() => {
     act(() => {
       action(current());
@@ -126,15 +140,16 @@ it.layer(network, { excludeTestServices: true })('the new-property form', (suite
     Effect.gen(function* saveSendsOnce() {
       yield* pinTestDocument;
       const unmount = mountHarness();
-      yield* perform((editor) => {
-        editor.begin();
-        editor.change('code', 'NEW-02');
-        editor.change('name', 'Druhá budova');
-        editor.change('address', 'Hlavní 2');
-        editor.change('propertyType', 'Komerční');
-        editor.changeResponsibleEmployees([employeeId]);
-      });
-      yield* perform((editor) => editor.createDraft.save());
+      yield* perform(({ editor }) => editor.begin());
+      yield* perform(({ type }) =>
+        type({
+          ...emptyRecordValues,
+          responsibleEmployeeIds: [employeeId],
+          text: { address: 'Hlavní 2', code: 'NEW-02', name: 'Druhá budova', propertyType: 'Komerční' },
+        }),
+      );
+      expect(commands).toHaveLength(0);
+      yield* perform(({ editor }) => editor.createDraft.save());
       yield* waitUntil(() => commands.length > 0);
       yield* networkIdle;
       expect(commands).toHaveLength(1);

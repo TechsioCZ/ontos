@@ -15,11 +15,23 @@ import { useRef, useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy } from '../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { FormReady } from './draft-fields.ts';
 import { withRecordInputs } from './editor-state.ts';
 import type { OccupancyDraft } from './editor-state.ts';
 import { failureReasonOf, revisionedResultOf } from './occupancy-command.ts';
 import type { OccupancyOutcome } from './occupancy-command.ts';
-import { ChoiceSelect, CustomerField, PeriodFields, RentFields, StayFields } from './occupancy-editor-fields.tsx';
+import {
+  CustomerField,
+  OccupancyFormRoot,
+  PeriodFields,
+  RentFields,
+  StayFields,
+  UnitField,
+  occupancyDraftOf,
+  occupancyValuesOf,
+  useOccupancyValues,
+  useSetOccupancyValues,
+} from './occupancy-editor-fields.tsx';
 import type { Choice, CustomerPicker, GuestSearch } from './occupancy-editor-fields.tsx';
 
 const LABEL_CLOSE = 'property-leasing.demo.close';
@@ -33,8 +45,6 @@ export interface OccupancySave {
 
 export interface OccupancyEditorPanelProps {
   readonly customers: CustomerPicker;
-  /** The form's draft as the page holds it. */
-  readonly draft: OccupancyDraft;
   /** The lease draft as the page reads it now, when the form edits one; None for a new lease or stay. */
   readonly editing: Option.Option<Occupancy>;
   /** Page feedback of the form's reads (the guest search), when there is some. */
@@ -43,17 +53,16 @@ export interface OccupancyEditorPanelProps {
   /** Whether the draft can be sent; Uložit stays disabled until it can. */
   readonly isValid: (draft: OccupancyDraft) => boolean;
   readonly mode: 'lease' | 'stay';
-  readonly onChange: (field: keyof OccupancyDraft, value: string) => void;
   /** Closes the form; called once the guard let the person leave. */
   readonly onClose: () => void;
   /** A new lease or stay was created: the page opens it. */
   readonly onCreated: (resourceId: string) => void;
   /** Re-reads the leases, for "Načíst aktuální verzi". */
   readonly onReload: () => void;
-  /** Puts `draft` back on screen ("Zahodit změny", "Načíst aktuální verzi"). */
-  readonly onRestore: (draft: OccupancyDraft) => void;
   /** Sends one save of the draft. */
   readonly onSave: (draft: OccupancyDraft, save: OccupancySave) => Effect.Effect<OccupancyOutcome>;
+  /** The values the form opens with. */
+  readonly opened: OccupancyDraft;
   /** Revision of the leases as the page reads them now. */
   readonly revision: number;
   /** Units a new lease or stay can be made in. */
@@ -69,19 +78,25 @@ const createdBy = (outcome: OccupancyOutcome): Option.Option<string> =>
   );
 
 /**
- * A new lease, a new stay or a lease draft. Typing changes the draft only; Uložit sends it once, an edit against the
- * revision the draft was read at, so someone else's change of the draft comes back as a conflict that offers the
+ * A new lease, a new stay or a lease draft. Typing changes the form only; Uložit sends its draft once, an edit against
+ * the revision the draft was read at, so someone else's change of the draft comes back as a conflict that offers the
  * newer version. Leaving with unsaved input asks Uložit / Zahodit změny / Zůstat; an untouched form closes at once.
  */
 export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
-  const { customers, draft, editing, guests, mode, onChange, onClose, onCreated, onRestore, onSave } = props;
+  const { customers, editing, guests, mode, onClose, onCreated, onSave, opened } = props;
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
+  const [ready, setReady] = useState(false);
+  const values = Option.filter(useOccupancyValues(), () => ready);
+  const setValues = useSetOccupancyValues();
+  const draft = Option.match(values, { onNone: () => opened, onSome: occupancyDraftOf });
+  const query = Option.match(values, { onNone: () => '', onSome: (shown) => shown.guestQuery });
+  // The page keeps who the chosen guest is, so a later search that omits the guest does not lose the choice.
   /** The revision the draft builds on: the read it was opened from, then the revision its own saves returned. */
   const base = useRef(props.revision);
   const created = useRef(nothingCreated);
   /** The version the server last confirmed: what the form opened with, then each saved or reloaded draft. */
-  const confirmed = useRef(draft);
+  const confirmed = useRef(opened);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   const record = useDraftSave<OccupancyDraft, never>({
     isValid: props.isValid,
@@ -114,8 +129,12 @@ export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
       }
     });
   };
+  /** Puts `shown` back into the form; the guest search box keeps what was typed. */
+  const restore = (shown: OccupancyDraft) => {
+    setValues(occupancyValuesOf(shown, query));
+  };
   const handleDiscard = () => {
-    onRestore(record.confirmed);
+    restore(record.confirmed);
   };
   /** The newer version of the edited draft replaces this one and becomes its base; a new record keeps its input. */
   const handleReloadLatest = () => {
@@ -125,7 +144,7 @@ export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
     });
     base.current = props.revision;
     confirmed.current = latest;
-    onRestore(latest);
+    restore(latest);
     record.adopt(latest);
     props.onReload();
   };
@@ -148,8 +167,13 @@ export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
   return (
     <SidePanel
       actions={
-        <div className="sp-occupancy-form-actions">
-          <Button appearance="outline" onClick={requestClose} severity="secondary">
+        <div className="flex w-full flex-wrap justify-end gap-3">
+          <Button
+            appearance="outline"
+            className="max-w-full flex-none whitespace-nowrap"
+            onClick={requestClose}
+            severity="secondary"
+          >
             {t(LABEL_CLOSE)}
           </Button>
           <SaveBar
@@ -177,23 +201,19 @@ export const OccupancyEditorPanel = (props: OccupancyEditorPanelProps) => {
       size="lg"
       title={t(title)}
     >
-      <div className="propertyleasing:space-y-4 propertyleasing:py-2">
+      <OccupancyFormRoot className="space-y-4 py-2" opened={opened}>
+        <FormReady onReady={setReady} />
         {props.feedbackText !== undefined && <output aria-live="polite">{props.feedbackText}</output>}
         {creating && (
-          <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
-            <ChoiceSelect
-              items={props.units}
-              label={t('property-leasing.demo.unit')}
-              onChange={(value) => onChange('unitId', value)}
-              value={draft.unitId}
-            />
-            {mode === 'lease' && <CustomerField customers={customers} draft={draft} onChange={onChange} />}
+          <div className="grid gap-4 md:grid-cols-2">
+            <UnitField items={props.units} />
+            {mode === 'lease' && <CustomerField customers={customers} />}
           </div>
         )}
-        <PeriodFields draft={draft} onChange={onChange} />
-        {mode === 'lease' && <RentFields draft={draft} onChange={onChange} />}
-        {mode === 'stay' && <StayFields draft={draft} guests={guests} onChange={onChange} />}
-      </div>
+        <PeriodFields />
+        {mode === 'lease' && <RentFields />}
+        {mode === 'stay' && <StayFields guestId={draft.guestId} guests={guests} query={query} />}
+      </OccupancyFormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );

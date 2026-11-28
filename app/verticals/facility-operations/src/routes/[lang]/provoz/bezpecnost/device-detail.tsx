@@ -1,14 +1,24 @@
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 // Device card (S11): facts, faults with their linked service task, attachments and the change history.
 import { SectionCard, SidePanel, formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
+import {
+  FileField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TemplateChoiceField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { DateTime, Effect, Predicate, Result, Schema } from 'effect';
-import { useRef, useState } from 'react';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { isInspectionOverdue } from '../../../../../shared/commands/security.ts';
 import { SecurityAttachmentKindSchema, securityAttachmentKinds } from '../../../../../shared/domain/security.ts';
@@ -111,7 +121,7 @@ const IncidentCard = ({
         <p className="whitespace-pre-line text-sm">{incident.description}</p>
       )}
       {incident.resolution !== undefined && (
-        <p className="rounded-md bg-surface-secondary p-150 text-sm">
+        <p className="rounded-md p-150 text-sm">
           <span className="font-medium">{k('fields.resolution')}: </span>
           {incident.resolution}
           {incident.resolvedAt !== undefined && (
@@ -175,76 +185,86 @@ const IncidentCard = ({
   );
 };
 
+/** An attachment to upload: its kind, then the file, which uploads as soon as it is picked. */
+const attachmentForm = FormReact.make(
+  FormBuilder.empty
+    .addField('attachmentKind', Schema.String)
+    .addField('file', Schema.OptionFromNullOr(Schema.instanceOf(File))),
+  {
+    fields: { attachmentKind: TemplateChoiceField, file: FileField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noAttachment = { attachmentKind: 'revision_protocol', file: null };
+/** The picked file, which changes only when the pick does. */
+const pickedAttachment = attachmentForm
+  .getFieldAtoms(attachmentForm.fields.file)
+  .value.pipe(Atom.map(Option.getOrElse((): File | null => null)));
+
 const DeviceAttachments = ({
   attachments,
   busy,
   canWrite,
-  kind,
   onDownload,
-  onKindChange,
   onUpload,
 }: {
   readonly attachments: NonNullable<SecurityDevice['attachments']>;
   readonly busy: boolean;
   readonly canWrite: boolean;
-  readonly kind: SecurityAttachmentKind;
   readonly onDownload: (fileId: string) => void;
-  readonly onKindChange: (kind: SecurityAttachmentKind) => void;
-  readonly onUpload: (file: File) => void;
+  readonly onUpload: (file: File, kind: SecurityAttachmentKind) => void;
 }) => {
   const k = useSecurityLabel();
-  const fileInput = useRef<HTMLInputElement>(null);
+  const { t } = useModernI18n();
+  const { attachmentKind } = Option.getOrElse(useAtomValue(attachmentForm.values), () => noAttachment);
+  const kind: SecurityAttachmentKind = Schema.is(SecurityAttachmentKindSchema)(attachmentKind)
+    ? attachmentKind
+    : 'revision_protocol';
+  const setFile = useAtomSet(attachmentForm.getFieldAtoms(attachmentForm.fields.file).setValue);
+  useAtomSubscribe(
+    pickedAttachment,
+    (picked) => {
+      if (picked !== null) {
+        setFile(null);
+        onUpload(picked, kind);
+      }
+    },
+    { immediate: false },
+  );
   return (
     <SectionCard
       actions={
         canWrite ? (
-          <div className="flex flex-wrap items-end gap-100">
+          <FormRoot
+            className="flex flex-wrap items-end gap-100"
+            defaultValues={noAttachment}
+            form={attachmentForm}
+            translateMessage={(message) => t(message)}
+          >
             <div className="w-48">
-              <Select
-                items={securityAttachmentKinds.map((value) => ({
-                  displayValue: k(`attachmentKind.${value}`),
-                  label: k(`attachmentKind.${value}`),
-                  value,
-                }))}
+              <attachmentForm.attachmentKind
+                items={securityAttachmentKinds.map((value) => ({ label: k(`attachmentKind.${value}`), value }))}
                 label={k('fields.attachmentKind')}
-                name="attachmentKind"
-                onValueChange={({ value }) => {
-                  const parsed = Schema.decodeUnknownResult(SecurityAttachmentKindSchema)(
-                    value[0] ?? 'revision_protocol',
-                  );
-                  if (Result.isSuccess(parsed)) {
-                    onKindChange(parsed.success);
-                  }
-                }}
                 size="sm"
-                value={[kind]}
               />
             </div>
-            <input
-              aria-label={k('fields.file')}
-              className="hidden"
-              data-testid="security-file-input"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = '';
-                if (file !== undefined) {
-                  onUpload(file);
-                }
-              }}
-              ref={fileInput}
-              type="file"
-            />
-            <Button
-              appearance="outline"
-              disabled={busy}
-              icon="icon-[mdi--paperclip]"
-              onClick={() => fileInput.current?.click()}
-              severity="secondary"
-              size="sm"
-            >
-              {k('actions.upload')}
-            </Button>
-          </div>
+            <attachmentForm.file aria-label={k('fields.file')} className="hidden" data-testid="security-file-input">
+              {(pick) => (
+                <Button
+                  appearance="outline"
+                  disabled={busy}
+                  icon="icon-[mdi--paperclip]"
+                  onClick={pick}
+                  severity="secondary"
+                  size="sm"
+                  type="button"
+                >
+                  {k('actions.upload')}
+                </Button>
+              )}
+            </attachmentForm.file>
+          </FormRoot>
         ) : undefined
       }
       title={k('detail.attachments')}
@@ -440,7 +460,7 @@ const DeviceFacts = ({ device, overdue }: { readonly device: SecurityDevice; rea
           {device.nextInspectionDate === undefined ? (
             <Missing />
           ) : (
-            <span className={overdue ? 'font-semibold text-fg-danger' : ''}>
+            <span className={overdue ? 'font-semibold text-danger' : ''}>
               {formatDate(device.nextInspectionDate)}
               {overdue ? ` · ${k('detail.overdue')}` : ''}
             </span>
@@ -448,7 +468,7 @@ const DeviceFacts = ({ device, overdue }: { readonly device: SecurityDevice; rea
         </Fact>
       </dl>
       {device.note !== undefined && device.note !== '' && (
-        <p className="whitespace-pre-line rounded-md bg-surface-secondary p-150 text-sm">{device.note}</p>
+        <p className="whitespace-pre-line rounded-md p-150 text-sm">{device.note}</p>
       )}
       <p className="text-fg-secondary text-xs">
         {k('detail.createdInfo', { at: stamp(device.createdAt) })}
@@ -490,7 +510,6 @@ export const DeviceDetailPanel = ({
   const { t } = useModernI18n();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
-  const [kind, setKind] = useState<SecurityAttachmentKind>('revision_protocol');
   const own = incidents
     .filter((incident) => incident.deviceId === device?.id)
     .toSorted((left, right) => right.occurredOn.localeCompare(left.occurredOn));
@@ -520,7 +539,8 @@ export const DeviceDetailPanel = ({
   const createTask = (incident: SecurityIncident) =>
     createSecurityIncidentTask({ device, incident, k, onReload, revision, setBusy, t, tenantId, toast, today });
 
-  const upload = (file: File) => uploadSecurityAttachment({ device, file, k, kind, run, setBusy, t, toast });
+  const upload = (file: File, kind: SecurityAttachmentKind) =>
+    uploadSecurityAttachment({ device, file, k, kind, run, setBusy, t, toast });
 
   const overdue = isInspectionOverdue(device, today);
   const attachments = device.attachments ?? [];
@@ -618,7 +638,6 @@ export const DeviceDetailPanel = ({
           attachments={attachments}
           busy={busy}
           canWrite={canWrite}
-          kind={kind}
           onDownload={(fileId) => {
             void browserRuntime.runPromise(
               downloadFile(fileId).pipe(
@@ -632,9 +651,8 @@ export const DeviceDetailPanel = ({
               ),
             );
           }}
-          onKindChange={setKind}
-          onUpload={(file) => {
-            void browserRuntime.runPromise(upload(file));
+          onUpload={(file, kind) => {
+            void browserRuntime.runPromise(upload(file, kind));
           }}
         />
 

@@ -8,17 +8,25 @@ import {
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
-import { FormInput } from '@app/admin-ui/form-controls';
-import { withNativeLabels } from '@app/admin-ui/select-template';
+import {
+  ChoiceField,
+  FlaggedTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Select } from '@techsio/ui-kit/molecules/select';
-import { Effect, Match, Option } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useRef, useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Contract } from '../../../../shared/apis/records.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { failureReasonOf } from './agreements-command.ts';
 import type { AgreementOutcome } from './agreements-command.ts';
 import {
@@ -29,9 +37,11 @@ import {
   renewalStartValid,
 } from './agreement-draft.ts';
 import type { CreateDraft, CreateReferences, RenewalDraft } from './agreement-draft.ts';
+import { useFormDraft } from './form-draft.tsx';
 
 const KINDS = ['OTHER', 'LEASE'] as const;
 const nothingCreated = Option.none<string>();
+const nothingDiscarded = Option.none<string>();
 
 /** A create form has no older version to conflict with: anything but a created or parked contract failed. */
 const createOutcomeOf = (outcome: AgreementOutcome): SaveOutcome =>
@@ -53,43 +63,42 @@ interface Choice {
   readonly value: string;
 }
 
-/** One single-choice select of the form; `value` empty means nothing chosen. */
-const ChoiceSelect = ({
-  items,
-  label,
-  onChange,
-  placeholder,
-  value,
-}: {
-  readonly items: readonly Choice[];
-  readonly label: string;
-  readonly onChange: (value: string) => void;
-  readonly placeholder?: string | undefined;
-  readonly value: string;
-}) => (
-  <Select
-    items={withNativeLabels(items.map((item) => ({ label: item.label, value: item.value })))}
-    onValueChange={({ value: chosen }) => onChange(chosen[0] ?? '')}
-    value={value.length > 0 ? [value] : []}
-  >
-    <Select.Label>{label}</Select.Label>
-    <Select.Control>
-      <Select.Trigger>
-        <Select.ValueText {...(placeholder === undefined ? {} : { placeholder })} />
-      </Select.Trigger>
-    </Select.Control>
-    <Select.Positioner>
-      <Select.Content>
-        {items.map((item) => (
-          <Select.Item item={{ label: item.label, value: item.value }} key={item.value}>
-            <Select.ItemText>{item.label}</Select.ItemText>
-            <Select.ItemIndicator />
-          </Select.Item>
-        ))}
-      </Select.Content>
-    </Select.Positioner>
-  </Select>
+/**
+ * A new contract as typed: its kind, the customer or lease it binds, and its period as date text. Uložit creates it
+ * through the save bar, so the form only holds it and Enter submits nothing. The page opens one contract form at a time.
+ */
+const createForm = FormReact.make(
+  FormBuilder.empty
+    .addField('customerId', Schema.String)
+    .addField('endDate', Schema.String)
+    .addField('kind', Schema.String)
+    .addField('occupancyId', Schema.String)
+    .addField('startDate', Schema.String),
+  {
+    fields: {
+      customerId: ChoiceField,
+      endDate: FlaggedTextField,
+      kind: ChoiceField,
+      occupancyId: ChoiceField,
+      startDate: FlaggedTextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
 );
+
+type CreateValues = typeof createForm.schema.Encoded;
+
+const kindOf = (value: string): Contract['kind'] => (value === 'LEASE' ? 'LEASE' : 'OTHER');
+const valuesOf = (draft: CreateDraft): CreateValues => draft;
+const draftOf = (values: CreateValues): CreateDraft => ({ ...values, kind: kindOf(values.kind) });
+
+/** A choice as a plain string that changes only when the choice does: the field's value atom reports every change. */
+const choiceOf = (field: Atom.Atom<Option.Option<string>>) => field.pipe(Atom.map(Option.getOrElse(() => '')));
+const chosenKind = choiceOf(createForm.getFieldAtoms(createForm.fields.kind).value);
+const chosenLease = choiceOf(createForm.getFieldAtoms(createForm.fields.occupancyId).value);
+const startDateField = createForm.getFieldAtoms(createForm.fields.startDate);
+const endDateField = createForm.getFieldAtoms(createForm.fields.endDate);
 
 /** A confirmed lease the new contract can be made for, with the period it suggests. */
 export interface LeaseChoice extends Choice {
@@ -121,7 +130,7 @@ export interface ContractCreatePanelProps {
 type Translate = ReturnType<typeof useModernI18n>['t'];
 interface DateHint {
   readonly helpText?: string;
-  readonly validateStatus?: 'error';
+  readonly invalid?: boolean;
 }
 const noHint: DateHint = {};
 
@@ -132,13 +141,13 @@ const renewalStartHintOf = (draft: CreateDraft, renewal: RenewalDraft | undefine
   const helpText = t('legal-agreements.demo.renewalStartHelp', {
     date: formatDate(renewalEarliestStart(renewal.previous)),
   });
-  return renewalStartValid(draft, renewal.previous) ? { helpText } : { helpText, validateStatus: 'error' };
+  return renewalStartValid(draft, renewal.previous) ? { helpText } : { helpText, invalid: true };
 };
 
 const renewalEndHintOf = (draft: CreateDraft, renewal: RenewalDraft | undefined, t: Translate): DateHint =>
   renewal === undefined || draft.endDate > draft.startDate
     ? noHint
-    : { helpText: t('legal-agreements.demo.renewalEndInvalid'), validateStatus: 'error' };
+    : { helpText: t('legal-agreements.demo.renewalEndInvalid'), invalid: true };
 
 /**
  * A new contract. Typing changes the draft only; Uložit creates the contract once and the page opens it. Leaving
@@ -155,7 +164,10 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
    * so its opening values are not the saved version; leaving the untouched form still does not ask.
    */
   const unopened = renewal === undefined ? opening : { ...opening, endDate: '', startDate: '' };
-  const [draft, setDraft] = useState(opening);
+  const { draft: values, gate, ready, reset } = useFormDraft(createForm, valuesOf(opening));
+  const draft = draftOf(values);
+  const setStartDate = useAtomSet(startDateField.setValue);
+  const setEndDate = useAtomSet(endDateField.setValue);
   const [reason, setReason] = useState(() => Option.none<Feedback>());
   /** The contract the last save created. */
   const created = useRef(nothingCreated);
@@ -185,8 +197,13 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
       }
     });
   };
+  /** A kind put back by discarding, which is no pick of the person's: the page is not told about it. */
+  const discardedKind = useRef(nothingDiscarded);
   const handleDiscard = () => {
-    setDraft(opening);
+    if (draft.kind !== opening.kind) {
+      discardedKind.current = Option.some(opening.kind);
+    }
+    reset(valuesOf(opening));
     record.adopt(unopened);
   };
   /** Nothing to reload for a new contract: the typed draft stays and Uložit sends it again. */
@@ -196,18 +213,33 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
   const savable = { ...record, save: handleSave };
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: savable, navigation: blocker, onDiscard: handleDiscard });
-  const change = (patch: Partial<CreateDraft>) => {
-    setDraft((current) => ({ ...current, ...patch }));
-  };
-  const handleKindChange = (value: string) => {
-    const kind = value === 'LEASE' ? 'LEASE' : 'OTHER';
-    change({ kind });
-    onKindChange(kind);
-  };
-  const handleLeaseChange = (occupancyId: string) => {
-    const lease = leases.find((item) => item.value === occupancyId);
-    change(lease === undefined ? { occupancyId } : { endDate: lease.endDate, occupancyId, startDate: lease.startDate });
-  };
+  // Reading the picked kind and lease links them to the form's state, so the subscriptions below hear every pick.
+  useAtomValue(chosenKind);
+  useAtomValue(chosenLease);
+  // The person picked another kind: the page reads what that kind needs.
+  useAtomSubscribe(
+    chosenKind,
+    (kind) => {
+      const discarded = Option.contains(discardedKind.current, kind);
+      discardedKind.current = nothingDiscarded;
+      if (ready && !discarded) {
+        onKindChange(kindOf(kind));
+      }
+    },
+    { immediate: false },
+  );
+  // A picked lease suggests its own period.
+  useAtomSubscribe(
+    chosenLease,
+    (occupancyId) => {
+      const lease = leases.find((item) => item.value === occupancyId);
+      if (ready && lease !== undefined) {
+        setStartDate(lease.startDate);
+        setEndDate(lease.endDate);
+      }
+    },
+    { immediate: false },
+  );
   const requestClose = () => {
     guard.request(onClose);
   };
@@ -246,62 +278,51 @@ export const ContractCreatePanel = (props: ContractCreatePanelProps) => {
       size="lg"
       title={t(renewal === undefined ? 'legal-agreements.demo.create' : 'legal-agreements.demo.renew')}
     >
-      <form
-        className="legalagreements:space-y-4 legalagreements:py-2"
-        noValidate
-        onSubmit={(event) => {
-          // Enter never saves: only Uložit in the panel footer sends the draft.
-          event.preventDefault();
-        }}
+      <FormRoot
+        className="space-y-4 py-2"
+        defaultValues={valuesOf(opening)}
+        form={createForm}
+        translateMessage={(message) => t(message, { defaultValue: message })}
       >
+        {gate}
         {renewal === undefined && (
-          <ChoiceSelect
+          <createForm.kind
             items={KINDS.map((value) => ({ label: t(`legal-agreements.demo.kinds.${value}`), value }))}
             label={t('legal-agreements.demo.contractKind')}
-            onChange={handleKindChange}
-            value={draft.kind}
           />
         )}
         {renewal === undefined && draft.kind === 'OTHER' && (
-          <ChoiceSelect
+          <createForm.customerId
             items={customers}
             label={t('legal-agreements.demo.customer')}
-            onChange={(customerId) => change({ customerId })}
             placeholder={t('legal-agreements.demo.choose')}
-            value={draft.customerId}
           />
         )}
         {renewal === undefined && draft.kind === 'LEASE' && rentalFeedback !== undefined && (
           <output aria-live="polite">{rentalFeedback}</output>
         )}
         {renewal === undefined && draft.kind === 'LEASE' && (
-          <ChoiceSelect
+          <createForm.occupancyId
             items={leases}
             label={t('legal-agreements.demo.occupancy')}
-            onChange={handleLeaseChange}
             placeholder={t('legal-agreements.demo.choose')}
-            value={draft.occupancyId}
           />
         )}
-        <div className="legalagreements:grid legalagreements:gap-4 legalagreements:md:grid-cols-2">
-          <FormInput
+        <div className="grid gap-4 md:grid-cols-2">
+          <createForm.startDate
             id="contract-start-date"
             label={t('legal-agreements.demo.startDate')}
-            onChange={(event) => change({ startDate: event.target.value })}
             type="date"
-            value={draft.startDate}
             {...renewalStartHint}
           />
-          <FormInput
+          <createForm.endDate
             id="contract-end-date"
             label={t('legal-agreements.demo.endDate')}
-            onChange={(event) => change({ endDate: event.target.value })}
             type="date"
-            value={draft.endDate}
             {...renewalEndHint}
           />
         </div>
-      </form>
+      </FormRoot>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </SidePanel>
   );

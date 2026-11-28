@@ -1,13 +1,28 @@
+import { Result, Schema, SchemaIssue } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
+  CreateDraftSchema,
   customerNameMaxLength,
   czechCollator,
   formatPostalCode,
   normalizedCustomerName,
-  validateCreateDraft,
 } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
 import type { CreateDraft } from '../../src/routes/[lang]/prodej/zakaznici/customers-model.ts';
+
+const VALIDATION = 'party-registry.pages.customers.create.validation';
+
+/** The failed checks of a create draft: the translation key each one shows, by the field it names. */
+const decodeDraft = Schema.decodeUnknownResult(CreateDraftSchema);
+const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+const problems = (draft: CreateDraft): Readonly<Record<string, string>> =>
+  Result.match(decodeDraft(draft, { errors: 'all' }), {
+    onFailure: (error) =>
+      Object.fromEntries(
+        formatIssues(error.issue).issues.map((issue) => [(issue.path ?? []).map(String).join('.'), issue.message]),
+      ),
+    onSuccess: () => ({}),
+  });
 
 const emptyDraft: CreateDraft = {
   city: '',
@@ -21,19 +36,19 @@ const emptyDraft: CreateDraft = {
 };
 
 it('flags a lone address part, because the owner would drop it silently', () => {
-  expect(validateCreateDraft({ ...emptyDraft, city: 'Ústí nad Orlicí' })).toEqual({ city: 'addressIncomplete' });
-  expect(validateCreateDraft({ ...emptyDraft, postalCode: '56201' })).toEqual({ postalCode: 'addressIncomplete' });
+  expect(problems({ ...emptyDraft, city: 'Ústí nad Orlicí' })).toEqual({ city: `${VALIDATION}.addressIncomplete` });
+  expect(problems({ ...emptyDraft, postalCode: '56201' })).toEqual({ postalCode: `${VALIDATION}.addressIncomplete` });
 });
 
 it('accepts an address with two parts and an empty address', () => {
-  expect(validateCreateDraft({ ...emptyDraft, city: 'Ústí nad Orlicí', postalCode: '56201' })).toEqual({});
-  expect(validateCreateDraft(emptyDraft)).toEqual({});
+  expect(problems({ ...emptyDraft, city: 'Ústí nad Orlicí', postalCode: '56201' })).toEqual({});
+  expect(problems(emptyDraft)).toEqual({});
 });
 
 it('checks the IČO format first and the mod-11 checksum second', () => {
-  expect(validateCreateDraft({ ...emptyDraft, ico: '2574113' })).toEqual({ ico: 'icoInvalid' });
-  expect(validateCreateDraft({ ...emptyDraft, ico: '25741137' })).toEqual({ ico: 'icoChecksum' });
-  expect(validateCreateDraft({ ...emptyDraft, ico: '25741136' })).toEqual({});
+  expect(problems({ ...emptyDraft, ico: '2574113' })).toEqual({ ico: `${VALIDATION}.icoInvalid` });
+  expect(problems({ ...emptyDraft, ico: '25741137' })).toEqual({ ico: `${VALIDATION}.icoChecksum` });
+  expect(problems({ ...emptyDraft, ico: '25741136' })).toEqual({});
 });
 
 it('keeps the name length limit that the owner subject key enforces', () => {

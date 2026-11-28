@@ -1,6 +1,11 @@
-@import '@techsio/ui-kit/tokens-with-tailwind';
-/* Shell UI uses unprefixed ui-kit utilities too (home tiles, frame, selectors). */
-@source '..';
-@source '../../../../packages/admin-ui/src';
-/* Projected with scripts/generate-shell-ui-candidates.mts, which the Shell's build and dev scripts run for all verticals. */
-@source '../../generated/ui-candidates/*.txt';
+/* The kit's precompiled stylesheet: every class the Shell and its modules write is one of its rules. */
+@import '@techsio/ui-kit/styles.css';
+
+/* The tenant's theme (Core) carries the look; the Shell adds only what its own frame and surfaces need. */
+:root {
+  /* The kit Sidebar sits below the Shell's 700-step top bar; the kit derives its viewport height from this offset. */
+  --spacing-sidebar-offset: var(--spacing-700);
+  --height-sidebar-viewport: calc(100dvh - var(--spacing-700));
+  /* The one outlined level keeps its light hairline in every theme. */
+  --color-surface-card-border: color-mix(in oklab, var(--color-border-primary) 60%, transparent);
+}

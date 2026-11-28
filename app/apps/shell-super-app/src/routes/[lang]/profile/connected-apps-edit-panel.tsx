@@ -1,16 +1,26 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { AgentWritePolicySchema } from '@app/shared-contracts/agent-access';
 import type { ConnectionSummary } from '@app/shared-contracts/agent-access';
 import { SaveBar, UnsavedChangesDialog, saveLabelsFor, useDraftSave, useUnsavedChangesGuard } from '@app/admin-ui';
 import type { SaveOutcome } from '@app/admin-ui';
+import {
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  MemberCheckboxField,
+  RadioField,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
-import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { updateConnectionAccess } from './connected-apps-client.ts';
 import {
   draftFromConnection,
@@ -20,10 +30,82 @@ import {
   isStale,
   moduleChoices,
   policyChoices,
-  setModuleChoice,
   widenHint,
 } from './connected-apps-model.ts';
 import type { EditDraft, ModuleChoice } from './connected-apps-model.ts';
+
+/**
+ * The access of one connection as the panel edits it: the scope, the modules it may read and the modules it may
+ * write (a written module is always read too), and the write policy. Uložit sends the draft through the save bar, so
+ * the form only holds it.
+ */
+const accessForm = FormReact.make(
+  FormBuilder.empty
+    .addField('read', Schema.Array(Schema.String))
+    .addField('scope', Schema.String)
+    .addField('write', Schema.Array(Schema.String))
+    .addField('writePolicy', Schema.String),
+  {
+    fields: { read: MemberCheckboxField, scope: RadioField, write: MemberCheckboxField, writePolicy: RadioField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
+type AccessValues = typeof accessForm.schema.Encoded;
+
+const allScope = 'all';
+const modulesScope = 'modules';
+
+const valuesOf = (draft: EditDraft): AccessValues => {
+  const granted = Object.entries(draft.modules);
+  return {
+    read: granted.flatMap(([moduleId, choice]) => (choice === 'none' ? [] : [moduleId])),
+    scope: draft.allModules ? allScope : modulesScope,
+    write: granted.flatMap(([moduleId, choice]) => (choice === 'write' ? [moduleId] : [])),
+    writePolicy: draft.writePolicy,
+  };
+};
+
+const choiceOf = (values: AccessValues, moduleId: string): ModuleChoice => {
+  if (values.write.includes(moduleId)) {
+    return 'write';
+  }
+  return values.read.includes(moduleId) ? 'read' : 'none';
+};
+
+/** The draft the form shows, over the modules of the connection's limits. */
+const draftOf = (opened: EditDraft, values: AccessValues): EditDraft => ({
+  allModules: values.scope === allScope,
+  modules: Object.fromEntries(Object.keys(opened.modules).map((moduleId) => [moduleId, choiceOf(values, moduleId)])),
+  writePolicy: Schema.is(AgentWritePolicySchema)(values.writePolicy) ? values.writePolicy : opened.writePolicy,
+});
+
+/**
+ * Keeps writing within reading: unticking Číst also unticks Zapisovat, and ticking Zapisovat also ticks Číst.
+ * `previous` is what the form showed before `next`, so the change tells which of the two was ticked.
+ */
+const coupleAccess = (previous: AccessValues, next: AccessValues): AccessValues => {
+  const unread = new Set(previous.read.filter((moduleId) => !next.read.includes(moduleId)));
+  const alsoRead = next.write.filter((moduleId) => !previous.write.includes(moduleId) && !next.read.includes(moduleId));
+  if (alsoRead.length === 0 && !next.write.some((moduleId) => unread.has(moduleId))) {
+    return next;
+  }
+  return {
+    ...next,
+    read: [...next.read, ...alsoRead],
+    write: next.write.filter((moduleId) => !unread.has(moduleId)),
+  };
+};
+
+/**
+ * Rendered inside `FormRoot`, which renders its children only once this mount initialized the form: until then the
+ * form's atoms can still hold what an earlier mount left, so the values are read only after `onReady`.
+ */
+const FormReady = ({ onReady }: { readonly onReady: (ready: boolean) => void }) => {
+  useEffect(() => onReady(true), [onReady]);
+  return null;
+};
 
 /** Right-side panel that narrows one connection. The server enforces the limits again on save. */
 export const ConnectedAppsEditPanel = ({
@@ -40,7 +122,23 @@ export const ConnectedAppsEditPanel = ({
 }) => {
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
-  const [draft, setDraft] = useState<EditDraft>(() => draftFromConnection(connection));
+  const opened = draftFromConnection(connection);
+  const [ready, setReady] = useState(false);
+  const values = Option.filter(useAtomValue(accessForm.values), () => ready);
+  const setValues = useAtomSet(accessForm.setValues);
+  const draft = Option.match(values, { onNone: () => opened, onSome: (shown) => draftOf(opened, shown) });
+  // What the form showed before its latest change, so a change tells which box was ticked.
+  const shown = useRef<AccessValues | null>(null);
+  useAtomSubscribe(accessForm.values, (next) => {
+    if (!ready || Option.isNone(next)) {
+      return;
+    }
+    const coupled = coupleAccess(shown.current ?? valuesOf(opened), next.value);
+    shown.current = next.value;
+    if (coupled !== next.value) {
+      setValues(coupled);
+    }
+  });
   const [failure, setFailure] = useState<string | undefined>();
   // Nothing is sent until Uložit: the server re-checks every narrowing it receives.
   const saved = useRef(false);
@@ -70,10 +168,14 @@ export const ConnectedAppsEditPanel = ({
   const { name } = connection.client;
   const policies = policyChoices(connection);
   const modules = moduleChoices(connection);
-
-  const setChoice = (moduleId: string, choice: ModuleChoice) => {
-    setDraft((current) => setModuleChoice(current, moduleId, choice));
-  };
+  const scopeChoices = [
+    { label: connection.acting.kind === 'human' ? 'Vše, co smíte' : 'Vše, co agent smí', value: allScope },
+    { label: 'Vybrat moduly', value: modulesScope },
+  ];
+  // Only what the approved grant and the live rights allow can be chosen; the wider policies are listed below.
+  const policyItems = policies.flatMap((policy) =>
+    policy.disabled ? [] : [{ label: policy.label, value: policy.value }],
+  );
 
   const close = () => {
     if (saved.current) {
@@ -85,7 +187,7 @@ export const ConnectedAppsEditPanel = ({
   const guard = useUnsavedChangesGuard({
     draft: record,
     navigation: blocker,
-    onDiscard: () => setDraft(record.confirmed),
+    onDiscard: () => setValues(valuesOf(record.confirmed)),
   });
   const requestClose = () => {
     guard.request(close);
@@ -121,80 +223,56 @@ export const ConnectedAppsEditPanel = ({
         size="md"
         title={`Upravit přístup – ${name}`}
       >
-        <div className="grid gap-300">
+        <FormRoot
+          className="grid gap-300"
+          defaultValues={valuesOf(opened)}
+          form={accessForm}
+          key={connection.grantId}
+          translateMessage={(message) => t(message)}
+        >
+          <FormReady onReady={setReady} />
           <section className="grid gap-150">
-            <h3 className="font-semibold text-sm">K čemu bude mít přístup</h3>
-            <label className="flex items-start gap-150">
-              <input
-                checked={draft.allModules}
-                disabled={!connection.allModules}
-                name="connected-app-scope"
-                onChange={() => setDraft((current) => ({ ...current, allModules: true }))}
-                type="radio"
-              />
-              <span className="text-sm">
-                {connection.acting.kind === 'human' ? 'Vše, co smíte' : 'Vše, co agent smí'}
-              </span>
-            </label>
-            <label className="flex items-start gap-150">
-              <input
-                checked={!draft.allModules}
-                name="connected-app-scope"
-                onChange={() => setDraft((current) => ({ ...current, allModules: false }))}
-                type="radio"
-              />
-              <span className="text-sm">Vybrat moduly</span>
-            </label>
+            <accessForm.scope disabled={!connection.allModules} items={scopeChoices} label="K čemu bude mít přístup" />
             {draft.allModules ? null : (
               <div className="grid gap-150">
-                {modules.map((module) => {
-                  const choice = draft.modules[module.moduleId] ?? 'none';
-                  return (
-                    <div className="grid gap-100 rounded-md border border-border-primary p-150" key={module.moduleId}>
-                      <p className="font-medium text-sm">{module.label}</p>
-                      <div className="flex flex-wrap gap-300">
-                        <FormCheckbox
-                          checked={choice !== 'none'}
-                          disabled={!module.canRead}
-                          label={t('shell.connect.access.read')}
-                          onCheckedChange={(checked) => setChoice(module.moduleId, checked ? 'read' : 'none')}
-                        />
-                        <FormCheckbox
-                          checked={choice === 'write'}
-                          disabled={!module.canWrite}
-                          label={t('shell.connect.access.write')}
-                          onCheckedChange={(checked) => setChoice(module.moduleId, checked ? 'write' : 'read')}
-                        />
-                      </div>
+                {modules.map((module) => (
+                  <div className="grid gap-100 rounded-md border border-border-primary p-150" key={module.moduleId}>
+                    <p className="font-medium text-sm">{module.label}</p>
+                    <div className="flex flex-wrap gap-300">
+                      <accessForm.read
+                        disabled={!module.canRead}
+                        label={t('shell.connect.access.read')}
+                        member={module.moduleId}
+                      />
+                      <accessForm.write
+                        disabled={!module.canWrite}
+                        label={t('shell.connect.access.write')}
+                        member={module.moduleId}
+                      />
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </section>
 
           <section className="grid gap-150">
-            <h3 className="font-semibold text-sm">Jak bude zapisovat</h3>
-            {policies.map((policy) => (
-              <label className="flex items-start gap-150" key={policy.value}>
-                <input
-                  checked={draft.writePolicy === policy.value}
-                  disabled={policy.disabled}
-                  name="connected-app-write-policy"
-                  onChange={() => setDraft((current) => ({ ...current, writePolicy: policy.value }))}
-                  type="radio"
-                />
-                <span className="grid min-w-0 gap-50">
-                  <span className="font-medium text-sm">{policy.label}</span>
-                  {policy.description === '' ? null : (
-                    <span className="text-fg-secondary text-xs">{policy.description}</span>
-                  )}
-                  {policy.disabledReason === null ? null : (
-                    <span className="text-fg-secondary text-xs">{policy.disabledReason}</span>
-                  )}
-                </span>
-              </label>
-            ))}
+            <accessForm.writePolicy items={policyItems} label="Jak bude zapisovat" />
+            <ul className="grid gap-100">
+              {policies.map((policy) =>
+                policy.description === '' && policy.disabledReason === null ? null : (
+                  <li className="grid min-w-0 gap-50" key={policy.value}>
+                    <span className="font-medium text-sm">{policy.label}</span>
+                    {policy.description === '' ? null : (
+                      <span className="text-fg-secondary text-xs">{policy.description}</span>
+                    )}
+                    {policy.disabledReason === null ? null : (
+                      <span className="text-fg-secondary text-xs">{policy.disabledReason}</span>
+                    )}
+                  </li>
+                ),
+              )}
+            </ul>
           </section>
 
           {problem === undefined ? null : (
@@ -207,7 +285,7 @@ export const ConnectedAppsEditPanel = ({
               {failure}
             </StatusText>
           )}
-        </div>
+        </FormRoot>
       </Dialog>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

@@ -1,16 +1,24 @@
-import { pipe, DateTime } from 'effect';
+import { pipe, DateTime, Effect, Option, Schema } from 'effect';
 // AREA: visits — owned by the crm-visits lane. C02 Návštěvy: timeline + table of visits / calls / e-mails with
 // filters, record and correct (with history). `?klient=<id>` focuses one client (timeline per client).
 import { EmptyState, PageHeader, SectionCard, StatCard, StatRow, formatNumber, matchesSearch } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { Input } from '@techsio/ui-kit/atoms/input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 
-import { SelectTemplate } from '@app/admin-ui/select-template';
+import {
+  ChoiceField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 
 import { useState } from 'react';
 import type { ComponentProps } from 'react';
@@ -22,6 +30,7 @@ import type { Visit, VisitKind } from '../../../../../shared/domain/visits.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { clientOptions, salespersonOptions } from '../../../../crm/option-labels.ts';
 import { useCrmRecords } from '../../../../crm/records.ts';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import {
   CrmScopeNote,
   CrmStateGate,
@@ -52,6 +61,28 @@ const periods = [
   { days: 90, label: 'Posledních 90 dní', value: '90' },
   { days: 100_000, label: 'Celá historie', value: 'all' },
 ] as const;
+
+/** The filters of the visit list: they narrow what the timeline and the table show and are never submitted. */
+const visitFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('clientFilter', Schema.String)
+    .addField('kindFilter', Schema.String)
+    .addField('period', Schema.String)
+    .addField('salespersonFilter', Schema.String)
+    .addField('search', Schema.String),
+  {
+    fields: {
+      clientFilter: ChoiceField,
+      kindFilter: ChoiceField,
+      period: ChoiceField,
+      salespersonFilter: ChoiceField,
+      search: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+type VisitFilters = typeof visitFilterForm.schema.Encoded;
 
 const columns = (records: RecordsResponse): ColumnDef<Visit>[] => [
   {
@@ -155,13 +186,13 @@ const ClientFocus = ({
     <SectionCard
       actions={
         <>
-          <a
-            className="inline-flex items-center gap-50 font-medium underline text-sm underline-offset-2 hover:underline"
+          <Link
+            className="inline-flex items-center gap-50 font-medium text-sm hover:underline"
             href={`/${language ?? 'cs'}/crm/klienti?klient=${encodeURIComponent(clientId)}`}
           >
             <span aria-hidden="true" className="icon-[mdi--card-account-details-outline] size-200" />
             Karta klienta
-          </a>
+          </Link>
           {onRecord !== undefined && (
             <Button icon="icon-[mdi--plus]" onClick={onRecord} severity="primary" size="sm">
               Zapsat návštěvu
@@ -283,15 +314,17 @@ const renderVisitResults = ({
 const VisitsContent = ({ initialClient }: { readonly initialClient: string | null }) => {
   const { t } = useModernI18n();
   const { load, state, submit } = useCrmRecords();
-  const [filters, setFilters] = useState(() => ({
+  const opened: VisitFilters = {
     clientFilter: initialClient ?? ALL,
     kindFilter: ALL,
     period: '90',
     salespersonFilter: ALL,
     search: '',
-  }));
+  };
+  const filters = Option.getOrElse(useAtomValue(visitFilterForm.values), () => opened);
+  const setFilters = useAtomSet(visitFilterForm.setValues);
   const { clientFilter, kindFilter, period, salespersonFilter, search } = filters;
-  const patchForm = (patch: Partial<typeof filters>) => setFilters((current) => ({ ...current, ...patch }));
+  const patchForm = (patch: Partial<VisitFilters>) => setFilters({ ...filters, ...patch });
   const [view, setView] = useState('timeline');
   const [recordOpen, setRecordOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | undefined>();
@@ -378,62 +411,50 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
               />
             )}
 
-            <div className="flex flex-wrap items-end gap-150">
-              <Input
-                aria-label={t('crm.ciClientsVisits.visits.searchLabel')}
-                className="w-64"
-                onChange={(event) => patchForm({ search: event.target.value })}
-                placeholder={t('crm.ciClientsVisits.visits.searchPlaceholder')}
-                size="sm"
-                type="search"
-                value={search}
-              />
+            <FormRoot
+              className="flex flex-wrap items-end gap-150"
+              defaultValues={filters}
+              form={visitFilterForm}
+              translateMessage={(message) => t(message, { defaultValue: message })}
+            >
+              <div className="w-64">
+                <visitFilterForm.search
+                  label={<span className="sr-only">{t('crm.ciClientsVisits.visits.searchLabel')}</span>}
+                  placeholder={t('crm.ciClientsVisits.visits.searchPlaceholder')}
+                  size="sm"
+                  type="search"
+                />
+              </div>
               <div className="w-56">
-                <SelectTemplate
+                <visitFilterForm.clientFilter
                   items={[{ label: 'Všichni klienti', value: ALL }, ...clientOptions(records.state.clients.items)]}
                   label={t('crm.ciClientsVisits.fields.client')}
-                  name="clientFilter"
-                  onValueChange={(details) => patchForm({ clientFilter: details.value[0] ?? ALL })}
-                  size="sm"
-                  value={[clientFilter]}
                 />
               </div>
               {canSeeEverything(records.viewer) && (
                 <div className="w-48">
-                  <SelectTemplate
+                  <visitFilterForm.salespersonFilter
                     items={[
                       { label: 'Všichni obchodníci', value: ALL },
                       ...salespersonOptions(records.state.salespeople),
                     ]}
                     label={t('crm.ciClientsVisits.fields.salesperson')}
-                    name="salespersonFilter"
-                    onValueChange={(details) => patchForm({ salespersonFilter: details.value[0] ?? ALL })}
-                    size="sm"
-                    value={[salespersonFilter]}
                   />
                 </div>
               )}
               <div className="w-44">
-                <SelectTemplate
+                <visitFilterForm.kindFilter
                   items={[
                     { label: 'Všechny typy', value: ALL },
                     ...visitKinds.map((kind) => ({ label: visitKindMeta[kind].label, value: kind })),
                   ]}
                   label={t('crm.ciClientsVisits.fields.type')}
-                  name="kindFilter"
-                  onValueChange={(details) => patchForm({ kindFilter: details.value[0] ?? ALL })}
-                  size="sm"
-                  value={[kindFilter]}
                 />
               </div>
               <div className="w-44">
-                <SelectTemplate
+                <visitFilterForm.period
                   items={periods.map((entry) => ({ label: entry.label, value: entry.value }))}
                   label={t('crm.ciClientsVisits.fields.period')}
-                  name="period"
-                  onValueChange={(details) => patchForm({ period: details.value[0] ?? '90' })}
-                  size="sm"
-                  value={[period]}
                 />
               </div>
               {filtered && (
@@ -441,7 +462,7 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                   Zrušit filtry
                 </Button>
               )}
-            </div>
+            </FormRoot>
 
             <Tabs appearance="line" onValueChange={setView} value={view}>
               <Tabs.List>

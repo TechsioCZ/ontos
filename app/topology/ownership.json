@@ -145,24 +145,6 @@
       }
     },
     {
-      "id": "shared-design-tokens",
-      "package": "@app/shared-design-tokens",
-      "path": "packages/shared-design-tokens",
-      "ownership": {
-        "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/wave2/shared-design-tokens.md",
-        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
-        "blastRadius": {
-          "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
-        }
-      }
-    },
-    {
       "id": "customer-market-retirement-contracts",
       "package": "@app/customer-market-retirement-contracts",
       "path": "packages/customer-market-retirement-contracts",

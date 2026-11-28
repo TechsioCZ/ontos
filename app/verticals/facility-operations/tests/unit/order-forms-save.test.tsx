@@ -271,9 +271,9 @@ describe('purchase order forms', () => {
       );
       expect(saveButton().disabled).toBe(true);
       yield* waitUntil(
-        () => document.querySelector(`select[name="invoice-vat-rate"] option[value="${CZ_VAT_STANDARD}"]`) !== null,
+        () => document.querySelector(`select[name="vatKey"] option[value="${CZ_VAT_STANDARD}"]`) !== null,
       );
-      yield* pick('invoice-vat-rate', CZ_VAT_STANDARD);
+      yield* pick('vatKey', CZ_VAT_STANDARD);
       expect(saveButton().disabled).toBe(true);
       yield* typeInto('#draft-invoice-number', 'SUP-2026-118');
       yield* click(labels.save);

@@ -16,19 +16,21 @@ const openLease = occupancyEditorActions.OPEN_DRAFT({
 });
 const previousEditor = {
   ...initialEditorState('2026-01-01'),
-  customerId: 'previous-customer',
   customerOpen: true,
   editingId: 'previous-draft',
-  endDate: '2026-01-31',
-  guestId: 'previous-guest',
-  guestQuery: 'previous query',
-  peopleCount: '8',
+  opened: {
+    customerId: 'previous-customer',
+    endDate: '2026-01-31',
+    guestId: 'previous-guest',
+    peopleCount: '8',
+    rentMonthly: '12000',
+    rentPaymentDay: '20',
+    rentService: '1500',
+    startDate: '2026-01-01',
+    stayNote: 'Previous stay',
+    unitId: 'previous-unit',
+  },
   rentEditorOpen: true,
-  rentMonthly: '12000',
-  rentPaymentDay: '20',
-  rentService: '1500',
-  stayNote: 'Previous stay',
-  unitId: 'previous-unit',
 };
 
 describe('occupancy editor transitions', () => {
@@ -36,21 +38,22 @@ describe('occupancy editor transitions', () => {
     const opened = occupancyEditorReducer(previousEditor, openLease);
     expect(Option.getOrNull(opened.editor)).toBe('lease');
     expect(opened).toMatchObject({
-      customerId: '',
       customerOpen: true,
       customersLoading: true,
       editingId: '',
-      endDate: '',
-      guestId: '',
-      guestQuery: '',
-      peopleCount: '2',
+      opened: {
+        customerId: '',
+        endDate: '',
+        guestId: '',
+        peopleCount: '2',
+        rentMonthly: '',
+        rentPaymentDay: '15',
+        rentService: '',
+        startDate: today,
+        stayNote: '',
+        unitId: 'unit-from-link',
+      },
       rentEditorOpen: true,
-      rentMonthly: '',
-      rentPaymentDay: '15',
-      rentService: '',
-      startDate: today,
-      stayNote: '',
-      unitId: 'unit-from-link',
     });
     const stay = occupancyEditorReducer(
       initialEditorState(today),
@@ -60,40 +63,18 @@ describe('occupancy editor transitions', () => {
     expect(stay.customersLoading).toBe(false);
   });
 
-  it('keeps edits made while customer options load when that asynchronous read completes', () => {
+  it('keeps the opened form when its customer options load', () => {
     const opened = occupancyEditorReducer(initialEditorState(today), openLease);
-    const edited = occupancyEditorReducer(
-      opened,
-      occupancyEditorActions.SET_INPUT({ field: 'startDate', value: '2026-11-01' }),
-    );
-    const loaded = occupancyEditorReducer(edited, occupancyEditorActions.CUSTOMERS_LOADED({ customers: [] }));
+    const loaded = occupancyEditorReducer(opened, occupancyEditorActions.CUSTOMERS_LOADED({ customers: [] }));
     const settled = occupancyEditorReducer(loaded, occupancyEditorActions.CUSTOMERS_LOADING({ loading: false }));
-    expect(settled.startDate).toBe('2026-11-01');
-    expect(settled.unitId).toBe('unit-from-link');
+    expect(settled.opened).toEqual(opened.opened);
     expect(Option.getOrNull(settled.editor)).toBe('lease');
     expect(settled.customersLoading).toBe(false);
   });
 
-  it('opens rent editing without resetting the draft and copies a selected draft interval together', () => {
-    const opened = occupancyEditorReducer(
-      previousEditor,
-      occupancyEditorActions.OPEN_RENT({
-        terms: Option.some({
-          currency: 'CZK',
-          monthlyRentMinor: 1_234_500,
-          paymentDay: 7,
-          serviceChargesMinor: 250_000,
-        }),
-      }),
-    );
-    expect(opened).toMatchObject({
-      editingId: 'previous-draft',
-      rentEditorOpen: true,
-      rentMonthly: '12345',
-      rentPaymentDay: '7',
-      rentService: '2500',
-      unitId: 'previous-unit',
-    });
+  it('opens rent editing without resetting the draft and opens a selected draft with its interval and rent', () => {
+    const rent = occupancyEditorReducer(previousEditor, occupancyEditorActions.SET_RENT_EDITOR_OPEN({ open: true }));
+    expect(rent).toMatchObject({ editingId: 'previous-draft', opened: previousEditor.opened, rentEditorOpen: true });
     const record: Occupancy = {
       contractRef: null,
       customerCounterpartyRef: {
@@ -123,15 +104,11 @@ describe('occupancy editor transitions', () => {
         tenantId,
       },
     };
-    const draft = occupancyEditorReducer(opened, occupancyEditorActions.EDIT_DRAFT({ record }));
+    const draft = occupancyEditorReducer(rent, occupancyEditorActions.EDIT_DRAFT({ record }));
     expect(Option.getOrNull(draft.editor)).toBe('lease');
     expect(draft).toMatchObject({
       editingId: record.occupancyRef.resourceId,
-      endDate: '',
-      rentMonthly: '',
-      rentPaymentDay: '15',
-      rentService: '',
-      startDate: record.startDate,
+      opened: { endDate: '', rentMonthly: '', rentPaymentDay: '15', rentService: '', startDate: record.startDate },
     });
   });
 
@@ -139,21 +116,16 @@ describe('occupancy editor transitions', () => {
     const cleared = occupancyEditorReducer(previousEditor, occupancyEditorActions.CLEAR({ startDate: today }));
     expect(Option.isNone(cleared.editor)).toBe(true);
     expect(cleared).toMatchObject({
-      customerId: '',
       customerOpen: false,
       customers: [],
       customersLoading: false,
       editingId: '',
-      endDate: '',
-      guestId: '',
-      guestQuery: '',
       guests: [],
+      opened: { customerId: '', endDate: '', guestId: '', startDate: today, unitId: '' },
       rentEditorOpen: false,
-      startDate: today,
-      unitId: '',
     });
-    expect(cleared.peopleCount).toBe(previousEditor.peopleCount);
-    expect(cleared.stayNote).toBe(previousEditor.stayNote);
-    expect(cleared.rentMonthly).toBe(previousEditor.rentMonthly);
+    expect(cleared.opened.peopleCount).toBe(previousEditor.opened.peopleCount);
+    expect(cleared.opened.stayNote).toBe(previousEditor.opened.stayNote);
+    expect(cleared.opened.rentMonthly).toBe(previousEditor.opened.rentMonthly);
   });
 });

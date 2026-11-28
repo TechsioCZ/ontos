@@ -166,7 +166,6 @@ const creditlessPnpmScripts = new Set([
   'api:check:ontos',
   'handler-services:check',
   'lint',
-  'shell:ui-candidates',
   'module-entrypoints:check',
 ]);
 const defaultInclude = ['**/*.{test,spec}.?(c|m)[jt]s?(x)'];

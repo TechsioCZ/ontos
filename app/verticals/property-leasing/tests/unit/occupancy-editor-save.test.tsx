@@ -14,7 +14,6 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Effect, Layer, Option, Schema } from 'effect';
 import { constVoid } from 'effect/Function';
 import { afterEach, beforeEach, describe, expect, it } from 'effect-rstest';
-import { useReducer } from 'react';
 import { applyCommandActionSchemaErrorLive } from '../../api/apply-command-action-problems.ts';
 import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayloadSchema } from '../../shared/actions/apply-command.ts';
@@ -23,11 +22,9 @@ import type { ApplyCommandActionProblem } from '../../shared/apis/apply-command-
 import { RecordsApi, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import {
   initialEditorState,
-  occupancyDraftOf,
   occupancyEditorActions,
   occupancyEditorReducer,
 } from '../../src/routes/[lang]/najmy/editor-state.ts';
-import type { OccupancyDraft } from '../../src/routes/[lang]/najmy/editor-state.ts';
 import { createOccupancy, saveLeaseDraft } from '../../src/routes/[lang]/najmy/occupancy-command.ts';
 import { stayDraftRecord, updateDraftCommand } from '../../src/routes/[lang]/najmy/occupancy-draft.ts';
 import { OccupancyEditorPanel } from '../../src/routes/[lang]/najmy/occupancy-editor-panel.tsx';
@@ -84,31 +81,25 @@ const sent = () => commands;
 const closed: string[] = [];
 const created: string[] = [];
 
-/** The page around the form: the editor reducer holds the draft, as on the lease screen. */
+/** The page around the form: the editor reducer says what the form opens with, as on the lease screen. */
 const Form = ({ mode }: { readonly mode: 'edit' | 'lease' | 'stay' }) => {
-  const [state, dispatch] = useReducer(occupancyEditorReducer, today, (startDate) =>
-    occupancyEditorReducer(
-      initialEditorState(startDate),
-      mode === 'edit'
-        ? occupancyEditorActions.EDIT_DRAFT({ record: leaseDraft })
-        : occupancyEditorActions.OPEN_DRAFT({ initialUnitId: '', mode, startDate }),
-    ),
+  const { opened } = occupancyEditorReducer(
+    initialEditorState(today),
+    mode === 'edit'
+      ? occupancyEditorActions.EDIT_DRAFT({ record: leaseDraft })
+      : occupancyEditorActions.OPEN_DRAFT({ initialUnitId: '', mode, startDate: today }),
   );
   const editing = mode === 'edit' ? Option.some(leaseDraft) : Option.none();
-  const handleChange = (input: keyof OccupancyDraft, value: string) =>
-    dispatch(occupancyEditorActions.SET_INPUT({ field: input, value }));
-  const handleRestore = (draft: OccupancyDraft) => dispatch(occupancyEditorActions.RESTORE_DRAFT({ draft }));
   return (
     <OccupancyEditorPanel
       customers={{ empty: true, items: [], loading: false, onOpenChange: constVoid, open: false }}
-      draft={occupancyDraftOf(state)}
       editing={editing}
       guests={{
         busy: false,
         items: [{ label: guestRef.resourceId, value: guestRef.resourceId }],
-        onQueryChange: constVoid,
+        kept: Option.none(),
+        onChoose: constVoid,
         onSearch: constVoid,
-        query: '',
       }}
       isValid={(draft) =>
         mode === 'edit'
@@ -116,7 +107,6 @@ const Form = ({ mode }: { readonly mode: 'edit' | 'lease' | 'stay' }) => {
           : Option.isSome(stayDraftRecord(draft, references, ''))
       }
       mode={mode === 'stay' ? 'stay' : 'lease'}
-      onChange={handleChange}
       onClose={() => {
         closed.push(mode);
       }}
@@ -124,12 +114,12 @@ const Form = ({ mode }: { readonly mode: 'edit' | 'lease' | 'stay' }) => {
         created.push(resourceId);
       }}
       onReload={constVoid}
-      onRestore={handleRestore}
       onSave={(draft, save) =>
         mode === 'edit'
           ? saveLeaseDraft(leaseDraft, draft, save)
           : createOccupancy(draft, { expectedRevision: 4, kind: 'stay', references })
       }
+      opened={opened}
       revision={4}
       units={[{ label: unitRef.resourceId, value: unitRef.resourceId }]}
     />

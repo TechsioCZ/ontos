@@ -1,12 +1,14 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { pipe, Effect, Predicate } from 'effect';
+import { pipe, Effect, Option, Predicate, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { orderDateText } from '../../../../../shared/domain/imports.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 import { EmptyState, PageHeader, SectionCard, formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { FormBuilder, FormReact, FormRoot, TextField, useAtomValue } from '@app/core-runtime/ui/form';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { Accordion } from '@techsio/ui-kit/molecules/accordion';
 
 import { useState } from 'react';
 import type { CrmCommandInput } from '../../../../../shared/actions/apply-command.ts';
@@ -24,7 +26,6 @@ import { useCrmRecords } from '../../../../crm/records.ts';
 import type { CrmCommandSubmit } from '../../../../crm/records.ts';
 
 import { CrmStateGate } from '../../../../crm/ui.tsx';
-import './review.css';
 
 type Submit = CrmCommandSubmit;
 // Fixed Hanák demo accounts from scripts/demo/permissions.mts, keyed by their UUIDv5 principal identity.
@@ -66,6 +67,18 @@ const batchStatus = (batch: AiBatch, pending: readonly AiChange[], applied: read
   return { label: 'Vyřízeno', variant: 'secondary' } as const;
 };
 
+/**
+ * The approver's note of one batch: every batch card has its own, and the batch's decisions and its revert send it. It
+ * is never submitted.
+ */
+const batchNoteFormOf = Atom.family((_batchId: string) =>
+  FormReact.make(FormBuilder.empty.addField('note', Schema.String), {
+    fields: { note: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  }),
+);
+
 const ChangeCard = ({
   busy,
   change,
@@ -75,27 +88,39 @@ const ChangeCard = ({
   readonly change: AiChange;
   readonly decide: (ids: readonly string[], decision: 'approve' | 'reject') => void;
 }) => (
-  <article className="ai-review-change" data-change-id={change.id}>
-    <div className="ai-review-heading">
-      <div>
+  <article className="flex min-w-0 flex-col gap-3.5 rounded-sm bg-surface p-3 sm:p-4" data-change-id={change.id}>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="min-w-0 grow basis-64">
         <h3 className="font-semibold text-sm">{change.summary}</h3>
         <p className="text-fg-secondary text-sm">{change.target.label}</p>
       </div>
-      <div className="ai-review-actions">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge severity={changeStatusVariant(change.status)}>{aiStatusLabel[change.status]}</Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
       </div>
     </div>
-    <p className="ai-review-reason">
+    <p className="max-w-[80ch] text-sm leading-normal wrap-anywhere">
       <span className="font-medium">Proč AI změnu navrhuje: </span>
       {change.reason}
     </p>
-    <table aria-label={`Porovnání: ${change.summary}`} className="ai-review-diff">
+    <table
+      aria-label={`Porovnání: ${change.summary}`}
+      className="w-full table-fixed border-collapse overflow-hidden rounded-sm bg-base"
+    >
       <thead>
-        <tr className="ai-review-diff-head">
-          <th scope="col">Údaj</th>
-          <th scope="col">Před změnou</th>
-          <th scope="col">Po schválení</th>
+        <tr className="bg-surface text-fg-secondary text-xs font-medium leading-normal">
+          <th
+            className="w-[27.2727%] px-1.5 py-2 align-top wrap-anywhere sm:px-3 sm:py-2.5 text-left font-medium"
+            scope="col"
+          >
+            Údaj
+          </th>
+          <th className="px-1.5 py-2 align-top wrap-anywhere sm:px-3 sm:py-2.5 text-left font-medium" scope="col">
+            Před změnou
+          </th>
+          <th className="px-1.5 py-2 align-top wrap-anywhere sm:px-3 sm:py-2.5 text-left font-medium" scope="col">
+            Po schválení
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -106,12 +131,16 @@ const ChangeCard = ({
             ]
           : change.diff
         ).map((line) => (
-          <tr className="ai-review-diff-row" key={line.field}>
-            <th className="font-medium" scope="row">
+          <tr className="border-t border-border-primary/60 text-xs leading-normal sm:text-sm" key={line.field}>
+            <th className="px-1.5 py-2 align-top wrap-anywhere sm:px-3 sm:py-2.5 text-left font-medium" scope="row">
               {line.label}
             </th>
-            <td className="ai-review-before">{line.before ?? 'Neuvedeno'}</td>
-            <td className="ai-review-after">{line.after ?? 'Vymazáno'}</td>
+            <td className="px-1.5 py-2 align-top wrap-anywhere sm:px-3 sm:py-2.5 bg-danger-light text-danger-fg">
+              {line.before ?? 'Neuvedeno'}
+            </td>
+            <td className="px-1.5 py-2 align-top wrap-anywhere sm:px-3 sm:py-2.5 bg-success-light text-success-fg">
+              {line.after ?? 'Vymazáno'}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -125,7 +154,7 @@ const ChangeCard = ({
       <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>
     )}
     {change.status === 'pending' && (
-      <div className="ai-review-actions ai-review-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           appearance="outline"
           disabled={busy}
@@ -159,7 +188,8 @@ const BatchCard = ({
   readonly submit: Submit;
 }) => {
   const { t } = useModernI18n();
-  const [note, setNote] = useState('');
+  const noteForm = batchNoteFormOf(batch.id);
+  const note = Option.match(useAtomValue(noteForm.values), { onNone: () => '', onSome: (values) => values.note });
   const [confirmRevert, setConfirmRevert] = useState(false);
   const pending = changes.filter((change) => change.status === 'pending');
   const applied = changes.filter((change) => change.status === 'applied');
@@ -192,27 +222,33 @@ const BatchCard = ({
     );
   };
   return (
-    <section className="ai-review-batch" data-batch-id={batch.id}>
-      <header className="ai-review-batch-header">
-        <div className="ai-review-heading">
-          <div>
+    <section className="min-w-0 overflow-hidden rounded-md border border-border-primary/60" data-batch-id={batch.id}>
+      <header className="flex flex-col gap-4 p-3 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 grow basis-64">
             <p className="text-fg-secondary text-xs">
               {pipe(batch.createdAt, orderDateText, formatDateTime)} · {batch.agentLabel}
             </p>
-            <h2 className="ai-review-instruction">{batch.instruction}</h2>
+            <h2 className="mt-1.5 max-w-[75ch] text-base font-semibold leading-normal wrap-anywhere sm:text-[1.1rem]">
+              {batch.instruction}
+            </h2>
           </div>
           <Badge severity={status.variant}>{status.label}</Badge>
         </div>
         {pending.length > 0 && (
           <>
-            <FormInput
-              id={`note-${batch.id}`}
-              label={t('crm.ciWorkflow.decisionNote')}
-              onChange={(event) => setNote(event.target.value)}
-              placeholder={t('crm.ciWorkflow.decisionNotePlaceholder')}
-              value={note}
-            />
-            <div className="ai-review-actions">
+            <FormRoot
+              defaultValues={{ note: '' }}
+              form={noteForm}
+              translateMessage={(message) => t(message, { defaultValue: message })}
+            >
+              <noteForm.note
+                id={`note-${batch.id}`}
+                label={t('crm.ciWorkflow.decisionNote')}
+                placeholder={t('crm.ciWorkflow.decisionNotePlaceholder')}
+              />
+            </FormRoot>
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 disabled={busy}
                 onClick={() =>
@@ -243,7 +279,7 @@ const BatchCard = ({
           </>
         )}
         {applied.length > 0 && batch.revertedAt === undefined && (
-          <div className="ai-review-revert">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               appearance="outline"
               disabled={busy}
@@ -257,12 +293,12 @@ const BatchCard = ({
               Obnoví původní údaje celé dávky. Pozdější lidské úpravy nepřepíše.
             </span>
             {confirmRevert && (
-              <div className="ai-review-confirm" role="alert">
+              <div className="flex basis-full flex-col gap-3 border-l-2 border-warning p-4 text-sm" role="alert">
                 <p>
                   Vrátit všechny provedené změny této dávky? Nově založené klienty a kontakty archivujeme; historii
                   zachováme.
                 </p>
-                <div className="ai-review-actions">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     disabled={busy}
                     onClick={() => {
@@ -303,7 +339,7 @@ const BatchCard = ({
           </p>
         )}
       </header>
-      <div className="ai-review-changes">
+      <div className="flex flex-col gap-4 px-3 pb-3 sm:px-5 sm:pb-5">
         {changes.map((change) => (
           <ChangeCard busy={busy} change={change} decide={decide} key={change.id} />
         ))}
@@ -344,15 +380,15 @@ const AiApprovalsContent = () => {
                 slice.changes.some((change) => change.batchId === batch.id && change.status === 'pending'),
             );
           return (
-            <div className="ai-review">
-              <div className="ai-review-safety">
-                <span aria-hidden className="icon-[mdi--shield-check-outline] size-250" />
-                <p>
+            <div className="flex min-w-0 flex-col gap-5">
+              <div className="flex items-start gap-3 rounded-sm border-l-2 border-info bg-surface p-4 text-sm leading-relaxed">
+                <span aria-hidden className="icon-[mdi--shield-check-outline] size-250 shrink-0" />
+                <p className="max-w-[80ch]">
                   <strong>Pod kontrolou člověka.</strong> Agent smí pouze navrhovat změny CRM firmy Hanák. Každé
                   rozhodnutí má autora, čas a výsledek. Provedenou dávku lze bezpečně vrátit.
                 </p>
               </div>
-              <fieldset aria-label={t('crm.ciWorkflow.batchView')} className="ai-review-actions">
+              <fieldset aria-label={t('crm.ciWorkflow.batchView')} className="flex flex-wrap items-center gap-2">
                 <Button
                   appearance={filter === 'pending' ? 'solid' : 'outline'}
                   aria-pressed={filter === 'pending'}
@@ -372,7 +408,7 @@ const AiApprovalsContent = () => {
                   Všechny dávky
                 </Button>
               </fieldset>
-              {message && <output className="ai-review-feedback">{message}</output>}
+              {message && <output className="rounded-sm bg-surface px-4 py-3.5 text-sm">{message}</output>}
               {batches.length === 0 ? (
                 <EmptyState
                   description={
@@ -397,16 +433,19 @@ const AiApprovalsContent = () => {
                   );
                   return index > 0 &&
                     changes.every((change) => change.status !== 'pending' && change.status !== 'applied') ? (
-                    <details className="ai-review-history" key={batch.id}>
-                      <summary>
-                        <span>{batch.instruction}</span>
-                        <span className="text-fg-secondary text-xs">
-                          {pipe(batch.createdAt, orderDateText, formatDateTime)} ·{' '}
-                          {batch.revertedAt === undefined ? 'Vyřízeno' : revertedBatchLabel}
-                        </span>
-                      </summary>
-                      {card}
-                    </details>
+                    <Accordion className="rounded-sm bg-surface" collapsible key={batch.id}>
+                      <Accordion.Item value={batch.id}>
+                        <Accordion.Header>
+                          <Accordion.Title className="wrap-anywhere">{batch.instruction}</Accordion.Title>
+                          <Accordion.Subtitle>
+                            {pipe(batch.createdAt, orderDateText, formatDateTime)} ·{' '}
+                            {batch.revertedAt === undefined ? 'Vyřízeno' : revertedBatchLabel}
+                          </Accordion.Subtitle>
+                          <Accordion.Indicator />
+                        </Accordion.Header>
+                        <Accordion.Content>{card}</Accordion.Content>
+                      </Accordion.Item>
+                    </Accordion>
                   ) : (
                     <div key={batch.id}>{card}</div>
                   );
@@ -416,12 +455,15 @@ const AiApprovalsContent = () => {
                 {slice.log.length === 0 ? (
                   <p className="text-fg-secondary text-sm">Deník se naplní prvním návrhem AI.</p>
                 ) : (
-                  <ol className="ai-review-log">
+                  <ol className="flex max-w-[90ch] flex-col gap-4">
                     {slice.log
                       .toReversed()
                       .slice(0, showFullLog ? slice.log.length : 8)
                       .map((entry) => (
-                        <li key={entry.id}>
+                        <li
+                          className="flex flex-col gap-1 border-l-2 border-border-primary/60 pl-4 wrap-anywhere"
+                          key={entry.id}
+                        >
                           <div className="text-fg-secondary text-xs">
                             {pipe(entry.at, orderDateText, formatDateTime)} · {nameOf(records, entry.actorPrincipalId)}{' '}
                             · {entry.actorKind === 'agent' ? 'AI návrh' : 'Lidské rozhodnutí'}

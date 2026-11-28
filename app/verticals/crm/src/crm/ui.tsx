@@ -12,13 +12,13 @@ import { CrmQueryStringSchema } from '../../shared/route-search.ts';
 import type { CrmRouteSearch } from '../../shared/route-search.ts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import type { DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { canSeeEverything } from '../../shared/domain/access.ts';
 import type { CrmRecordsState } from './records.ts';
-import './loading-skeleton.css';
 
 /** Decode the provider's original query string, preserving opaque IDs that resemble JSON. */
 export const useCrmRouteSearch = (): CrmRouteSearch => {
@@ -67,7 +67,7 @@ export const CrmStateGate = ({
         {loadingTitle !== undefined && <PageHeader title={loadingTitle} />}
         <div aria-hidden="true" className={`${surfaceTileClassName} flex flex-col gap-150 p-250`}>
           {[0, 1, 2, 3, 4].map((row) => (
-            <div className="crm-loading-skeleton-row" key={row} />
+            <Skeleton.Rectangle className="h-10 rounded-sm" key={row} />
           ))}
         </div>
       </div>

@@ -4,7 +4,6 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import { financeBrowserRuntime } from '../../../runtime/browser.ts';
-import type { Dispatch, SetStateAction } from 'react';
 import type { FinanceFormSave, FinanceSendFailure } from './finance-form-save.tsx';
 import { outcomeMessage } from './finance-ui.tsx';
 import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
@@ -62,12 +61,12 @@ export const useCreateInvoiceFeedback = (vm: FinanceViewModel, onClose: () => vo
 /**
  * Uložit of the create form, in the footer and in the leave question, over a 0 Kč line: a 0 Kč line can be a gift, so
  * it is not an error, but the first Uložit only shows the warning and the next one creates the draft. `acknowledged`
- * is the form's state, which a change of the lines resets.
+ * is the form's state, which a change of the lines resets; `acknowledge` sets it.
  */
 export const zeroPriceChecked = (
   form: FinanceFormSave,
   hasZeroPriceLine: boolean,
-  [acknowledged, setAcknowledged]: readonly [boolean, Dispatch<SetStateAction<boolean>>],
+  [acknowledged, acknowledge]: readonly [boolean, () => void],
 ) => {
   const held = hasZeroPriceLine && !acknowledged;
   const checked: FinanceFormSave = {
@@ -79,7 +78,7 @@ export const zeroPriceChecked = (
         onSave: () => {
           if (held) {
             form.guard.prompt.onStay();
-            setAcknowledged(true);
+            acknowledge();
             return;
           }
           form.guard.prompt.onSave();
@@ -88,7 +87,7 @@ export const zeroPriceChecked = (
     },
     handleSave: () => {
       if (held) {
-        setAcknowledged(true);
+        acknowledge();
         return;
       }
       form.handleSave();

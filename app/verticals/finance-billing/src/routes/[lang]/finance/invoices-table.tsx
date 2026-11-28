@@ -1,14 +1,14 @@
 import type { FinanceCommandDraft } from './finance-ui.tsx';
-import { financeBrowserRuntime } from '../../../runtime/browser.ts';
+import { financeBrowserAtomRuntime, financeBrowserRuntime } from '../../../runtime/browser.ts';
 import { EmptyState, formatDate, formatMoney, matchesSearch, StatusBadge, paginationTranslations } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Tooltip } from '@techsio/ui-kit/atoms/tooltip';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { useState } from 'react';
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
+import { Effect, Schema } from 'effect';
+import { useFormDraft } from './finance-form-draft.tsx';
 import type { DataTableProps } from '@techsio/ui-kit/organisms/data-table';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -203,6 +203,21 @@ interface FinanceInvoiceTableProps {
   readonly vm: FinanceViewModel;
 }
 
+/** The search text and the kind and status filters over the invoice list: they filter at once, nothing is sent. */
+const invoiceFilterForm = FormReact.make(
+  FormBuilder.empty
+    .addField('direction', Schema.String)
+    .addField('search', Schema.String)
+    .addField('status', Schema.String),
+  {
+    fields: { direction: SelectTemplateField, search: TextField, status: SelectTemplateField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+const openedFilters: typeof invoiceFilterForm.schema.Encoded = { direction: ALL, search: '', status: ALL };
+
 export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
   const {
     busy,
@@ -218,9 +233,8 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
     snapshot,
     t,
   } = vm;
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<string>(ALL);
-  const [direction, setDirection] = useState<string>(ALL);
+  const filters = useFormDraft(invoiceFilterForm, openedFilters);
+  const { direction, search, status } = filters.draft;
   const loadFailed = snapshot === undefined && feedback !== 'loading';
   const filterActive = search.trim() !== '' || status !== ALL || direction !== ALL;
   const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
@@ -342,19 +356,23 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
 
   return (
     <>
-      <div className="flex flex-wrap items-end gap-150">
+      <FormRoot
+        className="flex flex-wrap items-end gap-150"
+        defaultValues={openedFilters}
+        form={invoiceFilterForm}
+        translateMessage={t}
+      >
+        {filters.ready}
         <div className="w-64 min-w-0">
-          <FormInput
+          <invoiceFilterForm.search
             id="invoice-search"
             label={t(`${ns}.table.search`)}
-            onChange={(event) => setSearch(event.target.value)}
             placeholder={t(`${ns}.table.searchPlaceholder`)}
             size="sm"
-            value={search}
           />
         </div>
         <div className="w-40 min-w-0">
-          <Select
+          <invoiceFilterForm.direction
             items={[
               { displayValue: 'Vydané i přijaté', label: 'Vydané i přijaté', value: ALL },
               { displayValue: 'Vydané', label: 'Vydané', value: 'OUTGOING' },
@@ -362,18 +380,11 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
             ]}
             label={t('finance-billing.demo.kind')}
             labelProps={{ className: 'font-label text-label-sm' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next !== undefined) {
-                setDirection(next);
-              }
-            }}
             size="sm"
-            value={[direction]}
           />
         </div>
         <div className="w-48 min-w-0">
-          <Select
+          <invoiceFilterForm.status
             items={[
               // `displayValue` names the hidden native option too; without it the option reads ALL, DRAFT, UNPAID.
               { displayValue: t(`${ns}.filters.all`), label: t(`${ns}.filters.all`), value: ALL },
@@ -384,18 +395,11 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
             ]}
             label={t(`${ns}.filters.status`)}
             labelProps={{ className: 'font-label text-label-sm' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next !== undefined) {
-                setStatus(next);
-              }
-            }}
             placeholder={t('finance-billing.selectPlaceholder')}
             size="sm"
-            value={[status]}
           />
         </div>
-      </div>
+      </FormRoot>
       <DataTable
         columns={buildColumns(t, vm)}
         data={visibleInvoices}

@@ -15,12 +15,12 @@ const LegalAgreementsRouteContent = () => {
 
   return (
     <section
-      className="legalagreements:rounded-2xl legalagreements:bg-white/90 legalagreements:p-5 legalagreements:shadow-xl legalagreements:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalLegalAgreements"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="legalagreements:text-2xl legalagreements:font-black">{t('legal-agreements.title')}</h2>
-      <p className="legalagreements:mt-2 legalagreements:text-stone-600">{t('legal-agreements.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('legal-agreements.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('legal-agreements.routeSurface')}</p>
     </section>
   );
 };

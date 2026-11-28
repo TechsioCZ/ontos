@@ -47,6 +47,12 @@ const clipboardHolds = (expected: string, attempts = 400): Effect.Effect<string>
     ),
   );
 
+/** The prompt panel the client's "show prompt" toggle controls, whether or not it is expanded. */
+const promptPanel = (section: HTMLElement, label: string) =>
+  section.querySelector(
+    `[id="${within(section).getByRole('button', { name: label }).getAttribute('aria-controls') ?? ''}"]`,
+  );
+
 const click = (element: HTMLElement) =>
   Effect.sync(() => {
     fireEvent.click(element);
@@ -100,7 +106,7 @@ it.live.each(['cs', 'en'] as const)('renders translated current instructions for
           .queryByRole('link', { name: expectedCopy.t('shell.connectedAppsGuide.officialDocs') })
           ?.getAttribute('href'),
       ).toBe(client.docs);
-      const prompt = section.querySelector('details p')?.textContent ?? '';
+      const prompt = promptPanel(section, expectedCopy.t('shell.connectedAppsGuide.showPrompt'))?.textContent ?? '';
       expect(prompt).toContain(url);
       expect(prompt).toContain(client.title);
       expect(prompt).toContain('OAuth');
@@ -173,9 +179,9 @@ it.live('exposes the prompt for manual copying when clipboard access fails', () 
     const section = screen.getByRole('region', { name: 'ChatGPT' });
     yield* click(within(section).getByRole('button', { name: 'Zkopírovat pokyn pro AI' }));
     yield* waitUntil(() => within(section).queryByRole('alert')?.textContent?.includes('Rozbalte') === true);
-    const details = section.querySelector('details');
-    expect(details?.textContent).toContain(url);
-    expect(details?.textContent).toContain('OAuth');
+    const prompt = promptPanel(section, translations.t('shell.connectedAppsGuide.showPrompt'));
+    expect(prompt?.textContent).toContain(url);
+    expect(prompt?.textContent).toContain('OAuth');
     expect(within(section).getByRole('button', { name: 'Zkopírovat pokyn pro AI' })).toBeTruthy();
     // The address falls back to manual selection the same way.
     yield* click(screen.getByRole('button', { name: 'Kopírovat adresu' }));

@@ -77,6 +77,12 @@ import { rule as requireConcurrencyOption } from './rules/require-concurrency-op
 import { rule as requireContextServiceForServiceInterface } from './rules/require-context-service-for-service-interface.ts';
 import { rule as requireObservabilityLayersAtRuntimeRoot } from './rules/require-observability-layers-at-runtime-root.ts';
 import { rule as requireTimeoutOnExternalEffect } from './rules/require-timeout-on-external-effect.ts';
+import { rule as uiKitClassInKitStylesheet } from './rules/ui-kit-class-in-kit-stylesheet.ts';
+import { rule as uiKitImportThroughSurface } from './rules/ui-kit-import-through-surface.ts';
+import { rule as uiKitNoColourLiteral } from './rules/ui-kit-no-colour-literal.ts';
+import { rule as uiKitNoInlineStyle } from './rules/ui-kit-no-inline-style.ts';
+import { rule as uiKitNoIntrinsicControl } from './rules/ui-kit-no-intrinsic-control.ts';
+import { rule as uiKitNoModuleStylesheet } from './rules/ui-kit-no-module-stylesheet.ts';
 import { rule as uiKitRequiredLabel } from './rules/ui-kit-required-label.ts';
 
 /** Audit-derived diagnostic rules; application code is never autofixed. */
@@ -160,6 +166,12 @@ const effectNativePlugin = eslintCompatPlugin({
     'require-context-service-for-service-interface': requireContextServiceForServiceInterface,
     'require-observability-layers-at-runtime-root': requireObservabilityLayersAtRuntimeRoot,
     'require-timeout-on-external-effect': requireTimeoutOnExternalEffect,
+    'ui-kit-class-in-kit-stylesheet': uiKitClassInKitStylesheet,
+    'ui-kit-import-through-surface': uiKitImportThroughSurface,
+    'ui-kit-no-colour-literal': uiKitNoColourLiteral,
+    'ui-kit-no-inline-style': uiKitNoInlineStyle,
+    'ui-kit-no-intrinsic-control': uiKitNoIntrinsicControl,
+    'ui-kit-no-module-stylesheet': uiKitNoModuleStylesheet,
     'ui-kit-required-label': uiKitRequiredLabel,
   },
 });

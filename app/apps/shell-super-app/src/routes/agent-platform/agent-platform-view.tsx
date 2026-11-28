@@ -7,7 +7,6 @@ import { useShellControls } from '../use-shell-controls.ts';
 import type { AgentPlatformPageModel } from './agent-platform-page-model.ts';
 import { ActivityPanel } from './activity-panel.tsx';
 import { ApprovalsPanel } from './approvals-panel.tsx';
-import './agent-platform.css';
 
 export const AgentPlatformView = ({ model }: { readonly model: AgentPlatformPageModel }) => {
   const { t } = useModernI18n();
@@ -15,7 +14,7 @@ export const AgentPlatformView = ({ model }: { readonly model: AgentPlatformPage
   const page = model.agentPlatformPage;
   if (model.shell.state === 'reload_required' || controls.reloadRequired) {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8">
         <StatusText aria-live="polite" showIcon status="error">
           {t('shell.moduleTarget.reload_required')}
         </StatusText>
@@ -27,7 +26,7 @@ export const AgentPlatformView = ({ model }: { readonly model: AgentPlatformPage
   }
   if (model.shell.state !== 'authenticated') {
     return (
-      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
+      <main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8">
         <StatusText aria-live="polite" showIcon status="error">
           Stránka je teď nedostupná. Zkuste ji prosím načíst znovu.
         </StatusText>

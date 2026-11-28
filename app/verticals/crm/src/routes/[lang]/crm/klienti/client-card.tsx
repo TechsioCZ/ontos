@@ -44,7 +44,6 @@ import { PartyLinkDialog } from './party-link-dialog.tsx';
 import { ContactsTab } from './contacts-tab.tsx';
 import { HistoryTab } from './history-tab.tsx';
 import { SalespersonChip } from './salesperson-chip.tsx';
-import './client-card.css';
 
 interface CardProps {
   readonly busy: boolean;
@@ -396,19 +395,39 @@ const CardBody = ({
 
           <ClientCardFacts client={client} facts={facts} owner={owner} writeAll={records.viewer.writeAll} />
           {client.note !== undefined && (
-            <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
+            <div className="flex gap-100 rounded-lg p-200 text-sm">
               <span aria-hidden className="icon-[mdi--note-text-outline] mt-50 size-200 shrink-0 text-fg-secondary" />
               <p className="whitespace-pre-line">{client.note}</p>
             </div>
           )}
 
-          <Tabs appearance="line" className="crm-client-card-tabs" onValueChange={setTab} value={tab}>
-            <Tabs.List>
-              <Tabs.Trigger value="contacts">Kontakty ({contacts.length})</Tabs.Trigger>
-              <Tabs.Trigger value="visits">Návštěvy ({visitCount})</Tabs.Trigger>
-              <Tabs.Trigger value="orders">Objednávky ({facts.orderCount})</Tabs.Trigger>
-              <Tabs.Trigger value="history">Historie</Tabs.Trigger>
-              <Tabs.Indicator />
+          <Tabs appearance="line" onValueChange={setTab} value={tab}>
+            <Tabs.List className="flex-wrap sm:flex-nowrap">
+              <Tabs.Trigger
+                className="min-w-0 grow basis-[45%] border-b-2 border-transparent text-sm data-[selected]:border-current sm:grow-0 sm:basis-auto sm:border-b-0"
+                value="contacts"
+              >
+                Kontakty ({contacts.length})
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                className="min-w-0 grow basis-[45%] border-b-2 border-transparent text-sm data-[selected]:border-current sm:grow-0 sm:basis-auto sm:border-b-0"
+                value="visits"
+              >
+                Návštěvy ({visitCount})
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                className="min-w-0 grow basis-[45%] border-b-2 border-transparent text-sm data-[selected]:border-current sm:grow-0 sm:basis-auto sm:border-b-0"
+                value="orders"
+              >
+                Objednávky ({facts.orderCount})
+              </Tabs.Trigger>
+              <Tabs.Trigger
+                className="min-w-0 grow basis-[45%] border-b-2 border-transparent text-sm data-[selected]:border-current sm:grow-0 sm:basis-auto sm:border-b-0"
+                value="history"
+              >
+                Historie
+              </Tabs.Trigger>
+              <Tabs.Indicator className="hidden sm:block" />
             </Tabs.List>
             <Tabs.Content className="py-200" value="contacts">
               <ContactsTab

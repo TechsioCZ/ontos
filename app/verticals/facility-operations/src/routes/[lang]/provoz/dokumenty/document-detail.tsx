@@ -5,18 +5,28 @@ import {
   SectionCard,
   SidePanel,
   UnsavedChangesBoundary,
+  requiredLabelFor,
   surfaceTileClassName,
   useUnsavedChangesScope,
 } from '@app/admin-ui';
+import {
+  ChoiceField,
+  FileField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomSet,
+  useAtomSubscribe,
+} from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
-import { Effect } from 'effect';
-import { useState } from 'react';
+import { Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
+import { useRef, useState } from 'react';
 import { optionalField } from '../../../../../shared/domain/common.ts';
 import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
@@ -42,7 +52,11 @@ import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
 import { ContractStatusBadge } from './documents-model.tsx';
 import { FormSaveFooter, commandResult, useFormSave } from '../../../../ui/form-save.tsx';
 import type { FormSubmitResult } from '../../../../ui/form-save.tsx';
+import { useFormValues } from '../../../../ui/form-values.tsx';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
+/** Detail actions: a full-width half of the phone grid with a compact label, their own width from `sm`. */
+const detailActionClassName = 'w-full min-w-0 whitespace-nowrap px-2 text-sm sm:w-auto sm:px-5 sm:text-md';
 const k = 'facility-operations.documents';
 const notProvidedKey = 'facility-operations.common.notProvided';
 
@@ -153,6 +167,30 @@ interface VersionDraft {
 /** A new version before a file is picked. */
 const emptyVersionDraft: VersionDraft = { note: '' };
 
+/** A new version's file and note; Uložit sends them through the form save, so Enter sends nothing. */
+const versionForm = FormReact.make(
+  FormBuilder.empty.addField('file', Schema.OptionFromNullOr(Schema.instanceOf(File))).addField('note', Schema.String),
+  { fields: { file: FileField, note: TextField }, onSubmit: () => Effect.void, runtime: browserAtomRuntime },
+);
+const noVersion = { file: null, note: '' };
+/** The picked file, which changes only when the pick does. */
+const pickedVersionFile = versionForm
+  .getFieldAtoms(versionForm.fields.file)
+  .value.pipe(Atom.map(Option.getOrElse((): File | null => null)));
+
+/** A manual signature; Uložit sends it through the form save, so Enter sends nothing. */
+const signatureForm = FormReact.make(
+  FormBuilder.empty
+    .addField('signedBy', Schema.String)
+    .addField('signedOn', Schema.String)
+    .addField('version', Schema.String),
+  {
+    fields: { signedBy: TextField, signedOn: TextField, version: ChoiceField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+
 /** The new-version form of the version history (exported for its mounted test). */
 export const VersionUpload = ({
   document,
@@ -163,23 +201,41 @@ export const VersionUpload = ({
 }) => {
   const { t } = useModernI18n();
   const toast = useToast();
-  const [file, setFile] = useState<File | undefined>();
-  const [note, setNote] = useState('');
+  const { ready, values } = useFormValues(versionForm, noVersion);
+  const file = values.file ?? undefined;
+  const { note } = values;
+  const setValues = useAtomSet(versionForm.setValues);
+  const setFile = useAtomSet(versionForm.getFieldAtoms(versionForm.fields.file).setValue);
   const [busy, setBusy] = useState<'upload' | 'save' | undefined>();
   const [error, setError] = useState<string | undefined>();
   const newVersionLabel = t(`${k}.detail.newVersion`);
+  // A picked file that is too large is refused and the file before it stays.
+  const accepted = useRef<File | null>(null);
+  useAtomSubscribe(
+    pickedVersionFile,
+    (picked) => {
+      if (picked !== null && picked !== accepted.current && picked.size > MAX_UPLOAD_BYTES) {
+        setError(t(`${k}.tooLarge`));
+        setFile(accepted.current);
+        return;
+      }
+      if (picked !== accepted.current) {
+        setError(undefined);
+      }
+      accepted.current = picked;
+    },
+    { immediate: false },
+  );
 
   // A new version is sent on Uložit only, with its file and note.
   const form = useFormSave<VersionDraft>({
     isValid: (value) => value.file !== undefined,
     onDiscard: () => {
-      setFile(undefined);
-      setNote('');
+      setValues(noVersion);
       setError(undefined);
     },
     onStartOver: () => {
-      setFile(undefined);
-      setNote('');
+      setValues(noVersion);
       return emptyVersionDraft;
     },
     submit: () =>
@@ -214,32 +270,32 @@ export const VersionUpload = ({
   });
 
   return (
-    <div className="flex flex-col gap-100 rounded-lg border border-border-primary border-dashed p-150">
+    <FormRoot
+      className="flex flex-col gap-100 rounded-lg border border-border-primary border-dashed p-150"
+      defaultValues={noVersion}
+      form={versionForm}
+      translateMessage={(message) => t(message)}
+    >
+      {ready}
       {error !== undefined && (
         <StatusText showIcon status="error">
           {error}
         </StatusText>
       )}
       <div className="flex flex-wrap items-center gap-150">
-        <label className="cursor-pointer">
-          <input
-            className="sr-only"
-            data-testid="version-file-input"
-            onChange={(event) => {
-              const picked = event.target.files?.[0];
-              if (picked !== undefined && picked.size > MAX_UPLOAD_BYTES) {
-                setError(t(`${k}.tooLarge`));
-                return;
-              }
-              setError(undefined);
-              setFile(picked);
-            }}
-            type="file"
-          />
-          <span className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight">
-            ⇪ {file === undefined ? `${newVersionLabel}…` : t(`${k}.create.replace`)}
-          </span>
-        </label>
+        <versionForm.file data-testid="version-file-input">
+          {(pick) => (
+            <Button
+              className="inline-flex items-center gap-100 rounded-md border border-border-primary bg-surface px-150 py-100 font-medium text-sm hover:bg-highlight"
+              composition
+              onClick={pick}
+              size="current"
+              unstyled
+            >
+              ⇪ {file === undefined ? `${newVersionLabel}…` : t(`${k}.create.replace`)}
+            </Button>
+          )}
+        </versionForm.file>
         {file !== undefined && (
           <span className="text-sm">
             {file.name} <span className="text-fg-secondary">· {formatBytes(file.size)}</span>
@@ -247,19 +303,17 @@ export const VersionUpload = ({
         )}
       </div>
       {file !== undefined && (
-        <FormInput
+        <versionForm.note
           id="version-note"
           label={t(`${k}.detail.versionNote`)}
           maxLength={4000}
-          onChange={(event) => setNote(event.target.value)}
           placeholder={t(`${k}.detail.versionNotePlaceholder`)}
-          value={note}
         />
       )}
       <FormSaveFooter error={error} form={form}>
         {busy === 'upload' && <StatusText size="sm">{t(`${k}.uploading`)}</StatusText>}
       </FormSaveFooter>
-    </div>
+    </FormRoot>
   );
 };
 
@@ -273,12 +327,16 @@ export const SignatureForm = ({
   readonly onDone: () => void;
   readonly run: (command: OpsCommand) => Effect.Effect<CommandOutcome>;
 }) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const toast = useToast();
   const latest = document.versions.at(-1)?.version ?? 1;
-  const [signedBy, setSignedBy] = useState('');
-  const [signedOn, setSignedOn] = useState('');
-  const [version, setVersion] = useState(String(latest));
+  const opened = { signedBy: '', signedOn: '', version: String(latest) };
+  const { ready, values } = useFormValues(signatureForm, opened);
+  const { signedBy, signedOn } = values;
+  // No choice reads as the latest version, as the picker did.
+  const version = values.version === '' ? String(latest) : values.version;
+  const setValues = useAtomSet(signatureForm.setValues);
+  const requiredLabel = requiredLabelFor(language);
   const [error, setError] = useState<FailureReason | 'required' | undefined>();
   const errorText =
     error === undefined
@@ -287,9 +345,7 @@ export const SignatureForm = ({
   // The signature is recorded on Uložit only; the version it opens with is not typed input.
   const form = useFormSave({
     onDiscard: () => {
-      setSignedBy('');
-      setSignedOn('');
-      setVersion(String(latest));
+      setValues({ signedBy: '', signedOn: '', version: String(latest) });
       setError(undefined);
     },
     submit: () =>
@@ -310,40 +366,39 @@ export const SignatureForm = ({
   });
 
   return (
-    <div className={`${surfaceTileClassName} flex flex-col gap-150 p-150`}>
+    <FormRoot
+      className={`${surfaceTileClassName} flex flex-col gap-150 p-150`}
+      defaultValues={opened}
+      form={signatureForm}
+      translateMessage={(message) => t(message)}
+    >
+      {ready}
       {errorText !== undefined && (
         <StatusText showIcon status="error">
           {errorText}
         </StatusText>
       )}
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-3">
-        <FormInput
+        <signatureForm.signedBy
           id="signature-by"
           label={t(`${k}.signature.signedBy`)}
           maxLength={300}
-          onChange={(event) => setSignedBy(event.target.value)}
           required
-          value={signedBy}
+          requiredLabel={requiredLabel}
         />
-        <FormInput
+        <signatureForm.signedOn
           id="signature-on"
           label={t(`${k}.signature.signedOn`)}
-          onChange={(event) => setSignedOn(event.target.value)}
           required
+          requiredLabel={requiredLabel}
           type="date"
-          value={signedOn}
         />
-        <Select
+        <signatureForm.version
           items={document.versions.map((entry) => ({
-            displayValue: t(`${k}.detail.versionLabel`, { version: entry.version }),
             label: t(`${k}.detail.versionLabel`, { version: entry.version }),
             value: String(entry.version),
           }))}
           label={t(`${k}.signature.version`)}
-          name="signature-version"
-          onValueChange={({ value }) => setVersion(value[0] ?? String(latest))}
-          size="md"
-          value={[version]}
         />
       </div>
       <span className="text-fg-secondary text-xs">{t(`${k}.signature.manualNote`)}</span>
@@ -353,7 +408,7 @@ export const SignatureForm = ({
         form={form}
         onCancel={onDone}
       />
-    </div>
+    </FormRoot>
   );
 };
 
@@ -399,9 +454,15 @@ const DocumentMetadata = ({
           <div className="flex flex-wrap gap-100">
             {links.map((link) =>
               link.kind === 'document' ? (
-                <button key={`${link.kind}:${link.id}`} onClick={() => openSubject(link)} type="button">
+                <Button
+                  composition
+                  key={`${link.kind}:${link.id}`}
+                  onClick={() => openSubject(link)}
+                  size="current"
+                  unstyled
+                >
                   <SubjectChip subject={link} />
-                </button>
+                </Button>
               ) : (
                 <SubjectChip key={`${link.kind}:${link.id}`} subject={link} />
               ),
@@ -474,13 +535,15 @@ const DocumentAmendments = ({
         <ul className="flex flex-col gap-100">
           {amendments.map((amendment) => (
             <li className="flex items-center justify-between gap-100" key={amendment.id}>
-              <button
-                className="text-left font-medium text-sm hover:underline"
+              <Button
+                className="justify-start text-left font-medium text-sm hover:underline"
+                composition
                 onClick={() => onOpenDocument(amendment.id)}
-                type="button"
+                size="current"
+                unstyled
               >
                 {amendment.title}
-              </button>
+              </Button>
               <span className="flex items-center gap-100">
                 {amendment.contract?.validFrom !== undefined && (
                   <span className="text-fg-secondary text-xs">
@@ -658,18 +721,33 @@ export const DocumentDetailPanel = ({
     <UnsavedChangesBoundary scope={scope}>
       <SidePanel
         actions={
-          <div className="facility-documents-actions">
+          // Keep full Czech action labels inside their outlines at 390px: two columns, a third action on its own row.
+          <div className="grid w-full grid-cols-2 gap-3 sm:flex sm:justify-end">
             {canWrite && (
-              <Button appearance="outline" onClick={leaveTo(() => onEdit(document))} severity="secondary">
+              <Button
+                appearance="outline"
+                className={detailActionClassName}
+                onClick={leaveTo(() => onEdit(document))}
+                severity="secondary"
+              >
                 {t(`${k}.detail.edit`)}
               </Button>
             )}
             {canWrite && document.category === 'contract' && (
-              <Button appearance="outline" onClick={leaveTo(() => onAmend(document))} severity="secondary">
+              <Button
+                appearance="outline"
+                className={detailActionClassName}
+                onClick={leaveTo(() => onAmend(document))}
+                severity="secondary"
+              >
                 {t(`${k}.contract.createAmendment`)}
               </Button>
             )}
-            <Button onClick={leaveTo(onClose)} severity="primary">
+            <Button
+              className={`${detailActionClassName}${canWrite && document.category === 'contract' ? ' col-span-2' : ''}`}
+              onClick={leaveTo(onClose)}
+              severity="primary"
+            >
               {t('facility-operations.common.close')}
             </Button>
           </div>
@@ -700,20 +778,22 @@ export const DocumentDetailPanel = ({
       >
         <div className="flex flex-col gap-250 py-200" data-testid="document-detail">
           {original !== undefined && (
-            <button
-              className="w-fit rounded-md bg-info-light px-150 py-100 text-left text-sm hover:underline"
+            <Button
+              className="w-fit justify-start rounded-md bg-info-light px-150 py-100 text-left text-sm hover:underline"
+              composition
               onClick={() => openDocument(original.id)}
-              type="button"
+              size="current"
+              unstyled
             >
               ↳ {t(`${k}.contract.amendmentOf`, { title: original.title })}
-            </button>
+            </Button>
           )}
           {current !== undefined && canPreview(current.file) && (
             <SectionCard
               actions={<DownloadButton file={current.file} />}
               title={[t(`${k}.preview`), t(`${k}.detail.versionLabel`, { version: current.version })].join(' · ')}
             >
-              <FilePreviewBody file={current.file} height="420px" />
+              <FilePreviewBody file={current.file} height="panel" />
             </SectionCard>
           )}
 

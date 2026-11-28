@@ -93,8 +93,7 @@ it.effect('renders the current document metadata and approved parent context fro
     expect(html).toContain('Otevřít smlouvu');
     expect(html).toContain(`href="/cs/smlouvy?resourceId=${contractId}"`);
     expect(html).toContain('href="/cs/smlouvy"');
-    expect(html).toContain('legalagreements:grid-cols-1');
-    expect(html).toContain('legalagreements:xl:grid-cols-[minmax(0,1fr)_24rem]');
+    expect(html).toContain('grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]');
     expect(html).not.toContain('secret-signer');
     expect(html).not.toContain('secret-reference');
     expect(html).not.toContain('secret-note');

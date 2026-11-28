@@ -1,3 +1,4 @@
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import {
   SaveBar,
@@ -18,7 +19,7 @@ import {
 } from '@app/admin-ui';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { modulePagePreload } from '@app/shared-contracts/page-data';
@@ -28,9 +29,16 @@ import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/run
 import { useBlocker, useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { ActionProposalAcceptedSchema } from '@app/core-runtime/http/action-proposal';
+import {
+  CheckboxField,
+  CheckedTextField,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import type { ActionProposalAccepted } from '@app/core-runtime/http/action-proposal';
 import { DateTime, Effect, Match, Option, Predicate, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useId, useReducer, useRef, useState } from 'react';
@@ -54,21 +62,14 @@ import { executeApplyCommand } from '../../../api/apply-command-action-client.ts
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/property-leasing.json';
 import enResource from '../../../../locales/en/property-leasing.json';
-import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierSave, DossierChanges } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';
 import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
 import type { NoticeContext } from './notice-templates.ts';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
-import './occupancy-form.css';
-import {
-  initialEditorState,
-  occupancyDraftOf,
-  guestChoicesOf,
-  occupancyEditorActions,
-  occupancyEditorReducer,
-} from './editor-state.ts';
+import { initialEditorState, guestChoicesOf, occupancyEditorActions, occupancyEditorReducer } from './editor-state.ts';
+import { FormReady, useDraftFields } from './draft-fields.ts';
 import {
   createOccupancy,
   editSaveResult,
@@ -99,6 +100,13 @@ import { invalidateLeaseRelated, preloadLeaseRelated, useLeaseRelated } from './
 
 export const preloadPage = modulePagePreload((props) => prepareLeasePage(props, preloadLeaseRelated));
 
+/** Whether the list also shows cancelled stays and leases; ticking it filters the list at once. */
+const cancelledFilterForm = FormReact.make(FormBuilder.empty.addField('showCancelled', Schema.Boolean), {
+  fields: { showCancelled: CheckboxField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const showCancelledValue = cancelledFilterForm.getFieldAtoms(cancelledFilterForm.fields.showCancelled).value;
 const LABEL_UNIT = 'property-leasing.demo.unit';
 const LABEL_DETAIL = 'property-leasing.demo.detail';
 const LABEL_OPEN_END = 'property-leasing.demo.openEnd';
@@ -169,44 +177,10 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     tenantDirectory,
   } = leaseViewOf(records, occupant, cleared);
   const [draftEditor, dispatchEditor] = useReducer(occupancyEditorReducer, DEFAULT_START_DATE, initialEditorState);
-  const {
-    customerId,
-    customerOpen,
-    customers,
-    customersLoading,
-    editingId,
-    endDate,
-    guestId,
-    guestQuery,
-    peopleCount,
-    rentEditorOpen,
-    rentMonthly,
-    rentPaymentDay,
-    rentService,
-    startDate,
-    stayNote,
-    unitId,
-  } = draftEditor;
+  const { customerOpen, customers, customersLoading, editingId, rentEditorOpen } = draftEditor;
   const guests = guestChoicesOf(draftEditor);
   const editor = Option.getOrUndefined(draftEditor.editor);
-  const setCustomerId = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'customerId', value }));
-  const setEndDate = (value: string) => dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'endDate', value }));
-  const setGuestId = (value: string) => dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'guestId', value }));
-  const setGuestQuery = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'guestQuery', value }));
-  const setPeopleCount = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'peopleCount', value }));
-  const setRentMonthly = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'rentMonthly', value }));
-  const setRentPaymentDay = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'rentPaymentDay', value }));
-  const setRentService = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'rentService', value }));
-  const setStartDate = (value: string) =>
-    dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'startDate', value }));
-  const setStayNote = (value: string) => dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'stayNote', value }));
-  const setUnitId = (value: string) => dispatchEditor(occupancyEditorActions.SET_INPUT({ field: 'unitId', value }));
+  const chooseGuest = (guestId: string) => dispatchEditor(occupancyEditorActions.GUEST_CHOSEN({ guestId }));
   const setCustomerOpen = (open: boolean) => dispatchEditor(occupancyEditorActions.SET_CUSTOMER_OPEN({ open }));
   const setRentEditorOpen = (open: boolean) => dispatchEditor(occupancyEditorActions.SET_RENT_EDITOR_OPEN({ open }));
   /**
@@ -436,7 +410,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
           );
     };
   const openRentEditor = () => {
-    dispatchEditor(occupancyEditorActions.OPEN_RENT({ terms: Option.fromUndefinedOr(selected?.rentTerms) }));
+    setRentEditorOpen(true);
   };
   /** A new lease or stay the form created; the page opens it once the form is gone. */
   const [created, setCreated] = useState<string>();
@@ -492,7 +466,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     setEditor(undefined);
     setCreated(resourceId);
   };
-  const restoreDraft = (draft: OccupancyDraft) => dispatchEditor(occupancyEditorActions.RESTORE_DRAFT({ draft }));
   const editDraft = () => {
     if (selected?.state !== 'DRAFT') {
       return;
@@ -558,7 +531,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       occupancyRef: record.occupancyRef,
     });
   };
-  const searchGuests = () => {
+  const searchGuests = (guestQuery: string) => {
     if (guestQuery.trim().length === 0) {
       setActionFeedback('validation');
       return;
@@ -594,7 +567,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   };
   const unitName = (resourceId: string) =>
     properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? 'Jednotka bez názvu';
-  const [showCancelled, setShowCancelled] = useState(false);
+  /** The cancelled-stays filter of this page, read once its form started from unticked. */
+  const [cancelledFilterReady, setCancelledFilterReady] = useState(false);
+  const showCancelled = Option.getOrElse(
+    Option.filter(useAtomValue(showCancelledValue), () => cancelledFilterReady),
+    () => false,
+  );
   const cancelledCount = snapshot?.occupancies.filter((record) => record.state === 'CANCELLED').length ?? 0;
   // Cancelled stays and leases keep their audit but do not crowd the working list unless asked for.
   const visible =
@@ -630,8 +608,8 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     busy,
     cancelledCount,
     canWrite,
+    chooseGuest,
     collision,
-    customerId,
     customerName,
     customerNameFeedback,
     customerNamePending,
@@ -640,17 +618,19 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     customersEmpty: !customersLoading && customers.length === 0,
     customersLoading,
     directoryLoaded,
-    dispatchEditor,
-    draft: occupancyDraftOf(draftEditor),
     editDraft,
     editingId,
     editor,
-    endDate,
     feedback,
-    guestId,
-    guestQuery,
+    guestHits: draftEditor.guests,
     guests,
     guestSearchFailed: draftEditor.guestSearchFailed,
+    // The chosen guest the latest search omits.
+    keptGuest: draftEditor.guest.pipe(
+      Option.filter(
+        (chosen) => !draftEditor.guests.some((item) => item.partyRef.resourceId === chosen.partyRef.resourceId),
+      ),
+    ),
     kindFilter,
     language,
     linkedCounterpartyId,
@@ -658,19 +638,15 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     logCounterpartyActivity,
     newDraft,
     openCreated,
+    opened: draftEditor.opened,
     openRentEditor,
     partyNameOf,
-    peopleCount,
     properties,
     propertyOf,
     proposal,
     related,
     rentEditorOpen,
-    rentMonthly,
-    rentPaymentDay,
-    rentService,
     reportProposal: setProposal,
-    restoreDraft,
     retry,
     runCommand,
     runReload: () => run(reload()),
@@ -679,30 +655,15 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     saveOccupancy,
     searchGuests,
     selected,
-    setCustomerId,
+    setCancelledFilterReady,
     setCustomerOpen,
     setEditor,
-    setEndDate,
-    setGuestId,
-    setGuestQuery,
     setKindFilter,
-    setPeopleCount,
     setRentEditorOpen,
-    setRentMonthly,
-    setRentPaymentDay,
-    setRentService,
-    setShowCancelled,
-    setStartDate,
-    setStayNote,
-    setUnitId,
-    showCancelled,
     snapshot,
-    startDate,
-    stayNote,
     t,
     tenantDirectory,
     tenantOf,
-    unitId,
     unitName,
     unitOf,
     updateCounterpartyDossier,
@@ -727,9 +688,26 @@ const ProposalNotice = ({ state }: { readonly state: ReturnType<typeof useRecord
  * builds on; when someone else changed this rent, the panel offers the current version instead. Leaving with unsaved
  * changes asks first.
  */
+/** The agreed rent as the rent panel edits it; only the panel's Uložit sends it, so Enter submits nothing. */
+const rentForm = FormReact.make(
+  FormBuilder.empty
+    .addField('monthly', Schema.String)
+    .addField('paymentDay', Schema.String)
+    .addField('service', Schema.String),
+  {
+    fields: { monthly: CheckedTextField, paymentDay: CheckedTextField, service: CheckedTextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const rentOfValues = (values: RentDraft): RentDraft => ({
+  monthly: values.monthly,
+  paymentDay: values.paymentDay,
+  service: values.service,
+});
 const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; readonly state: PageState }) => {
-  const { t } = state;
-  const labels = saveLabelsFor(state.language);
+  const { language, t } = state;
+  const labels = saveLabelsFor(language);
   const server = rentDraftOf(occupancy.rentTerms);
   /** The rent the draft builds on: what the panel opened with, last saved or reloaded. */
   const base = useRef(server);
@@ -768,11 +746,9 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
     }
   }, [base, server, settledOnServer]);
   const { draft } = record;
+  useDraftFields({ draft, form: rentForm, setDraft: record.setDraft, toDraft: rentOfValues, toValues: rentOfValues });
   const problems = rentProblems(draft);
-  const invalid = (problem: boolean, key: string) =>
-    problem ? { helpText: t(key), validateStatus: 'error' as const } : {};
-  const change = (field: keyof RentDraft) => (value: string) =>
-    record.setDraft((current) => ({ ...current, [field]: value }));
+  const invalid = (problem: boolean, key: string) => (problem ? { helpText: t(key), invalid: true } : {});
   const blocker = useBlocker({ enableBeforeUnload: false, shouldBlockFn: () => record.dirty, withResolver: true });
   const guard = useUnsavedChangesGuard({ draft: record, navigation: blocker, onDiscard: record.discard });
   const close = () => {
@@ -815,39 +791,36 @@ const RentTermsPanel = ({ occupancy, state }: { readonly occupancy: Occupancy; r
       title={t('property-leasing.rent.formTitle')}
     >
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-      <div className="propertyleasing:space-y-4 propertyleasing:py-2">
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-          {t('property-leasing.rent.formHint')}
-        </p>
-        <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-3">
-          <FormInput
+      <FormRoot
+        className="space-y-4 py-2"
+        defaultValues={rentOfValues(draft)}
+        form={rentForm}
+        translateMessage={(message) => t(message)}
+      >
+        <p className="text-sm text-fg-secondary">{t('property-leasing.rent.formHint')}</p>
+        <div className="grid gap-4 md:grid-cols-3">
+          <rentForm.monthly
             id="occupancy-rent-monthly"
             inputMode="decimal"
             label={t('property-leasing.rent.monthlyRentInput')}
-            onChange={(event) => change('monthly')(event.target.value)}
-            value={draft.monthly}
             {...invalid(problems.monthly, 'property-leasing.rent.invalidAmount')}
           />
-          <FormInput
+          <rentForm.service
             id="occupancy-rent-service"
             inputMode="decimal"
             label={t('property-leasing.rent.serviceChargesInput')}
-            onChange={(event) => change('service')(event.target.value)}
-            value={draft.service}
             {...invalid(problems.service, 'property-leasing.rent.invalidAmount')}
           />
-          <FormInput
+          <rentForm.paymentDay
             id="occupancy-rent-payment-day"
             label={t('property-leasing.rent.paymentDayInput')}
             max={31}
             min={1}
-            onChange={(event) => change('paymentDay')(event.target.value)}
             type="number"
-            value={draft.paymentDay}
             {...invalid(problems.paymentDay, 'property-leasing.rent.invalidPaymentDay')}
           />
         </div>
-      </div>
+      </FormRoot>
     </SidePanel>
   );
 };
@@ -941,18 +914,20 @@ const OccupancyDetailHeader = ({ model, state }: OccupancyDetailProps) => {
         title={`${unitName(selected.unitRef.resourceId)}${tenantSuffix}`}
       />
       {feedback !== 'ready' && feedback !== 'loading' && (
-        <output aria-live="polite" className="sp-occupancy-feedback">
+        <output aria-live="polite" className="">
           {state.collision === undefined ? t(`property-leasing.demo.feedback.${feedback}`) : state.collision.text}
           {state.collision !== undefined && (
             <>
               {' '}
-              <a href={state.collision.href}>Otevřít kolidující záznam →</a>
+              <Link className="text-inherit no-underline" href={state.collision.href} size="current">
+                Otevřít kolidující záznam →
+              </Link>
             </>
           )}
         </output>
       )}
       {!state.canWrite && (
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        <p className="text-sm text-fg-secondary">
           Máte oprávnění tento záznam pouze číst. Změny provádí vedení, provoz nebo obchod.
         </p>
       )}
@@ -1050,7 +1025,7 @@ const OccupancyOverview = ({ model, state }: OccupancyDetailProps) => {
           t={t}
         />
       )}
-      <div className="propertyleasing:grid propertyleasing:gap-6 propertyleasing:md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2">
         <SectionCard title={t('property-leasing.detail.lease')}>
           <DetailList
             items={[
@@ -1137,7 +1112,7 @@ const OccupancyRelations = ({ model, state }: OccupancyDetailProps) => {
         />
       )}
       {customerNameFeedback !== undefined && (
-        <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+        <p className="text-sm text-fg-secondary">
           {t('property-leasing.detail.customerUnavailable')}{' '}
           {t(`property-leasing.demo.feedback.${customerNameFeedback}`)}
         </p>
@@ -1185,7 +1160,7 @@ const OccupancyDocuments = ({ model, state }: OccupancyDetailProps) => {
       )}
       {selected.note !== null && (
         <SectionCard title={t('property-leasing.detail.note')}>
-          <p className="propertyleasing:whitespace-pre-wrap propertyleasing:text-sm">{selected.note}</p>
+          <p className="whitespace-pre-wrap text-sm">{selected.note}</p>
         </SectionCard>
       )}{' '}
     </>
@@ -1202,7 +1177,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
             {t(`property-leasing.demo.stateLabels.${selected.state}`)}
           </Badge>
         </div>
-        <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2" hidden={!state.canWrite}>
+        <div className="flex flex-wrap gap-2" hidden={!state.canWrite}>
           {selected.state === 'DRAFT' && (
             <Button appearance="outline" disabled={busy} onClick={editDraft} severity="secondary" size="sm">
               {t(LABEL_EDIT_DRAFT)}
@@ -1221,12 +1196,12 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
           {selected.state === 'CONFIRMED' && (
             <>
               {isLease && (
-                <a
-                  className="propertyleasing:inline-flex propertyleasing:items-center propertyleasing:text-sm propertyleasing:underline propertyleasing:underline-offset-4"
+                <Link
+                  className="inline-flex items-center text-sm text-inherit underline-offset-4"
                   href={`/${language}/smlouvy`}
                 >
                   {t('property-leasing.demo.contract')}
-                </a>
+                </Link>
               )}
               <Button disabled={busy} onClick={() => activate(selected)} severity="warning" size="sm">
                 {t('property-leasing.demo.activate')}
@@ -1259,7 +1234,7 @@ const OccupancyAside = ({ model, state }: OccupancyDetailProps) => {
       {isLease && <ContractCard contract={contract} language={language} t={t} />}
       <UnitCard language={language} property={property} t={t} unit={unit} />
       {property !== undefined && (
-        <div className={`${surfaceCardClassName} propertyleasing:min-w-0 propertyleasing:p-4`}>
+        <div className={`${surfaceCardClassName} min-w-0 p-4`}>
           <PropertyEquipment
             language={language}
             propertyId={property.propertyRef.resourceId}
@@ -1280,12 +1255,9 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
   if (selected === undefined) {
     return (
       <>
-        <a
-          className="propertyleasing:inline-flex propertyleasing:text-sm propertyleasing:underline"
-          href={`/${language}/najmy`}
-        >
+        <Link className="inline-flex text-sm text-inherit underline-offset-auto" href={`/${language}/najmy`}>
           {t('property-leasing.detail.back')}
-        </a>
+        </Link>
         <PageHeader title={t(LABEL_DETAIL)} />
         {feedback !== 'loading' && (
           <output aria-live="polite">
@@ -1302,13 +1274,13 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
     <>
       <OccupancyDetailHeader model={model} state={state} />
       <OccupancyStory model={model} state={state} />
-      <div className="propertyleasing:grid propertyleasing:grid-cols-1 propertyleasing:items-start propertyleasing:gap-6 propertyleasing:xl:grid-cols-[minmax(0,1fr)_24rem]">
-        <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+        <div className="min-w-0 space-y-6">
           <OccupancyOverview model={model} state={state} />
           <OccupancyRelations model={model} state={state} />
           <OccupancyDocuments model={model} state={state} />
         </div>
-        <div className="propertyleasing:min-w-0 propertyleasing:space-y-6">
+        <div className="min-w-0 space-y-6">
           <OccupancyAside model={model} state={state} />
         </div>
       </div>
@@ -1343,15 +1315,16 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         Option.isSome((editor === 'stay' ? stayDraftRecord : leaseDraftRecord)(draft, references, editingId)),
       onSome: (record) => Option.isSome(updateDraftCommand(record.occupancyRef, draft)),
     });
-  const handleChange = (field: keyof OccupancyDraft, value: string) =>
-    state.dispatchEditor(occupancyEditorActions.SET_INPUT({ field, value }));
+  const guestChoice = (record: (typeof state.guests)[number]) => ({
+    label: record.displayName ?? t('property-leasing.demo.unnamedGuest'),
+    value: record.partyRef.resourceId,
+  });
   const handleClose = () => state.setEditor(undefined);
   const handleCreated = state.openCreated;
   const handleReload = () => state.runReload();
-  const handleRestore = state.restoreDraft;
   const handleSave = state.saveOccupancy;
   const handleSearch = state.searchGuests;
-  const handleQueryChange = state.setGuestQuery;
+  const handleGuestChoice = state.chooseGuest;
   const handleCustomerOpenChange = state.setCustomerOpen;
   const { feedback } = state;
   return (
@@ -1366,7 +1339,6 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         onOpenChange: handleCustomerOpenChange,
         open: state.customerOpen,
       }}
-      draft={state.draft}
       editing={editing}
       feedbackText={
         feedback === 'ready' || feedback === 'saving' || feedback === 'loading'
@@ -1376,23 +1348,19 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
       guests={{
         busy: state.busy,
         failure: state.guestSearchFailed ? t('property-leasing.demo.guestSearchUnavailable') : undefined,
-        items: state.guests.map((record) => ({
-          label: record.displayName ?? t('property-leasing.demo.unnamedGuest'),
-          value: record.partyRef.resourceId,
-        })),
-        onQueryChange: handleQueryChange,
+        items: state.guestHits.map(guestChoice),
+        kept: state.keptGuest.pipe(Option.map(guestChoice)),
+        onChoose: handleGuestChoice,
         onSearch: handleSearch,
-        query: state.guestQuery,
       }}
       isValid={isValid}
       key={`${editor}:${editingId}`}
       mode={editor}
-      onChange={handleChange}
       onClose={handleClose}
       onCreated={handleCreated}
       onReload={handleReload}
-      onRestore={handleRestore}
       onSave={handleSave}
+      opened={state.opened}
       revision={state.snapshot?.revision ?? 0}
       units={activeUnits.map((record) => ({ label: record.name, value: record.unitRef.resourceId }))}
     />
@@ -1409,7 +1377,7 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
   );
   const withoutRent = active.filter((record) => record.rentTerms === undefined).length;
   return (
-    <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:sm:grid-cols-2 propertyleasing:xl:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard label={state.t('property-leasing.list.summaryActive')} value={String(active.length)} />
       <StatCard label={state.t('property-leasing.list.summaryUpcoming')} value={String(upcoming.length)} />
       <StatCard label={state.t('property-leasing.list.summaryEnded')} value={String(ended.length)} />
@@ -1442,6 +1410,7 @@ const RetryAfterFailure = ({
 const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['context'] }) => {
   const state = useRecordsPage(context);
   const [calendarMonth, setCalendarMonth] = useState('');
+  const handleCancelledFilterReady = state.setCancelledFilterReady;
   const {
     busy,
     feedback,
@@ -1457,7 +1426,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
   return (
     <>
       <UltramodernRouteHead />
-      <section className="propertyleasing:w-full propertyleasing:min-w-0 propertyleasing:max-w-none propertyleasing:space-y-6 propertyleasing:p-0 propertyleasing:text-(--color-page-fg)">
+      <section className="w-full min-w-0 max-w-none space-y-6 p-0 text-fg-primary">
         <ProposalNotice state={state} />
         {state.linkedCounterpartyId !== undefined && state.linkedResourceId === undefined ? (
           <CounterpartyDossierView
@@ -1544,7 +1513,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 snapshot={snapshot}
               />
             )}
-            <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+            <div className="flex flex-wrap gap-2">
               <LinkButton appearance="outline" href="#tenants" severity="secondary" size="sm">
                 Nájemci, zájemci a kontaktní osoby ↓
               </LinkButton>
@@ -1557,8 +1526,8 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 Kalendář a přehled nemovitostí →
               </LinkButton>
             </div>
-            <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-4 propertyleasing:pb-4">
-              <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4">
+              <div className="flex flex-wrap gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
                   <Button
                     appearance="ghost"
@@ -1572,17 +1541,18 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                   </Button>
                 ))}
               </div>
-              <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-3">
-                {state.cancelledCount > 0 && (
-                  <label className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-                    <input
-                      checked={state.showCancelled}
-                      onChange={(event) => state.setShowCancelled(event.target.checked)}
-                      type="checkbox"
-                    />{' '}
-                    Zobrazit zrušené ({state.cancelledCount})
-                  </label>
-                )}
+              <div className="flex flex-wrap items-center gap-3">
+                <FormRoot
+                  className="contents text-sm text-fg-secondary"
+                  defaultValues={{ showCancelled: false }}
+                  form={cancelledFilterForm}
+                  translateMessage={(message) => t(message)}
+                >
+                  <FormReady onReady={handleCancelledFilterReady} />
+                  {state.cancelledCount > 0 && (
+                    <cancelledFilterForm.showCancelled label={`Zobrazit zrušené (${state.cancelledCount})`} />
+                  )}
+                </FormRoot>
                 <RetryAfterFailure
                   busy={busy}
                   feedback={feedback}
@@ -1592,13 +1562,11 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p
-                className={`${surfaceTileClassName} propertyleasing:p-5 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
-              >
+              <p className={`${surfaceTileClassName} p-5 text-sm text-fg-secondary`}>
                 {t('property-leasing.demo.empty')}
               </p>
             )}
-            <div className="propertyleasing:overflow-x-auto">
+            <div className="overflow-x-auto">
               <Table appearance="line" size="sm">
                 <Table.Caption>{t('property-leasing.demo.list')}</Table.Caption>
                 <Table.Header>
@@ -1615,12 +1583,8 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                   {visible.map((record) => (
                     <Table.Row key={record.occupancyRef.resourceId}>
                       <Table.Cell>
-                        <span className="propertyleasing:block propertyleasing:font-medium">
-                          {unitName(record.unitRef.resourceId)}
-                        </span>
-                        <span className="propertyleasing:text-xs propertyleasing:text-(--color-fg-secondary)">
-                          {state.propertyOf(record)?.name ?? ''}
-                        </span>
+                        <span className="block font-medium">{unitName(record.unitRef.resourceId)}</span>
+                        <span className="text-xs text-fg-secondary">{state.propertyOf(record)?.name ?? ''}</span>
                       </Table.Cell>
                       <Table.Cell>{state.partyNameOf(record) ?? '—'}</Table.Cell>
                       <Table.Cell>
@@ -1628,12 +1592,12 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                         {record.endDate === null ? t(LABEL_OPEN_END) : formatDate(record.endDate)}
                       </Table.Cell>
                       <Table.Cell>
-                        <span className="propertyleasing:tabular-nums">
+                        <span className="tabular-nums">
                           {record.rentTerms === undefined ? '—' : formatMoney(monthlyTotal(record.rentTerms))}
                         </span>
                       </Table.Cell>
                       <Table.Cell>
-                        <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <Badge
                             severity={
                               (
@@ -1650,9 +1614,7 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                           >
                             {t(`property-leasing.demo.stateLabels.${record.state}`)}
                           </Badge>
-                          <span className="propertyleasing:text-(--color-fg-secondary)">
-                            {t(`property-leasing.demo.kind.${record.kind}`)}
-                          </span>
+                          <span className="text-fg-secondary">{t(`property-leasing.demo.kind.${record.kind}`)}</span>
                         </div>
                       </Table.Cell>
                       <Table.Cell>

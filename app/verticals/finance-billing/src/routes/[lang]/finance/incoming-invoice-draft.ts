@@ -1,11 +1,12 @@
 // A received invoice as its form holds it until Uložit, with its attached document.
+import { Schema } from 'effect';
 import type { Invoice } from '../../../../shared/apis/records.ts';
 import type { VatChoices } from '../../../../shared/apis/vat-choices.ts';
 import { addCalendarDaysTo } from '../../../../shared/domain/finance-planning.ts';
 import { draftTotals, lineIssue, newDraftLine, storedLinesOf } from '../../../../shared/domain/invoice-draft.ts';
 import type { DraftLine } from '../../../../shared/domain/invoice-draft.ts';
 import { defaultLineVatChoice } from '../../../../shared/domain/line-vat.ts';
-import type { FinanceCommandDraft, FinanceViewModel, PreparedUpload } from './finance-ui.tsx';
+import type { FinanceCommandDraft, FinanceViewModel } from './finance-ui.tsx';
 import { emptyObjectSelection, objectAnchors } from './object-fields.tsx';
 import type { ObjectSelection } from './object-fields.tsx';
 
@@ -21,10 +22,12 @@ export const BUDGET_CATEGORIES = [
   'Ostatní',
 ] as const;
 
-export interface IncomingFile {
-  readonly size: number;
-  readonly upload: PreparedUpload;
-}
+/** A picked PDF or scan, read and ready to be stored with the invoice. */
+export const IncomingFileSchema = Schema.Struct({
+  size: Schema.Number,
+  upload: Schema.Struct({ contentBase64: Schema.String, fileName: Schema.String, mimeType: Schema.String }),
+});
+export type IncomingFile = typeof IncomingFileSchema.Type;
 
 export interface IncomingDraft {
   readonly category: string;

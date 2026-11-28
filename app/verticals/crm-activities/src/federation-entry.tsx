@@ -15,12 +15,12 @@ const CrmActivitiesRouteContent = () => {
 
   return (
     <section
-      className="crmactivities:rounded-2xl crmactivities:bg-white/90 crmactivities:p-5 crmactivities:shadow-xl crmactivities:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalCrmActivities"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="crmactivities:text-2xl crmactivities:font-black">{t('crm-activities.title')}</h2>
-      <p className="crmactivities:mt-2 crmactivities:text-stone-600">{t('crm-activities.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('crm-activities.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('crm-activities.routeSurface')}</p>
     </section>
   );
 };

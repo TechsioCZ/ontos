@@ -4,28 +4,53 @@ import {
   SaveBar,
   SectionCard,
   UnsavedChangesDialog,
+  requiredLabelFor,
   saveLabelsFor,
   useRecordDraft,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
+import {
+  CheckboxField,
+  CheckedTextField,
+  ChoiceField,
+  Field,
+  FormBuilder,
+  FormReact,
+  FormRoot,
+  TextField,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
 import type { RevisionedSaveResult } from '@app/admin-ui';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import type { PlatformError } from 'effect';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { Atom } from 'effect/reactivity';
+import { browserAtomRuntime, browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useRef, useState } from 'react';
 import type { Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RecordsResponse, TenantContact, TenantDossier } from '../../../../shared/apis/records.ts';
+import {
+  dossierActionsClass,
+  dossierEventClass,
+  dossierFieldsClass,
+  dossierHeadingClass,
+  dossierMutedClass,
+  dossierSectionClass,
+  dossierStackClass,
+  dossierTileClass,
+  dossierTitleClass,
+  plainLinkClass,
+} from './dossier-classes.ts';
 import { formatInstant, principalLabel } from './principal-labels.ts';
 import type { TenantDirectoryEntry } from './lease-story.tsx';
-import './tenant-dossier.css';
 import { timelineEntries } from './timeline-entries.ts';
 import { TenantCaseStateSchema } from '../../../../shared/apis/records.ts';
 import { contactCountLabel } from './contact-count.ts';
+import { FormReady, useDraftFields } from './draft-fields.ts';
 import { DossierCommunication } from './dossier-communication.tsx';
 import type { DossierLog } from './dossier-communication.tsx';
 import {
@@ -142,9 +167,8 @@ const useDossierDraft = <V,>({
   return { guard, reason, record };
 };
 
-/** Error props for a field, spread so `validateStatus` is absent (not undefined) when the field is valid. */
-const invalidField = (invalid: boolean, message: string) =>
-  invalid ? { helpText: message, validateStatus: 'error' as const } : {};
+/** Error props for a field, spread so they are absent (not undefined) when the field is valid. */
+const invalidField = (invalid: boolean, message: string) => (invalid ? { helpText: message, invalid: true } : {});
 
 const emptyContact = (id: string): TenantContact => ({ email: '', id, name: '', phone: '', role: '' });
 const caseFieldRequiredKey = 'property-leasing.dossier.caseFieldRequired';
@@ -154,6 +178,43 @@ interface ContactsSectionProps extends DossierDraftProps {
   readonly newContactId: Effect.Effect<string, PlatformError.PlatformError>;
 }
 const noContacts: readonly TenantContact[] = [];
+
+/**
+ * The contact people of one dossier as its section edits them; every dossier on screen has its own. Only the section's
+ * Uložit sends them, so Enter submits nothing.
+ */
+const contactsFormOf = Atom.family((_counterpartyId: string) =>
+  FormReact.make(
+    FormBuilder.empty.addField(
+      Field.makeArrayField(
+        'contacts',
+        Schema.Struct({
+          email: Schema.String,
+          id: Schema.String,
+          name: Schema.String,
+          phone: Schema.String,
+          role: Schema.String,
+        }),
+      ),
+    ),
+    {
+      fields: {
+        contacts: {
+          email: CheckedTextField,
+          id: TextField,
+          name: CheckedTextField,
+          phone: TextField,
+          role: TextField,
+        },
+      },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  ),
+);
+const contactsOf = (values: { readonly contacts: readonly TenantContact[] }): readonly TenantContact[] =>
+  values.contacts;
+const contactValuesOf = (contacts: readonly TenantContact[]) => ({ contacts });
 const DossierContacts = ({
   canWrite,
   counterpartyId,
@@ -174,14 +235,22 @@ const DossierContacts = ({
     unchangedSince: (base) => contactsUnchangedSince(counterpartyId, base),
   });
   const contacts = record.draft;
+  const contactsForm = contactsFormOf(counterpartyId);
+  useDraftFields({
+    draft: contacts,
+    form: contactsForm,
+    setDraft: record.setDraft,
+    toDraft: contactsOf,
+    toValues: contactValuesOf,
+  });
   const [editing, setEditing] = useState(false);
-  const editLabel = contacts.length === 0 ? 'Přidat kontaktní osoby' : 'Upravit kontakty';
-  const updateContact = (id: string, field: 'name' | 'role' | 'email' | 'phone', value: string) =>
-    record.setDraft((current) =>
-      current.map((contact) => (contact.id === id ? { ...contact, [field]: value } : contact)),
+  /** Adds an empty contact under a fresh id. */
+  const addContact = (append: (contact: TenantContact) => void) => {
+    void browserRuntime.runPromiseExit(
+      newContactId.pipe(Effect.tap((id) => Effect.sync(() => append(emptyContact(id))))),
     );
-  const removeContact = (id: string) => record.setDraft((current) => current.filter((item) => item.id !== id));
-  const appendContact = (id: string) => record.setDraft((current) => [...current, emptyContact(id)]);
+  };
+  const editLabel = contacts.length === 0 ? 'Přidat kontaktní osoby' : 'Upravit kontakty';
   const toggleEditing = () => {
     if (editing) {
       guard.request(() => setEditing(false));
@@ -193,8 +262,8 @@ const DossierContacts = ({
   const handleReloadLatest = record.reloadLatest;
   return (
     <>
-      <div className="sp-tenant-heading">
-        <h3>Kontaktní osoby</h3>
+      <div className={dossierHeadingClass}>
+        <h3 className={dossierTitleClass}>Kontaktní osoby</h3>
         {canWrite && (
           <Button appearance="outline" onClick={toggleEditing} severity="secondary" size="sm">
             {editing ? 'Zavřít úpravy' : editLabel}
@@ -202,92 +271,96 @@ const DossierContacts = ({
         )}
       </div>
       {!editing && contacts.length === 0 && (
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Kontaktní osoby zatím nejsou doplněny. Hlavní e-mail a telefon protistrany najdete v kartě výše.
         </p>
       )}
       {!editing &&
         contacts.map((contact) => (
-          <div className="sp-tenant-contact" key={contact.id}>
+          <div className={dossierTileClass} key={contact.id}>
             <strong>{contact.name}</strong>
             <DetailList
               items={[
                 { label: 'Role ve firmě', value: contact.role || 'Neuvedeno' },
                 {
                   label: 'E-mail',
-                  value: contact.email === '' ? 'Neuvedeno' : <a href={`mailto:${contact.email}`}>{contact.email}</a>,
+                  value:
+                    contact.email === '' ? (
+                      'Neuvedeno'
+                    ) : (
+                      <Link className={plainLinkClass} href={`mailto:${contact.email}`} size="current">
+                        {contact.email}
+                      </Link>
+                    ),
                 },
                 {
                   label: 'Telefon',
-                  value: contact.phone === '' ? 'Neuvedeno' : <a href={`tel:${contact.phone}`}>{contact.phone}</a>,
+                  value:
+                    contact.phone === '' ? (
+                      'Neuvedeno'
+                    ) : (
+                      <Link className={plainLinkClass} href={`tel:${contact.phone}`} size="current">
+                        {contact.phone}
+                      </Link>
+                    ),
                 },
               ]}
             />
           </div>
         ))}
       {editing && canWrite && (
-        <form
-          className="sp-tenant-stack"
-          noValidate
-          onSubmit={(event) => {
-            // Enter never saves: only Uložit does.
-            event.preventDefault();
-          }}
+        <FormRoot
+          className={dossierStackClass}
+          defaultValues={contactValuesOf(contacts)}
+          form={contactsForm}
+          translateMessage={(message) => t(message)}
         >
-          {contacts.map((contact, index) => {
-            const problems = contactProblems(contact);
-            return (
-              <fieldset className="sp-tenant-contact" key={contact.id}>
-                <legend>Kontakt {index + 1}</legend>
-                <div className="sp-tenant-fields">
-                  <FormInput
-                    label={t('property-leasing.registration.fullName')}
-                    onChange={(event) => updateContact(contact.id, 'name', event.target.value)}
-                    required
-                    value={contact.name}
-                    {...invalidField(problems.name, t('property-leasing.dossier.contactNameRequired'))}
-                  />
-                  <FormInput
-                    label={t('property-leasing.dossier.contactRole')}
-                    onChange={(event) => updateContact(contact.id, 'role', event.target.value)}
-                    value={contact.role}
-                  />
-                  <FormInput
-                    label={t('property-leasing.dossier.contactEmail')}
-                    onChange={(event) => updateContact(contact.id, 'email', event.target.value)}
-                    type="email"
-                    value={contact.email}
-                    {...invalidField(problems.email, t('property-leasing.dossier.contactEmailInvalid'))}
-                  />
-                  <FormInput
-                    label={t('property-leasing.dossier.contactPhone')}
-                    onChange={(event) => updateContact(contact.id, 'phone', event.target.value)}
-                    type="tel"
-                    value={contact.phone}
-                  />
+          <contactsForm.contacts>
+            {({ append, items, remove }) => (
+              <>
+                {items.map((contact, index) => {
+                  const problems = contactProblems(contact);
+                  return (
+                    <contactsForm.contacts.Item index={index} key={contact.id}>
+                      <fieldset className={dossierTileClass}>
+                        <legend>Kontakt {index + 1}</legend>
+                        <div className={dossierFieldsClass}>
+                          <contactsForm.contacts.name
+                            label={t('property-leasing.registration.fullName')}
+                            required
+                            requiredLabel={requiredLabelFor(language)}
+                            {...invalidField(problems.name, t('property-leasing.dossier.contactNameRequired'))}
+                          />
+                          <contactsForm.contacts.role label={t('property-leasing.dossier.contactRole')} />
+                          <contactsForm.contacts.email
+                            label={t('property-leasing.dossier.contactEmail')}
+                            type="email"
+                            {...invalidField(problems.email, t('property-leasing.dossier.contactEmailInvalid'))}
+                          />
+                          <contactsForm.contacts.phone label={t('property-leasing.dossier.contactPhone')} type="tel" />
+                        </div>
+                        <Button appearance="ghost" onClick={() => remove(index)} severity="secondary" size="sm">
+                          Odebrat kontakt
+                        </Button>
+                      </fieldset>
+                    </contactsForm.contacts.Item>
+                  );
+                })}
+                <div className={dossierActionsClass}>
+                  <Button
+                    appearance="outline"
+                    disabled={items.length >= 50}
+                    onClick={() => addContact(append)}
+                    severity="secondary"
+                    size="sm"
+                  >
+                    Přidat kontaktní osobu
+                  </Button>
                 </div>
-                <Button appearance="ghost" onClick={() => removeContact(contact.id)} severity="secondary" size="sm">
-                  Odebrat kontakt
-                </Button>
-              </fieldset>
-            );
-          })}
-          <div className="sp-tenant-actions">
-            <Button
-              appearance="outline"
-              disabled={contacts.length >= 50}
-              onClick={() => {
-                void browserRuntime.runPromiseExit(
-                  newContactId.pipe(Effect.tap((id) => Effect.sync(() => appendContact(id)))),
-                );
-              }}
-              severity="secondary"
-              size="sm"
-            >
-              Přidat kontaktní osobu
-            </Button>
-          </div>
-        </form>
+              </>
+            )}
+          </contactsForm.contacts>
+        </FormRoot>
       )}
       {canWrite && (
         <SaveBar
@@ -306,6 +379,54 @@ const DossierContacts = ({
     </>
   );
 };
+
+const caseStates = ['NEW', 'IN_PROGRESS', 'CONFIRMED', 'CLOSED', 'CANCELLED'] as const;
+const caseStateItems = caseStates.map((value) => ({ label: caseLabels[value], value }));
+
+/** The business case of one dossier as its section edits it. Only the section's Uložit sends it. */
+const caseFormOf = Atom.family((_counterpartyId: string) =>
+  FormReact.make(
+    FormBuilder.empty
+      .addField('deadline', Schema.String)
+      .addField('owner', Schema.String)
+      .addField('state', Schema.String)
+      .addField('subject', Schema.String)
+      .addField('value', Schema.String),
+    {
+      fields: {
+        deadline: CheckedTextField,
+        owner: CheckedTextField,
+        state: ChoiceField,
+        subject: CheckedTextField,
+        value: CheckedTextField,
+      },
+      onSubmit: () => Effect.void,
+      runtime: browserAtomRuntime,
+    },
+  ),
+);
+interface CaseValues {
+  readonly deadline: string;
+  readonly owner: string;
+  readonly state: string;
+  readonly subject: string;
+  readonly value: string;
+}
+const caseValuesOf = (draft: CaseDraft): CaseValues => ({
+  deadline: draft.deadline,
+  owner: draft.owner,
+  state: draft.state,
+  subject: draft.subject,
+  value: draft.value,
+});
+/** The picker offers only the case states, so its value is always one. */
+const caseDraftOfValues = (values: CaseValues): CaseDraft => ({
+  deadline: values.deadline,
+  owner: values.owner,
+  state: Option.getOrElse(Schema.decodeUnknownOption(TenantCaseStateSchema)(values.state), () => 'NEW' as const),
+  subject: values.subject,
+  value: values.value,
+});
 
 interface CaseSectionProps extends DossierDraftProps {
   readonly canWrite: boolean;
@@ -336,14 +457,22 @@ const DossierCase = ({
     unchangedSince: (base) => caseUnchangedSince(counterpartyId, base),
   });
   const { draft } = record;
+  const caseForm = caseFormOf(counterpartyId);
+  useDraftFields({
+    draft,
+    form: caseForm,
+    setDraft: record.setDraft,
+    toDraft: caseDraftOfValues,
+    toValues: caseValuesOf,
+  });
   const problems = caseProblems(draft, dossier);
-  const change = (patch: Partial<CaseDraft>) => record.setDraft((current) => ({ ...current, ...patch }));
+  const required = { required: true, requiredLabel: requiredLabelFor(language) };
   const handleSave = record.save;
   const handleReloadLatest = record.reloadLatest;
   return (
-    <div className="sp-tenant-contact">
-      <h3>Obchodní případ</h3>
-      <p className="sp-tenant-muted">Stav jednání nemění platnost smlouvy ani obsazenost jednotky.</p>
+    <div className={dossierTileClass}>
+      <h3 className={dossierTitleClass}>Obchodní případ</h3>
+      <p className={dossierMutedClass}>Stav jednání nemění platnost smlouvy ani obsazenost jednotky.</p>
       {dossier?.caseDetails !== undefined && (
         <DetailList
           items={[
@@ -363,67 +492,39 @@ const DossierCase = ({
       )}
       <DetailList items={[{ label: 'Protistrana případu', value: counterpartyName }]} />
       {canWrite && (
-        <form
-          className="sp-tenant-stack"
-          noValidate
-          onSubmit={(event) => {
-            // Enter never saves: only Uložit does.
-            event.preventDefault();
-          }}
+        <FormRoot
+          className={dossierStackClass}
+          defaultValues={caseValuesOf(draft)}
+          form={caseForm}
+          translateMessage={(message) => t(message)}
         >
-          <div className="sp-tenant-fields">
-            <FormInput
+          <div className={dossierFieldsClass}>
+            <caseForm.subject
               label={t('property-leasing.dossier.caseSubject')}
               maxLength={500}
-              onChange={(event) => change({ subject: event.target.value })}
-              required
-              value={draft.subject}
+              {...required}
               {...invalidField(problems.subject, t(caseFieldRequiredKey))}
             />
-            <FormInput
+            <caseForm.owner
               label={t('property-leasing.dossier.caseOwner')}
               maxLength={500}
-              onChange={(event) => change({ owner: event.target.value })}
-              required
-              value={draft.owner}
+              {...required}
               {...invalidField(problems.owner, t(caseFieldRequiredKey))}
             />
-            <FormInput
+            <caseForm.deadline
               label={t('property-leasing.dossier.caseDeadline')}
-              onChange={(event) => change({ deadline: event.target.value })}
-              required
               type="date"
-              value={draft.deadline}
+              {...required}
               {...invalidField(problems.deadline, t(caseFieldRequiredKey))}
             />
-            <FormInput
+            <caseForm.value
               inputMode="decimal"
               label={t('property-leasing.dossier.optionalCaseValue')}
-              onChange={(event) => change({ value: event.target.value })}
-              value={draft.value}
               {...invalidField(problems.value, t('property-leasing.rent.invalidAmount'))}
             />
           </div>
-          <div className="sp-tenant-actions">
-            <label className="sp-tenant-stack">
-              <span>Stav případu</span>
-              <select
-                aria-label={t('property-leasing.dossier.caseState')}
-                onChange={(event) => {
-                  const selected = Schema.decodeUnknownOption(TenantCaseStateSchema)(event.target.value);
-                  if (Option.isSome(selected)) {
-                    change({ state: selected.value });
-                  }
-                }}
-                value={draft.state}
-              >
-                {(['NEW', 'IN_PROGRESS', 'CONFIRMED', 'CLOSED', 'CANCELLED'] as const).map((value) => (
-                  <option key={value} value={value}>
-                    {caseLabels[value]}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className={dossierActionsClass}>
+            <caseForm.state items={caseStateItems} label={t('property-leasing.dossier.caseState')} />
           </div>
           <SaveBar
             error={Option.match(reason, {
@@ -436,10 +537,10 @@ const DossierCase = ({
             size="sm"
             status={record.status}
           />
-        </form>
+        </FormRoot>
       )}
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
-      <div className="sp-tenant-actions">
+      <div className={dossierActionsClass}>
         {contractHref !== undefined && (
           <LinkButton appearance="ghost" href={contractHref} severity="secondary" size="sm">
             Otevřít smlouvu případu →
@@ -496,7 +597,7 @@ export const TenantDossierCard = ({
 }) => {
   const { t } = useModernI18n();
   return (
-    <div className="sp-tenant" id="tenant">
+    <div className={dossierSectionClass} id="tenant">
       <SectionCard
         actions={
           <Badge severity={dossier?.archived === true ? 'neutral' : 'info'} size="sm">
@@ -505,7 +606,7 @@ export const TenantDossierCard = ({
         }
         title={t('property-leasing.dossier.title')}
       >
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Kontakty, komunikace a stav obchodního případu této protistrany, sdílené napříč všemi jejími nájmy. Zápisy se
           ukládají s autorem a časem.
         </p>
@@ -529,14 +630,14 @@ export const TenantDossierCard = ({
           taskHref={taskHref}
         />
         <DossierCommunication activityLabels={activityLabels} canWrite={canWrite} onSave={onLog} />
-        <h3>Časová osa</h3>
+        <h3 className={dossierTitleClass}>Časová osa</h3>
         {timelineEntries(dossier?.history ?? []).map(({ entry, key }) => (
-          <article className="sp-tenant-event" key={key}>
-            <div className="sp-tenant-heading">
+          <article className={dossierEventClass} key={key}>
+            <div className={dossierHeadingClass}>
               <Badge appearance="outline" severity="neutral" size="sm">
                 {activityLabels[entry.kind]}
               </Badge>
-              <span className="sp-tenant-muted">
+              <span className={dossierMutedClass}>
                 {principalLabel(entry.authorPrincipalId)} · {formatInstant(entry.occurredAt)}
               </span>
             </div>
@@ -544,10 +645,12 @@ export const TenantDossierCard = ({
           </article>
         ))}
         {(dossier?.history.length ?? 0) === 0 && (
-          <p className="sp-tenant-muted">Zatím bez záznamů. První hovor, poznámka nebo změna případu se zobrazí zde.</p>
+          <p className={dossierMutedClass}>
+            Zatím bez záznamů. První hovor, poznámka nebo změna případu se zobrazí zde.
+          </p>
         )}
-        <div className="sp-tenant-heading">
-          <p className="sp-tenant-muted">
+        <div className={dossierHeadingClass}>
+          <p className={dossierMutedClass}>
             Archivace skryje protistranu pouze z běžného přehledu kontaktů. Platné smlouvy, nájmy i historie zůstávají
             zachovány.
           </p>
@@ -579,6 +682,17 @@ const relationshipLabel = (
   return dossier === undefined ? 'Zákazník z registru · zatím bez evidence' : 'Zájemce bez nájmu';
 };
 
+/** The search box and the archive switch of the directory: both filter the list at once, nothing is submitted. */
+const directoryFilterForm = FormReact.make(
+  FormBuilder.empty.addField('archived', Schema.Boolean).addField('query', Schema.String),
+  {
+    fields: { archived: CheckboxField, query: TextField },
+    onSubmit: () => Effect.void,
+    runtime: browserAtomRuntime,
+  },
+);
+const noDirectoryFilter = { archived: false, query: '' };
+
 export const TenantDirectory = ({
   directory,
   language,
@@ -591,8 +705,12 @@ export const TenantDirectory = ({
   readonly unitName: (id: string) => string;
 }) => {
   const { t } = useModernI18n();
-  const [query, setQuery] = useState('');
-  const [archived, setArchived] = useState(false);
+  const [ready, setReady] = useState(false);
+  const filter = Option.getOrElse(
+    Option.filter(useAtomValue(directoryFilterForm.values), () => ready),
+    () => noDirectoryFilter,
+  );
+  const { archived, query } = filter;
   const leasesOf = (counterpartyId: string): readonly Occupancy[] =>
     snapshot.occupancies.filter((record) => record.customerCounterpartyRef?.resourceId === counterpartyId);
   const dossierOf = (counterpartyId: string) =>
@@ -615,7 +733,7 @@ export const TenantDirectory = ({
     );
   });
   return (
-    <section className="sp-tenant" id="tenants">
+    <section className={dossierSectionClass} id="tenants">
       <SectionCard
         actions={
           <LinkButton appearance="outline" href={`/${language}/prodej/zakaznici`} severity="secondary" size="sm">
@@ -624,22 +742,22 @@ export const TenantDirectory = ({
         }
         title={t('property-leasing.dossier.directoryTitle')}
       >
-        <p className="sp-tenant-muted">
+        <p className={dossierMutedClass}>
           Najděte firmu nebo osobu podle názvu, IČO, e-mailu, telefonu nebo jména kontaktní osoby. Seznam obsahuje
           nájemce i firmy z registru zákazníků; nového zájemce založíte ve firemním registru zákazníků tlačítkem Nový
           zákazník.
         </p>
-        <FormInput
-          label={t('property-leasing.dossier.search')}
-          onChange={(event) => setQuery(event.target.value)}
-          type="search"
-          value={query}
-        />
-        <label className="sp-tenant-muted">
-          <input checked={archived} onChange={(event) => setArchived(event.target.checked)} type="checkbox" /> Zahrnout
-          archivovanou evidenci
-        </label>
-        <div className="sp-tenant-directory">
+        <FormRoot
+          className={dossierStackClass}
+          defaultValues={noDirectoryFilter}
+          form={directoryFilterForm}
+          translateMessage={(message) => t(message)}
+        >
+          <FormReady onReady={setReady} />
+          <directoryFilterForm.query label={t('property-leasing.dossier.search')} type="search" />
+          <directoryFilterForm.archived label="Zahrnout archivovanou evidenci" />
+        </FormRoot>
+        <div className={dossierFieldsClass}>
           {visible.map((entry) => {
             const id = entry.counterpartyRef.resourceId;
             const dossier = dossierOf(id);
@@ -648,23 +766,23 @@ export const TenantDirectory = ({
               .filter((value) => value !== null && value !== undefined && value !== '')
               .join(' · ');
             return (
-              <a className="sp-tenant-contact" href={dossierHref(id)} key={id}>
-                <div className="sp-tenant-heading">
+              <Link className={`${dossierTileClass} ${plainLinkClass}`} href={dossierHref(id)} key={id} size="current">
+                <div className={dossierHeadingClass}>
                   <strong>{entry.displayName ?? 'Protistrana'}</strong>
                   <Badge severity={dossier?.archived === true ? 'neutral' : 'info'} size="sm">
                     {dossier?.archived === true ? 'Archivováno' : caseLabels[dossier?.caseState ?? 'NEW']}
                   </Badge>
                 </div>
-                <span className="sp-tenant-muted">
+                <span className={dossierMutedClass}>
                   {relationshipLabel(leases, dossier, unitName)} · {contactCountLabel(dossier?.contacts.length ?? 0)}
                 </span>
-                {contactDetails.length > 0 && <span className="sp-tenant-muted">{contactDetails}</span>}
-                <span className="sp-tenant-muted">Kontakty, historie a obchodní případ →</span>
-              </a>
+                {contactDetails.length > 0 && <span className={dossierMutedClass}>{contactDetails}</span>}
+                <span className={dossierMutedClass}>Kontakty, historie a obchodní případ →</span>
+              </Link>
             );
           })}
         </div>
-        {visible.length === 0 && <p className="sp-tenant-muted">Žádné protistrany neodpovídají zadanému filtru.</p>}
+        {visible.length === 0 && <p className={dossierMutedClass}>Žádné protistrany neodpovídají zadanému filtru.</p>}
       </SectionCard>
     </section>
   );

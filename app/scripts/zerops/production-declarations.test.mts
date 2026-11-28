@@ -87,7 +87,7 @@ await test('the failed deployment fixture stays in the CI graph, not the product
 });
 
 await test('production keeps the same source diagnostics and declaration locations with separate incremental state', () => {
-  for (const project of ['core-runtime', 'shared-contracts', 'shared-design-tokens']) {
+  for (const project of ['core-runtime', 'shared-contracts']) {
     const base = configOf(path.resolve(root, `packages/${project}/tsconfig.json`));
     const build = configOf(path.resolve(root, `packages/${project}/tsconfig.build.json`));
     const { tsBuildInfoFile: originalState, ...originalOptions } = base.options;
@@ -104,7 +104,7 @@ await test('production keeps the same source diagnostics and declaration locatio
 await test('stage and gates build drivers use the source-only graph before building units', () => {
   for (const driver of ['scripts/zerops/build-app.sh', 'scripts/ci/build-units.sh']) {
     const source = readFileSync(path.resolve(root, driver), 'utf-8');
-    ok(source.includes('for project in packages/shared-contracts packages/shared-design-tokens; do'));
+    ok(source.includes('for project in packages/shared-contracts; do'));
     ok(source.includes('typecheck --build "$project/tsconfig.build.json"'));
     ok(!source.includes('typecheck --build "$project/tsconfig.json"'));
   }
@@ -116,6 +116,5 @@ await test('stage and gates build drivers use the source-only graph before build
     ),
   )(readFileSync(path.resolve(root, 'package.json'), 'utf-8'));
   ok(manifest.scripts.build.includes('packages/shared-contracts/tsconfig.build.json'));
-  ok(manifest.scripts.build.includes('packages/shared-design-tokens/tsconfig.build.json'));
   equal(manifest.scripts.typecheck, 'ultramodern-create ultramodern typecheck --build tsconfig.json');
 });

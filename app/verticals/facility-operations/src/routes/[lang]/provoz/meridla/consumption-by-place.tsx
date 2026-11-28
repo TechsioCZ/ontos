@@ -1,18 +1,36 @@
 // Consumption and costs per property/unit (ops-meters lane, S04 „tabulka vývoje spotřeby a nákladů“).
 // Media and units of measure are never summed together; missing costs read „bez dat“, never 0.
 import { SectionCard, formatMoney } from '@app/admin-ui';
+import { FormBuilder, FormReact, FormRoot, TemplateChoiceField, useAtomValue } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { SelectTemplate as Select } from '@app/admin-ui/select-template';
+import { Effect, Option, Schema } from 'effect';
+import { Atom } from 'effect/reactivity';
 import { useState } from 'react';
+import { browserAtomRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { meterMedia, monthlySeries } from '../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';
 import { SITE, formatQuantity, metersAt, monthLabel, monthLongLabel, placeOptions } from './meters-view.ts';
 
 const k = 'facility-operations.meters';
+
+/** The place the consumption is shown for; it acts as it changes, so Enter sends nothing. */
+const placeForm = FormReact.make(FormBuilder.empty.addField('place', Schema.String), {
+  fields: { place: TemplateChoiceField },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+const wholeSite = { place: SITE };
+/** The picked place; no pick is the whole site. */
+const pickedPlace = placeForm.getFieldAtoms(placeForm.fields.place).value.pipe(
+  Atom.map((value) => {
+    const place = Option.getOrElse(value, () => '');
+    return place === '' ? SITE : place;
+  }),
+);
 
 export const ConsumptionByPlace = ({
   canReadFinancial,
@@ -25,7 +43,7 @@ export const ConsumptionByPlace = ({
 }) => {
   const { t } = useModernI18n();
   const places = placeOptions(meters, t(`${k}.byUnit.allPlaces`));
-  const [place, setPlace] = useState(SITE);
+  const place = useAtomValue(pickedPlace);
   const selected = metersAt(meters, place);
   const media = meterMedia.filter((medium) => selected.some((meter) => meter.medium === medium));
   const [chosenMedium, setChosenMedium] = useState<MeterMedium | undefined>();
@@ -45,16 +63,18 @@ export const ConsumptionByPlace = ({
     <SectionCard
       actions={
         <div className="flex flex-wrap items-end gap-150">
-          <div className="min-w-[16rem]">
-            <Select
-              items={places.map((option) => ({ displayValue: option.label, label: option.label, value: option.value }))}
+          <FormRoot
+            className="min-w-64"
+            defaultValues={wholeSite}
+            form={placeForm}
+            translateMessage={(message) => t(message)}
+          >
+            <placeForm.place
+              items={places.map((option) => ({ label: option.label, value: option.value }))}
               label={t(`${k}.byUnit.place`)}
-              name="consumption-place"
-              onValueChange={({ value }) => setPlace(value[0] ?? SITE)}
               size="sm"
-              value={[place]}
             />
-          </div>
+          </FormRoot>
           <fieldset
             aria-label={t(`${k}.byUnit.medium`)}
             className="inline-flex rounded-button-sm border border-border-primary p-50"

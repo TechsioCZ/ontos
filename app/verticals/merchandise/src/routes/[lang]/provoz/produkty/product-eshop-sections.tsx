@@ -1,11 +1,12 @@
 // Sections of the "E-shop a obrázky" tab: publication settings (part of the tab's draft), archiving a product (a
-// one-click command that takes the product off the e-shop, so it asks first) and restoring an archived one.
+// one-click command that takes the product off the e-shop, so it asks first) and restoring an archived one. They render
+// inside the tab's form (`EshopForm`).
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { FormInput, Switch } from '@app/admin-ui/form-controls';
 import { SectionCard, formatDateTime } from '@app/admin-ui';
+import { useAtomValue } from '@app/core-runtime/ui/form';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
@@ -13,71 +14,53 @@ import { LiveShopConfirm } from './live-shop-confirm.tsx';
 import { useCommandFailure, useProductLabel } from './product-form-labels.ts';
 import { runCommand } from './products-api.ts';
 import { slugInvalidOf } from './product-eshop-draft.ts';
-import type { EshopDraft } from './product-eshop-draft.ts';
+import { archiveReason, eshopFields } from './product-eshop-form.ts';
 
-const slugFieldError = (invalid: boolean, taken: boolean) => {
+const slugVerdict = (invalid: boolean, taken: boolean) => {
   if (invalid) {
-    return { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const };
+    return { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', invalid: true };
   }
   if (taken) {
-    return { helpText: 'Tuto adresu už má jiný produkt', validateStatus: 'error' as const };
+    return { helpText: 'Tuto adresu už má jiný produkt', invalid: true };
   }
   return {};
 };
 
 interface PublicationSectionProps {
   readonly canWrite: boolean;
-  readonly form: EshopDraft;
-  readonly onFormChange: (patch: Partial<EshopDraft>) => void;
+  /** The slug as the form has it. */
+  readonly slug: string;
   /** The slug the server refused because another product uses it. */
   readonly takenSlug: string | null;
 }
 
 /** Publication, slug and how availability is reported. Editing changes the tab's draft only. */
-export const PublicationSection = ({ canWrite, form, onFormChange, takenSlug }: PublicationSectionProps) => {
+export const PublicationSection = ({ canWrite, slug, takenSlug }: PublicationSectionProps) => {
   const { t } = useModernI18n();
-  const { published, slug, sourceBaseProduct, stockTracked } = form;
   const slugTakenNow = takenSlug !== null && takenSlug === slug.trim();
   return (
     <SectionCard title={t('merchandise.ui.publicationAvailability')}>
       <div className="flex flex-col gap-200">
-        <FormInput
+        <eshopFields.slug
           disabled={!canWrite}
           id="eshop-slug"
           label={t('merchandise.ui.productSlug')}
           name="slug"
-          onChange={(event) => onFormChange({ slug: event.target.value })}
-          value={slug}
-          {...slugFieldError(slugInvalidOf(slug), slugTakenNow)}
+          {...slugVerdict(slugInvalidOf(slug), slugTakenNow)}
         />
-        <Switch
-          checked={published}
-          disabled={!canWrite}
-          name="published"
-          onCheckedChange={(checked: boolean) => onFormChange({ published: checked })}
-        >
+        <eshopFields.published disabled={!canWrite} name="published">
           Zveřejnit v e-shopu
-        </Switch>
-        <Switch
-          checked={sourceBaseProduct}
-          disabled={!canWrite}
-          name="sourceBaseProduct"
-          onCheckedChange={(checked: boolean) => onFormChange({ sourceBaseProduct: checked })}
-        >
+        </eshopFields.published>
+        <eshopFields.sourceBaseProduct disabled={!canWrite} name="sourceBaseProduct">
           Zobrazit v seznamech e-shopu jako hlavní produkt
-        </Switch>
+        </eshopFields.sourceBaseProduct>
         <p className="text-fg-secondary text-sm">
           Akros a ŠroubShop ve výpisech kategorií a vyhledávání ukazují jen hlavní produkty, dokud je v Prodej › E-shopy
           zapnuté „Jen hlavní produkty“. Stránka produktu zůstává dostupná přímým odkazem.
         </p>
-        <Switch
-          checked={stockTracked}
-          disabled={!canWrite}
-          name="stockTracked"
-          onCheckedChange={(checked: boolean) => onFormChange({ stockTracked: checked })}
-        >
+        <eshopFields.stockTracked disabled={!canWrite} name="stockTracked">
           Sklad je evidovaný (vypnuto = zákazník uvidí „Dostupnost nelze ověřit“ a nemůže objednat)
-        </Switch>
+        </eshopFields.stockTracked>
       </div>
     </SectionCard>
   );
@@ -100,7 +83,7 @@ export const ArchiveSection = ({ onArchived, onCommitted, onReload, product, rev
   const k = useProductLabel();
   const failure = useCommandFailure();
   const toaster = useToast();
-  const [reason, setReason] = useState('');
+  const reason = useAtomValue(archiveReason);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,13 +119,11 @@ export const ArchiveSection = ({ onArchived, onCommitted, onReload, product, rev
         Produkt zmizí ze seznamu i z e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány a produkt lze
         obnovit.
       </p>
-      <FormInput
+      <eshopFields.archiveReason
         id="product-archive-reason"
         label={t('merchandise.ui.archiveReason')}
         maxLength={500}
         name="archiveReason"
-        onChange={(event) => setReason(event.target.value)}
-        value={reason}
       />
       <Button
         appearance="outline"

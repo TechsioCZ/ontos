@@ -171,6 +171,7 @@
     "@effect/atom-react": "4.0.7",
     "@effect/platform-node": "4.0.7",
     "@effect/sql-pg": "4.0.7",
+    "@lucas-barake/effect-form": "catalog:",
     "@lucas-barake/effect-form-react": "1.1.0",
     "@noble/hashes": "2.2.0",
     "@techsio/ui-kit": "catalog:",

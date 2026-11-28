@@ -8,7 +8,6 @@ import { installStaleBuildRecovery, useStaleBuildErrorRecovery } from './stale-b
 import { TenantThemeRoot } from './tenant-theme-root.tsx';
 
 import './ui-kit.css';
-import './index.css';
 
 // Before any remote loads, so every remote's module requests share one cache for this document.
 if ('document' in globalThis) {

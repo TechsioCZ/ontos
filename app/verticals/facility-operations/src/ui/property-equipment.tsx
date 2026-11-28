@@ -55,8 +55,8 @@ const PropertyEquipmentContent = ({ language = 'cs', propertyId, unitId }: Prope
   const rows = assetsAtLocation(agenda?.state.assets ?? [], propertyId, unitId);
   const state = equipmentState(records.status, agenda !== undefined, rows.length);
   return (
-    <section aria-label={title} style={{ minWidth: 0 }}>
-      <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>{title}</h2>
+    <section aria-label={title} className="min-w-0">
+      <h2 className="mb-3 font-semibold text-[1rem]">{title}</h2>
       {state === 'loading' && <LoadingSkeleton label={labels.loading} rows={3} />}
       {state === 'error' && (
         <output>
@@ -76,7 +76,7 @@ const PropertyEquipmentContent = ({ language = 'cs', propertyId, unitId }: Prope
       {state === 'forbidden' && <p>{labels.forbidden}</p>}
       {state === 'empty' && <p>{labels.empty}</p>}
       {state === 'ready' && (
-        <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
+        <div className="max-w-full overflow-x-auto">
           <Table appearance="line" size="sm">
             <Table.Header>
               <Table.Row>

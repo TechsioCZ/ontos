@@ -1,14 +1,53 @@
 // A new financial plan item, or an edit of one; mounted only while open and saved only on the shared Uložit.
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { useState } from 'react';
+import { Effect, Schema } from 'effect';
+import { financeBrowserAtomRuntime } from '../../../runtime/browser.ts';
 import { FinanceFormDialog, useFinanceFormSave } from './finance-form-save.tsx';
+import { useFormDraft } from './finance-form-draft.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
-import { ObjectFields } from './object-fields.tsx';
+import { ObjectSelectionField, ObjectSelectionSchema } from './object-fields.tsx';
 import { editPlanItemDraft, planItemCommandOf, planItemProblem } from './plan-item-draft.ts';
 import type { PlanDraft } from './plan-item-draft.ts';
+
+/** What the plan item form edits; the item's id and its stored links stay as the draft opened with them. */
+const planItemForm = FormReact.make(
+  FormBuilder.empty
+    .addField('amount', Schema.String)
+    .addField('expectedDate', Schema.String)
+    .addField('kind', Schema.String)
+    .addField('note', Schema.String)
+    .addField('object', ObjectSelectionSchema)
+    .addField('probability', Schema.String)
+    .addField('projectName', Schema.String)
+    .addField('title', Schema.String),
+  {
+    fields: {
+      amount: TextField,
+      expectedDate: TextField,
+      kind: SelectTemplateField,
+      note: TextField,
+      object: ObjectSelectionField,
+      probability: TextField,
+      projectName: TextField,
+      title: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+const editableOf = (draft: PlanDraft): typeof planItemForm.schema.Encoded => ({
+  amount: draft.amount,
+  expectedDate: draft.expectedDate,
+  kind: draft.kind,
+  note: draft.note,
+  object: draft.object,
+  probability: draft.probability,
+  projectName: draft.projectName,
+  title: draft.title,
+});
 
 /** An edit is saved only over the version of the item it opened with. */
 export const PlanItemEditor = ({
@@ -21,14 +60,18 @@ export const PlanItemEditor = ({
   readonly vm: FinanceViewModel;
 }) => {
   const { t } = useModernI18n();
-  const [draft, setDraft] = useState(initial);
-  const update = (patch: Partial<PlanDraft>) => setDraft((current) => ({ ...current, ...patch }));
+  const values = useFormDraft(planItemForm, editableOf(initial));
+  const draft: PlanDraft = {
+    ...initial,
+    ...values.draft,
+    kind: values.draft.kind === 'COST' ? 'COST' : 'REVENUE',
+  };
   const { id } = initial;
   const form = useFinanceFormSave({
     initial,
     isValid: (value) => planItemCommandOf(value, vm) !== undefined,
     onClose,
-    reset: setDraft,
+    reset: (value) => values.reset(editableOf(value)),
     send: (value) => {
       const command = planItemCommandOf(value, vm);
       return command === undefined
@@ -55,89 +98,65 @@ export const PlanItemEditor = ({
       form={form}
       title={id === undefined ? 'Nová položka finančního plánu' : 'Upravit položku plánu'}
     >
-      <div className="flex flex-col gap-150">
+      <FormRoot
+        className="flex flex-col gap-150"
+        defaultValues={editableOf(initial)}
+        form={planItemForm}
+        translateMessage={t}
+      >
+        {values.ready}
         {problem !== undefined && (
           <StatusText showIcon size="sm" status="warning">
             {problem}
           </StatusText>
         )}
         <div className="grid grid-cols-1 gap-150 sm:grid-cols-[10rem_minmax(0,1fr)]">
-          <SelectTemplate
+          <planItemForm.kind
             items={[
               { displayValue: 'Příjem', label: 'Příjem', value: 'REVENUE' },
               { displayValue: 'Výdaj', label: 'Výdaj', value: 'COST' },
             ]}
             label={t('finance-billing.financeUi.common.type')}
             labelProps={{ className: 'font-label text-label-md' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next === 'COST' || next === 'REVENUE') {
-                update({ kind: next });
-              }
-            }}
             size="sm"
-            value={[draft.kind]}
           />
-          <FormInput
+          <planItemForm.title
             id="plan-title"
             label={t('finance-billing.financeUi.common.name')}
-            onChange={(event) => update({ title: event.target.value })}
             placeholder={t('finance-billing.financeUi.plan.titleExample')}
             size="sm"
-            value={draft.title}
           />
         </div>
         <div className="grid grid-cols-1 gap-150 sm:grid-cols-3">
-          <FormInput
+          <planItemForm.amount
             id="plan-amount"
             inputMode="decimal"
             label={t('finance-billing.financeUi.common.amount')}
-            onChange={(event) => update({ amount: event.target.value })}
             size="sm"
-            value={draft.amount}
           />
-          <FormInput
+          <planItemForm.expectedDate
             id="plan-date"
             label={t('finance-billing.financeUi.plan.expectedDate')}
-            onChange={(event) => update({ expectedDate: event.target.value })}
             size="sm"
             type="date"
-            value={draft.expectedDate}
           />
-          <FormInput
+          <planItemForm.probability
             helpText="Nepovinné, 1–100"
             id="plan-probability"
             inputMode="numeric"
             label={t('finance-billing.financeUi.plan.probability')}
-            onChange={(event) => update({ probability: event.target.value })}
             size="sm"
-            value={draft.probability}
           />
         </div>
-        <ObjectFields
-          idPrefix="plan-object"
-          objects={vm.objects}
-          onChange={(next) => update({ object: next })}
-          showContract
-          showCostCenter={false}
-          value={draft.object}
-        />
-        <FormInput
+        <planItemForm.object idPrefix="plan-object" objects={vm.objects} showContract showCostCenter={false} />
+        <planItemForm.projectName
           id="plan-project"
           label={t('finance-billing.financeUi.plan.project')}
-          onChange={(event) => update({ projectName: event.target.value })}
           placeholder={t('finance-billing.financeUi.plan.projectExample')}
           size="sm"
-          value={draft.projectName}
         />
-        <FormInput
-          id="plan-note"
-          label={t('finance-billing.financeUi.common.note')}
-          onChange={(event) => update({ note: event.target.value })}
-          size="sm"
-          value={draft.note}
-        />
-      </div>
+        <planItemForm.note id="plan-note" label={t('finance-billing.financeUi.common.note')} size="sm" />
+      </FormRoot>
     </FinanceFormDialog>
   );
 };

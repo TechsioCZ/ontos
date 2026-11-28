@@ -14,7 +14,6 @@ import { partyRegistryI18nResources } from '../../../../../i18n/resources.ts';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import type { CounterpartyRef } from '@app/party-registry-contracts/resources/counterparty';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
-import '../../../../index.css';
 import { CUSTOMER_DETAIL_KEY, CustomerDetailContent, CustomerDetailSaveBar } from '../customer-detail-content.tsx';
 import type { CustomerDetailSubject } from '../customer-detail-content.tsx';
 import {
@@ -311,9 +310,7 @@ const CustomerDetailPageContent = ({ context, routeParams }: CustomerDetailPageP
     <>
       <UltramodernRouteHead titleKey={`${KEY}.title`} />
       <Toaster />
-      <section className="partyregistry:mx-auto partyregistry:flex partyregistry:w-full partyregistry:max-w-4xl partyregistry:flex-col partyregistry:gap-5 partyregistry:px-4 partyregistry:py-8 partyregistry:sm:px-8">
-        {pageBody()}
-      </section>
+      <section className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-8 sm:px-8">{pageBody()}</section>
     </>
   );
 };

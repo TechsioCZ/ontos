@@ -1,22 +1,33 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Fiber, Option } from 'effect';
+import { Effect, Fiber, Option, Schema } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@app/admin-ui/form-controls';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import {
   SaveBar,
   SidePanel,
+  requiredLabelFor,
   saveLabelsFor,
   UnsavedChangesDialog,
   useDraftSave,
   useUnsavedChangesGuard,
 } from '@app/admin-ui';
+import {
+  FormReact,
+  FormRoot,
+  NoticedTextField,
+  TextField,
+  fromPayload,
+  useAtomSet,
+  useAtomSubscribe,
+  useAtomValue,
+} from '@app/core-runtime/ui/form';
+import type { FieldNotice } from '@app/core-runtime/ui/form';
 
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserAtomRuntime, browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CreatedCustomer, CustomerListItem } from '../../../../api/customers-client.ts';
 import { existingCustomerWithCompanyId } from '../../../../api/customer-create-decision.ts';
 import {
@@ -27,10 +38,10 @@ import {
   lookupAres,
 } from './customers-data.ts';
 import {
+  CreateDraftSchema,
   customerNameMaxLength,
   normalizedCustomerName,
   prefillFromAres,
-  validateCreateDraft,
 } from './customers-model.ts';
 import type { AresPrefill, CreateDraft } from './customers-model.ts';
 
@@ -96,17 +107,36 @@ const draftFields = [
   'vatId',
 ] as const satisfies readonly (keyof CreateDraft)[];
 
+/**
+ * The create form: its fields and checks come from the create draft Schema, and every check shows under its field
+ * as soon as the field changes. Only the Uložit button sends the draft (`useDraftSave`), so the form itself is never
+ * submitted.
+ */
+const createForm = FormReact.make(fromPayload(CreateDraftSchema), {
+  fields: {
+    city: TextField,
+    email: TextField,
+    ico: NoticedTextField,
+    name: NoticedTextField,
+    phone: TextField,
+    postalCode: TextField,
+    street: TextField,
+    vatId: TextField,
+  },
+  mode: { validation: 'onChange' },
+  onSubmit: () => Effect.void,
+  runtime: browserAtomRuntime,
+});
+
+const isCreateDraft = Schema.is(CreateDraftSchema);
+const isCreateIco = Schema.is(CreateDraftSchema.fields.ico);
+
 interface Notice {
   readonly status: 'error' | 'success' | 'warning';
   readonly text: string;
 }
 
-/** A message about one field's value (ARES lookup, duplicate IČO or name), shown under that field. */
-interface FieldNotice {
-  readonly status: 'error' | 'warning';
-  readonly text: string;
-}
-
+/** Messages about the IČO or name value (ARES lookup, duplicate IČO or name), shown under that field. */
 interface FieldNotices {
   readonly ico: FieldNotice | null;
   readonly name: FieldNotice | null;
@@ -117,23 +147,17 @@ const NO_FIELD_NOTICES: FieldNotices = { ico: null, name: null };
 /** Fields carrying a notice, for focusing the first of them. */
 const noticedFields = (notices: FieldNotices) => (['ico', 'name'] as const).filter((field) => notices[field] !== null);
 
-/** Message props one field takes from the dialog: help text, or an error or warning about its value. */
-interface FieldMessage {
-  readonly helpText?: string;
-  readonly validateStatus?: FieldNotice['status'];
-}
-
 interface CreateFormFieldsProps {
-  readonly draft: CreateDraft;
-  readonly fieldProps: (key: keyof CreateDraft, help?: string) => FieldMessage;
+  /** An ARES lookup of the IČO runs: the IČO field says so instead of its notice. */
+  readonly aresBusy: boolean;
+  readonly fieldNotices: FieldNotices;
   readonly notice: Notice | null;
   readonly noticeRef: RefObject<HTMLDivElement | null>;
-  readonly set: (patch: Partial<CreateDraft>) => void;
 }
 
-/** The notice and every input of the create form, in visual order. The dialog owns the state behind them. */
-const CreateFormFields = ({ draft, fieldProps, notice, noticeRef, set }: CreateFormFieldsProps) => {
-  const { t } = useModernI18n();
+/** The notice and every input of the create form, in visual order. The dialog owns the notices about them. */
+const CreateFormFields = ({ aresBusy, fieldNotices, notice, noticeRef }: CreateFormFieldsProps) => {
+  const { language, t } = useModernI18n();
   return (
     <>
       {notice !== null && (
@@ -143,89 +167,81 @@ const CreateFormFields = ({ draft, fieldProps, notice, noticeRef, set }: CreateF
           </StatusText>
         </div>
       )}
-      <FormInput
+      <createForm.ico
         autoComplete="off"
+        helpText={t(`${KEY}.${aresBusy ? 'aresLoading' : 'icoHelp'}`)}
         id="customer-ico"
         inputMode="numeric"
         label={t(`${KEY}.ico`)}
         maxLength={8}
-        name="ico"
-        onChange={(event) => set({ ico: event.target.value })}
-        value={draft.ico}
-        {...fieldProps('ico', t(`${KEY}.icoHelp`))}
+        notice={aresBusy ? null : fieldNotices.ico}
       />
-      <FormInput
+      <createForm.name
         autoComplete="off"
         id="customer-name"
         label={t(`${KEY}.name`)}
         maxLength={customerNameMaxLength}
-        name="name"
-        onChange={(event) => set({ name: event.target.value })}
+        notice={fieldNotices.name}
         required
-        value={draft.name}
-        {...fieldProps('name')}
+        requiredLabel={requiredLabelFor(language)}
       />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          autoComplete="off"
-          id="customer-vat-id"
-          label={t(`${KEY}.vatId`)}
-          name="vatId"
-          onChange={(event) => set({ vatId: event.target.value })}
-          value={draft.vatId}
-          {...fieldProps('vatId')}
-        />
-        <FormInput
-          autoComplete="off"
-          id="customer-email"
-          label={t(`${KEY}.email`)}
-          name="email"
-          onChange={(event) => set({ email: event.target.value })}
-          type="email"
-          value={draft.email}
-          {...fieldProps('email')}
-        />
-        <FormInput
-          autoComplete="off"
-          id="customer-phone"
-          label={t(`${KEY}.phone`)}
-          name="phone"
-          onChange={(event) => set({ phone: event.target.value })}
-          type="tel"
-          value={draft.phone}
-        />
+        <createForm.vatId autoComplete="off" id="customer-vat-id" label={t(`${KEY}.vatId`)} />
+        <createForm.email autoComplete="off" id="customer-email" label={t(`${KEY}.email`)} type="email" />
+        <createForm.phone autoComplete="off" id="customer-phone" label={t(`${KEY}.phone`)} type="tel" />
       </div>
-      <FormInput
-        autoComplete="off"
-        id="customer-street"
-        label={t(`${KEY}.street`)}
-        name="street"
-        onChange={(event) => set({ street: event.target.value })}
-        value={draft.street}
-        {...fieldProps('street')}
-      />
+      <createForm.street autoComplete="off" id="customer-street" label={t(`${KEY}.street`)} />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
-        <FormInput
-          autoComplete="off"
-          id="customer-city"
-          label={t(`${KEY}.city`)}
-          name="city"
-          onChange={(event) => set({ city: event.target.value })}
-          value={draft.city}
-          {...fieldProps('city')}
-        />
-        <FormInput
-          autoComplete="off"
-          id="customer-postal-code"
-          label={t(`${KEY}.postalCode`)}
-          name="postalCode"
-          onChange={(event) => set({ postalCode: event.target.value })}
-          value={draft.postalCode}
-          {...fieldProps('postalCode')}
-        />
+        <createForm.city autoComplete="off" id="customer-city" label={t(`${KEY}.city`)} />
+        <createForm.postalCode autoComplete="off" id="customer-postal-code" label={t(`${KEY}.postalCode`)} />
       </div>
     </>
   );
+};
+
+/**
+ * Which fields of the create form the person typed into, and the values the form showed last. `onTyped` hears of every
+ * change the person made; a change the dialog writes itself through `writeValues` (an ARES prefill, a reset) is not
+ * typing.
+ */
+const useTypedFields = (onTyped: (fields: readonly (keyof CreateDraft)[]) => void) => {
+  /** Fields the user typed into. ARES never overwrites them; it may replace what an earlier lookup filled in. */
+  const typedFields = useRef(new Set<keyof CreateDraft>());
+  /** The values the form showed last, so a change tells which fields it touched. */
+  const shown = useRef<CreateDraft>(EMPTY_DRAFT);
+  /** Set while the dialog itself writes the values: that is not typing. */
+  const writing = useRef(false);
+  useAtomSubscribe(
+    createForm.values,
+    (next) => {
+      if (Option.isNone(next)) {
+        return;
+      }
+      const previous = shown.current;
+      shown.current = next.value;
+      const typed = draftFields.filter((field) => next.value[field] !== previous[field]);
+      if (writing.current || typed.length === 0) {
+        return;
+      }
+      for (const field of typed) {
+        typedFields.current.add(field);
+      }
+      onTyped(typed);
+    },
+    { immediate: false },
+  );
+  /** Writes the form's values without counting them as typed. */
+  const writeValues = (write: () => void) => {
+    writing.current = true;
+    write();
+    writing.current = false;
+  };
+  /** Starts over from an empty form, where nothing is typed. */
+  const forgetTyping = () => {
+    typedFields.current.clear();
+    shown.current = EMPTY_DRAFT;
+  };
+  return { forgetTyping, shown, typedFields, writeValues };
 };
 
 export interface CustomerCreateDialogProps {
@@ -248,21 +264,29 @@ export const CustomerCreateDialog = ({
   const { language, t } = useModernI18n();
   const labels = saveLabelsFor(language);
   const toaster = useToast();
-  // The draft is only on screen until Uložit sends it; typing never writes.
-  const [draft, setDraft] = useState<CreateDraft>(EMPTY_DRAFT);
+  // The draft is the form's values, only on screen until Uložit sends it; typing never writes.
+  const draft = Option.getOrElse(useAtomValue(createForm.values), () => EMPTY_DRAFT);
+  const setValues = useAtomSet(createForm.setValues);
+  const resetValues = useAtomSet(createForm.reset);
+  const validate = useAtomSet(createForm.validate);
   const [aresBusy, setAresBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   /** Messages about the IČO or name value, shown under that field. Each clears as soon as its field changes. */
   const [fieldNotices, setFieldNotices] = useState<FieldNotices>(NO_FIELD_NOTICES);
   const noticeRef = useRef<HTMLDivElement>(null);
-  /** Fields the user typed into. ARES never overwrites them; it may replace what an earlier lookup filled in. */
-  const typedFields = useRef(new Set<keyof CreateDraft>());
   /** IČO already sent to ARES in this form, so each IČO is looked up once. */
   const lookedUpIco = useRef<string | null>(null);
-  const errors = validateCreateDraft(draft);
+  // Typing into a field retires an error or warning, because it describes the values it was raised for.
+  const { forgetTyping, shown, typedFields, writeValues } = useTypedFields((typed) => {
+    setNotice((current) => (current?.status === 'success' ? current : null));
+    setFieldNotices((current) => ({
+      ico: typed.includes('ico') ? null : current.ico,
+      name: typed.includes('name') ? null : current.name,
+    }));
+  });
   const ico = draft.ico.trim();
   /** A complete IČO with a valid checksum; only such an IČO reaches ARES. */
-  const lookupIco = ico.length === 8 && errors.ico === undefined ? ico : null;
+  const lookupIco = ico.length === 8 && isCreateIco(ico) ? ico : null;
 
   // The notice sits above the fields, so a message raised from the footer button is scrolled into view.
   useEffect(() => {
@@ -271,21 +295,6 @@ export const CustomerCreateDialog = ({
     }
   }, [notice]);
 
-  // Editing a field retires an error or warning, because it describes the values it was raised for.
-  const set = (patch: Partial<CreateDraft>) => {
-    for (const field of draftFields) {
-      if (patch[field] !== undefined) {
-        typedFields.current.add(field);
-      }
-    }
-    setDraft((current) => ({ ...current, ...patch }));
-    setNotice((current) => (current?.status === 'success' ? current : null));
-    setFieldNotices((current) => ({
-      ico: patch.ico === undefined ? current.ico : null,
-      name: patch.name === undefined ? current.name : null,
-    }));
-  };
-
   const showError = (failureKey: string) => setNotice({ status: 'error', text: t(`${KEY}.${failureKey}`) });
 
   /** A current customer already carries this IČO, so the owner would reuse it and write nothing. */
@@ -293,18 +302,17 @@ export const CustomerCreateDialog = ({
     displayName === null ? t(`${KEY}.duplicate`) : t(`${KEY}.duplicateNamed`, { name: displayName });
 
   const applyPrefill = (prefill: AresPrefill, lookedUp: string) => {
-    setDraft((current) => {
-      const next = { ...current };
-      for (const field of prefillFields) {
-        const value = prefill[field];
-        // A field the user typed into keeps its text unless it is empty again.
-        if (value !== undefined && (!typedFields.current.has(field) || current[field].trim() === '')) {
-          next[field] = value;
-          typedFields.current.delete(field);
-        }
+    const { current } = shown;
+    const next = { ...current };
+    for (const field of prefillFields) {
+      const value = prefill[field];
+      // A field the user typed into keeps its text unless it is empty again.
+      if (value !== undefined && (!typedFields.current.has(field) || current[field].trim() === '')) {
+        next[field] = value;
+        typedFields.current.delete(field);
       }
-      return next;
-    });
+    }
+    writeValues(() => setValues(next));
     setNotice({ status: 'success', text: t(`${KEY}.aresDone`) });
     // The lookup succeeded, but the IČO is already on record: warn under the IČO before the user fills the rest.
     const listed = Option.getOrUndefined(existingCustomerWithCompanyId(existing, lookedUp));
@@ -426,7 +434,7 @@ export const CustomerCreateDialog = ({
     });
 
   const record = useDraftSave({
-    isValid: (value) => Object.keys(validateCreateDraft(value)).length === 0,
+    isValid: isCreateDraft,
     // The panel stays mounted while closed: only the open panel asks before leaving.
     open,
     runtime: browserRuntime,
@@ -434,11 +442,19 @@ export const CustomerCreateDialog = ({
     value: draft,
   });
 
+  // Field messages show once the draft is changed and invalid, the same moment the save bar says so.
+  const invalid = record.status === 'invalid';
+  useEffect(() => {
+    if (invalid) {
+      validate();
+    }
+  }, [invalid, validate]);
+
   /** Drops the draft and continues from an empty form: after a close, a discard or a successful create. */
   const resetForm = () => {
-    typedFields.current.clear();
     lookedUpIco.current = null;
-    setDraft(EMPTY_DRAFT);
+    writeValues(() => resetValues());
+    forgetTyping();
     record.adopt(EMPTY_DRAFT);
     setNotice(null);
     setFieldNotices(NO_FIELD_NOTICES);
@@ -462,23 +478,6 @@ export const CustomerCreateDialog = ({
     });
   };
   const handleReloadLatest = resetForm;
-
-  const fieldProps = (key: keyof CreateDraft, help?: string): FieldMessage => {
-    // Invalid draft fields show their message once the draft is changed; a complete IČO is checked at once,
-    // because a valid one starts the ARES lookup.
-    const error = record.status === 'invalid' || (key === 'ico' && ico.length === 8) ? errors[key] : undefined;
-    if (error !== undefined) {
-      return { helpText: t(`${KEY}.validation.${error}`), validateStatus: 'error' };
-    }
-    if (key === 'ico' && aresBusy) {
-      return { helpText: t(`${KEY}.aresLoading`) };
-    }
-    const fieldNotice = key === 'ico' || key === 'name' ? fieldNotices[key] : null;
-    if (fieldNotice !== null) {
-      return { helpText: fieldNotice.text, validateStatus: fieldNotice.status };
-    }
-    return help === undefined ? {} : { helpText: help };
-  };
 
   return (
     <>
@@ -505,16 +504,15 @@ export const CustomerCreateDialog = ({
         size="md"
         title={t(`${KEY}.title`)}
       >
-        {/* Enter does not save: only the Uložit button sends the draft. */}
-        <form
+        {/* The form has no submit button, so Enter does not save: only the Uložit button sends the draft. */}
+        <FormRoot
           className="flex flex-col gap-200 py-200"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-          }}
+          defaultValues={EMPTY_DRAFT}
+          form={createForm}
+          translateMessage={(message) => t(message)}
         >
-          <CreateFormFields draft={draft} fieldProps={fieldProps} notice={notice} noticeRef={noticeRef} set={set} />
-        </form>
+          <CreateFormFields aresBusy={aresBusy} fieldNotices={fieldNotices} notice={notice} noticeRef={noticeRef} />
+        </FormRoot>
       </SidePanel>
       <UnsavedChangesDialog labels={labels} prompt={guard.prompt} />
     </>

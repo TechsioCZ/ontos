@@ -7,6 +7,7 @@ import { orderDateText } from '../../../../../shared/domain/imports.ts';
 import { PageHeader, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Link } from '@techsio/ui-kit/atoms/link';
 
 import { useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
@@ -116,9 +117,9 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
                 {excludedWord} (
                 {report.excluded.map((entry) => `${entry.count}× ${exclusionReasonLabels[entry.reason]}`).join('; ')}
                 ). Počet vyloučených záznamů platí pro celé zvolené období, bez filtru klienta, obchodníka a stavu.{' '}
-                <a className="underline underline-offset-2" href={`/${lang}/crm/parovani`}>
+                <Link href={`/${lang}/crm/parovani`} size="current">
                   Otevřít párování
-                </a>
+                </Link>
               </>
             ) : (
               'Vyloučeno z přehledu: 0 objednávek — v daném období nejsou nespárované ani sporné objednávky.'
@@ -182,9 +183,9 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
                 : 'Vaši klienti zatím nemají žádné spárované objednávky.'}
             </p>
             {scopeAll && (
-              <a className="text-sm underline underline-offset-2" href={`/${lang}/crm/importy`}>
+              <Link className="text-sm" href={`/${lang}/crm/importy`}>
                 Přejít na import objednávek
-              </a>
+              </Link>
             )}
           </div>
         </div>
@@ -192,9 +193,9 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
       {query.client !== ALL && (
         <p className="text-fg-secondary text-sm">
           Filtr klienta je aktivní.{' '}
-          <a className="underline underline-offset-2" href={`/${lang}/crm/klienti?klient=${query.client}`}>
+          <Link href={`/${lang}/crm/klienti?klient=${query.client}`} size="current">
             Otevřít kartu klienta
-          </a>
+          </Link>
         </p>
       )}
     </>

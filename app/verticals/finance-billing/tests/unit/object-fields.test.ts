@@ -1,12 +1,13 @@
 // @rstest-environment happy-dom
 import { acted, unmountAll } from '@app/admin-ui/testing/module-ui';
 import { Effect, Option } from 'effect';
+import { constVoid } from 'effect/Function';
 import { afterEach, expect, it } from 'effect-rstest';
 import { createElement } from 'react';
 
 import csResource from '../../locales/cs/finance-billing.json';
 import enResource from '../../locales/en/finance-billing.json';
-import { ObjectFields } from '../../src/routes/[lang]/finance/object-fields.tsx';
+import { ObjectSelectionField } from '../../src/routes/[lang]/finance/object-fields.tsx';
 import type { ObjectSelection } from '../../src/routes/[lang]/finance/object-fields.tsx';
 import type { RentalObjects } from '../../src/routes/[lang]/finance/use-rental-objects.ts';
 import { moduleText, mountInRoute } from '../support/module-ui.ts';
@@ -46,14 +47,21 @@ const renderFields = () =>
   Effect.gen(function* render() {
     const changes: ObjectSelection[] = [];
     yield* mountInRoute(
-      createElement(ObjectFields, {
-        idPrefix: 'edit',
-        objects,
-        onChange: (next) => {
-          changes.push(next);
+      // The field of a form that holds `selection` and records every change of it.
+      createElement(ObjectSelectionField, {
+        field: {
+          error: Option.none(),
+          isDirty: false,
+          isTouched: false,
+          isValidating: false,
+          onBlur: constVoid,
+          onChange: (next: ObjectSelection) => {
+            changes.push(next);
+          },
+          path: 'object',
+          value: selection,
         },
-        showContract: true,
-        value: selection,
+        props: { idPrefix: 'edit', objects, showContract: true },
       }),
       { path: 'finance', resources, url: '/cs/finance' },
     );

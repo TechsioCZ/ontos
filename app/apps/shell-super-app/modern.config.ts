@@ -7,7 +7,6 @@ import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
-import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { getOrThrow as getResultOrThrow } from 'effect/Result';
 import {
@@ -70,7 +69,6 @@ export default defineConfig(
         prefix: [shellBffPrefix, paymentGatewayRelayPrefix, ...(internalSymmyIngress ? [SYMMY_REST_PREFIX] : [])],
         runtimeFramework: 'effect',
       },
-      builderPlugins: [pluginTailwindcss()],
       deploy: { releaseEnvelopeRole: 'shell' },
       dev: { ...ontos.dev, lazyCompilation: getBuildConfigEnvironment('CI') ? false : undefined },
       plugins: [

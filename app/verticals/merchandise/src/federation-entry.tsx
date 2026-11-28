@@ -15,12 +15,12 @@ const MerchandiseRouteContent = () => {
 
   return (
     <section
-      className="merchandise:rounded-2xl merchandise:bg-white/90 merchandise:p-5 merchandise:shadow-xl merchandise:shadow-stone-900/10"
+      className="rounded-lg bg-surface p-5 shadow-xl"
       data-modern-boundary-id="verticalMerchandise"
       data-modern-mf-expose="./Route"
     >
-      <h2 className="merchandise:text-2xl merchandise:font-black">{t('merchandise.title')}</h2>
-      <p className="merchandise:mt-2 merchandise:text-stone-600">{t('merchandise.routeSurface')}</p>
+      <h2 className="text-2xl font-bold">{t('merchandise.title')}</h2>
+      <p className="mt-2 text-fg-secondary">{t('merchandise.routeSurface')}</p>
     </section>
   );
 };

@@ -1,10 +1,10 @@
 // The budget line and opening balance forms of the planning tab. Each is mounted only while open and saves only on
 // the shared Uložit.
+import { FormBuilder, FormReact, FormRoot, SelectTemplateField, TextField } from '@app/core-runtime/ui/form';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { SelectTemplate } from '@app/admin-ui/select-template';
-import { useState } from 'react';
+import { Effect, Schema } from 'effect';
+import { financeBrowserAtomRuntime } from '../../../runtime/browser.ts';
 import {
   BUDGET_INVALID,
   OPENING_INVALID,
@@ -14,12 +14,55 @@ import {
   openingCommandOf,
   openingDraftOf,
 } from './budget-draft.ts';
-import type { BudgetDraft, OpeningDraft } from './budget-draft.ts';
+import type { BudgetDraft } from './budget-draft.ts';
 import { FinanceFormDialog, useFinanceFormSave } from './finance-form-save.tsx';
+import { useFormDraft } from './finance-form-draft.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { monthLabel } from './finance-ui.tsx';
 import { BUDGET_CATEGORIES } from './incoming-invoice-draft.ts';
-import { ObjectFields } from './object-fields.tsx';
+import { ObjectSelectionField, ObjectSelectionSchema } from './object-fields.tsx';
+
+/** What the budget line form edits; the line's id and its stored links stay as the draft opened with them. */
+const budgetForm = FormReact.make(
+  FormBuilder.empty
+    .addField('actual', Schema.String)
+    .addField('category', Schema.String)
+    .addField('explanation', Schema.String)
+    .addField('kind', Schema.String)
+    .addField('object', ObjectSelectionSchema)
+    .addField('planned', Schema.String),
+  {
+    fields: {
+      actual: TextField,
+      category: SelectTemplateField,
+      explanation: TextField,
+      kind: SelectTemplateField,
+      object: ObjectSelectionField,
+      planned: TextField,
+    },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
+
+const budgetEditableOf = (draft: BudgetDraft): typeof budgetForm.schema.Encoded => ({
+  actual: draft.actual,
+  category: draft.category,
+  explanation: draft.explanation,
+  kind: draft.kind,
+  object: draft.object,
+  planned: draft.planned,
+});
+
+/** The opening balance as typed: the amount and the date as their input text. */
+const openingForm = FormReact.make(
+  FormBuilder.empty.addField('amount', Schema.String).addField('date', Schema.String),
+  {
+    fields: { amount: TextField, date: TextField },
+    onSubmit: () => Effect.void,
+    runtime: financeBrowserAtomRuntime,
+  },
+);
 
 const InvalidNotice = ({ shown, text }: { readonly shown: boolean; readonly text: string }) =>
   shown ? (
@@ -41,13 +84,18 @@ export const BudgetEditor = ({
   readonly vm: FinanceViewModel;
 }) => {
   const { t } = useModernI18n();
-  const [draft, setDraft] = useState(initial);
+  const values = useFormDraft(budgetForm, budgetEditableOf(initial));
+  const draft: BudgetDraft = {
+    ...initial,
+    ...values.draft,
+    kind: values.draft.kind === 'REVENUE' ? 'REVENUE' : 'COST',
+  };
   const { id } = initial;
   const form = useFinanceFormSave({
     initial,
     isValid: (value) => budgetAmounts(value) !== undefined,
     onClose,
-    reset: setDraft,
+    reset: (value) => values.reset(budgetEditableOf(value)),
     send: (value) => {
       const amounts = budgetAmounts(value);
       return amounts === undefined
@@ -70,70 +118,51 @@ export const BudgetEditor = ({
       form={form}
       title={id === undefined ? 'Nová rozpočtová položka' : 'Upravit rozpočet'}
     >
-      <div className="flex flex-col gap-150">
+      <FormRoot
+        className="flex flex-col gap-150"
+        defaultValues={budgetEditableOf(initial)}
+        form={budgetForm}
+        translateMessage={t}
+      >
+        {values.ready}
         <InvalidNotice shown={form.record.status === 'invalid'} text={BUDGET_INVALID} />
         <div className="grid grid-cols-2 gap-150">
-          <SelectTemplate
+          <budgetForm.kind
             items={[
               { displayValue: 'Výdaj', label: 'Výdaj', value: 'COST' },
               { displayValue: 'Příjem', label: 'Příjem', value: 'REVENUE' },
             ]}
             label={t('finance-billing.financeUi.common.type')}
             labelProps={{ className: 'font-label text-label-md' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next === 'COST' || next === 'REVENUE') {
-                setDraft((current) => ({ ...current, kind: next }));
-              }
-            }}
             size="sm"
-            value={[draft.kind]}
           />
-          <SelectTemplate
+          <budgetForm.category
             items={BUDGET_CATEGORIES.map((category) => ({ displayValue: category, label: category, value: category }))}
             label={t('finance-billing.financeUi.common.category')}
             labelProps={{ className: 'font-label text-label-md' }}
-            onValueChange={({ value }) => {
-              const [next] = value;
-              if (next !== undefined) {
-                setDraft((current) => ({ ...current, category: next }));
-              }
-            }}
             size="sm"
-            value={[draft.category]}
           />
         </div>
-        <ObjectFields
-          idPrefix="budget-object"
-          objects={vm.objects}
-          onChange={(next) => setDraft((current) => ({ ...current, object: next }))}
-          value={draft.object}
-        />
-        <FormInput
+        <budgetForm.object idPrefix="budget-object" objects={vm.objects} />
+        <budgetForm.planned
           id="budget-planned"
           inputMode="decimal"
           label={t('finance-billing.financeUi.planning.plannedAmount')}
-          onChange={(event) => setDraft((current) => ({ ...current, planned: event.target.value }))}
           size="sm"
-          value={draft.planned}
         />
-        <FormInput
+        <budgetForm.actual
           helpText="Prázdné = skutečnost se spočítá z potvrzených faktur kategorie."
           id="budget-actual"
           inputMode="decimal"
           label={t('finance-billing.financeUi.planning.manualActual')}
-          onChange={(event) => setDraft((current) => ({ ...current, actual: event.target.value }))}
           size="sm"
-          value={draft.actual}
         />
-        <FormInput
+        <budgetForm.explanation
           id="budget-explanation"
           label={t('finance-billing.financeUi.planning.explanation')}
-          onChange={(event) => setDraft((current) => ({ ...current, explanation: event.target.value }))}
           size="sm"
-          value={draft.explanation}
         />
-      </div>
+      </FormRoot>
     </FinanceFormDialog>
   );
 };
@@ -152,12 +181,12 @@ export const OpeningBalanceEditor = ({
   const { t } = useModernI18n();
   const server = () => openingDraftOf(vm.snapshot?.state.cashFlowOpening, month);
   const initial = server();
-  const [draft, setDraft] = useState<OpeningDraft>(initial);
+  const { draft, ready, reset } = useFormDraft(openingForm, initial);
   const form = useFinanceFormSave({
     initial,
     isValid: (value) => openingCommandOf(value, vm.actorLabel) !== undefined,
     onClose,
-    reset: setDraft,
+    reset,
     send: (value) => {
       const command = openingCommandOf(value, vm.actorLabel);
       return command === undefined ? undefined : vm.execute(command, 'Počáteční stav potvrzen');
@@ -173,25 +202,22 @@ export const OpeningBalanceEditor = ({
       size="sm"
       title={t('finance-billing.financeUi.planning.openingTitle')}
     >
-      <div className="flex flex-col gap-150">
+      <FormRoot className="flex flex-col gap-150" defaultValues={initial} form={openingForm} translateMessage={t}>
+        {ready}
         <InvalidNotice shown={form.record.status === 'invalid'} text={OPENING_INVALID} />
-        <FormInput
+        <openingForm.amount
           id="opening-amount"
           inputMode="decimal"
           label={t('finance-billing.financeUi.planning.openingAmount')}
-          onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
           size="sm"
-          value={draft.amount}
         />
-        <FormInput
+        <openingForm.date
           id="opening-date"
           label={t('finance-billing.financeUi.planning.asOf')}
-          onChange={(event) => setDraft((current) => ({ ...current, date: event.target.value }))}
           size="sm"
           type="date"
-          value={draft.date}
         />
-      </div>
+      </FormRoot>
     </FinanceFormDialog>
   );
 };
