@@ -94,7 +94,8 @@ const governContacts = Effect.fn('SymmyC14ContactLifecycle.govern')(function* go
   ];
   const policy = yield* seedSourceProcessingNativeFixture({
     connections: fixture.isolated.connections,
-    contexts,
+    // Samples describe targetless uses only; target capabilities are grants, not invented owner assurance.
+    contexts: contexts.filter(({ request }) => request.target === null),
     contractEvidenceRef: 'INTERNAL_C14_CONTACT_LIFECYCLE_STANDING_GRANTS',
     controllerRef: 'internal:customer-conformance',
     dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
