@@ -166,8 +166,12 @@ export const migrationRuntimeIdentityIds = (sql: string): readonly string[] => {
     let role = rolePattern.exec(statement);
     while (role !== null) {
       const name = role.groups?.['quoted'] ?? role.groups?.['plain']?.toLowerCase();
-      if (name !== undefined) {requiredRoles.add(name);}
-      if (!role[0].trimEnd().endsWith(',')) {break;}
+      if (name !== undefined) {
+        requiredRoles.add(name);
+      }
+      if (!role[0].trimEnd().endsWith(',')) {
+        break;
+      }
       role = rolePattern.exec(statement);
     }
   }
