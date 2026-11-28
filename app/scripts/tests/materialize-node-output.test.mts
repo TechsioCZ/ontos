@@ -21,7 +21,7 @@ const OUTPUT_PACKAGE = {
 };
 const fixture = Effect.gen(function* builtOutputFixture() {
   const fs = yield* FileSystem.FileSystem;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-node-output-' });
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: 'ontos-node-output-' }).pipe(Effect.flatMap(fs.realPath));
   const packageRoot = path.join(root, PACKAGE_DIR);
   const output = path.join(packageRoot, '.output');
   const runtime = path.join(root, '.zerops/runtime', APP);

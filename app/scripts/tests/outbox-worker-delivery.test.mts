@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -145,7 +145,7 @@ const RELEASE_INTENT_PATH = 'topology/application-release-intent.json';
 const makeFixture = () =>
   Effect.gen(function* testEffect1() {
     const root = yield* Effect.acquireRelease(
-      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-worker-artifact-'))),
+      Effect.tryPromise(() => mkdtemp(path.join(realpathSync(os.tmpdir()), 'ontos-worker-artifact-'))),
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
     );
     yield* Effect.tryPromise(() =>
