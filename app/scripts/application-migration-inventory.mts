@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Effect, FileSystem, Order, Schema } from 'effect';
 import { parse } from 'libpg-query';
-import type { Node } from 'libpg-query';
+import type { AlterDefaultPrivilegesStmt, Node } from 'libpg-query';
 
 import { DATABASE_IDENTITIES } from '../packages/core-runtime/src/db/database-identities.ts';
 
@@ -147,13 +147,35 @@ const portal: OwnerStreamSource = {
 const roleNames = (roles: readonly Node[] = []) =>
   roles.map((role) => ('RoleSpec' in role ? role.RoleSpec.rolename : undefined));
 
-/** Only grantee, policy role, new owner and SET ROLE operands can add to this bootstrap inventory. */
+const defaultGrantRoles = ({ action, options = [] }: AlterDefaultPrivilegesStmt) => {
+  if (action?.is_grant !== true) {
+    return [];
+  }
+  const owners = options.flatMap((option) => {
+    if (!('DefElem' in option) || option.DefElem.defname !== 'roles') {
+      return [];
+    }
+    const { arg } = option.DefElem;
+    return arg !== undefined && 'List' in arg ? roleNames(arg.List.items) : [];
+  });
+  return [...owners, ...roleNames(action.grantees)];
+};
+
+/** Only executable role operands, never identifiers from table names or privilege lists. */
 const statementRoleNames = (node: Node): readonly (string | undefined)[] => {
   if ('GrantStmt' in node && node.GrantStmt.is_grant === true) {
-    return roleNames(node.GrantStmt.grantees);
+    return [...roleNames(node.GrantStmt.grantees), node.GrantStmt.grantor?.rolename];
+  }
+  if ('AlterDefaultPrivilegesStmt' in node) {
+    return defaultGrantRoles(node.AlterDefaultPrivilegesStmt);
   }
   if ('GrantRoleStmt' in node && node.GrantRoleStmt.is_grant === true) {
-    return roleNames(node.GrantRoleStmt.grantee_roles);
+    const { granted_roles, grantee_roles, grantor } = node.GrantRoleStmt;
+    return [
+      ...(granted_roles ?? []).map((role) => ('AccessPriv' in role ? role.AccessPriv.priv_name : undefined)),
+      ...roleNames(grantee_roles),
+      grantor?.rolename,
+    ];
   }
   if ('CreatePolicyStmt' in node) {
     return roleNames(node.CreatePolicyStmt.roles);
