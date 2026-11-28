@@ -56,15 +56,15 @@ appendFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv) + '\\n');
   });
 });
 
-it('the Rust project checker fails on an Effect warning and accepts the corrected source', () => {
+it('the production Rust diagnostics command fails on an Effect warning and accepts the corrected source', () => {
   withTemporaryWorkspace((directory) => {
     const project = nodePath.join(directory, 'tsconfig.json');
     const input = nodePath.join(directory, 'probe.ts');
     const base = nodePath.join(appRoot, 'tsconfig.base.json');
     writeFileSync(project, JSON.stringify({ extends: base, files: ['probe.ts'] }));
-    const cli = nodePath.join(appRoot, 'node_modules/@modern-js/ultramodern-create/bin/run.js');
+    const cli = nodePath.join(appRoot, 'scripts/check-effect-diagnostics.mts');
     const check = () =>
-      spawnSync(process.execPath, [cli, 'ultramodern', 'typecheck', '--project', project], {
+      spawnSync(process.execPath, [cli, project], {
         cwd: appRoot,
         encoding: 'utf-8',
       });
@@ -74,8 +74,8 @@ it('the Rust project checker fails on an Effect warning and accepts the correcte
     );
     const invalid = check();
     expect(invalid.error).toBeUndefined();
-    expect(invalid.stdout + invalid.stderr).toContain('warning TS377001');
-    expect(invalid.status).toBe(2);
+    expect(invalid.stdout + invalid.stderr).toContain('warning effect(floatingEffect)');
+    expect(invalid.status).toBe(1);
     writeFileSync(input, "import { Effect } from 'effect';\nexport const task = () => Effect.succeed(123);\n");
     const valid = check();
     expect(valid.error).toBeUndefined();

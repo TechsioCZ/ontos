@@ -41,7 +41,7 @@
     "format:check": "oxfmt --check .",
     "lint": "effect-tsgo --tsrs-lint=7.1.0-beta.tsrs3 oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts && pnpm lint:effect-diagnostics && pnpm lint:semantic",
     "lint:semantic": "ultramodern-create ultramodern semantic-lint apps verticals packages scripts \"tools/oxlint/effect-native/tests/*.test.mts\"",
-    "lint:effect-diagnostics": "ultramodern-create ultramodern typecheck --project apps/shell-super-app/tests/tsconfig.json && ultramodern-create ultramodern typecheck --project apps/shell-super-app/tests/integration/tsconfig.json && ultramodern-create ultramodern typecheck --project packages/shared-contracts/tests/tsconfig.json && ultramodern-create ultramodern typecheck --project packages/shared-contracts/tests/client-runtime-types.tsconfig.json && ultramodern-create ultramodern typecheck --project scripts/scaffolding/tsconfig.json",
+    "lint:effect-diagnostics": "node scripts/check-effect-diagnostics.mts apps/shell-super-app/tests/tsconfig.json apps/shell-super-app/tests/integration/tsconfig.json packages/shared-contracts/tests/tsconfig.json packages/shared-contracts/tests/client-runtime-types.tsconfig.json scripts/scaffolding/tsconfig.json",
     "lint:fix": "effect-tsgo --tsrs-lint=7.1.0-beta.tsrs3 oxlint apps verticals packages scripts tools/oxlint/effect-native/tests/*.test.mts --fix && pnpm lint:semantic",
     "lint:suppressions": "node ./scripts/lint-suppression-ratchet.mts",
     "lint:repository-policy": "node tools/oxlint/effect-native/repository-policy.mts",
