@@ -488,12 +488,14 @@ const retireTenant = Effect.fn('StageContextBootstrap.retireTenant')(function* r
     .set({ revokedAt: retiredAt, status: 'revoked' })
     .where(and(eq(principalAuthBindings.tenantId, retired.tenantId), ne(principalAuthBindings.status, 'revoked')))
     .pipe(Effect.mapError(bootstrapFailureFromCause));
-  yield* transaction
-    .update(accessMemberships)
-    // A membership's period is immutable, so retirement ends it by status alone.
-    .set({ status: 'revoked' })
-    .where(and(eq(accessMemberships.tenantId, retired.tenantId), ne(accessMemberships.status, 'revoked')))
-    .pipe(Effect.mapError(bootstrapFailureFromCause));
+  yield* (
+    transaction
+      .update(accessMemberships)
+      // A membership's period is immutable, so retirement ends it by status alone.
+      .set({ status: 'revoked' })
+      .where(and(eq(accessMemberships.tenantId, retired.tenantId), ne(accessMemberships.status, 'revoked')))
+      .pipe(Effect.mapError(bootstrapFailureFromCause))
+  );
   yield* transaction
     .update(accessAssignments)
     .set({ status: 'revoked' })

@@ -37,11 +37,14 @@ export const commerceAuthSha256Live = Layer.effect(
   WebCrypto.WebCrypto.use((crypto) =>
     Effect.succeed(
       makeCommerceAuthSha256((bytes) =>
-        Effect.tryPromise({
+        Effect.try({
           catch: commerceAuthDigestUnavailable,
-          // oxlint-disable-next-line typescript/promise-function-async -- Lookup and call the host primitive inside tryPromise so a missing subtle provider is also a typed outage.
-          try: () => crypto.subtle.digest('SHA-256', bytes),
-        }).pipe(digestTimeout),
+          // The lookup runs inside the bridge, so a missing subtle provider is a typed outage too.
+          try: () => crypto.subtle.digest.bind(crypto.subtle, 'SHA-256', bytes),
+        }).pipe(
+          Effect.flatMap((digest) => Effect.tryPromise({ catch: commerceAuthDigestUnavailable, try: digest })),
+          digestTimeout,
+        ),
       ),
     ),
   ),

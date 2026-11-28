@@ -64,7 +64,7 @@ L4-pending: no request has reached GoPay, Stripe or Comgate.
   captured; the next L4 refund run checks it.
 - **Comgate refund completion** is read only from the production settlement statement (D-P2). Sandbox payments have
   no statement, so a sandbox refund stays REFUND_PENDING. The live row shape (refund rows in `singleTransfer`, `ID od
-klienta` = our refId, `Merchant`) is unverified until one small real production refund (N10).
+  klienta` = our refId, `Merchant`) is unverified until one small real production refund (N10).
 - **Relay end to end.** The Payment relay is mounted on the real Modern server (`/api/payment/v1`, all deployment
   profiles), and that run proved its refusals and transport headers: no-store, problem content type, no API key
   challenge, no locale redirect, batch alias and OpenAPI refused, nothing under the Shell mount. A successful

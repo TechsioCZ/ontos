@@ -295,10 +295,7 @@ const sourceAuditForConfirmation = (
 const unavailableSourceOutcome = (
   reason: string,
   retryable: boolean,
-): Extract<
-  PricingCommitmentConfirmationIssuanceOutcome,
-  { readonly _tag: 'SOURCE_INVALID' | 'SOURCE_UNVERIFIABLE' }
-> =>
+): Extract<PricingCommitmentConfirmationIssuanceOutcome, { readonly _tag: 'SOURCE_INVALID' | 'SOURCE_UNVERIFIABLE' }> =>
   retryable
     ? { _tag: 'SOURCE_UNVERIFIABLE', reason, retryable: true }
     : { _tag: 'SOURCE_INVALID', reason, retryable: false };

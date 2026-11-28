@@ -32,22 +32,24 @@ export const pspPayerContactPersistenceForTransaction = (
     if (legalEntityId === undefined) {
       return yield* paymentUnavailable('A verified Selling Legal Entity scope is required');
     }
-    return yield* transaction
-      .insert(pspOperationPayerContacts)
-      .values({
-        email: contact.email ?? null,
-        fullName: contact.fullName ?? null,
-        legalEntityId,
-        operationId,
-        phone: contact.phone ?? null,
-        tenantId,
-      })
-      // No conflict target: inferring one needs SELECT on its columns, which the runtime role does not hold.
-      .onConflictDoNothing()
-      .pipe(
-        Effect.asVoid,
-        Effect.mapError((cause) => paymentUnavailable('The payer contact could not be written', cause)),
-      );
+    return yield* (
+      transaction
+        .insert(pspOperationPayerContacts)
+        .values({
+          email: contact.email ?? null,
+          fullName: contact.fullName ?? null,
+          legalEntityId,
+          operationId,
+          phone: contact.phone ?? null,
+          tenantId,
+        })
+        // No conflict target: inferring one needs SELECT on its columns, which the runtime role does not hold.
+        .onConflictDoNothing()
+        .pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) => paymentUnavailable('The payer contact could not be written', cause)),
+        )
+    );
   });
   return Object.freeze({ rememberForCollect });
 };

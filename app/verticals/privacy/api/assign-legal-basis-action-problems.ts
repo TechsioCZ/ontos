@@ -213,9 +213,8 @@ const mapCoreProblem = (error: ActionCoreError): AssignLegalBasisActionProblem =
   );
 
 const isDomainError = Schema.is(assignLegalBasisAction.descriptor.domainErrorSchema);
-export const mapAssignLegalBasisActionProblem = (
-  error: ActionCoreError | DomainError,
-): AssignLegalBasisActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
+export const mapAssignLegalBasisActionProblem = (error: ActionCoreError | DomainError): AssignLegalBasisActionProblem =>
+  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const assignLegalBasisActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   AssignLegalBasisActionSchemaErrorMiddleware,

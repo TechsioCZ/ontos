@@ -240,9 +240,8 @@ const mapCoreProblem = (error: ActionCoreError): ProvisionVoucherActionProblem =
   );
 
 const isDomainError = Schema.is(provisionVoucherAction.descriptor.domainErrorSchema);
-export const mapProvisionVoucherActionProblem = (
-  error: ActionCoreError | DomainError,
-): ProvisionVoucherActionProblem => (isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error));
+export const mapProvisionVoucherActionProblem = (error: ActionCoreError | DomainError): ProvisionVoucherActionProblem =>
+  isDomainError(error) ? mapDomainProblem(error) : mapCoreProblem(error);
 
 export const provisionVoucherActionSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   ProvisionVoucherActionSchemaErrorMiddleware,
