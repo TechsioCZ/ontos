@@ -4,7 +4,7 @@ import { readVerifiedGatewayRecovery } from '@app/core-runtime/auth/system-princ
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { executeSourcePersonAdmissionWithAuthorization } from '@app/party-registry/apis/source-person-admission/client';
 import {
-  SourcePersonProofRequestSchema,
+  SourcePersonAdmissionRequestSchema,
   SourcePersonAdmissionResponseSchema,
 } from '@app/party-registry/apis/source-person-admission';
 import { Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
@@ -170,7 +170,7 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
       operationRequirementKey: PrivacyPartyOwnerRequirement | undefined,
       contactPointId?: string,
     ) {
-      const sourceRequest = yield* Schema.decodeUnknownEffect(SourcePersonProofRequestSchema, {
+      const sourceRequest = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema, {
         onExcessProperty: 'error',
       })(personRequest(partyRef, sourceReference, contactPointId)).pipe(Effect.mapError(unavailable));
       const requestHash =
@@ -186,7 +186,7 @@ export const PrivacySubjectPartyOwnerLive = Layer.effect(
     return PrivacySubjectPartyOwner.of({
       contactPointParty: Effect.fn('PrivacySubjectPartyOwner.contactPointParty')(
         function* contactPointParty(contactPointId, admittedRecord, scope, operationRequirementKey) {
-          const request = yield* Schema.decodeUnknownEffect(SourcePersonProofRequestSchema, {
+          const request = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema, {
             onExcessProperty: 'error',
           })({ admittedRecord, contactPointId }).pipe(Effect.mapError(unavailable));
           const transport = yield* credentials.acquire(

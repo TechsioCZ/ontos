@@ -1,4 +1,4 @@
-import { TrustedPrincipalContextSchema, trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
 import { Crypto, Effect, Layer, Option, Schema } from 'effect';
@@ -21,7 +21,11 @@ import { privacySubjects } from '../../src/database/schema.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { processingPurposeRepositoryForScope } from '../../src/persistence/processing-purpose-postgres-repository.ts';
 import { sourceProcessingAuthorizationRepositoryForScope } from '../../src/persistence/source-processing-authorization-postgres-repository.ts';
-import { inPrivacyLedger, privacyLedgerDatabaseLive } from '../support/privacy-ledger-scope.ts';
+import {
+  freshPrivacyLedgerScope,
+  inPrivacyLedger,
+  privacyLedgerDatabaseLive,
+} from '../support/privacy-ledger-scope.ts';
 import { makeStandingSourceFixture } from '../support/standing-source-fixture.ts';
 
 /**
@@ -47,31 +51,13 @@ const withRouteGrants = (authorization: ReturnType<typeof makeStandingSourceFixt
     ],
   });
 
-const apiKeyScope = Effect.fn('PrivacyTests.standingSourceScope')(function* standingSourceScope() {
-  const crypto = yield* Crypto.Crypto;
-  const [tenantId, legalEntityId, principalId, authBindingId] = yield* Effect.all(
-    [crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
-    { concurrency: 1 },
-  );
-  const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)({
-    authBindingId,
-    authContextRef: `fixture:standing-source:${principalId}`,
-    authenticationNamespaceId: 'core.staff',
-    authMethod: 'api_key',
-    legalEntityId,
-    principalId,
-    tenantId,
-  });
-  return { ...principal, correlationId: `fixture:standing-source:${tenantId}` };
-});
-
 it.live(
   'keeps a restriction across both subject references and a renewal, and commits no binding by evaluating a use',
   () =>
     Effect.gen(function* subjectReferences() {
       const crypto = yield* Crypto.Crypto;
       const nextId = () => crypto.randomUUIDv4();
-      const scope = yield* apiKeyScope();
+      const scope = yield* freshPrivacyLedgerScope('api_key');
       const { principalId, tenantId } = scope;
       const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(scope.legalEntityId));
       const caller = (appId: string) =>

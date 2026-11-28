@@ -800,6 +800,12 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     ),
   ),
   {
+    importer: 'verticals/privacy/src/services/source-profile-subject.ts',
+    reason:
+      'Privacy verifies the owner of an exact customer profile through the governed Customer Context proof read before it authorizes a source use of that profile.',
+    specifier: `${commercePackageSpecifierPrefix}/api/source-profile-subject/client`,
+  },
+  {
     importer: privacyConsentProfileAuthority,
     reason:
       'Privacy Consent withdrawal verifies the exact customer profile through its existing governed Customer Context integration boundary.',

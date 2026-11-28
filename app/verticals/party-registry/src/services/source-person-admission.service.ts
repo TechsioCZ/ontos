@@ -4,7 +4,7 @@ import { and, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 import type {
   SourcePersonAdmissionRequest,
-  SourcePersonProofRequest,
+  SourcePersonOccurrenceRequest,
   SourcePersonAdmissionResponse,
 } from '../../shared/apis/source-person-admission.ts';
 import { PartyPersistenceUnavailable, makePartyRef } from '../../shared/domain/identity-contracts.ts';
@@ -39,7 +39,7 @@ export const loadAuthorizedSourceCorrelatedParty = Effect.fn('SourcePersonAdmiss
   function* authorizedCorrelatedParty(
     transaction: Pick<PartyTransaction, 'select'>,
     scope: OperationalScope,
-    input: SourcePersonAdmissionRequest,
+    input: SourcePersonOccurrenceRequest,
   ) {
     const [party] = yield* transaction
       .select({
@@ -125,7 +125,7 @@ export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCo
   function* correlatedParty(
     transaction: Pick<PartyTransaction, 'select'>,
     scope: OperationalScope,
-    input: SourcePersonAdmissionRequest,
+    input: SourcePersonOccurrenceRequest,
   ) {
     if (input.partyRef.tenantId !== scope.tenantId) {
       return;
@@ -143,7 +143,7 @@ export const loadSourceCorrelatedParty = Effect.fn('SourcePersonAdmission.loadCo
 const committedPersonReference = Effect.fn('SourcePersonAdmission.committedReference')(function* committedReference(
   transaction: Pick<PartyTransaction, 'select'>,
   scope: OperationalScope,
-  request: Extract<SourcePersonProofRequest, { admittedRecord: unknown }>,
+  request: Extract<SourcePersonAdmissionRequest, { admittedRecord: unknown }>,
 ) {
   if (('partyRef' in request && request.partyRef.tenantId !== scope.tenantId) || scope.legalEntityId === undefined) {
     return;
@@ -224,9 +224,9 @@ const committedPersonReference = Effect.fn('SourcePersonAdmission.committedRefer
 export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')(function* readAdmission(
   transaction: Pick<PartyTransaction, 'select'>,
   scope: OperationalScope,
-  request: SourcePersonProofRequest,
+  request: SourcePersonAdmissionRequest,
 ): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
-  const input: SourcePersonAdmissionRequest | undefined =
+  const input: SourcePersonOccurrenceRequest | undefined =
     'sourceReference' in request ? request : yield* committedPersonReference(transaction, scope, request);
   if (input === undefined) {
     return notAdmissible;

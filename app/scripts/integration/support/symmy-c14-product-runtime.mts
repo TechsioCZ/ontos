@@ -442,6 +442,24 @@ export const startProductOwner = Effect.fn('SymmyC14ProductFixture.startOwner')(
   return { child, diagnostic: Ref.get(diagnostic), origin: `http://127.0.0.1:${ready.port}`, output };
 });
 
+/**
+ * What the Shell gateway and every owner process recorded. A request the Shell refuses names its cause only in these
+ * logs, so a refused admission prints them before the test fails.
+ */
+export const logOwnerDiagnostics = <Gateway, Failure, Requirements>(
+  gatewayDiagnostics: Effect.Effect<Gateway, Failure, Requirements>,
+  ownerDiagnostics: ReadonlyMap<string, Effect.Effect<string>>,
+) =>
+  Effect.all(
+    [
+      gatewayDiagnostics.pipe(Effect.flatMap((gateway) => Effect.logError({ gateway }))),
+      ...[...ownerDiagnostics].map(([appId, diagnostic]) =>
+        diagnostic.pipe(Effect.flatMap((message) => Effect.logError({ appId, message }))),
+      ),
+    ],
+    { concurrency: 1, discard: true },
+  );
+
 export const encodeProductComposition = (snapshot: ActiveApplicationCompositionSnapshot) =>
   Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot);
 

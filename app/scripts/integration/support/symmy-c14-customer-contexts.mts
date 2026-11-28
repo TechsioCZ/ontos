@@ -154,17 +154,3 @@ export const customerContexts = (
       ? [...intake, ...creation]
       : [...intake, ...creation, ...existingContexts(scope, customer, { addresses, contacts })];
   });
-
-/** What the GET of the customers asks Privacy for, as the original source record. */
-export const readbackContexts = (scope: CustomerContextScope, source: Source): readonly NativeContext[] => {
-  const partyTarget = { kind: 'PARTY', resourceId: scope.partyId } as const;
-  const profileTarget = { kind: 'RETAIL_CUSTOMER_PROFILE', resourceId: scope.profileId } as const;
-  const requests = [
-    partyRequest('PROFILE_EXPORT', source, partyTarget),
-    { consumerModuleId: commerceModuleId, operation: 'customer-profile-source.read', source, target: profileTarget },
-  ];
-  return requests.flatMap((request) => [
-    { authMethod: 'api_key' as const, principalId: scope.integrationPrincipalId, request },
-    system(scope, request),
-  ]);
-};

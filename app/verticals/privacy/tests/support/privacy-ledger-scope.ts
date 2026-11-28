@@ -10,7 +10,9 @@ import { installOperationalScope } from '../../../../packages/core-runtime/src/d
  * security applies). It deliberately does not claim authorization: the governed access gate is a different seam, and
  * this harness needs no SpiceDB. Every row it writes belongs to its random Tenant, so suites never collide.
  */
-export const freshPrivacyLedgerScope = Effect.fn('PrivacyTests.freshLedgerScope')(function* freshLedgerScope() {
+export const freshPrivacyLedgerScope = Effect.fn('PrivacyTests.freshLedgerScope')(function* freshLedgerScope(
+  authMethod: 'api_key' | 'session' = 'session',
+) {
   const crypto = yield* Crypto.Crypto;
   const [tenantId, legalEntityId, principalId, authBindingId] = yield* Effect.all(
     [crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4(), crypto.randomUUIDv4()],
@@ -20,7 +22,7 @@ export const freshPrivacyLedgerScope = Effect.fn('PrivacyTests.freshLedgerScope'
     authBindingId,
     authContextRef: `fixture:privacy-ledger:${principalId}`,
     authenticationNamespaceId: 'core.staff',
-    authMethod: 'session',
+    authMethod,
     legalEntityId,
     principalId,
     tenantId,

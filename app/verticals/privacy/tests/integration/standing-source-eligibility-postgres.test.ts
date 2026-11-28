@@ -1,13 +1,12 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { NativeReadTestOwnerRegistration, makeNativeReadTestContext } from '@app/core-runtime/testing/native-reads';
-import { privacyRegistration } from '../../vertical.registration.ts';
+import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { NodeCrypto } from '@effect/platform-node';
-import { Crypto, DateTime, Effect, Option, Schema } from 'effect';
-import { TestClock } from 'effect/testing';
+import { Crypto, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
-  sourceProcessingEligibilityRead,
+  evaluateSourceProcessingEligibility,
   readSourceProtections,
+  sourceProcessingEligibilityServices,
 } from '../../src/api/source-processing-eligibility.read.ts';
 import {
   AntiResurrectionProtectionSchema,
@@ -21,7 +20,20 @@ import { sourceProcessingAuthorizationRepositoryForScope } from '../../src/persi
 import { PrivacyLegalBasisAssignmentSchema } from '../../shared/domain/privacy-legal-basis.ts';
 import { privacyOperationRepositoryForScope } from '../../src/persistence/privacy-operation-postgres-repository.ts';
 import { processingPurposeRepositoryForScope } from '../../src/persistence/processing-purpose-postgres-repository.ts';
+import {
+  freshPrivacyLedgerScope,
+  inPrivacyLedger,
+  privacyLedgerDatabaseLive,
+} from '../support/privacy-ledger-scope.ts';
+import type { PrivacyLedgerScope } from '../support/privacy-ledger-scope.ts';
 import { makeStandingSourceFixture } from '../support/standing-source-fixture.ts';
+
+/**
+ * The standing source authorization against Privacy's REAL ledgers in PostgreSQL, through the owner's own repositories
+ * and the same owner-local services the governed Read builds. The governed Read runtime and its access gate are a
+ * separate seam (they need an approved Application Composition; C14 proves them with the real owners).
+ */
+const layer = Layer.mergeAll(NodeCrypto.layer, privacyLedgerDatabaseLive);
 
 const subjectRefOf = (tenantId: string) => (resourceId: string) => ({
   moduleId: 'privacy.core' as const,
@@ -30,149 +42,142 @@ const subjectRefOf = (tenantId: string) => (resourceId: string) => ({
   tenantId,
 });
 
-it.live('checks standing source-route authorization through governed Read and native Privacy ledgers', () =>
+it.live('checks standing source-route authorization against the native Privacy ledgers', () =>
   Effect.gen(function* nativeSourceProcessing() {
-    yield* TestClock.setTime(new Date('2026-11-07T12:00:00.000Z').getTime());
-    const native = yield* makeNativeReadTestContext({
-      access: 'allowed',
-      authMethod: 'api_key',
-      contextPermissions: ['privacy.core.source-processing-eligibility.read'],
-      moduleId: 'privacy.core',
-      ownerFixtureRetention: 'retain-complete-context',
-    }).pipe(Effect.provideService(NativeReadTestOwnerRegistration, privacyRegistration));
+    const ledgerScope = yield* freshPrivacyLedgerScope('api_key');
+    /** Each step commits in its own owner transaction, as separate governed operations would. */
+    const prepareOwner = <Value, Failure, Requirements>(
+      body: (
+        transaction: ScopedTransactionExecutor,
+        scope: PrivacyLedgerScope,
+      ) => Effect.Effect<Value, Failure, Requirements>,
+    ) => inPrivacyLedger(ledgerScope, (transaction) => body(transaction, ledgerScope));
     const crypto = yield* Crypto.Crypto;
     const nextId = () => crypto.randomUUIDv4();
-    const { tenantId } = native.principal;
-    const { principalId } = native.principal;
-    const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(native.principal.legalEntityId));
+    const { principalId, tenantId } = ledgerScope;
+    const legalEntityId = Option.getOrThrow(Option.fromUndefinedOr(ledgerScope.legalEntityId));
     const subjectRefOfTenant = subjectRefOf(tenantId);
     const subjectOne = yield* nextId();
     const subjectTwo = yield* nextId();
-    let fixture = yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* setupPrivacyFacts() {
-          const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
-          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-          const authorizations = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
-          const purpose = yield* purposes.create(tenantId, legalEntityId, yield* nextId(), {
-            businessCode: 'SYMMY_INTEGRATION',
-            effectiveFrom: '2026-11-01T00:00:00.000Z',
-            governanceOwnerId: principalId,
-            meaning: 'Explicit internal source ingestion fixture without synthetic consent',
-          });
-          const firstVersion = Option.getOrThrow(Option.fromUndefinedOr(purpose.versions.at(0)));
-          const facts = makeStandingSourceFixture({
-            authorizationId: yield* nextId(),
-            evaluatedAt: DateTime.formatIso(yield* DateTime.now),
-            legalEntityId,
-            principalId,
-            purposeId: purpose.purposeRef.resourceId,
-            tenantId,
-            versionId: firstVersion.versionId,
-          });
-          const subjects = [
-            { recordId: 'client:one', subjectId: subjectOne },
-            { recordId: 'client:two', subjectId: subjectTwo },
-          ];
-          for (const { recordId, subjectId } of subjects) {
-            yield* repository.createSubject(
-              { legalEntityId, tenantId },
-              {
-                actionInvocationId: yield* nextId(),
-                subject: {
-                  createdAt: facts.from,
-                  subject: { kind: 'SOURCE_ASSERTED', source: { ...facts.route, recordId } },
-                  subjectRef: subjectRefOfTenant(subjectId),
-                  updatedAt: facts.from,
-                },
-              },
-            );
-          }
-          const collided = yield* Effect.flip(
-            repository.createSubject(
-              { legalEntityId, tenantId },
-              {
-                actionInvocationId: yield* nextId(),
-                subject: {
-                  createdAt: facts.from,
-                  subject: { kind: 'SOURCE_ASSERTED', source: { ...facts.route, recordId: 'client:one' } },
-                  subjectRef: subjectRefOfTenant(yield* nextId()),
-                  updatedAt: facts.from,
-                },
-              },
-            ),
-          );
-          expect(collided.code).toBe('privacy_operation_conflict');
-          yield* repository.assignResponsibility(tenantId, legalEntityId, yield* nextId(), facts.controller);
-          yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* nextId(), facts.policy);
-          yield* repository.recordApplicability(
-            tenantId,
-            legalEntityId,
-            yield* nextId(),
-            facts.authorization.applicability.decisionRef,
-            facts.decision,
-          );
-          const assignment = Schema.decodeUnknownSync(PrivacyLegalBasisAssignmentSchema)({
-            actor: { principalId, tenantId },
-            applicabilityDecision: facts.decision,
-            assignmentRef: facts.authorization.legalBasisAssignmentRef,
-            basis: 'CONTRACT',
-            basisVersion: 'internal-explicit-contract-fixture:1',
-            decision: 'APPROVED',
-            effectiveFrom: facts.from,
-            effectiveTo: facts.until,
-            provenance: {
-              decisionEvidenceRefs: ['internal-fixture:governance-decision'],
-              policyRef: facts.policy.policyKey,
-              policyVersion: facts.policy.policyVersion,
-              reason: 'Explicit native internal contract fixture; no production assertion',
-              recordedAt: facts.from,
-            },
-            scope: {
-              controllerRef: facts.authorization.scopeTemplate.controllerRef,
-              operation: facts.authorization.scopeTemplate.operation,
-              processingScopeRef: facts.authorization.scopeTemplate.processingScopeRef,
-              purposeRef: purpose.purposeRef,
-              purposeVersionId: firstVersion.versionId,
-            },
-          });
-          yield* repository.assignLegalBasis(tenantId, legalEntityId, yield* nextId(), assignment);
-          yield* authorizations.create(facts.authorization, yield* nextId());
-          for (const { recordId, subjectId } of subjects) {
-            yield* authorizations.admit({
+    let fixture = yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* setupPrivacyFacts() {
+        const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
+        const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+        const authorizations = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+        const purpose = yield* purposes.create(tenantId, legalEntityId, yield* nextId(), {
+          businessCode: 'SYMMY_INTEGRATION',
+          effectiveFrom: '2026-11-01T00:00:00.000Z',
+          governanceOwnerId: principalId,
+          meaning: 'Explicit internal source ingestion fixture without synthetic consent',
+        });
+        const firstVersion = Option.getOrThrow(Option.fromUndefinedOr(purpose.versions.at(0)));
+        const facts = makeStandingSourceFixture({
+          authorizationId: yield* nextId(),
+          legalEntityId,
+          principalId,
+          purposeId: purpose.purposeRef.resourceId,
+          tenantId,
+          versionId: firstVersion.versionId,
+        });
+        const subjects = [
+          { recordId: 'client:one', subjectId: subjectOne },
+          { recordId: 'client:two', subjectId: subjectTwo },
+        ];
+        for (const { recordId, subjectId } of subjects) {
+          yield* repository.createSubject(
+            { legalEntityId, tenantId },
+            {
               actionInvocationId: yield* nextId(),
-              admittedAt: facts.from,
-              authorizationId: facts.authorization.authorizationRef.resourceId,
-              sources: [
-                { role: 'SUBJECT', source: { ...facts.route, recordId } },
-                { role: 'CHILD', source: { ...facts.route, recordId: `contact:${recordId}` } },
-              ],
-              subjectId,
-            });
-          }
-          return { ...facts, assignment };
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+              subject: {
+                createdAt: facts.from,
+                subject: { kind: 'SOURCE_ASSERTED', source: { ...facts.route, recordId } },
+                subjectRef: subjectRefOfTenant(subjectId),
+                updatedAt: facts.from,
+              },
+            },
+          );
+        }
+        const collided = yield* Effect.flip(
+          repository.createSubject(
+            { legalEntityId, tenantId },
+            {
+              actionInvocationId: yield* nextId(),
+              subject: {
+                createdAt: facts.from,
+                subject: { kind: 'SOURCE_ASSERTED', source: { ...facts.route, recordId: 'client:one' } },
+                subjectRef: subjectRefOfTenant(yield* nextId()),
+                updatedAt: facts.from,
+              },
+            },
+          ),
+        );
+        expect(collided.code).toBe('privacy_operation_conflict');
+        yield* repository.assignResponsibility(tenantId, legalEntityId, yield* nextId(), facts.controller);
+        yield* repository.recordApplicabilityPolicy(tenantId, legalEntityId, yield* nextId(), facts.policy);
+        yield* repository.recordApplicability(
+          tenantId,
+          legalEntityId,
+          yield* nextId(),
+          facts.authorization.applicability.decisionRef,
+          facts.decision,
+        );
+        const assignment = Schema.decodeUnknownSync(PrivacyLegalBasisAssignmentSchema)({
+          actor: { principalId, tenantId },
+          applicabilityDecision: facts.decision,
+          assignmentRef: facts.authorization.legalBasisAssignmentRef,
+          basis: 'CONTRACT',
+          basisVersion: 'internal-explicit-contract-fixture:1',
+          decision: 'APPROVED',
+          effectiveFrom: facts.from,
+          effectiveTo: facts.until,
+          provenance: {
+            decisionEvidenceRefs: ['internal-fixture:governance-decision'],
+            policyRef: facts.policy.policyKey,
+            policyVersion: facts.policy.policyVersion,
+            reason: 'Explicit native internal contract fixture; no production assertion',
+            recordedAt: facts.from,
+          },
+          scope: {
+            controllerRef: facts.authorization.scopeTemplate.controllerRef,
+            operation: facts.authorization.scopeTemplate.operation,
+            processingScopeRef: facts.authorization.scopeTemplate.processingScopeRef,
+            purposeRef: purpose.purposeRef,
+            purposeVersionId: firstVersion.versionId,
+          },
+        });
+        yield* repository.assignLegalBasis(tenantId, legalEntityId, yield* nextId(), assignment);
+        yield* authorizations.create(facts.authorization, yield* nextId());
+        for (const { recordId, subjectId } of subjects) {
+          yield* authorizations.admit({
+            actionInvocationId: yield* nextId(),
+            admittedAt: facts.from,
+            authorizationId: facts.authorization.authorizationRef.resourceId,
+            sources: [
+              { role: 'SUBJECT', source: { ...facts.route, recordId } },
+              { role: 'CHILD', source: { ...facts.route, recordId: `contact:${recordId}` } },
+            ],
+            subjectId,
+          });
+        }
+        return { ...facts, assignment };
+      }),
+    );
     const intendedScope = sourceProcessingIntendedScope(
       fixture.authorization.scopeTemplate,
       subjectRefOfTenant(subjectOne),
     );
     // The integration acts with its own machine credential; no setting names a context, subject or occurrence.
-    const principal = trustVerifiedGatewayPrincipalContext(native.principal, 'e'.repeat(64), undefined, {
+    const caller = trustVerifiedGatewayPrincipalContext(ledgerScope, 'e'.repeat(64), undefined, {
       appId: 'party-registry',
       buildMarker: 'fixture',
       principalId,
     });
     const read = (input: SourceProcessingEligibilityRequest = fixture.request) =>
-      native.runtime
-        .runRead({
-          input,
-          principal,
-          registration: sourceProcessingEligibilityRead,
-          transport: { correlationId: `source-processing:${input.source?.occurrenceId ?? 'native-owner'}` },
-        })
-        .pipe(Effect.provide(native.layer));
+      prepareOwner((transaction, scope) =>
+        Effect.flatMap(sourceProcessingEligibilityServices(transaction, scope), (services) =>
+          evaluateSourceProcessingEligibility(input, caller, services, fixture.evaluatedAt),
+        ),
+      );
     expect((yield* read()).outcome).toBe('ALLOWED');
     const child = yield* read(fixture.requestFor('contact:client:one', 'occurrence:child'));
     expect(child.outcome === 'ALLOWED' && child.evidence.evaluatedScope.subjectRef.resourceId).toBe(subjectOne);
@@ -192,86 +197,80 @@ it.live('checks standing source-route authorization through governed Read and na
     ).toBe('DENIED');
     expect((yield* read({ ...fixture.request, operation: 'READ' })).outcome).toBe('DENIED');
     const intervention = (kind: 'RESTRICTION' | 'OBJECTION', status: 'ACTIVE' | 'RESOLVED') =>
-      native
-        .prepareOwner((transaction, scope) =>
-          Effect.gen(function* recordIntervention() {
-            const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-            const actionInvocationId = yield* nextId();
-            const observedAt = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
-            const ref = `fixture:${kind}:${status}:${tenantId}`;
-            yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
-              actionInvocationId,
-              asOf: observedAt,
-              authorityRef: ref,
-              evidenceRefs: [ref],
-              intervention: {
-                currentness: { authoritative: true, observedAt, revision: status, sourceRef: ref },
-                interventionRef: ref,
-                kind,
-                scope: intendedScope,
-                status,
-              },
-              legalEntityId,
-              receiptRef: ref,
-              tenantId,
-            });
-          }),
-        )
-        .pipe(Effect.provide(native.layer));
+      prepareOwner((transaction, scope) =>
+        Effect.gen(function* recordIntervention() {
+          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+          const actionInvocationId = yield* nextId();
+          const observedAt = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
+          const ref = `fixture:${kind}:${status}:${tenantId}`;
+          yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
+            actionInvocationId,
+            asOf: observedAt,
+            authorityRef: ref,
+            evidenceRefs: [ref],
+            intervention: {
+              currentness: { authoritative: true, observedAt, revision: status, sourceRef: ref },
+              interventionRef: ref,
+              kind,
+              scope: intendedScope,
+              status,
+            },
+            legalEntityId,
+            receiptRef: ref,
+            tenantId,
+          });
+        }),
+      );
     yield* intervention('OBJECTION', 'ACTIVE');
     yield* intervention('RESTRICTION', 'ACTIVE');
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
     const other = fixture.requestFor('contact:client:two', 'occurrence:carry-forward');
     expect((yield* read(other)).outcome).toBe('ALLOWED');
-    yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* revoke() {
-          const a = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
-          yield* a.end(fixture.ended, 1, yield* nextId());
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+    yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* revoke() {
+        const a = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+        yield* a.end(fixture.ended, 1, yield* nextId());
+      }),
+    );
     expect((yield* read(other)).outcome).toBe('DENIED');
-    fixture = yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* replaceGrant() {
-          const next = makeStandingSourceFixture({
-            authorizationId: yield* nextId(),
-            basisId: yield* nextId(),
-            evaluatedAt: fixture.evaluatedAt,
-            legalEntityId,
-            principalId,
-            purposeId: fixture.purpose.purposeRef.resourceId,
-            responsibilityId: yield* nextId(),
-            tenantId,
-            versionId: fixture.authorization.scopeTemplate.purposeVersionId,
-          });
-          const r = yield* privacyOperationRepositoryForScope(transaction, scope);
-          const a = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
-          yield* r.assignResponsibility(tenantId, legalEntityId, yield* nextId(), next.controller);
-          yield* r.recordApplicabilityPolicy(tenantId, legalEntityId, yield* nextId(), next.policy);
-          const assignment = {
-            ...fixture.assignment,
-            applicabilityDecision: next.decision,
-            assignmentRef: next.authorization.legalBasisAssignmentRef,
-            scope: {
-              ...fixture.assignment.scope,
-              processingScopeRef: next.authorization.scopeTemplate.processingScopeRef,
-            },
-          };
-          yield* r.recordApplicability(
-            tenantId,
-            legalEntityId,
-            yield* nextId(),
-            next.authorization.applicability.decisionRef,
-            next.decision,
-          );
-          yield* r.assignLegalBasis(tenantId, legalEntityId, yield* nextId(), assignment);
-          yield* a.create(next.authorization, yield* nextId());
-          return { ...next, assignment };
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+    fixture = yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* replaceGrant() {
+        const next = makeStandingSourceFixture({
+          authorizationId: yield* nextId(),
+          basisId: yield* nextId(),
+          evaluatedAt: fixture.evaluatedAt,
+          legalEntityId,
+          principalId,
+          purposeId: fixture.purpose.purposeRef.resourceId,
+          responsibilityId: yield* nextId(),
+          tenantId,
+          versionId: fixture.authorization.scopeTemplate.purposeVersionId,
+        });
+        const r = yield* privacyOperationRepositoryForScope(transaction, scope);
+        const a = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+        yield* r.assignResponsibility(tenantId, legalEntityId, yield* nextId(), next.controller);
+        yield* r.recordApplicabilityPolicy(tenantId, legalEntityId, yield* nextId(), next.policy);
+        const assignment = {
+          ...fixture.assignment,
+          applicabilityDecision: next.decision,
+          assignmentRef: next.authorization.legalBasisAssignmentRef,
+          scope: {
+            ...fixture.assignment.scope,
+            processingScopeRef: next.authorization.scopeTemplate.processingScopeRef,
+          },
+        };
+        yield* r.recordApplicability(
+          tenantId,
+          legalEntityId,
+          yield* nextId(),
+          next.authorization.applicability.decisionRef,
+          next.decision,
+        );
+        yield* r.assignLegalBasis(tenantId, legalEntityId, yield* nextId(), assignment);
+        yield* a.create(next.authorization, yield* nextId());
+        return { ...next, assignment };
+      }),
+    );
     // No record was re-admitted. Only the original subject with active interventions stays blocked.
     expect((yield* read(other)).outcome).toBe('ALLOWED');
     expect((yield* read()).outcome).toBe('DENIED');
@@ -285,23 +284,21 @@ it.live('checks standing source-route authorization through governed Read and na
       authorityRevision: '1',
       outcome: 'ALLOWED',
     });
-    yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* rejectCurrentBasis() {
-          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-          yield* repository.assignLegalBasis(
-            tenantId,
-            legalEntityId,
-            yield* nextId(),
-            Schema.decodeUnknownSync(PrivacyLegalBasisAssignmentSchema)({
-              ...fixture.assignment,
-              assignmentRef: { ...fixture.assignment.assignmentRef, resourceId: yield* nextId() },
-              decision: 'REJECTED',
-            }),
-          );
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+    yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* rejectCurrentBasis() {
+        const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+        yield* repository.assignLegalBasis(
+          tenantId,
+          legalEntityId,
+          yield* nextId(),
+          Schema.decodeUnknownSync(PrivacyLegalBasisAssignmentSchema)({
+            ...fixture.assignment,
+            assignmentRef: { ...fixture.assignment.assignmentRef, resourceId: yield* nextId() },
+            decision: 'REJECTED',
+          }),
+        );
+      }),
+    );
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
 
     // Valid owner-enforcement receipt fixture persisted only inside this owner's native setup.
@@ -370,19 +367,17 @@ it.live('checks standing source-route authorization through governed Read and na
       protectedAt: fixture.from,
       protectionId: `fixture:protection:${tenantId}`,
     });
-    yield* native
-      .prepareOwner((transaction) =>
-        transaction.insert(antiResurrectionProtections).values({
-          legalEntityId,
-          measure: protection.measure,
-          protectedAt: new Date(protection.protectedAt),
-          protectionId: protection.protectionId,
-          protectionRecord: Schema.encodeSync(AntiResurrectionProtectionSchema)(protection),
-          subjectRef: protection.subjectRef,
-          tenantId,
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+    yield* prepareOwner((transaction) =>
+      transaction.insert(antiResurrectionProtections).values({
+        legalEntityId,
+        measure: protection.measure,
+        protectedAt: new Date(protection.protectedAt),
+        protectionId: protection.protectionId,
+        protectionRecord: Schema.encodeSync(AntiResurrectionProtectionSchema)(protection),
+        subjectRef: protection.subjectRef,
+        tenantId,
+      }),
+    );
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROTECTED_MATERIAL' });
     // Replays and later occurrences of the protected record stay blocked; the protection follows the subject.
     expect(yield* read(fixture.requestFor('client:one', 'occurrence:two'))).toMatchObject({
@@ -392,69 +387,67 @@ it.live('checks standing source-route authorization through governed Read and na
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROTECTED_MATERIAL' });
     // Storage-level negative: a retained DATA_SUBJECT link must preserve its original source
     // tombstone even if a new request names a different source. This does not assert admission.
-    const sourceBridge = yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* originalSourceProtectionBridge() {
-          const dataSubjectId = yield* nextId();
-          const partyId = yield* nextId();
-          const retained = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
-            createdAt: fixture.from,
-            subject: {
-              kind: 'DATA_SUBJECT',
-              partyRef: {
-                moduleId: 'party.registry',
-                resourceId: partyId,
-                resourceType: 'party.registry.party',
-                tenantId,
-              },
-              sourceAdmission: {
-                occurrenceId: 'occurrence:one',
-                sourceSubjectRef: subjectRefOfTenant(subjectOne),
-              },
+    const sourceBridge = yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* originalSourceProtectionBridge() {
+        const dataSubjectId = yield* nextId();
+        const partyId = yield* nextId();
+        const retained = Schema.decodeUnknownSync(PrivacySubjectRecordSchema)({
+          createdAt: fixture.from,
+          subject: {
+            kind: 'DATA_SUBJECT',
+            partyRef: {
+              moduleId: 'party.registry',
+              resourceId: partyId,
+              resourceType: 'party.registry.party',
+              tenantId,
             },
-            subjectRef: { ...subjectRefOfTenant(subjectOne), resourceId: dataSubjectId },
-            updatedAt: fixture.from,
-          });
-          yield* transaction.insert(privacySubjects).values({
-            createdAt: new Date(fixture.from),
-            legalEntityId,
-            privacySubjectId: dataSubjectId,
-            sourceIdentityKey: null,
-            subjectKind: 'DATA_SUBJECT',
-            subjectRecord: Schema.encodeSync(PrivacySubjectRecordSchema)(retained),
-            tenantId,
-            updatedAt: new Date(fixture.from),
-          });
-          const admittedProtection = Schema.decodeUnknownSync(AntiResurrectionProtectionSchema)({
-            ...protection,
-            enforcementReceipt: { ...protection.enforcementReceipt, subjectRef: dataSubjectId },
-            protectionId: `fixture:admitted-protection:${tenantId}`,
-            subjectRef: dataSubjectId,
-          });
-          yield* transaction.insert(antiResurrectionProtections).values({
-            legalEntityId,
-            measure: admittedProtection.measure,
-            protectedAt: new Date(admittedProtection.protectedAt),
-            protectionId: admittedProtection.protectionId,
-            protectionRecord: Schema.encodeSync(AntiResurrectionProtectionSchema)(admittedProtection),
-            subjectRef: admittedProtection.subjectRef,
-            tenantId,
-          });
-          const preTarget = yield* readSourceProtections(transaction, scope, subjectOne, fixture.request);
-          const incoming = {
-            ...fixture.request,
-            source: { ...fixture.route, occurrenceId: 'occurrence:one', recordId: 'alias:new-source-record' },
-            target: { kind: 'PARTY' as const, resourceId: partyId },
-          };
-          const alias = yield* readSourceProtections(transaction, scope, dataSubjectId, incoming);
-          const nativeOwner = yield* readSourceProtections(transaction, scope, dataSubjectId, {
-            ...incoming,
-            source: null,
-          });
-          return { admittedProtection, alias, dataSubjectId, nativeOwner, preTarget };
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+            sourceAdmission: {
+              occurrenceId: 'occurrence:one',
+              sourceSubjectRef: subjectRefOfTenant(subjectOne),
+            },
+          },
+          subjectRef: { ...subjectRefOfTenant(subjectOne), resourceId: dataSubjectId },
+          updatedAt: fixture.from,
+        });
+        yield* transaction.insert(privacySubjects).values({
+          createdAt: new Date(fixture.from),
+          legalEntityId,
+          privacySubjectId: dataSubjectId,
+          sourceIdentityKey: null,
+          subjectKind: 'DATA_SUBJECT',
+          subjectRecord: Schema.encodeSync(PrivacySubjectRecordSchema)(retained),
+          tenantId,
+          updatedAt: new Date(fixture.from),
+        });
+        const admittedProtection = Schema.decodeUnknownSync(AntiResurrectionProtectionSchema)({
+          ...protection,
+          enforcementReceipt: { ...protection.enforcementReceipt, subjectRef: dataSubjectId },
+          protectionId: `fixture:admitted-protection:${tenantId}`,
+          subjectRef: dataSubjectId,
+        });
+        yield* transaction.insert(antiResurrectionProtections).values({
+          legalEntityId,
+          measure: admittedProtection.measure,
+          protectedAt: new Date(admittedProtection.protectedAt),
+          protectionId: admittedProtection.protectionId,
+          protectionRecord: Schema.encodeSync(AntiResurrectionProtectionSchema)(admittedProtection),
+          subjectRef: admittedProtection.subjectRef,
+          tenantId,
+        });
+        const preTarget = yield* readSourceProtections(transaction, scope, subjectOne, fixture.request);
+        const incoming = {
+          ...fixture.request,
+          source: { ...fixture.route, occurrenceId: 'occurrence:one', recordId: 'alias:new-source-record' },
+          target: { kind: 'PARTY' as const, resourceId: partyId },
+        };
+        const alias = yield* readSourceProtections(transaction, scope, dataSubjectId, incoming);
+        const nativeOwner = yield* readSourceProtections(transaction, scope, dataSubjectId, {
+          ...incoming,
+          source: null,
+        });
+        return { admittedProtection, alias, dataSubjectId, nativeOwner, preTarget };
+      }),
+    );
     for (const lookup of [sourceBridge.alias, sourceBridge.nativeOwner]) {
       expect(lookup.sourceSubjectRefs).toContain(subjectOne);
       expect(lookup.items.map((item) => item.protectionId)).toContain(protection.protectionId);
@@ -463,28 +456,26 @@ it.live('checks standing source-route authorization through governed Read and na
     expect(sourceBridge.preTarget.items.map((item) => item.protectionId)).toContain(
       sourceBridge.admittedProtection.protectionId,
     );
-    yield* native
-      .prepareOwner((transaction, scope) =>
-        Effect.gen(function* endAuthorization() {
-          const authorizations = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
-          yield* authorizations.end(
-            {
-              ...fixture.authorization,
-              endedAt: DateTime.formatIso(yield* DateTime.now),
-              endedBy: { principalId, tenantId },
-              endReason: 'fixture:integration-removed',
-              lifecycle: 'ENDED',
-              revision: 2,
-            },
-            1,
-            yield* nextId(),
-          );
-        }),
-      )
-      .pipe(Effect.provide(native.layer));
+    yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* endAuthorization() {
+        const authorizations = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+        yield* authorizations.end(
+          {
+            ...fixture.authorization,
+            endedAt: fixture.evaluatedAt,
+            endedBy: { principalId, tenantId },
+            endReason: 'fixture:integration-removed',
+            lifecycle: 'ENDED',
+            revision: 2,
+          },
+          1,
+          yield* nextId(),
+        );
+      }),
+    );
     expect(yield* read(fixture.requestFor('client:two', 'occurrence:after-end'))).toMatchObject({
       outcome: 'DENIED',
       reason: 'AUTHORITY_NOT_CURRENT',
     });
-  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer), Effect.provide(TestClock.layer())),
+  }).pipe(Effect.provide(layer)),
 );

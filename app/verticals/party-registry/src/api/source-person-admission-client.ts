@@ -2,7 +2,7 @@
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import { Effect, Redacted } from 'effect';
 import { SourcePersonAdmissionApi } from '../../shared/apis/source-person-admission.ts';
-import type { SourcePersonProofRequest } from '../../shared/apis/source-person-admission.ts';
+import type { SourcePersonAdmissionRequest } from '../../shared/apis/source-person-admission.ts';
 import { operationGateway } from './action-gateway.ts';
 
 export interface SourcePersonAdmissionClientOptions {
@@ -37,7 +37,7 @@ const sourcePersonAdmissionClient = (
   );
 
 export const executeSourcePersonAdmissionWithAuthorization = (
-  payload: SourcePersonProofRequest,
+  payload: SourcePersonAdmissionRequest,
   ...[credential, requestCorrelation, options = {}]: SourcePersonAdmissionAuthorizedInvocation
 ) =>
   sourcePersonAdmissionClient(Redacted.make(credential), requestCorrelation, options).pipe(
@@ -45,7 +45,7 @@ export const executeSourcePersonAdmissionWithAuthorization = (
   );
 
 export const executeSourcePersonAdmission = (
-  payload: SourcePersonProofRequest,
+  payload: SourcePersonAdmissionRequest,
   ...[requestCorrelation, options = {}]: SourcePersonAdmissionOperationInvocation
 ) =>
   operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>

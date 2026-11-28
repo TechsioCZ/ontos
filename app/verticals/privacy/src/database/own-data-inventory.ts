@@ -13,7 +13,11 @@ import type { PRIVACY_TABLE_INVENTORY } from './schema.ts';
 
 type PrivacyTable = (typeof PRIVACY_TABLE_INVENTORY)[number];
 
-export const PRIVACY_OWN_DATA_CATEGORY_IDS = ['PRE_VERIFICATION_SUBJECT_BINDING'] as const;
+export const PRIVACY_OWN_DATA_CATEGORY_IDS = [
+  'PRE_VERIFICATION_SUBJECT_BINDING',
+  'SOURCE_RECORD_ADMISSION',
+  'SOURCE_ROUTE_AUTHORIZATION',
+] as const;
 type PrivacyOwnDataCategoryId = (typeof PRIVACY_OWN_DATA_CATEGORY_IDS)[number];
 
 /** The facts a category cannot be retained or disposed of without. Each one is supplied by its owner, never defaulted. */
@@ -93,6 +97,64 @@ const categoriesById = {
       },
     ],
   },
+  SOURCE_RECORD_ADMISSION: {
+    // Which Privacy subject a source record of the route stands for. The source key and record are the source system's
+    // own reference to the person (or to a contact, an address or a membership of that person); the admission instants
+    // say when the route first and last used it. No name, address, token or code has a field anywhere.
+    businessStartCandidate: {
+      column: 'first_admitted_at',
+      event: 'SOURCE_RECORD_ADMITTED',
+      table: 'source_processing_admissions',
+    },
+    excludedContent: ['ENDPOINT_ADDRESS', 'AUTH_SECRET_OR_PROOF'],
+    personalDataKinds: ['SUBJECT_REFERENCE', 'TIMING_FACT'],
+    recordContentScope: 'privacy.source-record-admission',
+    retention: pendingPrivacyOwner,
+    storage: [
+      {
+        columns: [
+          'authorization_id',
+          'first_admitted_at',
+          'last_action_invocation_id',
+          'last_admitted_at',
+          'privacy_subject_id',
+          'source_identity_key',
+          'source_record',
+        ],
+        table: 'source_processing_admissions',
+      },
+    ],
+  },
+  SOURCE_ROUTE_AUTHORIZATION: {
+    // The standing authorization of one source route. It names no Data Subject: its record carries the staff principal
+    // who created or ended it, the machine principals of the route and the source system's issuer, namespace and route.
+    businessStartCandidate: {
+      column: 'created_at',
+      event: 'SOURCE_ROUTE_AUTHORIZED',
+      table: 'source_processing_authorizations',
+    },
+    excludedContent: ['ENDPOINT_ADDRESS', 'AUTH_SECRET_OR_PROOF'],
+    personalDataKinds: ['STAFF_ACTOR_PRINCIPAL', 'TIMING_FACT'],
+    recordContentScope: 'privacy.source-route-authorization',
+    retention: pendingPrivacyOwner,
+    storage: [
+      {
+        columns: [
+          'authorization_id',
+          'authorization_record',
+          'created_at',
+          'created_by_action_invocation_id',
+          'ended_at',
+          'ended_by_action_invocation_id',
+          'recorded_at',
+          'source_issuer',
+          'source_namespace',
+          'source_route_ref',
+        ],
+        table: 'source_processing_authorizations',
+      },
+    ],
+  },
 } as const satisfies Record<PrivacyOwnDataCategoryId, Omit<PrivacyOwnDataCategory, 'id'>>;
 
 export const privacyOwnDataInventory: readonly PrivacyOwnDataCategory[] = Object.freeze(
@@ -116,6 +178,17 @@ export const TECHNICAL_COLUMNS: Readonly<
     legal_entity_id: 'ORGANIZATION_SCOPE_REFERENCE',
     revision: 'ORDERING_OR_COUNTER',
     status: 'CLOSED_VOCABULARY_CODE',
+    tenant_id: 'TENANT_PARTITION_KEY',
+  },
+  source_processing_admissions: {
+    legal_entity_id: 'ORGANIZATION_SCOPE_REFERENCE',
+    role: 'CLOSED_VOCABULARY_CODE',
+    tenant_id: 'TENANT_PARTITION_KEY',
+  },
+  source_processing_authorizations: {
+    legal_entity_id: 'ORGANIZATION_SCOPE_REFERENCE',
+    lifecycle: 'CLOSED_VOCABULARY_CODE',
+    revision: 'ORDERING_OR_COUNTER',
     tenant_id: 'TENANT_PARTITION_KEY',
   },
 });
