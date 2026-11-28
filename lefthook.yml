@@ -10,13 +10,18 @@ pre-commit:
     # Globs match repository-root paths; they select exactly the files `pnpm lint` covers.
     - name: lint
       root: 'app/'
-      glob:
+      glob: &lint_sources
         - 'app/{apps,verticals,packages,scripts}/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'
         - 'app/tools/oxlint/effect-native/tests/*.test.mts'
-      exclude:
+      exclude: &lint_exclusions
         - 'app/tools/oxlint/effect-native/tests/fixtures/*'
-      run: pnpm exec effect-tsgo --tsrs-lint=7.1.0-beta.tsrs3 oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files} && pnpm exec ultramodern-create ultramodern semantic-lint {staged_files}
+      run: pnpm exec effect-tsgo --tsrs-lint=7.1.0-beta.tsrs3 oxlint --threads=9 --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
+    - name: semantic-lint
+      root: 'app/'
+      glob: *lint_sources
+      exclude: *lint_exclusions
+      run: pnpm exec ultramodern-create ultramodern semantic-lint {staged_files}
 
 pre-push:
   parallel: false
