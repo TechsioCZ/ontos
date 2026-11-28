@@ -229,9 +229,12 @@ it.effect('asks Privacy nothing about an item without an effect, which pins noth
       ),
     );
     // Even named for admission, an item without an effect is no part of one.
-    const admissions = projectSymmyCustomerIntakeAdmissions(mixed, new Set(mixed.items.map(({ itemKey }) => itemKey)));
+    const admissions = yield* projectSymmyCustomerIntakeAdmissions(
+      mixed,
+      new Set(mixed.items.map(({ itemKey }) => itemKey)),
+    );
     expect(admissions).toEqual(
-      projectSymmyCustomerIntakeAdmissions(mixed, new Set(siblings.map(({ itemKey }) => itemKey))),
+      yield* projectSymmyCustomerIntakeAdmissions(mixed, new Set(siblings.map(({ itemKey }) => itemKey))),
     );
     expect(JSON.stringify([requests, admissions])).not.toContain('unknown:one');
   }),

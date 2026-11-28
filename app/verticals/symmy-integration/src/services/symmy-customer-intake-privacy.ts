@@ -298,7 +298,10 @@ const sameSource = (left: AdmittedSource, right: AdmittedSource) =>
 export const projectSymmyCustomerIntakeAdmissions = Effect.fn('SymmyCustomerIntakePrivacy.admissions')(
   function* admissions(plan: SymmyPinnedJobPlan, personalItemKeys: ReadonlySet<string>) {
     const byKey = itemsByKey(plan);
-    const groups = new Map<string, { readonly children: Map<string, AdmittedSource>; readonly occurrence: ItemOccurrence; readonly root: Item }>();
+    const groups = new Map<
+      string,
+      { readonly children: Map<string, AdmittedSource>; readonly occurrence: ItemOccurrence; readonly root: Item }
+    >();
     yield* Effect.forEach(
       plan.items.filter(({ effects, itemKey }) => effects.length > 0 && personalItemKeys.has(itemKey)),
       Effect.fnUntraced(function* groupItem(item) {
@@ -308,46 +311,51 @@ export const projectSymmyCustomerIntakeAdmissions = Effect.fn('SymmyCustomerInta
         if (occurrence === undefined || rootOccurrence === undefined) {
           return yield* denied();
         }
-        const group = groups.get(root.itemKey) ?? { children: new Map<string, AdmittedSource>(), occurrence: rootOccurrence, root };
+        const group = groups.get(root.itemKey) ?? {
+          children: new Map<string, AdmittedSource>(),
+          occurrence: rootOccurrence,
+          root,
+        };
         groups.set(root.itemKey, group);
         const source = itemSource(occurrence);
         if (!sameSource(source, itemSource(rootOccurrence))) {
           group.children.set(computeCanonicalValueHash(source), source);
         }
+        return yield* Effect.void;
       }),
       { concurrency: 1, discard: true },
     );
     return [...groups.values()].map(({ children, occurrence, root }) => {
       const source = itemSource(occurrence);
-    const memberships = root.effects.flatMap(({ intent }) =>
-      Schema.is(SymmyPartyCommerceIntentSchema)(intent)
-        ? Match.value(intent).pipe(
-            Match.tag('CustomerGroupMembership', ({ customerSource, payload: membership }) => {
-              const membershipProfile = profileTarget(membership.profile.profileRef);
-              // An ERP membership also names the exact customer record the owner resolved it from.
-              return [
-                customerSource === undefined
-                  ? { membershipProfile }
-                  : {
-                      membershipCustomer: {
-                        issuer: customerSource.issuer,
-                        namespace: customerSource.namespace,
-                        recordId: customerSource.recordId,
-                        recordType: customerSource.recordType,
-                        routeRef: customerSource.route.id,
+      const memberships = root.effects.flatMap(({ intent }) =>
+        Schema.is(SymmyPartyCommerceIntentSchema)(intent)
+          ? Match.value(intent).pipe(
+              Match.tag('CustomerGroupMembership', ({ customerSource, payload: membership }) => {
+                const membershipProfile = profileTarget(membership.profile.profileRef);
+                // An ERP membership also names the exact customer record the owner resolved it from.
+                return [
+                  customerSource === undefined
+                    ? { membershipProfile }
+                    : {
+                        membershipCustomer: {
+                          issuer: customerSource.issuer,
+                          namespace: customerSource.namespace,
+                          recordId: customerSource.recordId,
+                          recordType: customerSource.recordType,
+                          routeRef: customerSource.route.id,
+                        },
+                        membershipProfile,
                       },
-                      membershipProfile,
-                    },
-              ];
-            }),
-            Match.orElse(() => []),
-          )
-        : [],
-    );
-    const payload: AdmitSourceProcessingSubjectPayload = { childSources: [...children.values()], source };
-    if (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' && memberships[0] !== undefined) {
-      Object.assign(payload, memberships[0]);
-    }
+                ];
+              }),
+              Match.orElse(() => []),
+            )
+          : [],
+      );
+      const payload: AdmitSourceProcessingSubjectPayload = { childSources: [...children.values()], source };
+      if (source.recordType === 'CUSTOMER_GROUP_MEMBERSHIP' && memberships[0] !== undefined) {
+        Object.assign(payload, memberships[0]);
+      }
 
       return { occurrenceId: occurrence.occurrenceId, payload };
     });
