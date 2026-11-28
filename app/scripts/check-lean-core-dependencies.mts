@@ -759,6 +759,12 @@ const privacyNoticeProfileAuthority =
   'verticals/privacy/src/integrations/commerce-customer-context/commerce-customer-context-notice-subject-authority.service.ts';
 
 const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
+  {
+    importer: 'apps/shell-super-app/api/symmy/membership-customer-facts.ts',
+    reason:
+      'The C14 membership admission resolves an exact ERP customer through the generated governed Current source-profile read; no Commerce persistence or private business service is imported.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-profile-source/client`,
+  },
   ...[
     '/api/client',
     '/api/customer-group-definition-source/client',

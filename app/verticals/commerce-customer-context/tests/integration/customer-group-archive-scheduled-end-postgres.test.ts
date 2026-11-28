@@ -697,6 +697,7 @@ const nativeFixture = Effect.fn('GroupArchive.nativeFixture')(function* nativeFi
         ),
       ),
   });
+  // Non-ERP assignments and their receipt recovery must run without an ERP customer proof service.
   const ordinary = Layer.mergeAll(
     role,
     sourcePrivacy,

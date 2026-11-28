@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -42,6 +43,7 @@ export const SYMMY_INTEGRATION_TABLES = [
   'job_notifications',
   'job_retention_tombstones',
   'job_routes',
+  'membership_source_orders',
   'privacy_measure_executions',
   'route_enrollment_records',
   'sync_admission_attempts',
@@ -359,6 +361,51 @@ export const symmyJobEffects = symmyIntegrationSchema.table.withRLS(
   ],
 );
 
+/**
+ * The owner orders the memberships of one source manager per profile, whatever group they name, and refuses an older
+ * order. The ERP states none, so this ledger issues the orders of the source namespaces reserved for ERP memberships,
+ * and of no other: a membership a caller orders itself is never in it. One row is the order one ERP admission reserved
+ * for one lineage, named by the route and idempotency digest its job is admitted under, with the time it sends to
+ * Commerce; no row commits without the membership effect of that job that takes it. Its lineage is a digest of the
+ * tenant, legal entity, source issuer, namespace and canonical profile, so no profile reference outlives the erasure
+ * of the effect it orders. `waitingSince` is when a claim first found an earlier order of the lineage unsettled.
+ * Rows are written and read only through the Symmy order routines.
+ */
+export const symmyMembershipSourceOrders = symmyIntegrationSchema.table.withRLS(
+  'membership_source_orders',
+  {
+    effectId: uuid('effect_id'),
+    effectiveAt: timestamp('effective_at', { withTimezone: true }).notNull(),
+    idempotencyDigest: text('idempotency_digest').notNull(),
+    lineageDigest: text('lineage_digest').notNull(),
+    routeId: uuid('route_id').notNull(),
+    sourceOrder: integer('source_order').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+    waitingSince: timestamp('waiting_since', { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.lineageDigest, table.sourceOrder],
+      name: 'symmy_membership_source_orders_pk',
+    }),
+    unique('symmy_membership_source_orders_effect_uq').on(table.tenantId, table.effectId),
+    foreignKey({
+      columns: [table.tenantId, table.effectId],
+      foreignColumns: [symmyJobEffects.tenantId, symmyJobEffects.effectId],
+      name: 'symmy_membership_source_orders_effect_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.routeId],
+      foreignColumns: [symmyJobRoutes.tenantId, symmyJobRoutes.routeId],
+      name: 'symmy_membership_source_orders_route_fk',
+    }).onDelete('restrict'),
+    check('symmy_membership_source_orders_admission_ck', sql`${table.idempotencyDigest} ~ '^[0-9a-f]{64}$'`),
+    check('symmy_membership_source_orders_lineage_ck', sql`${table.lineageDigest} ~ '^[0-9a-f]{64}$'`),
+    check('symmy_membership_source_orders_order_ck', sql`${table.sourceOrder} >= 1`),
+    ...tenantRlsPolicies('symmy_membership_source_orders_tenant', table.tenantId),
+  ],
+);
+
 /** Minimal owner receipt link for a new Core attempt returning an already accepted business admission. */
 export const symmySyncAdmissionAttempts = symmyIntegrationSchema.table.withRLS(
   'sync_admission_attempts',
@@ -387,6 +434,7 @@ export const symmyIntegrationRelations = defineRelations({
   symmyJobPrivacyExecutions,
   symmyJobRetentionTombstones,
   symmyJobRoutes,
+  symmyMembershipSourceOrders,
   symmyRouteEnrollmentRecords,
   symmySyncAdmissionAttempts,
   symmySyncAdmissions,

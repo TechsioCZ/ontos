@@ -1,7 +1,12 @@
+import { readVerifiedGatewayWorkload } from '@app/core-runtime/auth/system-principal-context-provenance';
+import { holdSourceEligibilityStable } from '@app/privacy-contracts/source-processing-eligibility/commit-interlock';
+import { membershipCustomerSourceReadServices } from './customer-profile-source-persistence.ts';
+import { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
+import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
 import type { ReadServiceFactory } from '@app/core-runtime';
-import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
+import { defineScopedRoutine, ReadPermissionDenied, requireModuleOperation } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import type { ApplyCustomerGroupMembershipSourcePayload } from '../../shared/actions/apply-customer-group-membership-source.ts';
 import {
   ApplyCustomerGroupMembershipSourceResultSchema,
@@ -158,7 +163,8 @@ export interface CustomerGroupMembershipSourceOperations {
     invocationId: string,
     recordedAt: string,
   ) => Effect.Effect<
-    Readonly<{ replayed: boolean; result: typeof ApplyCustomerGroupMembershipSourceResultSchema.Type }>,
+    | Readonly<{ replayed: boolean; result: typeof ApplyCustomerGroupMembershipSourceResultSchema.Type }>
+    | { readonly refusal: CustomerGroupMembershipSourceRejected },
     CustomerGroupMembershipSourceRejected
   >;
   readonly recover: (
@@ -260,6 +266,56 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
       .pipe(Effect.mapError(privacyRejected));
     return yield* Effect.void;
   });
+  const sameCustomerSource = Schema.toEquivalence(CustomerProfileSourceAssertionSchema);
+  /**
+   * An ERP membership names the exact customer record its profile was resolved from. Symmy read it in another
+   * transaction, so the write repeats the owner's current customer read here: the customer route, its reader, the
+   * binding, Party and Privacy are checked again before the membership commits, and a revocation in between denies it.
+   */
+  const requireCurrentCustomerSource = Effect.fn('CustomerGroupMembershipSource.requireCurrentCustomerSource')(
+    function* requireCurrentCustomerSource(
+      payload: ApplyCustomerGroupMembershipSourcePayload,
+      customerSource: typeof CustomerProfileSourceAssertionSchema.Type,
+    ) {
+      // Legacy assignments, snapshot admission and ordinary receipt reads have no ERP customer to prove.
+      const proof = yield* Effect.serviceOption(CommerceSourceProfileOwnerProof);
+      if (Option.isNone(proof)) {
+        return yield* unavailable();
+      }
+      const customerSourceReader = yield* membershipCustomerSourceReadServices(transaction, scope, {
+        privacy,
+        proof: proof.value,
+      }).pipe(Effect.mapError(unavailable));
+      const current = yield* customerSourceReader.readSource({ ...customerSource, mode: 'CURRENT' }).pipe(
+        Effect.mapError((cause) =>
+          Schema.is(ReadPermissionDenied)(cause)
+            ? new CustomerGroupMembershipSourceRejected({
+                code: 'SOURCE_AUTHORITY_DENIED',
+                reason: rejectionReasons.SOURCE_AUTHORITY_DENIED,
+              })
+            : unavailable(cause),
+        ),
+      );
+      const item = Match.value(current).pipe(
+        Match.tag('CURRENT', ({ item: currentItem }) => currentItem),
+        Match.orElse(() => null),
+      );
+      if (
+        item === null ||
+        item.profile.state !== 'ACTIVE' ||
+        item.profile.profileRef.resourceId !== payload.profile.profileRef.resourceId ||
+        item.profile.profileRef.kind !== payload.profile.profileKind ||
+        (item.icoAuthority === 'ORGANIZATION') !== (payload.processingKind === 'ORG_BUSINESS_REFERENCE') ||
+        !sameCustomerSource(item.source, customerSource)
+      ) {
+        return yield* new CustomerGroupMembershipSourceRejected({
+          code: 'TARGET_INELIGIBLE',
+          reason: rejectionReasons.TARGET_INELIGIBLE,
+        });
+      }
+      return yield* Effect.void;
+    },
+  );
   return {
     admitSnapshot: Effect.fn('CustomerGroupMembershipSource.admitSnapshot')(
       function* admitSnapshot(payload, invocationId, recordedAt) {
@@ -294,9 +350,56 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
             ? ORG_WRITE_PRIVACY_REQUIREMENT
             : WRITE_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
+        const workload = readVerifiedGatewayWorkload(scope);
+        const admittedBy =
+          workload?.sourceMode === 'worker' &&
+          workload.recovery === undefined &&
+          workload.sourceAppId === 'symmy-integration' &&
+          workload.entrypointKey === 'commerce.customer-context.apply-customer-group-membership-source'
+            ? workload.admissionInvocationId
+            : null;
+        // Only an ERP assignment names the customer record it was resolved from.
+        const customerSource = Match.value(payload).pipe(
+          Match.when({ operation: 'ASSIGN' }, (assignment) => Option.fromUndefinedOr(assignment.customerSource)),
+          Match.orElse(() => Option.none()),
+        );
+        const reserved = payload.manager.sourceNamespace.startsWith('erp-membership-v1:');
+        if (reserved !== Option.isSome(customerSource) || (reserved && admittedBy === null)) {
+          return yield* new CustomerGroupMembershipSourceRejected({
+            code: 'SOURCE_AUTHORITY_DENIED',
+            reason: rejectionReasons.SOURCE_AUTHORITY_DENIED,
+          });
+        }
+        if (Option.isSome(customerSource)) {
+          // The prior positive was in Symmy's transaction. Re-evaluate both independent decisions while
+          // Privacy cannot commit a change to their governing inputs. No policy is replicated in Commerce.
+          const [interlock] = yield* transaction
+            .invoke(holdSourceEligibilityStable, [])
+            .pipe(Effect.mapError(unavailable));
+          if (interlock?.held !== true) {
+            return yield* unavailable();
+          }
+          // A definitive refusal before any mutation can be committed against this exact Action key.
+          // Unavailable infrastructure still rolls back and is never a terminal refusal.
+          const refusal = yield* requireCurrentCustomerSource(payload, customerSource.value).pipe(
+            Effect.as(Option.none<CustomerGroupMembershipSourceRejected>()),
+            Effect.catchIf(
+              (error) => error.code === 'SOURCE_AUTHORITY_DENIED' || error.code === 'TARGET_INELIGIBLE',
+              (error) => Effect.succeed(Option.some(error)),
+            ),
+          );
+          if (Option.isSome(refusal)) {
+            return { refusal: refusal.value };
+          }
+        }
         yield* checkPrivacy(payload, payload.source, WRITE_PRIVACY_OPERATION, requirement, payload);
         const [row] = yield* transaction
-          .invoke(applyMembershipSourceRoutine, [scope.principalId, invocationId, recordedAt, payload])
+          .invoke(applyMembershipSourceRoutine, [
+            scope.principalId,
+            invocationId,
+            recordedAt,
+            admittedBy === null ? payload : { ...payload, _sourceAdmission: admittedBy },
+          ])
           .pipe(Effect.mapError(unavailable));
         if (row === undefined) {
           return yield* unavailable();

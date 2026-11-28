@@ -11,6 +11,7 @@ import {
   symmyIntegrationRelations,
   symmyJobEffects,
   symmyJobRoutes,
+  symmyMembershipSourceOrders,
   symmyRouteEnrollmentRecords,
   symmySyncAdmissionAttempts,
   symmyJobPrivacyExecutions,
@@ -18,7 +19,11 @@ import {
   symmyJobRetentionTombstones,
   symmySyncAdmissions,
 } from '../src/db/schema.ts';
-import { ROUTE_ENROLLMENT_RECORD_CHECKS, normalizeConstraintDefinition } from './route-enrollment-record-checks.mts';
+import {
+  MEMBERSHIP_RESERVATION_WHEN,
+  ROUTE_ENROLLMENT_RECORD_CHECKS,
+  normalizeConstraintDefinition,
+} from './route-enrollment-record-checks.mts';
 
 class SymmySchemaVerificationError extends Schema.TaggedError<SymmySchemaVerificationError>()(
   'SymmySchemaVerificationError',
@@ -120,6 +125,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
   yield* database.select().from(symmySyncAdmissionAttempts).limit(0);
   yield* database.select().from(symmyJobPrivacyExecutions).limit(0);
   yield* database.select().from(symmyRouteEnrollmentRecords).limit(0);
+  yield* database.select().from(symmyMembershipSourceOrders).limit(0);
   // The catalog is used only by this operator-side verifier.
   const tables = yield* client<{
     readonly enabled: boolean;
@@ -162,6 +168,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
           ![
             'job_notifications',
             'job_retention_tombstones',
+            'membership_source_orders',
             'privacy_measure_executions',
             'route_enrollment_records',
           ].includes(name) ||
@@ -223,6 +230,29 @@ const verification = Effect.gen(function* verifySymmySchema() {
         'Symmy migration journal, route gate, change token or record triggers, or runtime schema privileges mismatch',
     });
   }
+  // The membership ledger is held by three triggers: no ledger-ordered effect and no reservation commits without the
+  // other, and only an ERP membership route enrolls a ledger-ordered source.
+  const [membershipLedger] = yield* client<{ enabled: boolean }>`
+    select (select count(*) from pg_catalog.pg_trigger t where t.tgenabled = 'O' and (
+        (t.tgrelid = 'symmy_integration.job_effects'::regclass
+          and t.tgname = 'symmy_membership_reservation_at_commit' and t.tgdeferrable and t.tginitdeferred
+          and t.tgtype = 21 -- row-level AFTER INSERT and UPDATE
+          and (select array_agg(a.attname order by a.attname) from unnest(t.tgattr) k(attnum)
+            join pg_catalog.pg_attribute a on a.attrelid = t.tgrelid and a.attnum = k.attnum) = array['effect']::name[]
+          and strpos(pg_catalog.pg_get_triggerdef(t.oid), ${MEMBERSHIP_RESERVATION_WHEN}) > 0
+          and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_reservation()'))
+        or (t.tgrelid = 'symmy_integration.membership_source_orders'::regclass
+          and t.tgname = 'symmy_membership_order_bound_at_commit' and t.tgdeferrable and t.tginitdeferred
+          and t.tgtype = 5 and t.tgqual is null -- unconditional row-level AFTER INSERT
+          and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_binding()'))
+        or (t.tgrelid = 'symmy_integration.job_routes'::regclass
+          and t.tgname = 'symmy_job_routes_membership_contract'
+          and t.tgqual is null and cardinality(t.tgattr::smallint[])=0 and t.tgtype = 23 -- row-level BEFORE INSERT and UPDATE
+          and t.tgfoid = to_regprocedure('symmy_integration.guard_symmy_membership_route()'))
+      )) = 3 as enabled`;
+  if (!(membershipLedger?.enabled ?? false)) {
+    yield* new SymmySchemaVerificationError({ reason: 'Membership ledger triggers mismatch' });
+  }
   yield* verifyRouteEnrollmentRecords(client);
   const routines = yield* client<{
     readonly definer: boolean;
@@ -248,6 +278,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'erase_symmy_effect_payload',
     'erase_symmy_plan_payload',
     'guard_route_enrollment_record',
+    'guard_symmy_membership_route',
     'lock_symmy_enrollment_snapshot',
     'lock_symmy_privacy_execution',
     'mark_symmy_job_effect_blocked',
@@ -262,17 +293,48 @@ const verification = Effect.gen(function* verifySymmySchema() {
     'read_symmy_job_notification_wake',
     'read_symmy_privacy_execution',
     'read_symmy_sync_lifecycle',
+    'record_symmy_membership_orders',
     'record_symmy_owner_executor',
     'record_symmy_owner_invocation',
     'record_symmy_owner_receipt',
     'record_symmy_owner_request',
     'record_symmy_privacy_execution',
     'record_symmy_resolved_effect',
+    'require_membership_order_binding',
+    'require_membership_order_reservation',
+    'reserve_symmy_membership_order',
     'settle_symmy_job_effect',
     'settle_symmy_job_notification',
+    'symmy_membership_ledger_namespace',
+    'symmy_membership_lineage',
     'symmy_original_route_active',
     'symmy_source_selector_code',
   ];
+  const noRuntime = new Set([
+    'guard_symmy_membership_route',
+    'require_membership_order_binding',
+    'require_membership_order_reservation',
+    'symmy_membership_ledger_namespace',
+    'publish_route_execution_gate',
+    'symmy_original_route_active',
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'advance_route_change_token',
+    'symmy_membership_lineage',
+  ]);
+  const notDefiner = new Set([
+    'symmy_membership_ledger_namespace',
+    'symmy_membership_lineage',
+    'symmy_source_selector_code',
+    'pin_symmy_fixture_plan',
+    'publish_route_execution_gate',
+    'symmy_original_route_active',
+    'erase_symmy_effect_payload',
+    'erase_symmy_plan_payload',
+    'guard_route_enrollment_record',
+    'advance_route_change_token',
+  ]);
   if (
     routines.length !== routineNames.length ||
     routines.some(
@@ -280,26 +342,8 @@ const verification = Effect.gen(function* verifySymmySchema() {
         routine.name !== routineNames[index] ||
         routine.public_execute ||
         !routine.safe_settings ||
-        routine.runtime_execute !==
-          ![
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name) ||
-        routine.definer !==
-          ![
-            'symmy_source_selector_code',
-            'pin_symmy_fixture_plan',
-            'publish_route_execution_gate',
-            'symmy_original_route_active',
-            'erase_symmy_effect_payload',
-            'erase_symmy_plan_payload',
-            'guard_route_enrollment_record',
-            'advance_route_change_token',
-          ].includes(routine.name),
+        routine.runtime_execute !== !noRuntime.has(routine.name) ||
+        routine.definer !== !notDefiner.has(routine.name),
     )
   ) {
     yield* new SymmySchemaVerificationError({ reason: 'Symmy execution routine inventory or runtime grants mismatch' });

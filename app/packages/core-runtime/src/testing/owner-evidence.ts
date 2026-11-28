@@ -1,7 +1,9 @@
 import type { PgClient } from '@effect/sql-pg';
 import { eq } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
+import { SecureRandom } from 'effect/crypto';
+import { makeOutboxRepository } from '../outbox/repository.ts';
 
 import { applicationCompositionAuthority, coreRelations } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
@@ -13,6 +15,12 @@ import {
 
 /** The caller supplies PgClient at its test composition root; Core keeps its relations private. */
 export const testCoreDatabase = makeWithDefaults({ relations: coreRelations });
+
+/** Run the production matcher without also starting a consumer. Use the fixture runtime database role. */
+export const matchTestCoreOutbox = Effect.fn('OwnerEvidence.matchOutbox')(function* match(revision: string) {
+  const repository = makeOutboxRepository(yield* testCoreDatabase, yield* SecureRandom.SecureRandom);
+  return yield* repository.matchUnmatched(revision, yield* DateTime.nowAsDate).pipe(Effect.asVoid);
+});
 
 /** Release a disposable fixture's dispatch queue without deleting append-only evidence. */
 export const deleteTestCoreOutbox = Effect.fn('OwnerEvidence.deleteTestCoreOutbox')(

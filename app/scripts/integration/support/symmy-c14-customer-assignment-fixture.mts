@@ -113,6 +113,7 @@ export interface SymmyC14CustomerFixtureOptions<Failure = never, Requirements = 
   }[];
   readonly includePriceGroup?: boolean;
   readonly initializeScopes: (input: SymmyC14CustomerFixtureScopeInput) => Effect.Effect<void, Failure, Requirements>;
+  readonly recordId?: string;
   readonly verifyPausedIntake?: boolean;
   readonly workloads?: readonly string[];
 }
@@ -324,7 +325,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const customerJobKey = 'INTERNAL_C14_CUSTOMER_JOB';
     // Governance describes the route; the actual Privacy admission Action must admit this first customer.
     const occurrenceId = customerOccurrenceId(customerJobKey, 'customer-0');
-    const recordId = 'INTERNAL_C14_NAMED_PERSON';
+    const recordId = options.recordId ?? 'INTERNAL_C14_NAMED_PERSON';
     const observedAt = yield* DateTime.now;
     const customerPlan = symmyC14CustomerPlanData({
       legalEntityId,
@@ -416,36 +417,37 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
         'Explicit internal fixture authorizes named source Party creation, evidence read, and Retail profile creation separately',
       tenantId,
     };
+    const customerPrivacyContexts: Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'] = [
+      ...intakeContexts,
+      {
+        authMethod: 'api_key',
+        principalId: integration.principalId,
+        request: { consumerModuleId: partyModuleId, operation: 'EVIDENCE_READ', source: flatSource, target: null },
+      },
+      ...(['CREATE', 'EVIDENCE_READ'] as const).map(
+        (operation) =>
+          ({
+            authMethod: 'system',
+            principalId: systemId,
+            request: { consumerModuleId: partyModuleId, operation, source: flatSource, target: null },
+          }) satisfies Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'][number],
+      ),
+      {
+        authMethod: 'system',
+        principalId: systemId,
+        request: {
+          consumerModuleId: commerceModuleId,
+          operation: 'PROFILE_CREATE',
+          partySourceReference: { occurrenceId, recordId, source: sourceIdentity },
+          source: flatSource,
+          target: null,
+        },
+        targetAdmission: 'CURRENT_SOURCE_PERSON',
+      },
+    ];
     const standingPrivacy = yield* seedSourceProcessingNativeFixture({
       ...privacyGovernance,
-      contexts: [
-        ...intakeContexts,
-        {
-          authMethod: 'api_key',
-          principalId: integration.principalId,
-          request: { consumerModuleId: partyModuleId, operation: 'EVIDENCE_READ', source: flatSource, target: null },
-        },
-        ...(['CREATE', 'EVIDENCE_READ'] as const).map(
-          (operation) =>
-            ({
-              authMethod: 'system',
-              principalId: systemId,
-              request: { consumerModuleId: partyModuleId, operation, source: flatSource, target: null },
-            }) satisfies Parameters<typeof seedSourceProcessingNativeFixture>[0]['contexts'][number],
-        ),
-        {
-          authMethod: 'system',
-          principalId: systemId,
-          request: {
-            consumerModuleId: commerceModuleId,
-            operation: 'PROFILE_CREATE',
-            partySourceReference: { occurrenceId, recordId, source: sourceIdentity },
-            source: flatSource,
-            target: null,
-          },
-          targetAdmission: 'CURRENT_SOURCE_PERSON',
-        },
-      ],
+      contexts: customerPrivacyContexts,
     });
     expect(standingPrivacy.plans).toEqual([]);
     expect(standingPrivacy.subjectRefs).toEqual([]);
@@ -730,6 +732,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
       admin,
       completed,
       contracts,
+      customerPrivacyContexts,
       environment,
       flatSource,
       governancePrincipalId,

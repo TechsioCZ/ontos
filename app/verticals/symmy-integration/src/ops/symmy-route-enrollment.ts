@@ -26,6 +26,10 @@ import { PrincipalIdSchema, TenantIdSchema } from '@app/core-runtime/auth/extern
 import { Option, Schema } from 'effect';
 
 import { SymmyRouteContextRequestSchema } from '../../shared/apis/symmy-route-context.ts';
+import {
+  SYMMY_ERP_MEMBERSHIP_CONTRACT,
+  isSymmyErpMembershipNamespace,
+} from '../../shared/domain/symmy-customer-group-batch.ts';
 import { SymmyFixtureExecutionPlanSchema } from '../../shared/domain/symmy-job-execution.ts';
 import { SymmyJobIdSchema } from '../../shared/domain/symmy-job-identities.ts';
 import type { SymmyFixtureExecutionPlan } from '../../shared/domain/symmy-job-execution.ts';
@@ -61,13 +65,27 @@ import { stockOperation } from '../persistence/symmy-stock-plan.ts';
 import { SymmyRouteEnrollmentRefused } from './symmy-route-enrollment-refused.ts';
 import type { SymmyRouteEnrollmentRefusal, SymmyRouteEnrollmentRefusalCode } from './symmy-route-enrollment-refused.ts';
 
-/** The admission contract every non-fixture route admits under (`input.fixtureId ?? 'INTERNAL_C14'`). */
-const ADMISSION_FIXTURE_IDS: readonly string[] = ['INTERNAL_C14'];
+/**
+ * The admission contract a route admits new work under. A customer group customers route whose membership source is of
+ * a namespace reserved for ERP memberships is an ERP membership route: it admits the ERP's customers of its group,
+ * ordered by the membership ledger, under that contract alone. Every other route admits under `INTERNAL_C14`
+ * (`input.fixtureId ?? 'INTERNAL_C14'`), a membership route of any other namespace included: it keeps admitting the
+ * memberships its callers order themselves and never an ERP customer id.
+ */
+const admissionFixtureIds = ({
+  configuration,
+  routeKey,
+}: Pick<SymmyRouteEnrollmentRequest, 'configuration' | 'routeKey'>): readonly string[] =>
+  routeKey === 'customerGroupCustomersBatch' &&
+  configuration.items.some(({ source }) => isSymmyErpMembershipNamespace(source.sourceNamespace))
+    ? [SYMMY_ERP_MEMBERSHIP_CONTRACT]
+    : ['INTERNAL_C14'];
 const catalogModule = 'commerce.catalog';
 const pricingModule = 'commerce.pricing';
 const priceGroupModule = 'pricing.price-group-catalog';
 const partyModule = 'party.registry';
 const customerModule = 'commerce.customer-context';
+const customerProfileSourceRead = 'commerce.customer-context.api.customer-profile-source';
 const priceWrites: ReadonlySet<string> = new Set([priceOperation.entrypointKey, reviseOperation.entrypointKey]);
 /** The price reads `readSymmyPriceBatchFacts` requires of the price list read route before it admits a REVISE price. */
 const revisionReads: readonly SymmyOwnerOperation[] = [
@@ -296,6 +314,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
       companyRequired: true,
       family: 'customerGroups',
       operations: [
+        shellRead(customerModule, customerProfileSourceRead),
         executor(customerGroupOperation('commerce.customer-context.apply-customer-group-membership-source'), {
           reads: [read('commerce.customer-context.api.customer-group-definition-source')],
           required: true,
@@ -337,7 +356,7 @@ const symmyRouteInventories = new Map<SymmyEnrollmentRouteKey, SymmyRouteInvento
         executor(retailProfileOperation),
         executor(counterpartyProfileOperation),
         executor(addAddressOperation),
-        executor(organizationIcoOperation, { reads: [read('commerce.customer-context.api.customer-profile-source')] }),
+        executor(organizationIcoOperation, { reads: [read(customerProfileSourceRead)] }),
       ],
       uniformEntityKind: true,
     },
@@ -429,10 +448,20 @@ const enrolledOperations = (configuration: SymmyFixtureExecutionPlan) =>
     effects.map(({ operation }) => ({ entityKind: source.entityKind, operation })),
   );
 /** The inventory operations a configuration enrolls. */
-export const symmyEnrolledInventory = (inventory: SymmyRouteInventory, configuration: SymmyFixtureExecutionPlan) =>
-  inventory.operations.filter((operation) =>
-    enrolledOperations(configuration).some((enrolled) => sameOperation(enrolled.operation, operation)),
-  );
+export const symmyEnrolledInventory = (inventory: SymmyRouteInventory, configuration: SymmyFixtureExecutionPlan) => {
+  const configured = enrolledOperations(configuration);
+  const ledger = configuration.items.some(({ source }) => isSymmyErpMembershipNamespace(source.sourceNamespace));
+  return inventory.operations.flatMap((operation) => {
+    if (!configured.some((enrolled) => sameOperation(enrolled.operation, operation))) {
+      return [];
+    }
+    return [
+      ledger && operation.entrypointKey === 'commerce.customer-context.apply-customer-group-membership-source'
+        ? { ...operation, reads: [...(operation.reads ?? []), read(customerProfileSourceRead)] }
+        : operation,
+    ];
+  });
+};
 
 /** A route with complete plans enrolls every operation of at least one of them. */
 const completePlanRefusals = (
@@ -540,6 +569,12 @@ export const symmyRouteRequestRefusals = (
       'Catalog readiness is a Product route policy with the tenant-local Inventory Unit',
     ),
     ...selectorRefusals(request, inventory),
+    ...refuseWhen(
+      request.routeKey !== 'customerGroupCustomersBatch' &&
+        configuration.items.some(({ source }) => isSymmyErpMembershipNamespace(source.sourceNamespace)),
+      'configuration_field_not_allowed',
+      'Only an ERP membership route may enroll the ledger namespace',
+    ),
     ...enrolled.flatMap(({ entityKind, operation }) => {
       const listed = inventory.operations.find((candidate) => sameOperation(candidate, operation));
       if (listed === undefined) {
@@ -568,6 +603,16 @@ export const symmyRouteRequestRefusals = (
         'required_operation_missing',
         `${request.routeKey} cannot serve a request without ${symmyOperationName(operation)}`,
       ),
+    ),
+    // An ERP membership route names customers by their ERP id, so the Shell reads each one's current profile.
+    ...refuseWhen(
+      admissionFixtureIds(request).includes(SYMMY_ERP_MEMBERSHIP_CONTRACT) &&
+        !enrolled.some(
+          ({ operation }) =>
+            operation.moduleId === customerModule && operation.entrypointKey === customerProfileSourceRead,
+        ),
+      'required_operation_missing',
+      `${request.routeKey} of an ERP membership namespace cannot serve a request without ${customerProfileSourceRead}`,
     ),
     ...refuseWhen(
       inventory.admission !== 'read' &&
@@ -768,14 +813,15 @@ export const symmyRouteDifferences = (
   request: SymmyRouteEnrollmentRequest,
   row: RouteRow,
 ): readonly SymmyRouteField[] => {
+  const requestedFixtureIds = admissionFixtureIds(request);
   const differs = {
     active: !row.active,
     configuration: !Option.exists(decodeStoredConfiguration(row.fixturePlan), (stored) =>
       sameConfiguration(stored, request.configuration),
     ),
     fixtureIds:
-      row.fixtureIds.length !== ADMISSION_FIXTURE_IDS.length ||
-      row.fixtureIds.some((fixtureId, index) => fixtureId !== ADMISSION_FIXTURE_IDS[index]),
+      row.fixtureIds.length !== requestedFixtureIds.length ||
+      row.fixtureIds.some((fixtureId, index) => fixtureId !== requestedFixtureIds[index]),
     legalEntityId: row.legalEntityId !== (request.legalEntityId ?? null),
     lifecyclePolicy: Option.match(Option.fromUndefinedOr(request.lifecyclePolicy), {
       onNone: () => row.lifecyclePolicy !== null,
@@ -796,7 +842,7 @@ export const symmyRouteDifferences = (
 /** The row columns one enrollment writes, as the job store reads them back. */
 export const symmyPlannedRouteRow = (request: SymmyRouteEnrollmentRequest) => ({
   active: true,
-  fixtureIds: [...ADMISSION_FIXTURE_IDS],
+  fixtureIds: [...admissionFixtureIds(request)],
   legalEntityId: request.legalEntityId ?? null,
   mappingVersion: request.mappingVersion,
   principalId: request.principalId,

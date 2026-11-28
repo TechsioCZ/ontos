@@ -14,6 +14,7 @@ import { sourceProcessingIdentityKey } from '../../shared/domain/privacy-source-
 import type { SourceProcessingAuthorization } from '../../shared/domain/privacy-source-processing-authorization.ts';
 import type { PrivacySubjectRecord } from '../../shared/domain/privacy-subject.ts';
 import type { SourceProcessingAdmissionRow } from '../../src/persistence/source-processing-authorization-repository.ts';
+import { PrivacyActionRejected } from '../../src/actions/privacy-action-rejected.ts';
 import { makeStandingSourceFixture } from '../support/standing-source-fixture.ts';
 
 const ids = {
@@ -60,6 +61,8 @@ const ledgers = (authorization: SourceProcessingAuthorization) => {
   const services: AdmitServices = {
     authorizations: {
       activeForRoute: () => Effect.succeed(authorization.lifecycle === 'ACTIVE' ? [authorization] : []),
+      admission: (source) =>
+        Effect.succeed(Option.fromUndefinedOr(admissions.get(sourceProcessingIdentityKey(source)))),
       admit: (input) =>
         Effect.suspend(() => {
           for (const { role, source } of input.sources) {
@@ -238,6 +241,38 @@ describe('source processing subject admission', () => {
       expect(admissions.has(sourceProcessingIdentityKey(member.source))).toBe(false);
       expect(candidates.get(sourceProcessingIdentityKey(member.source))?.role).toBe('CHILD');
       expect(subjects.size).toBe(1);
+      const ownerLinked = admitContext(
+        { ...renewed, profileSource: () => Effect.succeed(Option.some(root)) },
+        '30000000-0000-4000-8000-0000000000a5',
+      );
+      expect(
+        (yield* handleAdmitSourceProcessingSubject({ ...member, membershipCustomer: root }, ownerLinked)).subjectRef,
+      ).toEqual(first.subjectRef);
+      const other = customer('customer:someone-else');
+      yield* handleAdmitSourceProcessingSubject(
+        { childSources: [], source: other },
+        admitContext(renewed, '30000000-0000-4000-8000-0000000000a6'),
+      );
+      const before = new Map(admissions);
+      const candidatesBefore = new Map(candidates);
+      for (const [index, membershipCustomer] of [
+        other,
+        customer('customer:never-admitted'),
+        { ...root, namespace: 'foreign-customers' },
+      ].entries()) {
+        // A fresh context per attempt: a refusal must come from the customer check, never from a reused collector.
+        const refused = yield* handleAdmitSourceProcessingSubject(
+          { ...member, membershipCustomer },
+          admitContext(
+            { ...renewed, profileSource: () => Effect.succeed(Option.some(root)) },
+            `30000000-0000-4000-8000-0000000000b${String(index + 5)}`,
+          ),
+        ).pipe(Effect.flip);
+        expect(refused).toBeInstanceOf(PrivacyActionRejected);
+      }
+      expect(admissions).toEqual(before);
+      expect(candidates).toEqual(candidatesBefore);
+      expect(subjects.size).toBe(2);
     }),
   );
   it.effect('refuses an ended authorization, an unlisted principal and a foreign route', () =>

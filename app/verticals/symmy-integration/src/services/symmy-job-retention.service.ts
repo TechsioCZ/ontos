@@ -58,6 +58,22 @@ const requireRecheckedAuthority = (
   return Effect.succeed(authority);
 };
 
+const recheckApproval = Effect.fn('SymmyJobRetention.recheckApproval')(function* recheckApproval(
+  scope: OperationalScope,
+  handoff: PrivacyMeasureHandoff,
+  authority: Extract<SymmyJobPrivacyAuthority, { readonly status: 'CURRENT_APPROVED' }>,
+) {
+  const privacy = yield* SymmyJobPrivacy;
+  const finalAuthority = yield* privacy.current(handoff, scope).pipe(Effect.flatMap(requireRecheckedAuthority));
+  if (
+    finalAuthority.authorityReceiptRef !== authority.authorityReceiptRef ||
+    finalAuthority.sourceDecisionRevision !== authority.sourceDecisionRevision
+  ) {
+    return yield* new SymmyJobRetentionError({ code: 'retention_authority_conflict' });
+  }
+  return yield* Effect.void;
+});
+
 export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(function* makeScopedRetention(
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
@@ -127,27 +143,29 @@ export const symmyJobRetentionService = Effect.fn('SymmyJobRetention.forScope')(
       if (originalAdmissionId === undefined) {
         return yield* unavailable();
       }
+      // The purge locks the job and effects. An expired claim still needs its original open fence to recover.
+      const status = yield* store.purge({
+        authority: {
+          authorityReceiptRef: authority.authorityReceiptRef,
+          authorityRevision: String(authority.sourceDecisionRevision),
+          contentScopeRef:
+            target.kind === 'JOB'
+              ? symmyJobIntentContentRef(jobId)
+              : `integration.symmy.sync-admission:${jobId}#integration.symmy.job-intent`,
+          resourceRef: target.kind === 'JOB' ? symmyJobResourceRef(jobId) : `integration.symmy.sync-admission:${jobId}`,
+          status: 'CURRENT_APPROVED',
+        },
+        jobId,
+        kind: target.kind,
+        policy,
+      });
+      if (status === 'BLOCKED') {
+        return outcome(status);
+      }
+      // Erasure and cancellation commit together, after any owner transaction holding the fence completes.
       yield* cancelScopedSourceExecutionFence(transaction, originalAdmissionId).pipe(Effect.mapError(unavailable));
-      // Cancellation may have waited for an existing owner transaction. Its earlier approval is not current after that wait.
-      const finalAuthority = yield* privacy.current(handoff, scope).pipe(Effect.flatMap(requireRecheckedAuthority));
-      return outcome(
-        yield* store.purge({
-          authority: {
-            authorityReceiptRef: finalAuthority.authorityReceiptRef,
-            authorityRevision: String(finalAuthority.sourceDecisionRevision),
-            contentScopeRef:
-              target.kind === 'JOB'
-                ? symmyJobIntentContentRef(jobId)
-                : `integration.symmy.sync-admission:${jobId}#integration.symmy.job-intent`,
-            resourceRef:
-              target.kind === 'JOB' ? symmyJobResourceRef(jobId) : `integration.symmy.sync-admission:${jobId}`,
-            status: 'CURRENT_APPROVED',
-          },
-          jobId,
-          kind: target.kind,
-          policy,
-        }),
-      );
+      yield* recheckApproval(scope, handoff, authority);
+      return outcome(status);
     }),
   });
 });

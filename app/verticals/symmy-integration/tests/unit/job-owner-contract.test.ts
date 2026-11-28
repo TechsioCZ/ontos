@@ -165,4 +165,28 @@ describe('Symmy internal job owner contracts', () => {
     expect(Result.isFailure(parseSyncAdmission({ ...groups, contractVersion: 'INTERNAL_C14' }))).toBe(true);
     expect(Result.isFailure(parseSyncAdmission({ ...groups, fixtureId: 'fixture-safe' }))).toBe(true);
   });
+  it('admits the customers of a selected group only on the coded route, each once by its customer id', () => {
+    const members = {
+      code: 'customer-group',
+      groupCustomers: [{ customerId: 'AKROS-0001' }],
+      idempotencyKey: 'members-key',
+      routeKey: 'customerGroupCustomersBatch',
+    };
+    expect(Result.isSuccess(parseAdmission(members))).toBe(true);
+    const { code: _code, ...withoutCode } = members;
+    expect(Result.isFailure(parseAdmission(withoutCode))).toBe(true);
+    for (const other of [
+      { routeKey: 'customersBatch' },
+      { fixtureId: 'fixture-safe' },
+      { contractVersion: 'INTERNAL_C14' },
+      { groupCustomers: [] },
+      { groupCustomers: [{ customerId: 'AKROS-0001' }, { customerId: 'AKROS-0001' }] },
+      { groupCustomers: Array.from({ length: 17 }, (_, index) => ({ customerId: `AKROS-${index}` })) },
+      { groupCustomers: [{ customerId: 'AKROS-0001', profileRef: {} }] },
+    ]) {
+      expect(Result.isFailure(parseAdmission({ ...members, ...other })), JSON.stringify(other)).toBe(true);
+    }
+    const sixteen = Array.from({ length: 16 }, (_, index) => ({ customerId: `AKROS-${index}` }));
+    expect(Result.isSuccess(parseAdmission({ ...members, groupCustomers: sixteen }))).toBe(true);
+  });
 });

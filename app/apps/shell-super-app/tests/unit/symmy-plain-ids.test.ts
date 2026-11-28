@@ -75,7 +75,10 @@ const ownerPartsIn = (node: Json, path: string) =>
     .filter(isOwnerPart)
     .map((property) => property.path);
 
-/** Group assignment has no public body yet: it takes an internal fixture or plan, whose shapes are the owners'. */
+/**
+ * Group assignment takes the ERP's customers, each named by its plain customer id alone (the request contract test
+ * holds that body), and still the internal fixture or plan it has always taken, whose shapes are the owners'.
+ */
 const internalBodies = new Set<string>([SYMMY_ROUTES.customerGroupCustomersBatch.path]);
 
 const operations = Object.entries(document.paths).flatMap(([path, methods]) =>

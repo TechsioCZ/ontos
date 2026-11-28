@@ -38,6 +38,18 @@ it.effect(
         query.authContextRef,
         2,
       ]);
+      const delivery = yield* makeTestDatabase((statement) => {
+        const sourceEffectOutcome = statement.includes('sourceEffectSettlement') ? 'unchanged' : null;
+        return Effect.succeed([{ ...rows[0], sourceEffectOutcome }]);
+      });
+      expect(
+        Option.getOrUndefined(
+          yield* readOriginalActionInvocationFacts(delivery, tenantId, query, query.authContextRef),
+        ),
+      ).toEqual({ ...rows[0], sourceEffectOutcome: 'unchanged' });
+      expect(
+        Option.getOrUndefined(yield* readOriginalActionInvocationFacts(delivery, tenantId, query, 'another-delivery')),
+      ).toEqual(rows[0]);
       rows = [];
       expect(Option.isNone(yield* readOriginalActionInvocationFacts(database, tenantId, query))).toBe(true);
       rows = [

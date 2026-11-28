@@ -104,7 +104,13 @@ const ownerScope = (
       persist: persistOutboxWorkerCompletion(transaction),
     }),
     (input) => readWorkerWorkloadPrincipalEligibility(transaction, context.tenantId, input),
-    (input) => readOriginalActionInvocationFacts(transaction, context.tenantId, input),
+    (input) =>
+      readOriginalActionInvocationFacts(
+        transaction,
+        context.tenantId,
+        input,
+        `job:${context.workerKey}:run:${context.deliveryId}`,
+      ),
   );
   return Object.freeze({
     close: capabilities.close,

@@ -432,6 +432,12 @@ export const TRUST_ROUTINES: readonly TrustRoutine[] = [
     securityDefiner: true,
     signature: LOCK_ACCESS_SCOPE_FENCE_SIGNATURE,
   },
+  { executableBy: [], securityDefiner: false, signature: 'trust.source_effect_commitment(text,jsonb)' },
+  {
+    executableBy: [],
+    securityDefiner: false,
+    signature: 'trust.hold_admitted_source_effect(uuid,uuid,uuid,text,text,jsonb)',
+  },
   { executableBy: [], securityDefiner: false, signature: 'trust.verified_scope()' },
   { executableBy: [], securityDefiner: false, signature: 'trust.scope_payload(xid8,timestamptz,uuid,uuid)' },
   { executableBy: [], securityDefiner: false, signature: 'trust.scope_mac(text)' },

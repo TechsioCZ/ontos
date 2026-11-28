@@ -1,3 +1,10 @@
+export { currentCustomerSourceMatches, projectCurrentMembershipCustomer } from './membership-customer.ts';
+export {
+  symmyCustomerRecordProjection,
+  symmyCustomerRecordProven,
+  symmyCustomerRecordSeed,
+  symmyCustomerSourceRecordId,
+} from './customer-record.ts';
 export {
   pinSymmyOwnerEffect,
   qualifySymmySourceRecord,

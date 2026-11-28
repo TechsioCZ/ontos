@@ -51,6 +51,12 @@ const readExecution = defineScopedRoutine({
   }),
   routineKey: 'symmy-job.read-execution',
 });
+/**
+ * The membership protocol this worker implements, stated with every claim: a ledger-ordered membership is claimed in
+ * its lineage's order and re-checked against its customer before the owner call. The claim hands a ledger-ordered
+ * membership to no worker that states another protocol or none, as a binary from before the ledger does.
+ */
+const MEMBERSHIP_CLAIM_PROTOCOL = 1;
 const claimEffect = defineScopedRoutine({
   ...routineBase,
   name: 'claim_symmy_job_effect',
@@ -59,6 +65,7 @@ const claimEffect = defineScopedRoutine({
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'uuid' },
     { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'integer' },
   ],
   resultSchema: Schema.toEncoded(SymmyEffectClaimSchema),
   routineKey: 'symmy-job.claim-effect',
@@ -339,7 +346,7 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
   }),
   claim: Effect.fn('SymmyJobExecution.claim')(function* claim(jobId: string, effectId: string, claimToken: string) {
     const [row] = yield* transaction
-      .invoke(claimEffect, [jobId, effectId, claimToken])
+      .invoke(claimEffect, [jobId, effectId, claimToken, MEMBERSHIP_CLAIM_PROTOCOL])
       .pipe(Effect.mapError(unavailable));
     if (row === undefined) {
       return yield* unavailable();

@@ -4,7 +4,7 @@ import { FetchHttpClient } from 'effect/http';
 import { SymmyJobPrivacy } from '../../src/services/symmy-job-privacy.service.ts';
 import { symmyJobRetentionService } from '../../src/services/symmy-job-retention.service.ts';
 import { TestClock } from 'effect/testing';
-import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
+import { SymmyEffectIdSchema, SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
 import { loadDatabaseConnectionPair, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { installOperationalScope } from '@app/core-runtime/testing/actions';
@@ -241,12 +241,57 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
           .from(symmyJobEffects)
           .where(eq(symmyJobEffects.effectId, state.effectId));
         expect(rows).toEqual([{ state: 'attempting' }]);
-        expect(
-          yield* state.adminDb
-            .select()
-            .from(symmyJobRetentionTombstones)
-            .where(eq(symmyJobRetentionTombstones.jobId, state.jobId)),
-        ).toHaveLength(0);
+        // Lease expiry makes the effect recoverable, not disposable. The owner might already have committed.
+        yield* state.admin`update symmy_integration.job_effects set lease_until=clock_timestamp()-interval '1 second'
+          where tenant_id=${state.scope.tenantId} and effect_id=${state.effectId}`;
+        const purge = state.secondDb.transaction((tx) =>
+          installOperationalScope(tx, state.governanceScope).pipe(
+            Effect.flatMap((executor) => symmyJobRetentionStore(executor).purge(state.purgeInput)),
+          ),
+        );
+        expect(yield* purge).toBe('BLOCKED');
+        const recoveryToken = crypto.randomUUID();
+        yield* state.firstDb.transaction((tx) =>
+          Effect.gen(function* recover() {
+            const store = symmyJobExecutionStore(yield* installOperationalScope(tx, state.scope));
+            const recovery = yield* store.claim(state.jobId, state.effectId, recoveryToken);
+            expect(recovery.mode).toBe('recover');
+            expect(yield* store.markIndeterminate(state.jobId, state.effectId, recoveryToken, recovery.version)).toBe(
+              true,
+            );
+          }),
+        );
+        expect(yield* purge).toBe('BLOCKED');
+        const tombstones = state.adminDb
+          .select()
+          .from(symmyJobRetentionTombstones)
+          .where(eq(symmyJobRetentionTombstones.jobId, state.jobId));
+        expect(yield* tombstones).toHaveLength(0);
+        // Once recovery reconciles the owner's outcome, the approved disposition erases the intent and keeps the outcome.
+        const reconciledToken = crypto.randomUUID();
+        yield* state.firstDb.transaction((tx) =>
+          Effect.gen(function* reconcile() {
+            const store = symmyJobExecutionStore(yield* installOperationalScope(tx, state.scope));
+            const recovery = yield* store.claim(state.jobId, state.effectId, reconciledToken);
+            expect(recovery.mode).toBe('recover');
+            const outcome = Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+              effectId: state.effectId,
+              owner: 'commerce.catalog',
+              status: 'accepted_change',
+            });
+            expect(yield* store.settle(state.jobId, state.effectId, reconciledToken, recovery.version, outcome)).toBe(
+              true,
+            );
+          }),
+        );
+        expect(yield* purge).toBe('PURGED');
+        expect(yield* tombstones).toHaveLength(1);
+        const settled = yield* state.adminDb
+          .select({ effect: symmyJobEffects.effect, outcome: symmyJobEffects.outcome, state: symmyJobEffects.state })
+          .from(symmyJobEffects)
+          .where(eq(symmyJobEffects.effectId, state.effectId));
+        expect(settled).toMatchObject([{ outcome: { status: 'accepted_change' }, state: 'settled' }]);
+        expect(JSON.stringify(settled)).not.toContain('internal-record');
       } else {
         expect(firstResult).toBe('PURGED');
         expect(secondResult).toMatchObject({ mode: 'blocked' });
@@ -260,6 +305,66 @@ for (const order of ['CLAIM_FIRST', 'PURGE_FIRST'] as const) {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
   );
 }
+
+it.effect(
+  'erases an admitted job that pins no owner effect, and blocks one whose plan pins effects it never wrote',
+  () =>
+    Effect.gen(function* zeroEffectJob() {
+      const state = yield* fixture;
+      const { routeId } = state.purgeInput.policy;
+      const insertJob = (items: readonly unknown[]) =>
+        Effect.gen(function* insertPlannedJob() {
+          const jobId = crypto.randomUUID();
+          // A distinct 64-digit hex digest per job, as the admission stores a SHA-256.
+          const digest = jobId.replaceAll('-', '').repeat(2);
+          const plan = JSON.stringify({ items });
+          yield* state.admin`insert into symmy_integration.import_jobs(job_id,tenant_id,route_id,route_key,route_revision,mapping_version,principal_id,fixture_id,idempotency_digest,intent_digest,phase,execution_plan)
+          values(${jobId},${state.scope.tenantId},${routeId},'productsBatch','v1','v1',${state.scope.principalId},'internal-race',${digest},${digest},'admitted',${plan}::jsonb)`;
+          return jobId;
+        });
+      const purgeJob = (jobId: string) =>
+        state.secondDb.transaction((tx) =>
+          installOperationalScope(tx, state.governanceScope).pipe(
+            Effect.flatMap((executor) =>
+              symmyJobRetentionStore(executor).purge({
+                ...state.purgeInput,
+                authority: {
+                  ...state.purgeInput.authority,
+                  contentScopeRef: symmyJobIntentContentRef(jobId),
+                  resourceRef: symmyJobResourceRef(jobId),
+                },
+                jobId,
+              }),
+            ),
+          ),
+        );
+      // An ERP batch of customers the owner never named: one item, refused for missing context, and no effect row.
+      const unsupported = yield* insertJob([
+        {
+          effects: [],
+          itemId: crypto.randomUUID(),
+          itemKey: 'membership-0',
+          unsupportedBranches: [{ branchId: crypto.randomUUID(), branchKey: 'customer', kind: 'CustomerHint' }],
+        },
+      ]);
+      expect(yield* purgeJob(unsupported)).toBe('PURGED');
+      const [tombstone] = yield* state.adminDb
+        .select({ retained: symmyJobRetentionTombstones.retainedEffectIds })
+        .from(symmyJobRetentionTombstones)
+        .where(eq(symmyJobRetentionTombstones.jobId, unsupported));
+      expect(tombstone?.retained).toEqual([]);
+      const [erased] = yield* state.admin<{
+        plan: unknown;
+      }>`select execution_plan as plan from symmy_integration.import_jobs where job_id=${unsupported}`;
+      expect(erased?.plan).toMatchObject({ items: [{ effects: [], unsupportedBranches: [{ kind: 'CustomerHint' }] }] });
+      expect(JSON.stringify(erased?.plan)).not.toContain('membership-0');
+      // A plan that pins an effect with no effect row is inconsistent: retention refuses it rather than guess.
+      const inconsistent = yield* insertJob([
+        { effects: [{ effectKey: 'catalog' }], itemId: crypto.randomUUID(), itemKey: 'internal-row' },
+      ]);
+      expect(yield* purgeJob(inconsistent)).toBe('BLOCKED');
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, Reactivity.layer))),
+);
 
 it.effect(
   'binds the immutable target scope and explicit verified Privacy governance scope before consulting Privacy',

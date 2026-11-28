@@ -1,6 +1,8 @@
+import { CustomerProfileSourceAssertionSchema } from '../domain/customer-profile-source.ts';
 import { Schema } from 'effect';
 import {
   MembershipSourceAssertionSchema,
+  MembershipEffectSettlementSchema,
   MembershipSourceIdentitySchema,
   MembershipSourceManagerSchema,
   MembershipSourceRouteSchema,
@@ -53,6 +55,8 @@ export type CompleteCustomerGroupMembershipSnapshot = typeof CompleteCustomerGro
 export const ApplyCustomerGroupMembershipSourcePayloadSchema = Schema.Union([
   Schema.Struct({
     ...baseFields,
+    // An ERP assignment names the exact customer record its profile was resolved from; only an assignment does.
+    customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
     groupRef: CustomerGroupRefSchema,
     operation: Schema.Literal('ASSIGN'),
   }),
@@ -90,6 +94,7 @@ const PersonCustomerGroupMembershipSourceResultSchema = Schema.Struct({
   processingKind: Schema.optionalKey(Schema.Never),
   reasonCode: Schema.optionalKey(Schema.Never),
   source: MembershipSourceAssertionSchema,
+  sourceEffectSettlement: Schema.optionalKey(MembershipEffectSettlementSchema),
 });
 export const ApplyCustomerGroupMembershipSourceResultSchema = Schema.Union([
   OrganizationMembershipSourceResultSchema,

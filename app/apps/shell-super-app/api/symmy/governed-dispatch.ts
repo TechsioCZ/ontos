@@ -1,3 +1,4 @@
+import { readSymmyMembershipCustomerFacts } from './membership-customer-facts.ts';
 import { SYMMY_FIXTURE_ROUTES } from '@app/shared-contracts/symmy';
 import { GatewayAuthenticationRequiredProblemSchema, GatewayForbiddenProblemSchema } from '@app/shared-contracts';
 import { executeAdmitSymmyJobWithAuthorization } from '@app/symmy-integration/api/admit-symmy-job-action/client';
@@ -217,6 +218,21 @@ const submitSource = Effect.fn('SymmyGovernedDispatch.submitSource')(function* s
 ) {
   if ('customers' in request) {
     return { customers: request.customers };
+  }
+  if ('groupCustomers' in request) {
+    if (selected === undefined) {
+      return yield* unavailable();
+    }
+    if (selected.route.replayIdempotencyDigest !== undefined) {
+      return { groupCustomers: request.groupCustomers };
+    }
+    return {
+      groupCustomerFacts: yield* readSymmyMembershipCustomerFacts(
+        { admission, membershipRoute: selected.route, rows: request.groupCustomers },
+        newRequestIdentifier,
+      ),
+      groupCustomers: request.groupCustomers,
+    };
   }
   if ('products' in request) {
     if (selected === undefined) {
@@ -467,6 +483,7 @@ export const makeSymmyGovernedDispatch = (
       'priceLists' in request ||
       'priceBatch' in request ||
       'customers' in request ||
+      'groupCustomers' in request ||
       'products' in request ||
       Schema.is(Schema.toType(SymmyInternalPlanPayloadSchema))(request) ||
       ('code' in request && Schema.is(SymmyEncodedSourceCodeSchema)(request.code));

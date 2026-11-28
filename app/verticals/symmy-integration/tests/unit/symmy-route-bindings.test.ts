@@ -318,6 +318,7 @@ describe('Symmy route bindings', () => {
         actions: receivingAction('commerce.customer-context.apply-customer-group-membership-source'),
         operationContracts: [
           ...receivingRead('commerce.customer-context.api.customer-group-definition-source'),
+          ...receivingRead('commerce.customer-context.api.customer-profile-source'),
           ...receivingRead('commerce.customer-context.api.customer-group-membership-source-receipt'),
         ],
       },
@@ -457,6 +458,7 @@ describe('Symmy route bindings', () => {
         actions: receivingAction('commerce.customer-context.apply-customer-group-membership-source'),
         operationContracts: [
           ...receivingRead('commerce.customer-context.api.customer-group-definition-source'),
+          ...receivingRead('commerce.customer-context.api.customer-profile-source'),
           ...receivingRead('commerce.customer-context.api.customer-group-membership-source-receipt'),
         ],
       },

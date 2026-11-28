@@ -242,6 +242,7 @@ const completePartyIcoInventoryEvidence = 'commerce.customer-context.evidence.co
 const legacyIcoInventoryProviderEntrypoint = 'party.registry.api.legacy-ico-inventory';
 const organizationIcoMigrationWriteEntrypoint = 'commerce.customer-context.migrate-organization-customer-profile-ico';
 const customerProfileSourceEntrypoint = 'commerce.customer-context.api.customer-profile-source';
+const applyMembershipSourceEntrypoint = 'commerce.customer-context.apply-customer-group-membership-source';
 const customerProfileSourcePageEntrypoint = 'commerce.customer-context.api.customer-profile-source-page';
 const profileIcoMigrationReadEntrypoint = 'commerce.customer-context.api.customer-profile-ico-migration';
 const profileIcoMigrationWriteEntrypoint = 'commerce.customer-context.migrate-customer-profile-ico';
@@ -872,7 +873,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       },
       {
         condition: currentSourceProcessingCondition,
-        entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+        entrypointKey: applyMembershipSourceEntrypoint,
         evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
         key: 'commerce.customer-context.requirement.org-membership-write-privacy',
         provider: {
@@ -1114,6 +1115,28 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       },
       {
         condition: currentSourceProfileCondition,
+        entrypointKey: applyMembershipSourceEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.membership-customer-source-party',
+        provider: {
+          entrypointKey: sourcePersonAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
+        entrypointKey: applyMembershipSourceEntrypoint,
+        evidence: [exactSourceProfileAuthorityEvidence],
+        key: 'commerce.customer-context.requirement.membership-customer-source-counterparty',
+        provider: {
+          entrypointKey: sourceCounterpartyAdmissionProviderEntrypoint,
+          moduleId: partyRegistryModuleId,
+          schemaVersion: '1',
+        },
+      },
+      {
+        condition: currentSourceProfileCondition,
         entrypointKey: customerProfileSourceEntrypoint,
         evidence: [exactSourceProfileAuthorityEvidence],
         key: 'commerce.customer-context.requirement.customer-profile-source-party',
@@ -1257,7 +1280,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       },
       {
         condition: currentSourceProcessingCondition,
-        entrypointKey: 'commerce.customer-context.apply-customer-group-membership-source',
+        entrypointKey: applyMembershipSourceEntrypoint,
         evidence: [currentProcessingEligibilityEvidence, currentAntiResurrectionEvidence],
         key: 'commerce.customer-context.requirement.membership-source-write-privacy',
         provider: {

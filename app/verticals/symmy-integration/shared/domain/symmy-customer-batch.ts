@@ -36,7 +36,7 @@ export const symmyCustomerOccurrenceSeed = (idempotencyKey: string, itemKey: str
   `occurrence\u0000${idempotencyKey}\u0000${itemKey}`;
 
 /** The text whose digest names the source record of a customer id the owners cannot take as it is. */
-export const symmyCustomerRecordSeed = (customerId: string): string => `customer-record\u0000${customerId}`;
+export { symmyCustomerRecordSeed } from '@app/shared-contracts/symmy';
 
 /**
  * The text whose digest names the source record of one saved address of one customer. A saved address binds one
@@ -87,7 +87,11 @@ const [emailContact, phoneContact] = AddContactPointPayloadSchema.fields.contact
 const [postalAddress] = AddSavedAddressPayloadSchema.fields.origin.members[1].fields.postalAddress.schema.members;
 const candidate = CreatePartyPayloadSchema.fields.candidate.fields;
 const personName = candidate.firstName.schema;
-const customerId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const customerId = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+  Schema.makeFilter((id) => id.isWellFormed() || 'Customer IDs must contain only Unicode scalar values'),
+);
 
 const SymmyCustomerAddressSchema = Schema.Struct({
   label: Schema.optionalKey(AddSavedAddressPayloadSchema.fields.label.schema),

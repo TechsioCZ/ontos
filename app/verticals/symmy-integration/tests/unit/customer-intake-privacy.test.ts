@@ -205,6 +205,41 @@ it.effect('admits one subject per customer and keeps each contact on the custome
   }),
 );
 
+it.effect('asks Privacy nothing about an item without an effect, which pins nothing of its source record', () =>
+  Effect.gen(function* refusedCustomerItems() {
+    const item = admissionItem(1, 'absent', 'unknown:one');
+    const empty = {
+      effects: [],
+      itemId: item.itemId,
+      itemKey: item.itemKey,
+      unsupportedBranches: [
+        { branchId: '10000000-0000-4000-8000-000000000419', branchKey: 'customer', kind: 'CustomerHint' },
+      ],
+    };
+    const alone = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({ items: [empty] });
+    expect(yield* projectSymmyCustomerIntakeRequests(scope, alone)).toEqual([]);
+    // Beside customers that are admitted, only they are asked about and admitted.
+    const siblings = (yield* plan(recordId)).items;
+    const mixed = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({ items: [empty, ...siblings] });
+    const requests = yield* projectSymmyCustomerIntakeRequests(scope, mixed);
+    expect(requests).toEqual(
+      yield* projectSymmyCustomerIntakeRequests(
+        scope,
+        yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({ items: siblings }),
+      ),
+    );
+    // Even named for admission, an item without an effect is no part of one.
+    const admissions = yield* projectSymmyCustomerIntakeAdmissions(
+      mixed,
+      new Set(mixed.items.map(({ itemKey }) => itemKey)),
+    );
+    expect(admissions).toEqual(
+      yield* projectSymmyCustomerIntakeAdmissions(mixed, new Set(siblings.map(({ itemKey }) => itemKey))),
+    );
+    expect(JSON.stringify([requests, admissions])).not.toContain('unknown:one');
+  }),
+);
+
 it.effect('encodes only a membership record as a child, not a CUSTOMER containing a membership effect', () =>
   Effect.gen(function* membership() {
     const sourceId = 'customer:one';

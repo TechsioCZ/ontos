@@ -1,6 +1,10 @@
 import { Schema } from 'effect';
 import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-identities.ts';
 import { SymmyCustomerRowsSchema } from './symmy-customer-batch.ts';
+import {
+  SymmyGroupCustomerRowsSchema,
+  SymmyGroupMembershipCustomerResolutionSchema,
+} from './symmy-customer-group-batch.ts';
 import { SymmyInternalExecutionPlanSchema } from './symmy-job-execution.ts';
 import { SymmyPriceBatchSchema, SymmyPriceReviseFactsListSchema } from './symmy-price-batch.ts';
 import { SymmyPriceListRowsSchema } from './symmy-price-list-batch.ts';
@@ -23,6 +27,8 @@ interface AdmissionFields {
   readonly contractVersion?: unknown;
   readonly customers?: unknown;
   readonly fixtureId?: unknown;
+  readonly groupCustomerFacts?: unknown;
+  readonly groupCustomers?: unknown;
   readonly plan?: unknown;
   readonly priceBatch?: unknown;
   readonly priceGroupFacts?: unknown;
@@ -33,7 +39,8 @@ interface AdmissionFields {
 }
 const carriesNoProductSource = ({ priceGroupFacts, products }: AdmissionFields) =>
   products === undefined && priceGroupFacts === undefined;
-const carriesNoCustomerSource = ({ customers }: AdmissionFields) => customers === undefined;
+const carriesNoCustomerSource = ({ customers, groupCustomerFacts, groupCustomers }: AdmissionFields) =>
+  customers === undefined && groupCustomers === undefined && groupCustomerFacts === undefined;
 const carriesNoFixtureSource = ({ code, contractVersion, fixtureId, plan }: AdmissionFields) =>
   code === undefined && fixtureId === undefined && contractVersion === undefined && plan === undefined;
 const priceListsAdmissionValid = (fields: AdmissionFields) =>
@@ -60,11 +67,25 @@ const productsAdmissionValid = (fields: AdmissionFields) =>
   carriesNoFixtureSource(fields);
 const customersAdmissionValid = (fields: AdmissionFields) =>
   fields.customers !== undefined &&
+  fields.groupCustomers === undefined &&
+  fields.groupCustomerFacts === undefined &&
   fields.priceLists === undefined &&
   fields.priceBatch === undefined &&
   fields.reviseFacts === undefined &&
   carriesNoProductSource(fields) &&
   carriesNoFixtureSource(fields);
+/** The public customers of the selected group go to the group's membership route, with its code and nothing else. */
+const groupCustomersAdmissionValid = (fields: AdmissionFields) =>
+  fields.groupCustomers !== undefined &&
+  fields.customers === undefined &&
+  fields.code !== undefined &&
+  fields.fixtureId === undefined &&
+  fields.contractVersion === undefined &&
+  fields.plan === undefined &&
+  fields.priceLists === undefined &&
+  fields.priceBatch === undefined &&
+  fields.reviseFacts === undefined &&
+  carriesNoProductSource(fields);
 const fixtureAdmissionValid = (fields: AdmissionFields) =>
   carriesNoCustomerSource(fields) &&
   carriesNoProductSource(fields) &&
@@ -84,6 +105,9 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   /** The public customers. The route enrollment and the admission supply every owner fact the body lacks. */
   customers: Schema.optionalKey(SymmyCustomerRowsSchema),
   fixtureId: Schema.optionalKey(SymmyFixtureIdSchema),
+  /** Fresh queried customer authority and current profiles; only exact replay may omit the owner resolution. */
+  groupCustomerFacts: Schema.optionalKey(SymmyGroupMembershipCustomerResolutionSchema),
+  groupCustomers: Schema.optionalKey(SymmyGroupCustomerRowsSchema),
   idempotencyKey: SymmyClientIdempotencyKeySchema,
   plan: Schema.optionalKey(SymmyInternalExecutionPlanSchema),
   /** The public price batch: one price list and its DEFINE and REVISE items. */
@@ -101,6 +125,11 @@ export const AdmitSymmyJobPayloadSchema = Schema.Struct({
   Schema.makeFilter((fields) => {
     if (fields.routeKey === 'priceListsBatchUpsert') {
       return priceListsAdmissionValid(fields) || 'Price lists carry no other source';
+    }
+    if (fields.routeKey === 'customerGroupCustomersBatch' && fields.groupCustomers !== undefined) {
+      return (
+        groupCustomersAdmissionValid(fields) || 'The customers of a selected group carry its code and no other source'
+      );
     }
     if (fields.routeKey === 'customersBatch' && fields.customers !== undefined) {
       return customersAdmissionValid(fields) || 'Customers carry no other source';
@@ -126,6 +155,9 @@ export const AdmitSymmyJobResultSchema = Schema.Struct({
   jobId: SymmyJobIdSchema,
   phase: Schema.Literal('admitted'),
   sourceBindingCommitments: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)))),
+  sourceEffectCommitments: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))).check(Schema.isMaxLength(16)),
+  ),
   sourcePreparationId: Schema.optionalKey(
     Schema.String.check(Schema.isUUID()).pipe(
       Schema.brand('SourceAdmissionPreparationId'),

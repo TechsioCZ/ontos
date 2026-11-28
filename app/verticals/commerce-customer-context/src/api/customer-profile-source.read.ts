@@ -57,6 +57,7 @@ export const customerProfileSourceRead = defineRead(
               ORG_RECEIPT: () => 1,
               PAGE: ({ items }) => items.length,
               RECEIPT: () => 1,
+              REFUSED: () => 0,
             }),
           ),
         },

@@ -39,6 +39,7 @@ const unsupportedEffect = Schema.Struct({
       'PriceHint',
       'StockProvisioningHint',
       'IdentifierHint',
+      'CustomerHint',
     ]),
   ),
   owner: OntosModuleIdSchema,

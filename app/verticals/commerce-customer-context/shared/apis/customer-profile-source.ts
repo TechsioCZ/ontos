@@ -95,6 +95,12 @@ export const CustomerProfileSourceResponseSchema = Schema.Union([
     receipt: RetailSourceReceiptSchema,
   }),
   Schema.TaggedStruct('ORG_RECEIPT', { receipt: OrganizationProfileSourceReceiptSchema }),
+  /**
+   * Privacy itself currently refuses this reader the exact current source Profile the CURRENT request names. It is the
+   * only customer-specific refusal: a missing permission, module, operation context or source route authority stays
+   * the endpoint's forbidden problem, and evidence that cannot be read stays unavailable.
+   */
+  Schema.TaggedStruct('REFUSED', {}),
 ]);
 export type CustomerProfileSourceResponse = typeof CustomerProfileSourceResponseSchema.Type;
 

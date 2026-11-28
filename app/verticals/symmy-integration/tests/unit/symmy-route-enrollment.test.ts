@@ -1,5 +1,5 @@
 import { Array as EffectArray, Option, Result, Schema, pipe } from 'effect';
-import { describe, expect, it } from 'effect-rstest';
+import { assert, describe, expect, it } from 'effect-rstest';
 
 import type { symmyJobRoutes } from '../../src/db/schema.ts';
 import {
@@ -31,6 +31,7 @@ import {
   decideSymmyRouteDeactivation,
   decideSymmyRouteWrite,
   symmyCoreRefusals,
+  symmyEnrolledInventory,
   symmyOutstandingRefusals,
   symmyPlannedRouteRow,
   symmyRelatedRouteRefusals,
@@ -313,7 +314,56 @@ it('publishes the exact registered Inventory provision, receipt recovery and sou
   }
 });
 
+/** The enrolled item under a source namespace reserved for ERP memberships. */
+const reserved = (enrolled: EncodedItem): EncodedItem => ({
+  ...enrolled,
+  source: { ...enrolled.source, sourceNamespace: 'erp-membership-v1:AKROS' },
+});
+
+const executorReads = (enrollment: SymmyRouteEnrollmentRequest) =>
+  symmyEnrolledInventory(inventoryOf(enrollment.routeKey), enrollment.configuration)
+    .filter(({ caller }) => caller === 'executor')
+    .flatMap(({ reads }) => (reads ?? []).map(({ entrypointKey }) => entrypointKey));
+
 describe('Symmy route inventories', () => {
+  it('enrolls the ERP membership contract alone exactly on a membership route of a namespace reserved for it', () => {
+    // A membership route of any other namespace keeps the contract it always had and never admits an ERP customer id.
+    expect(symmyPlannedRouteRow(request('customerGroupCustomersBatch')).fixtureIds).toEqual(['INTERNAL_C14']);
+    expect(codes(request('customerGroupCustomersBatch'))).toEqual([]);
+    const [membership] = valid.customerGroupCustomersBatch().configuration.items;
+    // An ERP membership route reads each customer's current profile, so it cannot enroll without that read.
+    const withoutRead = withConfiguration('customerGroupCustomersBatch', { items: [reserved(membership)] });
+    expect(codes(withoutRead)).toEqual(['required_operation_missing']);
+    const erp = withConfiguration('customerGroupCustomersBatch', {
+      items: [
+        reserved({
+          ...membership,
+          effects: [
+            ...membership.effects,
+            {
+              effectKey: 'authority-customer-read',
+              operation: operation(
+                'commerce.customer-context',
+                'commerce.customer-context.api.customer-profile-source',
+              ),
+            },
+          ],
+        }),
+      ],
+    });
+    expect(executorReads(request('customerGroupCustomersBatch'))).not.toContain(
+      'commerce.customer-context.api.customer-profile-source',
+    );
+    expect(executorReads(erp)).toContain('commerce.customer-context.api.customer-profile-source');
+    expect(codes(erp)).toEqual([]);
+    expect(symmyPlannedRouteRow(erp).fixtureIds).toEqual(['ERP_MEMBERSHIP_V1']);
+    // The reserved namespace cannot be enrolled on other routes, before any SQL is issued.
+    const [customer] = valid.customersBatch().configuration.items;
+    expect(codes(withConfiguration('customersBatch', { items: [reserved(customer)] }))).toContain(
+      'configuration_field_not_allowed',
+    );
+    expect(codes(request('customersBatch'))).toEqual([]);
+  });
   it('inventories dynamic stock resolution and names no inventory for an operator fixture route', () => {
     const stock = symmyRouteInventoryOf('inventoryStockBatch');
     expect(Option.isOption(stock) && Option.isSome(stock)).toBe(true);
@@ -412,7 +462,9 @@ describe('Symmy route request refusals', () => {
         },
       },
     } as const;
-    const withIntent: EncodedItem = { ...group, effects: [{ ...group.effects[0], intent }, ...group.effects.slice(1)] };
+    const [first, ...rest] = group.effects;
+    assert.isDefined(first);
+    const withIntent: EncodedItem = { ...group, effects: [{ ...first, intent }, ...rest] };
     expect(codes(withConfiguration('customerGroupsBatch', { items: [withIntent] }))).toEqual(['owner_intent_enrolled']);
   });
 

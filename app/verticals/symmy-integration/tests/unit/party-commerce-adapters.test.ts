@@ -1,7 +1,10 @@
 import { AssignCounterpartyPriceGroupResultSchema } from '@app/commerce-customer-context/actions/assign-counterparty-price-group';
 import { UpdateCustomerGroupResultSchema } from '@app/commerce-customer-context/actions/update-customer-group';
 import { AddSavedAddressPayloadSchema } from '@app/commerce-customer-context/api/add-saved-address-action';
-import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
+import {
+  ApplyCustomerGroupMembershipSourceActionConflictProblemSchema,
+  ApplyCustomerGroupMembershipSourcePayloadSchema,
+} from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
 import {
   AssignCounterpartyPriceGroupActionForbiddenProblemSchema,
   AssignCounterpartyPriceGroupPayloadSchema,
@@ -312,7 +315,11 @@ const routedOwners: readonly RoutedOwnerEndpoint[] = Object.values(owners);
 interface PeerState {
   /** Whether Core records the succeeded invocation once an owner write is acknowledged. */
   exposeCommittedAckFact: boolean;
-  fact: { actionInvocationId: string; status: string } | null;
+  fact: {
+    actionInvocationId: string;
+    sourceEffectOutcome?: 'changed' | 'unchanged' | 'rejected';
+    status: string;
+  } | null;
   factReads: number;
   readonly gateway: (typeof GatewayDelegatedContextRequestSchema.Type)[];
   readonly hashes: { authContextRef: string; hash: string }[];
@@ -2413,7 +2420,38 @@ const membershipPayload = Match.value(membershipEffect.intent).pipe(
   }),
 );
 const membershipResult = Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSourceResultSchema)({
-  items: [],
+  items: [{ groupRef: selectedMembershipGroup, outcome: 'ALREADY_MANAGED' }],
+  source: membershipPayload.source,
+});
+const organizationMembershipProfile = {
+  moduleId: 'commerce.customer-context',
+  resourceId: '10000000-0000-4000-8000-000000000031',
+  resourceType: 'commerce.customer-context.counterparty-purchasing-profile',
+  tenantId,
+};
+/** The same assignment of an organization's profile, stated under the organization's business processing. */
+const organizationMembershipEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...membershipEffect,
+  intent: {
+    _tag: 'CustomerGroupMembership',
+    payload: {
+      effectiveAt: membershipPayload.effectiveAt,
+      groupRef: selectedMembershipGroup,
+      manager: membershipPayload.manager,
+      operation: 'ASSIGN',
+      processingKind: 'ORG_BUSINESS_REFERENCE',
+      profile: { profileKind: 'COUNTERPARTY', profileRef: organizationMembershipProfile },
+      reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
+      route: membershipPayload.route,
+      source: membershipPayload.source,
+    },
+  },
+  ref: { ...membershipEffect.ref, originalTarget: organizationMembershipProfile },
+});
+const organizationMembershipReceipt = Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSourceResultSchema)({
+  items: [{ groupRef: selectedMembershipGroup, outcome: 'ALREADY_MANAGED' }],
+  processingKind: 'ORG_BUSINESS_REFERENCE',
+  reasonCode: 'SOURCE_MEMBERSHIP_ASSERTED',
   source: membershipPayload.source,
 });
 const membershipAdapter = Effect.gen(function* membershipAdapter() {
@@ -2543,6 +2581,105 @@ describe('current qualified Group Definition before first Membership write', () 
       expect(peer.membershipReceipt.sent).toHaveLength(1);
       expect(peer.groupDefinition.sent).toHaveLength(0);
       expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('settles nothing from a receipt of another group, order or source record', () =>
+    Effect.gen(function* foreignReceipt() {
+      const otherGroup = { ...selectedMembershipGroup, resourceId: '10000000-0000-4000-8000-000000000092' };
+      for (const receipt of [
+        { ...membershipResult, items: [{ groupRef: otherGroup, outcome: 'ALREADY_MANAGED' as const }] },
+        { ...membershipResult, items: [] },
+        { ...membershipResult, source: { ...membershipResult.source, order: membershipPayload.source.order + 1 } },
+        { ...membershipResult, source: { ...membershipResult.source, sourceRecordId: 'another-membership-record' } },
+      ]) {
+        reset();
+        peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+        peer.membershipReceipt.succeed(
+          Schema.decodeUnknownSync(ApplyCustomerGroupMembershipSourceResultSchema)(receipt),
+        );
+        const adapter = yield* membershipAdapter;
+        const recovered = yield* adapter.recover(
+          yield* withOriginalRequest({
+            ...input(),
+            effect: membershipEffect,
+            legalEntityId: sellingLegalEntityId,
+            routeKey: 'customerGroupCustomersBatch',
+          }),
+        );
+        expect(recovered.status).toBe('unavailable');
+        expect(peer.membership.sent).toHaveLength(0);
+      }
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('reads no receipt for a pinned command whose request hash is not the original one', () =>
+    Effect.gen(function* foreignIntentHash() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.membershipReceipt.succeed(membershipResult);
+      const adapter = yield* membershipAdapter;
+      const original = yield* withOriginalRequest({
+        ...input(),
+        effect: membershipEffect,
+        legalEntityId: sellingLegalEntityId,
+        routeKey: 'customerGroupCustomersBatch',
+      });
+      const recovered = yield* adapter.recover({ ...original, originalRequestHash: 'a'.repeat(64) });
+      expect(recovered.status).toBe('unavailable');
+      expect(peer.membershipReceipt.sent).toHaveLength(0);
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('recovers an organization membership under its business processing, never as a person', () =>
+    Effect.gen(function* organizationRecovery() {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'succeeded' };
+      peer.membershipReceipt.succeed(organizationMembershipReceipt);
+      const adapter = yield* membershipAdapter;
+      const recovered = yield* adapter.recover(
+        yield* withOriginalRequest({
+          ...input(),
+          effect: organizationMembershipEffect,
+          legalEntityId: sellingLegalEntityId,
+          routeKey: 'customerGroupCustomersBatch',
+        }),
+      );
+      expect(recovered.status).toBe('settled');
+      expect(peer.membershipReceipt.bodies).toEqual([
+        {
+          effectId: membershipPayload.source.effectId,
+          manager: membershipPayload.manager,
+          processingKind: 'ORG_BUSINESS_REFERENCE',
+          profile: { profileKind: 'COUNTERPARTY', profileRef: organizationMembershipProfile },
+          route: membershipPayload.route,
+        },
+      ]);
+      expect(peer.membership.sent).toHaveLength(0);
+    }).pipe(asSymmyWorker),
+  );
+  it.effect('settles as stale a membership the owner already holds a later one of', () =>
+    Effect.gen(function* staleMembership() {
+      reset();
+      peer.groupDefinition.succeed(membershipCurrentGroup);
+      peer.membership.fail(
+        ApplyCustomerGroupMembershipSourceActionConflictProblemSchema,
+        ApplyCustomerGroupMembershipSourceActionConflictProblemSchema.make({
+          code: 'SOURCE_STALE',
+          detail: 'A newer Membership operation has already been accepted for this source and Profile',
+          status: 409,
+          title: 'Conflict',
+          type: 'about:blank',
+        }),
+      );
+      const adapter = yield* membershipAdapter;
+      const result = yield* adapter.execute({
+        ...input(),
+        effect: membershipEffect,
+        legalEntityId: sellingLegalEntityId,
+        routeKey: 'customerGroupCustomersBatch',
+        selector: membershipSelector,
+      });
+      expect(result.status).toBe('stale');
+      expect(peer.membership.sent).toHaveLength(1);
     }).pipe(asSymmyWorker),
   );
 });
@@ -2731,6 +2868,138 @@ const organizationIcoCurrentProfile = Schema.decodeUnknownSync(CustomerProfileSo
     },
   },
 });
+it.effect(
+  'settles only what the owner answers about the ERP customer; an access failure of the read stays retryable',
+  () =>
+    Effect.gen(function* recheckCustomer() {
+      const ownerCurrent = Schema.decodeUnknownSync(CustomerProfileSourceResponseSchema.members[1])(
+        organizationIcoCurrentProfile,
+      );
+      const pinned = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+        ...membershipEffect,
+        intent: {
+          _tag: 'CustomerGroupMembership',
+          payload: { ...membershipPayload, customerSource: ownerCurrent.item.source },
+        },
+      });
+      const adapter = yield* membershipAdapter;
+      const execute = adapter.execute({
+        ...input(),
+        effect: pinned,
+        legalEntityId: sellingLegalEntityId,
+        routeKey: 'customerGroupCustomersBatch',
+        selector: membershipSelector,
+      });
+      for (const mode of ['forbidden', 'refused', 'absent', 'rebound', 'inactive', 'unavailable'] as const) {
+        reset();
+        peer.groupDefinition.succeed(membershipCurrentGroup);
+        if (mode === 'forbidden') {
+          // The endpoint's 403 is what a missing permission, module, operation context, deployment binding or source
+          // route authority answers too: it is no evidence about this customer.
+          peer.profileReceipt.fail(
+            CustomerProfileSourceForbiddenProblemSchema,
+            CustomerProfileSourceForbiddenProblemSchema.make({
+              detail: 'Customer source processing is denied',
+              status: 403,
+              title: 'Forbidden',
+              type: 'about:blank',
+            }),
+          );
+        } else if (mode === 'unavailable') {
+          peer.profileReceipt.fail(
+            CustomerProfileSourceUnavailableProblemSchema,
+            CustomerProfileSourceUnavailableProblemSchema.make({
+              detail: 'Owner unavailable',
+              retryable: true,
+              status: 503,
+              title: 'Unavailable',
+              type: 'about:blank',
+            }),
+          );
+        } else if (mode === 'absent') {
+          peer.profileReceipt.succeed({ _tag: 'ABSENT' });
+        } else if (mode === 'refused') {
+          // Privacy's own refusal of this exact customer source, as the owner's distinct result.
+          peer.profileReceipt.succeed({ _tag: 'REFUSED' });
+        } else {
+          peer.profileReceipt.succeed({
+            ...ownerCurrent,
+            item: {
+              ...ownerCurrent.item,
+              profile: { ...ownerCurrent.item.profile, state: mode === 'inactive' ? 'SUSPENDED' : 'ACTIVE' },
+            },
+          });
+        }
+        if (mode === 'unavailable' || mode === 'forbidden') {
+          expect(yield* execute.pipe(Effect.flip), mode).toMatchObject({ code: 'symmy_job_worker_unavailable' });
+        } else {
+          expect(yield* execute, mode).toMatchObject({ status: 'denied' });
+        }
+        expect(peer.profileReceipt.sent).toHaveLength(1);
+        expect(peer.membership.sent).toHaveLength(0);
+        expect(peer.hashes).toHaveLength(0);
+      }
+    }).pipe(asSymmyWorker),
+);
+
+it.effect('settles reclaimed ERP work only from its exact fenced terminal fact', () =>
+  Effect.gen(function* reconcileErp() {
+    const owner = yield* Schema.decodeUnknownEffect(CustomerProfileSourceResponseSchema.members[1])(
+      organizationIcoCurrentProfile,
+    );
+    const erpEffect = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+      ...membershipEffect,
+      intent: { _tag: 'CustomerGroupMembership', payload: { ...membershipPayload, customerSource: owner.item.source } },
+    });
+    const adapter = yield* membershipAdapter;
+    const claimed = {
+      ...input(),
+      effect: erpEffect,
+      legalEntityId: sellingLegalEntityId,
+      routeKey: 'customerGroupCustomersBatch' as const,
+      selector: membershipSelector,
+    };
+    const pinned = yield* withOriginalRequest(claimed);
+    reset();
+    expect(yield* adapter.recover({ ...claimed, canExecuteNewEffects: false })).toMatchObject({
+      outcome: { status: 'denied' },
+      status: 'settled',
+    });
+    expect(yield* adapter.recover({ ...pinned, canExecuteNewEffects: false })).toEqual({ status: 'unavailable' });
+    peer.fact = { actionInvocationId: invocationId, status: 'rejected' };
+    expect(yield* adapter.recover({ ...pinned, canExecuteNewEffects: false })).toMatchObject({
+      outcome: { status: 'denied' },
+      status: 'settled',
+    });
+    for (const terminal of ['changed', 'unchanged', 'rejected', undefined] as const) {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'running' };
+      expect(yield* adapter.recover(pinned)).toEqual({ status: 'retry_original_key' });
+      peer.groupDefinition.succeed(membershipCurrentGroup);
+      peer.profileReceipt.answer(() => {
+        if (terminal !== undefined) {
+          peer.fact = { actionInvocationId: invocationId, sourceEffectOutcome: terminal, status: 'succeeded' };
+        }
+        return { _tag: 'REFUSED' as const };
+      });
+      if (terminal === undefined) {
+        expect(yield* adapter.execute(pinned).pipe(Effect.flip)).toMatchObject({
+          code: 'symmy_job_worker_unavailable',
+        });
+      } else {
+        expect(yield* adapter.execute(pinned)).toMatchObject({
+          status: ({ changed: 'accepted_change', rejected: 'denied', unchanged: 'accepted_no_change' } as const)[
+            terminal
+          ],
+        });
+      }
+      expect(peer.factReads).toBe(2);
+      expect(peer.membership.sent).toHaveLength(0);
+      expect(peer.membershipReceipt.sent).toHaveLength(0);
+    }
+  }).pipe(asSymmyWorker),
+);
+
 const organizationIcoNative = Schema.decodeUnknownSync(ChangeOrganizationCustomerProfileIcoResultSchema)({
   assertion: {
     effectiveAt: '2026-11-07T00:00:00.000Z',
