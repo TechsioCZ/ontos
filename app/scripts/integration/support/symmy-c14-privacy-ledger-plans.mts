@@ -87,5 +87,7 @@ export const measurePartyReceiptCorrelation = Effect.fn('C14.measurePartyReceipt
   )(plan[0]?.['QUERY PLAN']);
   // An empty or ambiguous owner lookup is not a receipt benchmark.
   expect(measurement.Plan['Actual Rows']).toBe(1);
-  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', measurement });
+  // This is the isolated synthetic fixture only. Keep the plan nodes so slow correlation can be distinguished
+  // from page transport; the numeric empty/ambiguous guard above is independent of PostgreSQL's text format.
+  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', plan: plan[0]?.['QUERY PLAN'] });
 });
