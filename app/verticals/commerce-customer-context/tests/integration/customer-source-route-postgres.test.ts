@@ -37,6 +37,7 @@ import {
   CustomerSourceRouteUnavailable,
   StoredCustomerSourceRouteSchema,
 } from '../../shared/domain/customer-source-route.ts';
+import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
 import { SavedAddressSourceAssertionSchema } from '../../shared/domain/saved-address-source.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
@@ -306,6 +307,164 @@ const addressSource = (effectId: string) => ({
   revision: 'r1',
   routeRevision: '1',
 });
+interface SourceRoute {
+  readonly id: string;
+  readonly revision: string;
+}
+const groupIntent = (effectId: string, recordId: string, sourceCode: string, route: SourceRoute) => ({
+  businessCode: `INTERNAL_${sourceCode}`,
+  description: 'Source-managed fixture Group',
+  initialState: 'ACTIVE',
+  meaningKey: `internal.ebs-${sourceCode.toLowerCase()}`,
+  membershipCriteria: `Explicit ${sourceCode} assignment by the internal EBS fixture`,
+  name: `Group ${sourceCode}`,
+  purpose: `Internal EBS ${sourceCode} classification`,
+  reason: 'Import source Group revision 1',
+  source: {
+    definitionEvidence: {
+      kind: 'NAMED_CONFIGURATION',
+      reference: 'internal.ebs-explicit-classification',
+      revision: '1',
+    },
+    effectId,
+    issuer: 'internal-ebs',
+    mappingRevision: '1',
+    namespace: 'customer-groups',
+    order: 1,
+    recordId,
+    revision: '1',
+    route,
+    sourceCode,
+  },
+});
+type GroupIntent = ReturnType<typeof groupIntent>;
+const profileSource = (effectId: string, recordId: string, route: SourceRoute) => ({
+  effectId,
+  issuer: 'internal-ebs',
+  mappingRevision: '1',
+  namespace: 'customers',
+  occurrenceId: `${recordId}-r1`,
+  order: 1,
+  recordId,
+  recordType: 'customer',
+  revision: 'r1',
+  route,
+});
+type ProfileSource = ReturnType<typeof profileSource>;
+
+/**
+ * The owner routines the source Actions run, called as the given principal. The live fixture runs Actions only for
+ * human session actors, so the source writes are driven at this boundary.
+ */
+const sourceOwnerRoutines = ({
+  legalEntityId,
+  owner,
+  tenantId,
+}: Pick<Effect.Success<ReturnType<typeof setup>>, 'legalEntityId' | 'owner' | 'tenantId'>) => {
+  // Business times come from the database clock that also stamps the owner's records.
+  const isoNow = owner(
+    sql`select to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`,
+  ).pipe(Effect.map((row) => row?.now ?? ''));
+  const writeGroup = (principalId: string, intent: GroupIntent) =>
+    owner(
+      sql`select outcome, group_json from commerce_customer_context.apply_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,'CREATE',${json(intent)}::jsonb,now(),${principalId}::uuid,${randomUUID()}::uuid)`,
+    ).pipe(Effect.map((row) => ({ groupId: row?.group_json?.groupRef.resourceId ?? '', outcome: row?.outcome })));
+  const ensureProfile = Effect.fn('CustomerSourceRouteTest.ensureProfile')(function* ensureProfile(
+    principalId: string,
+    source: ProfileSource,
+  ) {
+    const partyId = randomUUID();
+    const payload = {
+      effectiveAt: yield* isoNow,
+      partySourceReference: {
+        occurrenceId: `person-${source.recordId}-r1`,
+        recordId: `person-${source.recordId}`,
+        source: {
+          issuer: 'internal-party-source',
+          namespace: 'identity',
+          recordType: 'person',
+          routeRef: 'party-source-route',
+        },
+      },
+      source,
+      subject: {
+        kind: 'RETAIL',
+        partyRef: {
+          moduleId: 'party.registry',
+          resourceId: partyId,
+          resourceType: 'party.registry.party',
+          tenantId,
+        },
+        sellingLegalEntityRef: {
+          moduleId: 'core.identity',
+          resourceId: legalEntityId,
+          resourceType: 'core.identity.legal-entity',
+          tenantId,
+        },
+      },
+      trigger: 'AUTHORIZED_ONBOARDING',
+    };
+    return yield* owner(
+      sql`select outcome, payload from commerce_customer_context.ensure_source_customer_profile(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,now(),${json(
+        {
+          payload,
+          profileKind: 'RETAIL',
+          proof: { partyResourceId: partyId, partyResourceRevision: 'internal-party-revision-1' },
+        },
+      )}::jsonb)`,
+    ).pipe(
+      Effect.map((row) => ({
+        outcome: row?.outcome,
+        payload: row?.payload,
+        profileId: row?.payload?.profileRef.resourceId ?? '',
+      })),
+    );
+  });
+  const membershipCommand = (
+    effectiveAt: string,
+    effectId: string,
+    groupId: string,
+    profileId: string,
+    route: SourceRoute,
+  ) => ({
+    effectiveAt,
+    groupRef: {
+      moduleId: 'commerce.customer-context',
+      resourceId: groupId,
+      resourceType: 'commerce.customer-context.customer-group',
+      tenantId,
+    },
+    manager: {
+      factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
+      issuer: 'internal-ebs',
+      sourceNamespace: 'customer-group-memberships',
+      tenantId,
+    },
+    operation: 'ASSIGN',
+    profile: {
+      profileKind: 'RETAIL',
+      profileRef: {
+        moduleId: 'commerce.customer-context',
+        resourceId: profileId,
+        resourceType: 'commerce.customer-context.retail-customer-profile',
+        tenantId,
+      },
+    },
+    reason: 'Assign the source membership',
+    route,
+    source: { assertionId: `assertion-${effectId}`, effectId, order: 1, sourceRecordId: `record-${effectId}` },
+  });
+  const applyMembership = (
+    principalId: string,
+    command: ReturnType<typeof membershipCommand> & {
+      readonly customerSource?: typeof CustomerProfileSourceAssertionSchema.Encoded;
+    },
+  ) =>
+    owner(
+      sql`select outcome, result from commerce_customer_context.apply_customer_group_membership_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,clock_timestamp(),${json(command)}::jsonb)`,
+    );
+  return { applyMembership, ensureProfile, isoNow, membershipCommand, writeGroup };
+};
 
 it.live(
   'grants a source route only to principals Core enrolls for it, under a generation no stale decision overwrites',
@@ -805,49 +964,9 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* pausedRouteAndGroupReader() {
-        const { configure, legalEntityId, owner, pause, reader, secondReader, tenantId, writer } = yield* setup();
-        // Business times come from the database clock that also stamps the owner's records.
-        const isoNow = owner(
-          sql`select to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`,
-        ).pipe(Effect.map((row) => row?.now ?? ''));
-        interface SourceRoute {
-          readonly id: string;
-          readonly revision: string;
-        }
-
-        // The owner routines the source Actions and the Group definition Read run, called as the given principal. The
-        // live fixture runs Actions only for human session actors, so the source writes are driven at this boundary.
-        const groupIntent = (effectId: string, recordId: string, sourceCode: string, route: SourceRoute) => ({
-          businessCode: `INTERNAL_${sourceCode}`,
-          description: 'Source-managed fixture Group',
-          initialState: 'ACTIVE',
-          meaningKey: `internal.ebs-${sourceCode.toLowerCase()}`,
-          membershipCriteria: `Explicit ${sourceCode} assignment by the internal EBS fixture`,
-          name: `Group ${sourceCode}`,
-          purpose: `Internal EBS ${sourceCode} classification`,
-          reason: 'Import source Group revision 1',
-          source: {
-            definitionEvidence: {
-              kind: 'NAMED_CONFIGURATION',
-              reference: 'internal.ebs-explicit-classification',
-              revision: '1',
-            },
-            effectId,
-            issuer: 'internal-ebs',
-            mappingRevision: '1',
-            namespace: 'customer-groups',
-            order: 1,
-            recordId,
-            revision: '1',
-            route,
-            sourceCode,
-          },
-        });
-        type GroupIntent = ReturnType<typeof groupIntent>;
-        const writeGroup = (principalId: string, intent: GroupIntent) =>
-          owner(
-            sql`select outcome, group_json from commerce_customer_context.apply_customer_group_definition_source(${tenantId}::uuid,${legalEntityId}::uuid,'CREATE',${json(intent)}::jsonb,now(),${principalId}::uuid,${randomUUID()}::uuid)`,
-          ).pipe(Effect.map((row) => ({ groupId: row?.group_json?.groupRef.resourceId ?? '', outcome: row?.outcome })));
+        const context = yield* setup();
+        const { configure, legalEntityId, owner, pause, reader, secondReader, tenantId, writer } = context;
+        const { applyMembership, ensureProfile, isoNow, membershipCommand, writeGroup } = sourceOwnerRoutines(context);
         // The request the Group definition Read decodes for each mode and hands to its routine.
         const groupRequest = Schema.decodeUnknownSync(CustomerGroupDefinitionSourceRequestSchema, {
           onExcessProperty: 'error',
@@ -880,110 +999,6 @@ it.live(
           );
         };
 
-        const profileSource = (effectId: string, recordId: string, route: SourceRoute) => ({
-          effectId,
-          issuer: 'internal-ebs',
-          mappingRevision: '1',
-          namespace: 'customers',
-          occurrenceId: `${recordId}-r1`,
-          order: 1,
-          recordId,
-          recordType: 'customer',
-          revision: 'r1',
-          route,
-        });
-        type ProfileSource = ReturnType<typeof profileSource>;
-        const ensureProfile = Effect.fn('CustomerSourceRouteTest.ensureProfile')(function* ensureProfile(
-          principalId: string,
-          source: ProfileSource,
-        ) {
-          const partyId = randomUUID();
-          const payload = {
-            effectiveAt: yield* isoNow,
-            partySourceReference: {
-              occurrenceId: `person-${source.recordId}-r1`,
-              recordId: `person-${source.recordId}`,
-              source: {
-                issuer: 'internal-party-source',
-                namespace: 'identity',
-                recordType: 'person',
-                routeRef: 'party-source-route',
-              },
-            },
-            source,
-            subject: {
-              kind: 'RETAIL',
-              partyRef: {
-                moduleId: 'party.registry',
-                resourceId: partyId,
-                resourceType: 'party.registry.party',
-                tenantId,
-              },
-              sellingLegalEntityRef: {
-                moduleId: 'core.identity',
-                resourceId: legalEntityId,
-                resourceType: 'core.identity.legal-entity',
-                tenantId,
-              },
-            },
-            trigger: 'AUTHORIZED_ONBOARDING',
-          };
-          return yield* owner(
-            sql`select outcome, payload from commerce_customer_context.ensure_source_customer_profile(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,now(),${json(
-              {
-                payload,
-                profileKind: 'RETAIL',
-                proof: { partyResourceId: partyId, partyResourceRevision: 'internal-party-revision-1' },
-              },
-            )}::jsonb)`,
-          ).pipe(
-            Effect.map((row) => ({
-              outcome: row?.outcome,
-              payload: row?.payload,
-              profileId: row?.payload?.profileRef.resourceId ?? '',
-            })),
-          );
-        });
-
-        const membershipCommand = (
-          effectiveAt: string,
-          effectId: string,
-          groupId: string,
-          profileId: string,
-          route: SourceRoute,
-        ) => ({
-          effectiveAt,
-          groupRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: groupId,
-            resourceType: 'commerce.customer-context.customer-group',
-            tenantId,
-          },
-          manager: {
-            factFamily: 'CUSTOMER_GROUP_MEMBERSHIP',
-            issuer: 'internal-ebs',
-            sourceNamespace: 'customer-group-memberships',
-            tenantId,
-          },
-          operation: 'ASSIGN',
-          profile: {
-            profileKind: 'RETAIL',
-            profileRef: {
-              moduleId: 'commerce.customer-context',
-              resourceId: profileId,
-              resourceType: 'commerce.customer-context.retail-customer-profile',
-              tenantId,
-            },
-          },
-          reason: 'Assign the source membership',
-          route,
-          source: { assertionId: `assertion-${effectId}`, effectId, order: 1, sourceRecordId: `record-${effectId}` },
-        });
-        type MembershipCommand = ReturnType<typeof membershipCommand>;
-        const applyMembership = (principalId: string, command: MembershipCommand) =>
-          owner(
-            sql`select outcome, result from commerce_customer_context.apply_customer_group_membership_source(${tenantId}::uuid,${legalEntityId}::uuid,${principalId}::uuid,${randomUUID()}::uuid,clock_timestamp(),${json(command)}::jsonb)`,
-          );
         // Saved Address authorization is checked before any address is written, so it shows the route's answer alone.
         // Its input is the one the Saved Address source service builds for an ADD from the Action payload's own parts.
         const addressInput = Schema.decodeUnknownSync(
@@ -1105,4 +1120,98 @@ it.live(
         expect(yield* readGroup(reader, group, routes.group.route, 'CURRENT')).toMatchObject(denied);
       }),
     ).pipe(Effect.provide(services)),
+);
+
+/** The current answer of the owner's customer read: the exact customer record an ERP admission pins. */
+const CurrentCustomerSourceSchema = Schema.Struct({
+  outcome: Schema.Literal('AVAILABLE'),
+  result: Schema.Struct({
+    _tag: Schema.Literal('CURRENT'),
+    item: Schema.Struct({ source: Schema.toEncoded(CustomerProfileSourceAssertionSchema) }),
+  }),
+});
+
+it.live('an ERP membership is written only while the customer record it names is current, inside the write', () =>
+  Effect.scoped(
+    Effect.gen(function* erpMembershipCustomerSource() {
+      const context = yield* setup();
+      const { configure, legalEntityId, owner, pause, tenantId, writer } = context;
+      const { applyMembership, ensureProfile, isoNow, membershipCommand, writeGroup } = sourceOwnerRoutines(context);
+      // The membership route asserts in the namespace reserved for ERP memberships.
+      const routes = {
+        group: groupRoute(writer),
+        membership: {
+          ...membershipRoute(writer),
+          route: { id: 'internal-erp-membership-route', revision: '1' },
+          sourceNamespace: 'erp-membership-v1:internal-ebs',
+        },
+        profile: profileRoute(writer, []),
+      };
+      for (const route of Object.values(routes)) {
+        expect(yield* configure(null, bind, route)).toEqual(resultOf({ _tag: 'CONFIGURED', generation: 1, route }));
+      }
+      const created = yield* writeGroup(writer, groupIntent('group-create', '77', 'LOYAL', routes.group.route));
+      expect(created).toMatchObject({ outcome: 'CREATED' });
+      const customer = profileSource('profile-create', 'C-1', routes.profile.route);
+      const ensured = yield* ensureProfile(writer, customer);
+      expect(ensured).toMatchObject({ payload: { sourceEffect: { effectId: 'profile-create', replayed: false } } });
+      expect(
+        yield* ensureProfile(writer, profileSource('profile-create-other', 'C-2', routes.profile.route)),
+      ).toMatchObject({ payload: { sourceEffect: { effectId: 'profile-create-other', replayed: false } } });
+      const currentSource = Effect.fn('CustomerSourceRouteTest.currentSource')(function* currentSource(
+        recordId: string,
+      ) {
+        const row = yield* owner(
+          sql`select outcome, result from commerce_customer_context.read_customer_profile_source(${tenantId}::uuid,${legalEntityId}::uuid,${writer}::uuid,${json(
+            {
+              issuer: customer.issuer,
+              mappingRevision: customer.mappingRevision,
+              mode: 'CURRENT',
+              namespace: customer.namespace,
+              recordId,
+              recordType: customer.recordType,
+              route: customer.route,
+            },
+          )}::jsonb)`,
+        );
+        return (yield* Schema.decodeUnknownEffect(CurrentCustomerSourceSchema)(row)).result.item.source;
+      });
+      const customerSource = yield* currentSource('C-1');
+      const otherCustomerSource = yield* currentSource('C-2');
+      const effectiveAt = yield* isoNow;
+      const assignment = (effectId: string, order: number) => {
+        const command = membershipCommand(
+          effectiveAt,
+          effectId,
+          created.groupId,
+          ensured.profileId,
+          routes.membership.route,
+        );
+        return {
+          ...command,
+          manager: { ...command.manager, sourceNamespace: routes.membership.sourceNamespace },
+          source: { ...command.source, order },
+        };
+      };
+      const denied = { outcome: 'SOURCE_AUTHORITY_DENIED' };
+      // The reserved namespace takes no assignment that names no customer record, and no removal.
+      expect(yield* applyMembership(writer, assignment('erp-unnamed-customer', 1))).toMatchObject(denied);
+      expect(
+        yield* applyMembership(writer, { ...assignment('erp-removal', 1), customerSource, operation: 'REMOVE' }),
+      ).toMatchObject(denied);
+      // Another customer's record never anchors this Profile.
+      expect(
+        yield* applyMembership(writer, { ...assignment('erp-other-customer', 1), customerSource: otherCustomerSource }),
+      ).toMatchObject({ outcome: 'TARGET_INELIGIBLE' });
+      expect(yield* applyMembership(writer, { ...assignment('erp-assign', 1), customerSource })).toMatchObject({
+        outcome: 'APPLIED',
+      });
+      // Pausing the customer route ends the authority the customer record was read under. The membership route stays
+      // active, yet the next assignment of the same lineage is refused inside its own write.
+      expect(yield* pause('PROFILE', routes.profile.route.id, 1)).toEqual(resultOf({ _tag: 'PAUSED', generation: 2 }));
+      expect(
+        yield* applyMembership(writer, { ...assignment('erp-after-customer-pause', 2), customerSource }),
+      ).toMatchObject(denied);
+    }),
+  ).pipe(Effect.provide(services)),
 );

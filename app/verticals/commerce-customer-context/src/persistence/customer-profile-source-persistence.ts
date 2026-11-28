@@ -74,6 +74,13 @@ const sourceReadRequirements: SourceReadRequirements = {
   party: 'commerce.customer-context.requirement.customer-profile-source-party',
   privacy: 'commerce.customer-context.requirement.customer-profile-source-privacy',
 };
+const membershipSourceReadRequirements: SourceReadRequirements = {
+  counterparty: 'commerce.customer-context.requirement.membership-customer-source-counterparty',
+  counterpartyPerson: 'commerce.customer-context.requirement.membership-customer-source-party',
+  organization: 'commerce.customer-context.requirement.org-membership-write-privacy',
+  party: 'commerce.customer-context.requirement.membership-customer-source-party',
+  privacy: 'commerce.customer-context.requirement.membership-source-write-privacy',
+};
 const sourcePageReadRequirements: SourceReadRequirements = {
   counterparty: 'commerce.customer-context.requirement.customer-profile-source-page-counterparty',
   counterpartyPerson: 'commerce.customer-context.requirement.customer-profile-source-page-counterparty-person',
@@ -689,6 +696,14 @@ const makeSourceReadServices = Effect.fn('CustomerProfileSourceRead.services')(f
 });
 
 type SourceReadServiceRequirements = CommerceSourceProcessingEligibility | CommerceSourceProfileOwnerProof;
+/** The current customer read a membership write repeats in its own transaction, under its own requirements. */
+export const membershipCustomerSourceReadServices = (
+  transaction: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[0],
+  scope: Parameters<ReadServiceFactory<CustomerProfileSourceReadServices>>[1],
+) =>
+  makeSourceReadServices(membershipSourceReadRequirements, transaction, scope).pipe(
+    Effect.map(({ readSource }): CustomerProfileSourceReadServices => ({ readSource })),
+  );
 export const customerProfileSourceReadServices: ReadServiceFactory<
   CustomerProfileSourceReadServices,
   SourceReadServiceRequirements

@@ -197,8 +197,8 @@ export const buildSymmyGroupMembershipPlan = Effect.fn('SymmyGroupMembershipPlan
           effectKey: 'customer-group-assignment',
           intent: {
             _tag: 'CustomerGroupMembership',
-            customerSource: fact.customerSource,
             payload: {
+              customerSource: fact.customerSource,
               effectiveAt: DateTime.formatIso(order.effectiveAt),
               groupRef,
               manager: {

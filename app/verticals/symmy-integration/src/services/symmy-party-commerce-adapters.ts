@@ -1564,7 +1564,8 @@ const currentMembershipCustomer = Effect.fn('SymmyPartyCommerceAdapters.currentM
     if (input.legalEntityId === undefined) {
       return yield* symmyJobWorkerUnavailable();
     }
-    const { customerSource: source, payload } = membership.value;
+    const { payload } = membership.value;
+    const { customerSource: source } = payload;
     // Only an ERP-id assignment pins a customer source; explicit internal plans already name their profile.
     if (source === undefined) {
       return true;

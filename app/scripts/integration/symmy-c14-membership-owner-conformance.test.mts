@@ -1,5 +1,8 @@
 import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-customer-context/api/apply-customer-group-membership-source-action';
-import { CustomerGroupMembershipSourceReceiptRequestSchema } from '@app/commerce-customer-context/api/customer-group-membership-source-receipt';
+import {
+  CustomerGroupMembershipSourceReceiptNotFoundProblemSchema,
+  CustomerGroupMembershipSourceReceiptRequestSchema,
+} from '@app/commerce-customer-context/api/customer-group-membership-source-receipt';
 import { executeCustomerGroupMembershipSourceReceiptWithAuthorization } from '@app/commerce-customer-context/api/customer-group-membership-source-receipt/client';
 import { enrollCustomerProfileSourceReaderNativeFixture } from '@app/commerce-customer-context/testing/customer-profile-source-reader';
 import { seedCustomerGroupMembershipSourceAuthority } from '@app/commerce-customer-context/testing/customer-group-membership-source-authority';
@@ -9,11 +12,7 @@ import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { ProcessingPurposeRefSchema } from '@app/privacy/resources/processing-purpose';
 import { retireSourceProcessingNativePurpose } from '@app/privacy/testing/source-processing-governance-native';
-import {
-  seedCommittedProfileSourceProcessingNativeFixture,
-  seedSourceProcessingNativeFixture,
-} from '@app/privacy/testing/source-processing-native';
-import { GatewayForbiddenProblemSchema } from '@app/shared-contracts';
+import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { SymmyJobStatusResponseSchema } from '@app/symmy-integration/api/symmy-job-status';
 import { encodeSymmySourceSelector } from '@app/symmy-integration/symmy-source-selector';
@@ -424,7 +423,7 @@ it.live(
         // Grant templates name a sample, not any absent ID or membership asserted by this test.
         const commonPolicy = {
           connections: isolated.connections,
-          controllerRef: 'internal:membership-conformance',
+          controllerRef: 'internal:customer-conformance',
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
           governancePrincipalId: fixture.governancePrincipalId,
           legalEntityId,
@@ -437,7 +436,7 @@ it.live(
           source: fixture.flatSource,
           target: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: scope.profileId },
         };
-        const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
+        yield* seedSourceProcessingNativeFixture({
           ...commonPolicy,
           contexts: [
             customerIntakeContext(integration.principalId, fixture.flatSource, null),
@@ -446,10 +445,9 @@ it.live(
           ],
           contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
           meaning: 'Current customer source admission and read',
-          profileReceipt: fixture.proofTransport,
         });
         const example = { ...source, occurrenceId: 'route-grant-example', recordId: 'unsubmitted-membership-example' };
-        yield* seedSourceProcessingNativeFixture({
+        const dataPrivacy = yield* seedSourceProcessingNativeFixture({
           ...commonPolicy,
           contexts: [
             customerIntakeContext(integration.principalId, example, target),
@@ -523,6 +521,13 @@ it.live(
         const [pinned] = pinnedRows;
         assert.isDefined(pinned);
         expect(pinned.payload).toMatchObject({
+          // The exact customer record the owner resolved, which Commerce reads again inside the membership write.
+          customerSource: {
+            issuer: fixture.sourceIdentity.issuer,
+            namespace: fixture.sourceIdentity.namespace,
+            recordType: fixture.sourceIdentity.recordType,
+            route: fixture.proofTransport.request.route,
+          },
           groupRef: group.value.groupRef,
           manager,
           operation: 'ASSIGN',
@@ -741,8 +746,8 @@ it.live(
         expect(retired.lifecycle).toBe('RETIRED');
         const deniedReceipt = yield* readReceipt.pipe(Effect.flip);
         expect(Schema.is(CustomerGroupMembershipSourceReceiptNotFoundProblemSchema)(deniedReceipt)).toBe(true);
-        // Even with the customer's read authority retired, exact replay returns the original job;
-        // a fresh request must re-read that same customer and cannot admit a job.
+        // Even with the membership assertion authority retired, exact replay returns the original job;
+        // a fresh request for the same customer cannot admit a job.
         const jobsBeforeDenial = yield* admittedJobs;
         const replayAfterRetirement = yield* submit();
         expect(replayAfterRetirement.status).toBe(202);

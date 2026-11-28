@@ -9,7 +9,7 @@ import {
   SymmyOwnerEffectRefSchema,
   SymmySourceRecordRefSchema,
 } from '@app/shared-contracts/symmy';
-import { Schema } from 'effect';
+import { Match, Schema } from 'effect';
 
 import { SymmyJobLifecyclePolicyRefSchema } from './symmy-job-notification.ts';
 import { SymmyDurableJobRouteKeySchema, SymmyJobIdSchema } from './symmy-job-identities.ts';
@@ -246,7 +246,15 @@ export const SymmyInternalExecutionPlanSchema = executionPlanDefinition.check(
           ({ effects, sourceOccurrenceId, unsupportedBranches: branches }) =>
             branches?.some(({ kind }) => kind === 'CustomerHint') !== true &&
             sourceOccurrenceId !== undefined &&
-            effects.every(({ intent }) => intent !== undefined && !('customerSource' in intent)),
+            effects.every(
+              ({ intent }) =>
+                intent !== undefined &&
+                Match.value(intent).pipe(
+                  // Only an ERP admission pins the customer record its membership was resolved from.
+                  Match.tag('CustomerGroupMembership', ({ payload }) => payload.customerSource === undefined),
+                  Match.orElse(() => true),
+                ),
+            ),
         )) ||
       'Every internal owner effect requires a finite typed intent',
   ),

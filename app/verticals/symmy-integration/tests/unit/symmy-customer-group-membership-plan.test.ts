@@ -223,7 +223,7 @@ describe('Symmy group membership plan from the public customers', () => {
         issuerId: 'route-issuer',
         sourceNamespace: membershipNamespace,
       });
-      expect(item?.effects[0]?.intent).toMatchObject({
+      expect(assignmentOf(plan, 0)).toMatchObject({
         customerSource: {
           namespace: 'route-customers',
           recordId: 'customer-1',
@@ -589,7 +589,7 @@ describe('Current customer membership authority independent of delivery history'
         );
         expect(planned.items[1]?.effects).toEqual([]);
         const intent = planned.items[0]?.effects[0]?.intent;
-        expect(intent).toMatchObject({ customerSource: { ...customerAuthority, recordId: 'customer-1' } });
+        expect(intent).toMatchObject({ payload: { customerSource: { ...customerAuthority, recordId: 'customer-1' } } });
         const membership = Schema.decodeUnknownSync(
           Schema.Struct({
             _tag: Schema.Literal('CustomerGroupMembership'),

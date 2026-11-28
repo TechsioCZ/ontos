@@ -1,3 +1,4 @@
+import { CustomerProfileSourceAssertionSchema } from '../domain/customer-profile-source.ts';
 import { Schema } from 'effect';
 import { CounterpartyPurchasingProfileRefSchema } from '../resources/counterparty-purchasing-profile.ts';
 import { CustomerGroupMembershipRefSchema } from '../resources/customer-group-membership.ts';
@@ -127,6 +128,7 @@ export const OrganizationMembershipProfileSchema = Schema.Struct({
 });
 
 const fields = {
+  customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
   effectiveAt: CustomerGroupIsoTimestampSchema,
   manager: MembershipSourceManagerSchema,
   processingKind: OrganizationMembershipProcessingKindSchema,

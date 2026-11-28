@@ -32,6 +32,7 @@ import { AdmitCustomerGroupMembershipSnapshotPayloadSchema } from '../../shared/
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { CommerceSourceProcessingEligibility } from '../../src/integrations/source-processing-eligibility.ts';
+import { CommerceSourceProfileOwnerProof } from '../../src/integrations/source-profile-owner-proof.ts';
 import { commerceCustomerContextRegistration } from '../../vertical.registration.ts';
 import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { makeVerifiedGatewayPrincipals } from '../support/verified-gateway-principal.ts';
@@ -122,9 +123,14 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
       // INTERNAL_CONTRACT Privacy seam, as in the owner lifecycle suite. Snapshot admission
       // still executes the registered Action, actual Core transaction, producer and access evidence.
       const admissionContext = yield* Layer.build(
-        Layer.succeed(CommerceSourceProcessingEligibility, { check: () => Effect.void }).pipe(
-          Layer.provideMerge(fixture.layer),
-        ),
+        Layer.mergeAll(
+          Layer.succeed(CommerceSourceProcessingEligibility, { check: () => Effect.void }),
+          // No membership of this suite names an ERP customer record, so its current customer read is never proved.
+          Layer.succeed(CommerceSourceProfileOwnerProof, {
+            counterparty: () => Effect.succeed({ outcome: 'INDETERMINATE' as const }),
+            retail: () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
+          }),
+        ).pipe(Layer.provideMerge(fixture.layer)),
       );
       const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
       const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });

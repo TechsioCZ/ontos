@@ -1,7 +1,10 @@
+import { membershipCustomerSourceReadServices } from './customer-profile-source-persistence.ts';
+import type { CommerceSourceProfileOwnerProof } from '../integrations/source-profile-owner-proof.ts';
+import { CustomerProfileSourceAssertionSchema } from '../../shared/domain/customer-profile-source.ts';
 import type { ReadServiceFactory } from '@app/core-runtime';
 import { defineScopedRoutine, requireModuleOperation } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Match, Option, Schema } from 'effect';
 import type { ApplyCustomerGroupMembershipSourcePayload } from '../../shared/actions/apply-customer-group-membership-source.ts';
 import {
   ApplyCustomerGroupMembershipSourceResultSchema,
@@ -168,9 +171,10 @@ export interface CustomerGroupMembershipSourceOperations {
 
 export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
   CustomerGroupMembershipSourceOperations,
-  CommerceSourceProcessingEligibility
+  CommerceSourceProcessingEligibility | CommerceSourceProfileOwnerProof
 > = Effect.fn('customerGroupMembershipSourceServiceFactory')(function* membershipSourceServices(transaction, scope) {
   const privacy = yield* CommerceSourceProcessingEligibility;
+  const customerSourceReader = yield* membershipCustomerSourceReadServices(transaction, scope);
   const checkPrivacy = Effect.fn('CustomerGroupMembershipSource.checkPrivacy')(function* checkPrivacy(
     input: Pick<CustomerGroupMembershipSourceReceiptRequest, 'manager' | 'profile' | 'route' | 'processingKind'>,
     source: (typeof ApplyCustomerGroupMembershipSourceResultSchema.Type)['source'],
@@ -260,6 +264,40 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
       .pipe(Effect.mapError(privacyRejected));
     return yield* Effect.void;
   });
+  const sameCustomerSource = Schema.toEquivalence(CustomerProfileSourceAssertionSchema);
+  /**
+   * An ERP membership names the exact customer record its profile was resolved from. Symmy read it in another
+   * transaction, so the write repeats the owner's current customer read here: the customer route, its reader, the
+   * binding, Party and Privacy are checked again before the membership commits, and a revocation in between denies it.
+   */
+  const requireCurrentCustomerSource = Effect.fn('CustomerGroupMembershipSource.requireCurrentCustomerSource')(
+    function* requireCurrentCustomerSource(
+      payload: ApplyCustomerGroupMembershipSourcePayload,
+      customerSource: NonNullable<ApplyCustomerGroupMembershipSourcePayload['customerSource']>,
+    ) {
+      const current = yield* customerSourceReader
+        .readSource({ ...customerSource, mode: 'CURRENT' })
+        .pipe(Effect.mapError(unavailable));
+      const item = Match.value(current).pipe(
+        Match.tag('CURRENT', ({ item: currentItem }) => currentItem),
+        Match.orElse(() => null),
+      );
+      if (
+        item === null ||
+        item.profile.state !== 'ACTIVE' ||
+        item.profile.profileRef.resourceId !== payload.profile.profileRef.resourceId ||
+        item.profile.profileRef.kind !== payload.profile.profileKind ||
+        (item.icoAuthority === 'ORGANIZATION') !== (payload.processingKind === 'ORG_BUSINESS_REFERENCE') ||
+        !sameCustomerSource(item.source, customerSource)
+      ) {
+        return yield* new CustomerGroupMembershipSourceRejected({
+          code: 'TARGET_INELIGIBLE',
+          reason: rejectionReasons.TARGET_INELIGIBLE,
+        });
+      }
+      return yield* Effect.void;
+    },
+  );
   return {
     admitSnapshot: Effect.fn('CustomerGroupMembershipSource.admitSnapshot')(
       function* admitSnapshot(payload, invocationId, recordedAt) {
@@ -294,6 +332,9 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
             ? ORG_WRITE_PRIVACY_REQUIREMENT
             : WRITE_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
+        if (payload.customerSource !== undefined) {
+          yield* requireCurrentCustomerSource(payload, payload.customerSource);
+        }
         yield* checkPrivacy(payload, payload.source, WRITE_PRIVACY_OPERATION, requirement, payload);
         const [row] = yield* transaction
           .invoke(applyMembershipSourceRoutine, [scope.principalId, invocationId, recordedAt, payload])

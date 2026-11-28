@@ -330,7 +330,8 @@ export const projectSymmyCustomerIntakeAdmissions = Effect.fn('SymmyCustomerInta
       const memberships = root.effects.flatMap(({ intent }) =>
         Schema.is(SymmyPartyCommerceIntentSchema)(intent)
           ? Match.value(intent).pipe(
-              Match.tag('CustomerGroupMembership', ({ customerSource, payload: membership }) => {
+              Match.tag('CustomerGroupMembership', ({ payload: membership }) => {
+                const { customerSource } = membership;
                 const membershipProfile = profileTarget(membership.profile.profileRef);
                 // An ERP membership also names the exact customer record the owner resolved it from.
                 return [
@@ -493,7 +494,9 @@ export const projectSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.
   const describedUses = yield* Effect.forEach(
     items,
     Effect.fnUntraced(function* describeItem({ item, requests: uses }) {
-      if (!uses.some(isPersonalUse)) return uses;
+      if (!uses.some(isPersonalUse)) {
+        return uses;
+      }
       const root = yield* rootItemOf(byKey, item);
       const occurrence = itemOccurrence(item);
       const customerOccurrence = itemOccurrence(root);

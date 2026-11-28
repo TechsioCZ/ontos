@@ -1,3 +1,4 @@
+import { CustomerProfileSourceAssertionSchema } from '../domain/customer-profile-source.ts';
 import { Schema } from 'effect';
 import {
   MembershipSourceAssertionSchema,
@@ -21,6 +22,7 @@ import {
 } from '../domain/organization-membership-source.ts';
 
 const baseFields = {
+  customerSource: Schema.optionalKey(CustomerProfileSourceAssertionSchema),
   effectiveAt: CustomerGroupIsoTimestampSchema,
   manager: MembershipSourceManagerSchema,
   processingKind: Schema.optionalKey(Schema.Never),

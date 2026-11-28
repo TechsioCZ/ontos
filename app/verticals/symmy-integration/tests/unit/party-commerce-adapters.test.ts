@@ -2875,8 +2875,7 @@ it.effect(
         ...membershipEffect,
         intent: {
           _tag: 'CustomerGroupMembership',
-          customerSource: ownerCurrent.item.source,
-          payload: membershipPayload,
+          payload: { ...membershipPayload, customerSource: ownerCurrent.item.source },
         },
       });
       const adapter = yield* membershipAdapter;
