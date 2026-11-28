@@ -85,7 +85,7 @@ export const ComgateTestFlagSchema = Schema.Union([
  * its decimal text.
  */
 export const ComgateMerchantSchema = Schema.Union([
-  Schema.String.check(Schema.isPattern(/^[0-9]{1,20}$/u)),
+  Schema.String.check(Schema.isPattern(/^\d{1,20}$/u)),
   Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 })).pipe(
     Schema.decodeTo(
       Schema.String,
@@ -272,9 +272,7 @@ export const ComgateStatementRowKeySchema = Schema.Struct({
  * A statement amount as Comgate prints it: decimal comma, exactly two decimals, optional leading minus
  * (`"-422,00"`, `"10,00"`). Parsed into integer minor units in comgate-money.ts; never a float.
  */
-export const ComgateStatementAmountTextSchema = Schema.String.check(
-  Schema.isPattern(/^-?(?:0|[1-9][0-9]{0,12}),[0-9]{2}$/u),
-);
+export const ComgateStatementAmountTextSchema = Schema.String.check(Schema.isPattern(/^-?(?:0|[1-9]\d{0,12}),\d{2}$/u));
 
 /**
  * `Datum založení` as Comgate prints it: Europe/Prague wall-clock text `YYYY-MM-DD HH:mm:ss`, kept as

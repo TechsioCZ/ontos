@@ -12,7 +12,7 @@ export const AvailabilityConsumerRequestSchema = Schema.Struct({
   previousResultRef: Schema.optionalKey(reference),
   quantity: AvailabilitySubjectSchema.fields.quantity.check(
     Schema.makeFilter((quantity) =>
-      /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u.test(quantity.amount) && /[1-9]/u.test(quantity.amount)
+      /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(quantity.amount) && /[1-9]/u.test(quantity.amount)
         ? undefined
         : 'Requested quantity must be a positive exact decimal',
     ),

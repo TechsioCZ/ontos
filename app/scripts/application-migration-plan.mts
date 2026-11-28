@@ -1,7 +1,7 @@
 import { Effect, Schema } from 'effect';
 
 const ownerId = Schema.NonEmptyString.pipe(Schema.brand('ApplicationMigrationOwnerId'), Schema.decodeTo(Schema.String));
-const migrationName = Schema.String.check(Schema.isPattern(/^[0-9]{14}_[a-zA-Z0-9_-]+$/u)).pipe(
+const migrationName = Schema.String.check(Schema.isPattern(/^\d{14}_[\w-]+$/u)).pipe(
   Schema.brand('ApplicationMigrationName'),
   Schema.decodeTo(Schema.String),
 );
@@ -263,9 +263,11 @@ export const resolveApplicationMigrationRequirements = Effect.fn('ApplicationMig
     const rootRequirements =
       decoded.requirements.mode === 'all'
         ? [
-            ...decoded.inventory
-              .filter((owner) => !owner.optional && !roots.some((root) => root.ownerId === owner.ownerId))
-              .map((owner) => ({ migrate: true, ownerId: owner.ownerId, verify: true })),
+            ...decoded.inventory.flatMap((owner) =>
+              !owner.optional && !roots.some((root) => root.ownerId === owner.ownerId)
+                ? [{ migrate: true, ownerId: owner.ownerId, verify: true }]
+                : [],
+            ),
             ...roots,
           ]
         : roots;

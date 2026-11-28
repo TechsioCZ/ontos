@@ -22,11 +22,11 @@ import type { ProviderObjectId } from '../psp/psp-request.ts';
 
 const stripeIdOf = (pattern: RegExp) => ProviderObjectIdSchema.check(Schema.isPattern(pattern));
 
-export const StripeCheckoutSessionIdSchema = stripeIdOf(/^cs_[A-Za-z0-9_]{1,250}$/u);
-export const StripePaymentIntentIdSchema = stripeIdOf(/^pi_[A-Za-z0-9_]{1,250}$/u);
+export const StripeCheckoutSessionIdSchema = stripeIdOf(/^cs_\w{1,250}$/u);
+export const StripePaymentIntentIdSchema = stripeIdOf(/^pi_\w{1,250}$/u);
 /** Refund ids are `re_`; some payment methods report `pyr_` refunds. */
-export const StripeRefundIdSchema = stripeIdOf(/^(?:re|pyr)_[A-Za-z0-9_]{1,250}$/u);
-const StripeChargeIdSchema = stripeIdOf(/^(?:ch|py)_[A-Za-z0-9_]{1,250}$/u);
+export const StripeRefundIdSchema = stripeIdOf(/^(?:re|pyr)_\w{1,250}$/u);
+const StripeChargeIdSchema = stripeIdOf(/^(?:ch|py)_\w{1,250}$/u);
 
 /** Stripe reports ISO 4217 codes in lower case (`czk`). */
 const StripeCurrencySchema = Schema.String.check(Schema.isPattern(/^[a-z]{3}$/u));

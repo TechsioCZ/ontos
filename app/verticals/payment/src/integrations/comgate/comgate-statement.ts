@@ -19,7 +19,7 @@ const DAYS_UNTIL_READABLE = 1;
 export const COMGATE_STATEMENT_MAX_DATES = 24;
 
 const LOCAL_TIME_PATTERN =
-  /^(?<year>[0-9]{4})-(?<month>[0-9]{2})-(?<day>[0-9]{2}) (?<hour>[0-9]{2}):(?<minute>[0-9]{2}):(?<second>[0-9]{2})$/u;
+  /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2}) (?<hour>\d{2}):(?<minute>\d{2}):(?<second>\d{2})$/u;
 
 /** The Prague calendar date of an instant, as UTC midnight of that date. */
 const pragueDateOf = (instant: DateTime.Utc): Option.Option<DateTime.Utc> =>

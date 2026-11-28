@@ -31,7 +31,7 @@ import type { IntentHistoryRecord, RequestHistoryRecord } from '../services/mess
  * endpoint (a stored value that reads as a whole address is dropped, never shown).
  */
 
-const CLOSED_CODE = /^[A-Za-z][A-Za-z0-9_]{0,79}$/u;
+const CLOSED_CODE = /^[A-Za-z]\w{0,79}$/u;
 const isMask = Schema.is(EndpointMaskSchema);
 const isChannel = Schema.is(HistoryChannelSchema);
 const isClosedCode = (code: string) => CLOSED_CODE.test(code);

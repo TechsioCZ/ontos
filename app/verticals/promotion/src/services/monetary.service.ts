@@ -271,7 +271,7 @@ const formatUnits = (value: bigint): string => {
   const fraction = (value % scaleFactor)
     .toString()
     .padStart(PRICING_ALLOCATION_PROFILE.maximumScale, '0')
-    .replace(/0+$/u, '');
+    .replace(/(?<!0)0+$/u, '');
   return fraction.length === 0 ? (value / scaleFactor).toString() : `${value / scaleFactor}.${fraction}`;
 };
 const checkedAmount = (value: bigint): Effect.Effect<string, PromotionMonetaryPrecisionUnsupportedValue> => {

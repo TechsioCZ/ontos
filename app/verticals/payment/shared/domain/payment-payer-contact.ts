@@ -13,7 +13,7 @@ const contactText = (maximumLength: number) =>
 export const PaymentPayerContactSchema = Schema.Struct({
   email: Schema.optionalKey(contactText(254)),
   fullName: Schema.optionalKey(contactText(200)),
-  phone: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\+[1-9][0-9]{7,14}$/u))),
+  phone: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\+[1-9]\d{7,14}$/u))),
 });
 export type PaymentPayerContact = typeof PaymentPayerContactSchema.Type;
 

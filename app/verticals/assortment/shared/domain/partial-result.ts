@@ -89,7 +89,7 @@ export const accumulateAssortmentDiscoveryDecisions = Effect.fn('AssortmentDisco
     }
 
     const knownOmission = decisions.some((decision) => decision.decision === 'OMIT');
-    const partialResult = knownOmission
+    return knownOmission
       ? yield* Schema.decodeEffect(Schema.toType(AssortmentPartialDiscoveryResultSchema))({
           context,
           includedProductRefs: sortedUniqueProductRefs(
@@ -98,7 +98,6 @@ export const accumulateAssortmentDiscoveryDecisions = Effect.fn('AssortmentDisco
           knownOmission: true,
         })
       : undefined;
-    return partialResult;
   },
 );
 

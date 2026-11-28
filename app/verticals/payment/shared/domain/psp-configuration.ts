@@ -60,7 +60,7 @@ export type GatewayCredentialSecretRef = typeof GatewayCredentialSecretRefSchema
 /** Absolute https URL, at most 2000 characters. Plain http and whitespace-containing values are rejected. */
 export const GatewayHttpsUrlSchema = Schema.String.check(
   Schema.isMaxLength(2000),
-  Schema.isPattern(/^https:\/\/[^\s/?#]+\S*$/u),
+  Schema.isPattern(/^https:\/\/[^\s/?#]\S*$/u),
 );
 export type GatewayHttpsUrl = typeof GatewayHttpsUrlSchema.Type;
 

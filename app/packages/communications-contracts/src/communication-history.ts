@@ -16,7 +16,7 @@ import { CommunicationResourceRefSchema } from './communication-request.ts';
  * MEANS and what the source workflow receives through the `communication-outcome-feed` Read.
  */
 
-const closedCode = Schema.String.check(Schema.isMaxLength(80), Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]*$/u));
+const closedCode = Schema.String.check(Schema.isMaxLength(80), Schema.isPattern(/^[A-Za-z]\w*$/u));
 export const HistorySlotKeySchema = Schema.String.check(Schema.isMaxLength(120)).pipe(
   Schema.brand('CommunicationHistorySlotKey'),
 );

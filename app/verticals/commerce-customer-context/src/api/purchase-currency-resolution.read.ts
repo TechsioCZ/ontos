@@ -84,12 +84,11 @@ const purchaseCurrencyResolutionServicesFromPorts = (
         ],
         { concurrency: 2 },
       );
-      const current = {
+      return {
         ...currentContext,
         policy,
         pricing,
       };
-      return current;
     },
   );
   return {

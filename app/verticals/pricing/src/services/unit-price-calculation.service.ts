@@ -48,7 +48,7 @@ export const calculatePricingUnitPrice: (
   // Full material validation above retains the source scale/range limits and raw owner evidence.
   const selectedUnitPrice = input.tierSelection.resultingUnitPrice;
   const [integer = '0', fraction = ''] = selectedUnitPrice.amount.split('.');
-  const canonicalFraction = fraction.replace(/0+$/u, '');
+  const canonicalFraction = fraction.replace(/(?<!0)0+$/u, '');
   const unitPrice = {
     ...selectedUnitPrice,
     amount: canonicalFraction === '' ? integer : `${integer}.${canonicalFraction}`,

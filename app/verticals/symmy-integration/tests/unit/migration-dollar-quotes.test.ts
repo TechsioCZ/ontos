@@ -30,7 +30,7 @@ const blockCommentEnd = (statement: string, start: number): number | undefined =
 
 const dollarQuoteDefects = (statement: string): readonly string[] => {
   const defects: string[] = [];
-  const tag = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/uy;
+  const tag = /\$(?:[A-Za-z_]\w*)?\$/uy;
   let index = 0;
   while (index < statement.length) {
     const character = statement.charAt(index);
@@ -57,7 +57,7 @@ const dollarQuoteDefects = (statement: string): readonly string[] => {
       tag.lastIndex = index;
       const opened = tag.exec(statement)?.[0];
       if (opened === undefined) {
-        if (!/[0-9]/u.test(next)) {
+        if (!/\d/u.test(next)) {
           defects.push(`a $ at offset ${String(index)} opens no dollar quote`);
         }
         index += 1;

@@ -79,7 +79,7 @@ export const assetByteSourceRead = defineRead<
       const mediaAssetId = yield* resolveMediaAssetRef(input.mediaAssetRef, context.scope.tenantId).pipe(
         Effect.mapError(readFailureOf),
       );
-      const asset = yield* context.services.repository.find(mediaAssetId).pipe(Effect.mapError(readFailureOf));
+      const asset = yield* Effect.mapError(context.services.repository.find(mediaAssetId), readFailureOf);
       const source = yield* MediaByteSource;
       yield* source.offer(asset);
       return { evidence: { resultCount: 1 }, result: { mediaAssetRef: input.mediaAssetRef } };

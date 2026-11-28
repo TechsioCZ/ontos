@@ -91,7 +91,7 @@ export const assetDownloadRead = defineRead<
       const mediaAssetId = yield* resolveMediaAssetRef(input.mediaAssetRef, context.scope.tenantId).pipe(
         Effect.mapError(readFailureOf),
       );
-      const asset = yield* context.services.repository.find(mediaAssetId).pipe(Effect.mapError(readFailureOf));
+      const asset = yield* Effect.mapError(context.services.repository.find(mediaAssetId), readFailureOf);
       // Only a sealed, ready asset has bytes that may be presented as the confirmed asset.
       if (asset.processingStatus !== 'ready' || asset.sealedAt === null || asset.contentSha256 === null) {
         return yield* new MediaNotReady({

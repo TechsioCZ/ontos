@@ -309,13 +309,12 @@ export const makePricingBoundedWholeAttemptEvaluationService = <
           ),
         } as const;
       }
-      const published = yield* dependencies.publish(result.publicationRequest).pipe(
+      return yield* dependencies.publish(result.publicationRequest).pipe(
         Effect.match({
           onFailure: (failure) => ({ failure: publicationFailure(result.attempt, failure) }),
           onSuccess: (publication) => ({ attempt: result.attempt, publication }),
         }),
       );
-      return published;
     });
 
     const first = yield* runAttempt(1);

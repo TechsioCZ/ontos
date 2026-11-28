@@ -138,7 +138,7 @@ it('keeps Core module-state errors stable and sanitized', () => {
 
   for (const error of errors) {
     const serialized = JSON.stringify(error);
-    expect(serialized).not.toMatch(/postgres|select |insert |tenant-[0-9]|principal-[0-9]/iu);
+    expect(serialized).not.toMatch(/postgres|select |insert |tenant-\d|principal-\d/iu);
   }
 });
 

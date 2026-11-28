@@ -61,7 +61,7 @@ const StripeEventTypeSchema = Schema.Literals(STRIPE_MAPPED_EVENT_TYPES);
 const StripeEventEnvelopeSchema = Schema.Struct({
   created: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   data: Schema.Struct({ object: Schema.Json }),
-  id: Schema.String.check(Schema.isPattern(/^evt_[A-Za-z0-9_]{1,250}$/u)),
+  id: Schema.String.check(Schema.isPattern(/^evt_\w{1,250}$/u)),
   livemode: Schema.Boolean,
   type: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });

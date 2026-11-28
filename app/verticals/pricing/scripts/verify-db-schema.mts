@@ -97,21 +97,21 @@ const pricingTableInventoryMatches = (actualTables: readonly string[], expectedT
   actualTables.length === expectedTables.length &&
   actualTables.every((table, index) => table === expectedTables[index]);
 
-const runtimeDeleteTables = PRICING_RUNTIME_TABLE_GRANTS.filter(({ privileges }) =>
-  privileges.some((privilege) => privilege === 'delete'),
-).map(({ table }) => table);
-const runtimeInsertTables = PRICING_RUNTIME_TABLE_GRANTS.filter(({ privileges }) =>
-  privileges.some((privilege) => privilege === 'insert'),
-).map(({ table }) => table);
-const runtimeSelectTables = PRICING_RUNTIME_TABLE_GRANTS.filter(({ privileges }) =>
-  privileges.some((privilege) => privilege === 'select'),
-).map(({ table }) => table);
-const runtimeUpdateTables = PRICING_RUNTIME_TABLE_GRANTS.filter(({ privileges }) =>
-  privileges.some((privilege) => privilege === 'update'),
-).map(({ table }) => table);
-const governedRuntimeTables = PRICING_RUNTIME_TABLE_GRANTS.filter(({ privileges }) =>
-  privileges.every((privilege) => privilege === 'select'),
-).map(({ table }) => table);
+const runtimeDeleteTables = PRICING_RUNTIME_TABLE_GRANTS.flatMap(({ privileges, table }) =>
+  privileges.some((privilege) => privilege === 'delete') ? [table] : [],
+);
+const runtimeInsertTables = PRICING_RUNTIME_TABLE_GRANTS.flatMap(({ privileges, table }) =>
+  privileges.some((privilege) => privilege === 'insert') ? [table] : [],
+);
+const runtimeSelectTables = PRICING_RUNTIME_TABLE_GRANTS.flatMap(({ privileges, table }) =>
+  privileges.some((privilege) => privilege === 'select') ? [table] : [],
+);
+const runtimeUpdateTables = PRICING_RUNTIME_TABLE_GRANTS.flatMap(({ privileges, table }) =>
+  privileges.some((privilege) => privilege === 'update') ? [table] : [],
+);
+const governedRuntimeTables = PRICING_RUNTIME_TABLE_GRANTS.flatMap(({ privileges, table }) =>
+  privileges.every((privilege) => privilege === 'select') ? [table] : [],
+);
 
 const infrastructureMatchesExpectedContract = (row: InfrastructureRow | undefined) => {
   if (row === undefined) {

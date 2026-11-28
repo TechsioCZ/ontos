@@ -47,12 +47,12 @@ export const fromComgatePrice = (reported: {
  * (thousands separators, a decimal point, more or fewer decimals) is `None`.
  */
 export const parseComgateStatementAmount = (text: string): Option.Option<number> => {
-  const match = /^(?<sign>-?)(?<units>0|[1-9][0-9]{0,12}),(?<cents>[0-9]{2})$/u.exec(text);
+  const match = /^(?<sign>-?)(?<units>0|[1-9]\d{0,12}),(?<cents>\d{2})$/u.exec(text);
   const groups = match?.groups;
   if (groups === undefined) {
     return Option.none();
   }
-  const digits = `${groups['units'] ?? ''}${groups['cents'] ?? ''}`.replace(/^0+(?=[0-9])/u, '');
+  const digits = `${groups['units'] ?? ''}${groups['cents'] ?? ''}`.replace(/^0+(?=\d)/u, '');
   return Option.map(parseExactMinorUnits(digits), (magnitude) =>
     groups['sign'] === '-' && magnitude !== 0 ? -magnitude : magnitude,
   );

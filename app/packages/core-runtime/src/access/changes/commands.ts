@@ -857,7 +857,7 @@ export const makeAccessChangesCommands = (
         pending.push({ itemId: AccessChangeItemIdSchema.make(item.id), roleIds: item.suggestedRoleIds });
       }
     }
-    const view = withOptional(
+    return withOptional(
       {
         decisions: Object.freeze([...state.decisions]),
         items: Object.freeze(
@@ -871,7 +871,6 @@ export const makeAccessChangesCommands = (
       },
       snapshot === undefined ? {} : { release: releaseView(snapshot) },
     );
-    return view;
   });
 
   const preview = Effect.fn('AccessChangesCommands.preview')(function* previewEffect(

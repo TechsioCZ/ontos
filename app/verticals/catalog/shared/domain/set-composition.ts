@@ -94,7 +94,7 @@ const format = ({ coefficient, scale }: Decimal): string => {
     return coefficient.toString();
   }
   const padded = coefficient.toString().padStart(scale + 1, '0');
-  const fractional = padded.slice(-scale).replace(/0+$/u, '');
+  const fractional = padded.slice(-scale).replace(/(?<!0)0+$/u, '');
   return fractional.length === 0 ? padded.slice(0, -scale) : `${padded.slice(0, -scale)}.${fractional}`;
 };
 

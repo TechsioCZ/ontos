@@ -129,7 +129,7 @@ const recordIdOf = Effect.fn('SymmyProductPlan.recordId')(function* recordIdOf<F
 });
 
 const trimTrailingZeros = (quantity: string) =>
-  quantity.includes('.') ? quantity.replace(/0+$/u, '').replace(/\.$/u, '') : quantity;
+  quantity.includes('.') ? quantity.replace(/(?<!0)0+$/u, '').replace(/\.$/u, '') : quantity;
 
 /** The facts of one price once the route and the body together have named every part of its identity. */
 interface ResolvedPrice {

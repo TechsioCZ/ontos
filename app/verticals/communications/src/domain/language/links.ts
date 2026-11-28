@@ -31,7 +31,7 @@ const namedBraces = new Map([
   ['rbrace', '}'],
   ['rcub', '}'],
 ]);
-const htmlReference = /&(?:#(?<decimal>[0-9]+)|#[xX](?<hexadecimal>[0-9a-fA-F]+)|(?<name>[a-zA-Z]+));?/gu;
+const htmlReference = /&(?:#(?<decimal>\d+)|#[xX](?<hexadecimal>[0-9a-fA-F]+)|(?<name>[a-zA-Z]+));?/gu;
 const MAX_CODE_POINT = 1_114_111;
 
 const decodeHtmlReferences = (text: string) =>

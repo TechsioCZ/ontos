@@ -85,7 +85,7 @@ const formatScaled = (coefficient: bigint, scale: number): string => {
     return `${sign}${digits}`;
   }
   const integer = digits.slice(0, -scale);
-  const fraction = digits.slice(-scale).replace(/0+$/u, '');
+  const fraction = digits.slice(-scale).replace(/(?<!0)0+$/u, '');
   return fraction.length === 0 ? `${sign}${integer}` : `${sign}${integer}.${fraction}`;
 };
 

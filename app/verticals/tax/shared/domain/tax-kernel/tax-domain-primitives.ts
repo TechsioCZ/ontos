@@ -12,7 +12,7 @@ export const RevisionSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
 
 /** Exact positive base-10 decimal string; never a binary float and never zero. */
 export const PositiveDecimalStringSchema = Schema.String.check(
-  Schema.isPattern(/^(?:0\.\d*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u),
+  Schema.isPattern(/^(?:0\.0*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u),
 );
 
 /** ISO 4217 alphabetic currency code as issued by the owner; TAX never relabels it. */

@@ -976,12 +976,13 @@ const writeSummary = Effect.fn('qualityAudit.writeSummary')(function* writeSumma
       'JSCPD implementation counts exclude only complete static import-binding spans proven by parsing both files; raw clones and per-pair evidence remain in jscpd/report.json and jscpd/import-clone-evidence.json.',
       'Fallow strict clones preserve literal differences. Semantic similarity normalizes them and remains advisory; inspect both together with JSCPD before choosing a shared implementation.',
       `Health counts cyclomatic > ${COMPLEXITY_LIMITS.cyclomatic} or control-flow cognitive > ${COMPLEXITY_LIMITS.cognitive}. The latter subtracts hook-density and prop-count penalties from the native weighted metric, with contribution arithmetic verified for every finding.`,
-      ...results
-        .filter((result) => result.name === FALLOW_HEALTH)
-        .map(
-          (result) =>
-            `UI-only advisories excluded from the control-flow count: ${result.coverage.uiOnlyFindings ?? 0}. Native weighted findings: ${result.coverage.weightedFindings ?? 0}. Per-function evidence: fallow-health/complexity.json.`,
-        ),
+      ...results.flatMap((result) =>
+        result.name === FALLOW_HEALTH
+          ? [
+              `UI-only advisories excluded from the control-flow count: ${result.coverage.uiOnlyFindings ?? 0}. Native weighted findings: ${result.coverage.weightedFindings ?? 0}. Per-function evidence: fallow-health/complexity.json.`,
+            ]
+          : [],
+      ),
       'Source inventory and raw reports live in the run directory. Clone file counts include only token-eligible files; discovery and complexity counts cover the wider source corpus.',
       'Analyzer discovery is not proof of successful parsing: these tools can silently accept malformed source. Existing lint and compiler checks remain authoritative.',
       '',

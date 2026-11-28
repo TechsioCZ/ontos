@@ -113,7 +113,7 @@ const RETURN_TOKEN_PARAMETER = 'r';
 const CHECKOUT_SESSIONS_PATH = '/v1/checkout/sessions';
 const REFUNDS_PATH = '/v1/refunds';
 const PAYMENT_INTENTS_PATH = '/v1/payment_intents';
-const EXPIRE_SESSION_PATTERN = /^\/v1\/checkout\/sessions\/(?<sessionId>cs_[A-Za-z0-9_]{1,250})\/expire$/u;
+const EXPIRE_SESSION_PATTERN = /^\/v1\/checkout\/sessions\/(?<sessionId>cs_\w{1,250})\/expire$/u;
 const ENDPOINT_REF_PREFIX = 'stripe:POST:';
 
 /** Request headers OntOS adds at send time; a persisted request may never carry them. */

@@ -271,7 +271,7 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(function* runCo
       return { core, generatorContext };
     },
   });
-  const result = yield* generator(prepared.generatorContext, prepared.core).pipe(
+  return yield* generator(prepared.generatorContext, prepared.core).pipe(
     Effect.catchDefect((cause) =>
       Effect.fail(
         new ScaffoldingError({
@@ -289,7 +289,6 @@ const runCodesmithGenerator = Effect.fn('runCodesmithGenerator')(function* runCo
     ),
     Effect.ensuring(Effect.sync(() => (prepared.core._context.current = null))),
   );
-  return result;
 });
 
 const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorResult>(

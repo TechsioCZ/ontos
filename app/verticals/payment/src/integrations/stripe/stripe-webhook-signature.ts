@@ -16,7 +16,7 @@ import type { GatewayNotificationRejectedError, GatewayNotificationRejectionReas
  * Nothing here logs or includes the header, the body or the secret in an error.
  */
 
-const TIMESTAMP_PATTERN = /^[0-9]{1,15}$/u;
+const TIMESTAMP_PATTERN = /^\d{1,15}$/u;
 const SIGNATURE_PATTERN = /^[0-9a-fA-F]{64}$/u;
 
 export interface VerifyStripeSignatureInput {

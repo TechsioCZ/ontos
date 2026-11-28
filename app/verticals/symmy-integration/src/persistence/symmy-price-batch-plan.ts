@@ -29,7 +29,7 @@ export const reviseOperation = {
 type PriceGroupRef = SymmyPriceBatch['priceGroupRef'];
 
 const trimTrailingZeros = (quantity: string) =>
-  quantity.includes('.') ? quantity.replace(/0+$/u, '').replace(/\.$/u, '') : quantity;
+  quantity.includes('.') ? quantity.replace(/(?<!0)0+$/u, '').replace(/\.$/u, '') : quantity;
 
 /** The stable identity of a new price in its list, so a replay of the same price keeps one source record. */
 const priceIdentity = (priceGroupRef: PriceGroupRef, price: SymmyPriceListPrice): string =>

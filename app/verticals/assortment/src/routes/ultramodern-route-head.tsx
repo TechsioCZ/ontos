@@ -19,7 +19,7 @@ type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'jsonLd' | 'publ
 const routeMetadata: readonly RouteMetadata[] = ultramodernRouteMetadata;
 
 const normalisePath = (pathname: string) => {
-  const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/\/+$/u, '');
+  const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/(?<!\/)\/+$/u, '');
   return normalised.length > 0 ? normalised : '/';
 };
 
@@ -84,7 +84,7 @@ const resolveRouteMetadata = (pathname: string) => {
 const isPublicIndexableRoute = (route: RouteMetadata | undefined): boolean => route?.public === true && route.indexable;
 
 const absoluteUrl = (pathname: string) => {
-  const origin = ULTRAMODERN_SITE_URL.replace(/\/+$/u, '');
+  const origin = ULTRAMODERN_SITE_URL.replace(/(?<!\/)\/+$/u, '');
   return `${origin}${pathname}`;
 };
 

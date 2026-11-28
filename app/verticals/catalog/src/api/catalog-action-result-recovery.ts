@@ -128,9 +128,8 @@ export const recoverCatalogActionResult = Effect.fn('CatalogActionResultRecovery
     return { status: 'unavailable' } as const;
   }
 
-  const result = yield* codec.decode(row.encodedResult).pipe(
+  return yield* codec.decode(row.encodedResult).pipe(
     Effect.map((value) => ({ result: value, status: 'committed' }) as const),
     Effect.orElseSucceed(() => ({ status: 'unavailable' }) as const),
   );
-  return result;
 });

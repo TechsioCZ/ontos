@@ -89,7 +89,7 @@ import type { GopayCreatePaymentRequest, GopayGoid, GopayRefundHistory } from '.
 
 const GOPAY_PAYMENT_PATH = '/payments/payment';
 const GOPAY_COLLECT_ENDPOINT_REF = `gopay:POST:${GOPAY_PAYMENT_PATH}`;
-const GOPAY_REFUND_ENDPOINT_PATTERN = /^gopay:POST:\/payments\/payment\/(?<paymentId>[1-9][0-9]{0,15})\/refund$/u;
+const GOPAY_REFUND_ENDPOINT_PATTERN = /^gopay:POST:\/payments\/payment\/(?<paymentId>[1-9]\d{0,15})\/refund$/u;
 const RETURN_TOKEN_PARAMETER = 'r';
 const JSON_CONTENT_TYPE = 'application/json';
 const FORM_CONTENT_TYPE = 'application/x-www-form-urlencoded';

@@ -1017,7 +1017,10 @@ const planRetireContributionScaffold = Effect.fn('RetireContributionScaffold.pla
       mutations = yield* planPageRetirement(vertical, name);
     }
     yield* trySync(() => ensureUniqueMutationPaths(mutations), 'failed to validate retirement mutation paths');
-    const deletedPaths = mutations.filter((mutation) => mutation.kind === 'delete').map(({ path }) => path);
+    const deletedPaths = mutations.flatMap((mutation) => {
+      const { path } = mutation;
+      return mutation.kind === 'delete' ? [path] : [];
+    });
     return { mutations, result: { deletedPaths, kind: config.kind, name } };
   },
 );
