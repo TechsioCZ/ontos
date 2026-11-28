@@ -30,8 +30,7 @@ const later = '2026-10-05T12:07:00.000Z';
 const base = makeCurrentnessInput(['3'], '2');
 const request = (previous?: AvailabilityCurrentDecision): AvailabilityCurrentnessRequest => ({
   evaluatedAt: later,
-  previous,
-  representedInBundle: previous !== undefined,
+  ...(previous === undefined ? { representedInBundle: false } : { previous, representedInBundle: true }),
   subject: base.subject,
   useBoundary: { kind: 'ORDER_COMMITMENT', requiredAt: later },
 });

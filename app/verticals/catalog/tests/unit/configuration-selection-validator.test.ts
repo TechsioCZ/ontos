@@ -50,7 +50,7 @@ const definition: ProductConfigurationDefinitionRevision = {
     revision: Schema.decodeUnknownSync(CatalogRevisionNumberSchema)(1),
   },
 };
-const selection: ProductConfiguration = {
+const selection = {
   definition: definition.reference,
   productRef,
   values: [
@@ -58,7 +58,7 @@ const selection: ProductConfiguration = {
     { amount: '83', choiceKey: 'length', kind: 'MEASURED_VALUE', unitRef },
   ],
   variantRef,
-};
+} as const satisfies ProductConfiguration;
 const lengthRule: MeasuredConstraint = {
   completeness: 'COMPLETE',
   maximum: { amount: '120', inclusive: true },

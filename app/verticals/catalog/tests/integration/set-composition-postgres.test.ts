@@ -231,7 +231,7 @@ it.live('publishes only a proven flat fixed Set with one shelf and two brackets'
       const exact = [
         { amount: '1', productId: shelfId, variantId: shelfVariantId },
         { amount: '2', productId: bracketId, variantId: bracketVariantId },
-      ];
+      ] as const;
       const unconfirmedId = randomUUID();
       expect(
         Match.value(yield* publish(tenantId, unconfirmedId, exact)).pipe(

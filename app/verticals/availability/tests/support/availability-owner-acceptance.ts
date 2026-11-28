@@ -46,8 +46,7 @@ export const currentRequest = (
   kind: AvailabilityUseBoundary['kind'] = 'ORDER_COMMITMENT',
 ): AvailabilityCurrentnessRequest => ({
   evaluatedAt: acceptanceLater,
-  previous,
-  representedInBundle: previous !== undefined,
+  ...(previous === undefined ? { representedInBundle: false } : { previous, representedInBundle: true }),
   subject: input.subject,
   useBoundary: { kind, requiredAt: acceptanceLater },
 });

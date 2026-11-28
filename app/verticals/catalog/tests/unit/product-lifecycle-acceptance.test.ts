@@ -431,7 +431,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(updated.product.lifecycle).toBe('ACTIVE');
       // An ACTIVE Product can still be Catalog-incomplete.
       expect(updated.product.catalogReady).toBe(false);
-      expect(state.product.currentRevision).toBe(2);
+      expect(state.product['currentRevision']).toBe(2);
       expect(state.revisions[0]).toMatchObject({
         changeKind: 'LIFECYCLE',
         lifecycleState: 'ACTIVE',
@@ -464,7 +464,7 @@ describe('Product lifecycle acceptance (#414)', () => {
         Match.orElse(() => null),
       );
       expect(refused?.reasons).toEqual(['Product needs a current localized Catalog name']);
-      expect(state.product.lifecycleState).toBe('DRAFT');
+      expect(state.product['lifecycleState']).toBe('DRAFT');
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -497,7 +497,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(retired.product.productRef.resourceId).toBe(productId);
       expect(retired.product.lifecycle).toBe('RETIRED');
       expect(retired.product.variants[0]).toMatchObject({ variantId });
-      expect(state.product.retiredReason).toBe('Discontinued');
+      expect(state.product['retiredReason']).toBe('Discontinued');
       expect(state.revisions[0]).toMatchObject({
         changeKind: 'LIFECYCLE',
         lifecycleState: 'RETIRED',
@@ -587,7 +587,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(reactivated.product.lifecycle).toBe('ACTIVE');
       expect(reactivated.product.catalogReady).toBe(true);
       expect(reactivated.product.variants[0]).toMatchObject({ lifecycle: 'ACTIVE', variantId });
-      expect(state.product.retiredReason).toBeNull();
+      expect(state.product['retiredReason']).toBeNull();
       expect(state.revisions[0]).toMatchObject({ changeKind: 'LIFECYCLE', lifecycleState: 'ACTIVE', revision: 4 });
       expect(state.lifecycleEvents[0]).toMatchObject({ event: 'ACTIVATED' });
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -615,7 +615,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       expect(refused?.reasons).toEqual([
         'Current Product Type, required facts, Variant axes, Unit and dependent content are not verified',
       ]);
-      expect(state.product.lifecycleState).toBe('RETIRED');
+      expect(state.product['lifecycleState']).toBe('RETIRED');
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -636,7 +636,7 @@ describe('Product lifecycle acceptance (#414)', () => {
         yield* executableContextFor(persistence),
       );
       expect(result.product).toMatchObject({ catalogReady: true, lifecycle: 'ACTIVE', productRef, revision: 4 });
-      expect(state.product.lifecycleState).toBe('ACTIVE');
+      expect(state.product['lifecycleState']).toBe('ACTIVE');
       expect(state.revisions).toHaveLength(1);
       expect(state.lifecycleEvents).toHaveLength(1);
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -657,8 +657,8 @@ describe('Product lifecycle acceptance (#414)', () => {
         yield* executableContextFor(persistence),
       ).pipe(Effect.flip);
       expect(Schema.is(ProductNotCatalogReady)(error)).toBe(true);
-      expect(state.product.lifecycleState).toBe('RETIRED');
-      expect(state.product.currentRevision).toBe(3);
+      expect(state.product['lifecycleState']).toBe('RETIRED');
+      expect(state.product['currentRevision']).toBe(3);
       expect(state.revisions).toHaveLength(0);
       expect(state.lifecycleEvents).toHaveLength(0);
     }).pipe(Effect.provide(NodeCrypto.layer)),
@@ -684,7 +684,7 @@ describe('Product lifecycle acceptance (#414)', () => {
         Match.orElse(() => null),
       );
       expect(refused?.reasons).toEqual(['Product needs at least one ACTIVE Variant']);
-      expect(state.product.lifecycleState).toBe('RETIRED');
+      expect(state.product['lifecycleState']).toBe('RETIRED');
       expect(state.revisions).toHaveLength(0);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );

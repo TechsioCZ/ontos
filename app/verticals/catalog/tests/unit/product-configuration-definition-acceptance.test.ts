@@ -72,7 +72,7 @@ const definition: ProductConfigurationDefinitionRevision = {
     revision: Schema.decodeUnknownSync(CatalogRevisionNumberSchema)(1),
   },
 };
-const selected: ProductConfiguration = {
+const selected = {
   definition: definition.reference,
   productRef,
   values: [
@@ -80,7 +80,7 @@ const selected: ProductConfiguration = {
     { amount: '83', choiceKey: 'length', kind: 'MEASURED_VALUE', unitRef },
   ],
   variantRef: whiteVariant,
-};
+} as const satisfies ProductConfiguration;
 
 describe('Product Configuration definition acceptance (#456)', () => {
   it('distinguishes the Product-level Definition Resource from the Configuration value it validates', () => {

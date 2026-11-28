@@ -66,7 +66,7 @@ const selection = (source: ProductConfigurationDefinitionRevision): ProductConfi
 const left = selection(leftDefinition);
 const right = selection(rightDefinition);
 const at = new Date('2026-09-18T12:00:00.000Z');
-const input: CurrentConfigurationAssessmentInput = {
+const input = {
   at,
   target: {
     definitionId: definitionRef.resourceId,
@@ -77,7 +77,7 @@ const input: CurrentConfigurationAssessmentInput = {
     { amount: '83', choiceKey: 'length', kind: 'MEASURED_VALUE', unitId: unitRef.resourceId },
     { choiceKey: 'mount', kind: 'SINGLE_CHOICE', optionKey: 'A' },
   ],
-};
+} as const satisfies CurrentConfigurationAssessmentInput;
 const assessment = (revision: number): CurrentConfigurationAssessment => ({
   assessedAt: at,
   choiceRevisions: [

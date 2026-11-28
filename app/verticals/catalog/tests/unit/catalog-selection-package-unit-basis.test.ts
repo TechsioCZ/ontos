@@ -210,7 +210,8 @@ const makeWhere = (table: ReadTable, overrides: Map<unknown, unknown>, projected
         escapeParam: () => '?',
         escapeString: (text) => text,
       }).params ?? [];
-    const matched = entries.filter((entry) => !('definitionId' in entry) || bound.includes(entry.definitionId));
+    const boundIds = new Set(bound);
+    const matched = entries.filter((entry) => !('definitionId' in entry) || boundIds.has(entry.definitionId));
     if (table === productConfigurationDefinitions && !projected) {
       return { limit: () => Effect.succeed(matched.slice(0, 1)) };
     }
@@ -741,7 +742,7 @@ describe('Catalog Selection package and Unit owner basis', () => {
       for (const [field, value] of [
         ['tenantId', unitId],
         ['resourceType', 'commerce.catalog.product'],
-      ]) {
+      ] as const) {
         const requested = setSelection(1);
         Object.defineProperty(requested.setComposition?.resourceRef, field, { value });
         expect((yield* read(setRows(), requested)).status).toBe('INVALID');
@@ -770,7 +771,7 @@ describe('Catalog Selection package and Unit owner basis', () => {
       for (const [field, value] of [
         ['resourceType', 'commerce.catalog.product'],
         ['tenantId', '99999999-9999-4999-8999-999999999999'],
-      ]) {
+      ] as const) {
         const configured = Schema.decodeUnknownSync(CatalogSelectionSchema)({
           ...selection,
           configuration: {

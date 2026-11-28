@@ -91,7 +91,7 @@ describe('Product create initial Variant history', () => {
             combinationKey: null,
             evidenceRefs: [],
             lifecycleState: 'WORK_IN_PROGRESS',
-            productId: writes[0]?.[1].productId,
+            productId: writes[0]?.[1]['productId'],
             reason: reason ?? null,
             revision: 1,
             tenantId,

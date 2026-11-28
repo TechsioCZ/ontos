@@ -1,6 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { Effect, Match, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
@@ -99,7 +99,7 @@ const futureHistoryQuery = <O extends object, R extends object, C extends object
       if (table === setCompositionRevisions) {
         return map(Effect.succeed(rows));
       }
-      const selected = componentRows[state.componentReads % 3 === 1 ? 1 : 0];
+      const selected = EffectArray.getUnsafe(componentRows, state.componentReads % 3 === 1 ? 1 : 0);
       state.componentReads += 1;
       return map(Effect.succeed(selected));
     },
@@ -262,7 +262,7 @@ describe('Set composition persistence', () => {
           revision.components[0],
           {
             ...revision.components[1],
-            quantity: { amount: '3', unitRef: revision.components[1].quantity.unitRef },
+            quantity: { amount: '3', unitRef: EffectArray.getUnsafe(revision.components, 1).quantity.unitRef },
           },
         ],
         predecessor: revision.reference,

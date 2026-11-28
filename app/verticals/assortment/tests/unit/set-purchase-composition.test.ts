@@ -252,7 +252,7 @@ it('uses full configured-selection meaning for deterministic short-circuit order
   const resolve = (components: readonly ReturnType<typeof configuredComponent>[]) =>
     resolveAssortmentSetPurchase(input(components), (item) => {
       const { configuration } = item.constituent.catalogSelection;
-      const color = configuration.kind === 'CONFIGURED' ? configuration.value.color : undefined;
+      const color = configuration.kind === 'CONFIGURED' ? configuration.value['color'] : undefined;
       return decision(item.constituent, color === 'red' ? 'INELIGIBLE' : 'ELIGIBLE');
     });
   const first = resolve([red, blue]);
@@ -271,7 +271,7 @@ it('uses full configured-selection meaning for deterministic short-circuit order
   const collisionResolve = (components: readonly ReturnType<typeof configuredComponent>[]) =>
     resolveAssortmentSetPurchase(input(components), (item) => {
       const { configuration } = item.constituent.catalogSelection;
-      const value = configuration.kind === 'CONFIGURED' ? configuration.value.color : undefined;
+      const value = configuration.kind === 'CONFIGURED' ? configuration.value['color'] : undefined;
       return decision(item.constituent, value === null || value === 1 ? 'INELIGIBLE' : 'ELIGIBLE');
     });
   const nullCollision = collisionResolve([stringValue, nullValue]);

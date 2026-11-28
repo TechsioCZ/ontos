@@ -875,6 +875,9 @@ it('keeps the latest Set head guard structural for successors and preserves the 
     new URL('20261020103114_set_successor_publication_head/migration.sql', migrationRoot),
     'utf-8',
   );
+  if (originalFunction === undefined || !originalFunction.startsWith(prefix)) {
+    throw new Error('Missing original validation function');
+  }
   const expected = originalFunction
     .replace('CREATE FUNCTION', 'CREATE OR REPLACE FUNCTION')
     .replace(

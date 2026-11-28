@@ -332,7 +332,7 @@ describe('Product Type Current readiness source', () => {
   const siblingRows = [
     { currentRevision: 3, lifecycleState: 'RETIRED', productId, tenantId, variantId: retiredId },
     { currentRevision: 2, lifecycleState: 'ACTIVE', productId, tenantId, variantId: selectedId },
-  ];
+  ] as const;
   it.effect('keeps exact healthy V2 ready with a structurally verified retained V1 direct set', () =>
     Effect.gen(function* retainedSibling() {
       const source = productTypeReadinessSourceForScope(
@@ -418,14 +418,12 @@ describe('Product Type Current readiness source', () => {
   for (const control of ['orphan', 'foreign-product', 'foreign-tenant', 'duplicate-retired'] as const) {
     it.effect(`rejects ${control} across the full retained owner inventory`, () =>
       Effect.gen(function* inventoryProvenance() {
-        let variants = siblingRows;
-        if (control === 'foreign-product') {
-          variants = [{ ...siblingRows[0], productId: selectedId }, siblingRows[1]];
-        } else if (control === 'foreign-tenant') {
-          variants = [{ ...siblingRows[0], tenantId: selectedId }, siblingRows[1]];
-        } else if (control === 'duplicate-retired') {
-          variants = [...siblingRows, siblingRows[0]];
-        }
+        const variants = {
+          'duplicate-retired': [...siblingRows, siblingRows[0]],
+          'foreign-product': [{ ...siblingRows[0], productId: selectedId }, siblingRows[1]],
+          'foreign-tenant': [{ ...siblingRows[0], tenantId: selectedId }, siblingRows[1]],
+          orphan: siblingRows,
+        }[control];
         const options = {
           optionalRule: true,
           retainedVariantId: control === 'orphan' ? 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' : retiredId,
