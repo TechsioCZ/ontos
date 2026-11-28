@@ -1441,6 +1441,8 @@ export default defineConfig({
     ...antiSlopEffectRules,
     ...effectNativeRules,
     ...semanticLintOxlintRules,
+    // tsrs3 misses repeated membership in flatMap and find. Keep main's blocking rule until parity.
+    'react-doctor/js-set-map-lookups': 'error',
     ...uiKitRules,
   },
   settings: jsPluginSettings,
