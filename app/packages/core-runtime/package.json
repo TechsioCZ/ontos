@@ -10,6 +10,8 @@
     "./access/approvals/frozen-command-drizzle-store": "./src/access/approvals/frozen-command-drizzle-store.ts",
     "./access/approvals/governed-amount": "./src/access/approvals/governed-amount.ts",
     "./access/approvals/inbox": "./src/access/approvals/inbox.ts",
+    "./crypto/sha256": "./src/crypto/sha256.ts",
+    "./testing/webcrypto-digest": "./src/testing/webcrypto-digest.ts",
     "./access/bootstrap": "./src/access/bootstrap/index.ts",
     "./access/catalog": "./src/access/catalog/index.ts",
     "./access/decision/contract": "./src/access/decision/contract.ts",

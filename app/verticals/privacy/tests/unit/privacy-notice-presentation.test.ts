@@ -1,6 +1,7 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Exit, Redacted, Schema } from 'effect';
-import { Digest } from 'effect/crypto';
+import { Effect, Redacted, Schema } from 'effect';
+import { WebCrypto } from 'effect/crypto';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, base64url } from 'jose';
 
@@ -49,20 +50,14 @@ it.effect('digests Notice material with unchanged SHA-256 bytes', () =>
   }).pipe(Effect.provide(NodeCrypto.layer)),
 );
 
-it.effect('keeps a broken native digest primitive a defect, not Notice integrity unavailability', () =>
-  Effect.gen(function* nativeDigestDefect() {
+it.effect('reports a rejected host digest as a redacted Notice integrity outage', () =>
+  Effect.gen(function* hostDigestFailure() {
     const service = yield* makePrivacyNoticePresentationService(configuration);
-    const exit = yield* Effect.exit(service.digest('abc'));
-    expect(Exit.hasDies(exit)).toBe(true);
-    expect(Exit.hasFails(exit)).toBe(false);
+    const error = yield* Effect.flip(service.digest('abc'));
+    expect(error.code).toBe('privacy_notice_acknowledgement_unavailable');
+    expect(Object.hasOwn(error, 'cause')).toBe(false);
   }).pipe(
-    Effect.provideService(
-      Digest.Digest,
-      Digest.Digest.of({
-        digest: () => Effect.die(new Error('private digest failure')),
-        digestHex: () => Effect.die(new Error('private digest failure')),
-      }),
-    ),
+    Effect.provide(WebCrypto.layer(webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))))),
   ),
 );
 

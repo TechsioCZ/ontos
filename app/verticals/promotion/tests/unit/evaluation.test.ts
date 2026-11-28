@@ -1,6 +1,7 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
 import { NodeCrypto } from '@effect/platform-node';
-import { DateTime, Effect, Exit, Option, Schema } from 'effect';
-import { Digest } from 'effect/crypto';
+import { DateTime, Effect, Option, Schema } from 'effect';
+import { WebCrypto } from 'effect/crypto';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PromotionEvaluationRequestSchema, PromotionIssuedProofSchema } from '../../shared/apis/preview-promotions.ts';
@@ -291,25 +292,22 @@ const retainMonetaryProof = Effect.fn('EvaluationTest.retainProof')(function* re
 });
 
 describe('Real Promotion evaluator composition', () => {
-  it.effect('binds the Purchasing Subject with unchanged SHA-256 bytes and keeps a broken Digest a defect', () =>
-    Effect.gen(function* subjectBindingDigest() {
-      expect(yield* promotionSubjectBinding(request.purchase).pipe(Effect.provide(NodeCrypto.layer))).toBe(
-        'd90f5ea9c2dad8e9a252900c288aa793a252288e24d1471eb846550d251aa9ed',
-      );
-      const broken = yield* Effect.exit(
-        promotionSubjectBinding(request.purchase).pipe(
-          Effect.provideService(
-            Digest.Digest,
-            Digest.Digest.of({
-              digest: () => Effect.die(new Error('SHA-256 unavailable')),
-              digestHex: () => Effect.die(new Error('SHA-256 unavailable')),
-            }),
+  it.effect(
+    'binds the Purchasing Subject with unchanged SHA-256 bytes and reports a rejected host digest as unavailable',
+    () =>
+      Effect.gen(function* subjectBindingDigest() {
+        expect(yield* promotionSubjectBinding(request.purchase).pipe(Effect.provide(NodeCrypto.layer))).toBe(
+          'd90f5ea9c2dad8e9a252900c288aa793a252288e24d1471eb846550d251aa9ed',
+        );
+        const error = yield* promotionSubjectBinding(request.purchase).pipe(
+          Effect.provide(
+            WebCrypto.layer(webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure')))),
           ),
-        ),
-      );
-      expect(Exit.hasDies(broken)).toBe(true);
-      expect(Exit.hasFails(broken)).toBe(false);
-    }),
+          Effect.flip,
+        );
+        expect(error).toMatchObject({ code: 'UNAVAILABLE', reason: 'Purchasing Subject binding is unavailable' });
+        expect(Object.hasOwn(error, 'cause')).toBe(false);
+      }),
   );
 
   it.effect('completes proven monetary absence before Shipping and normalizes authoritative source order', () =>

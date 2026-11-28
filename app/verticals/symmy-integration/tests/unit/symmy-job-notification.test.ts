@@ -1,7 +1,9 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { TestClock } from 'effect/testing';
 import { SymmyJobNotificationStore } from '../../src/services/symmy-job-notification-store.ts';
 import { NodeCrypto } from '@effect/platform-node';
-import { Duration, Effect, Fiber, Layer, Schema } from 'effect';
+import { Deferred, Duration, Effect, Fiber, Layer, Schema } from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -218,7 +220,19 @@ it.effect('times out a notification attempt without changing any owner effect', 
       }),
   };
   return Effect.gen(function* verifyNotificationTimeout() {
-    const running = yield* Effect.forkChild(makeSymmyJobNotificationService([policy]).deliver(input).pipe(Effect.flip));
+    const sending = yield* Deferred.make<undefined>();
+    const running = yield* Effect.forkChild(
+      makeSymmyJobNotificationService([policy])
+        .deliver(input)
+        .pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Deferred.succeed(sending, undefined).pipe(Effect.andThen(Effect.never))),
+          ),
+          Effect.flip,
+        ),
+    );
+    yield* Deferred.await(sending);
     yield* TestClock.adjust(Duration.seconds(2));
     const timeout = yield* Fiber.join(running);
     expect(timeout).toMatchObject({ code: 'notification_retry' });
@@ -227,10 +241,6 @@ it.effect('times out a notification attempt without changing any owner effect', 
   }).pipe(
     Effect.provide(NodeCrypto.layer),
     Effect.provideService(SymmyJobNotificationStore, store),
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make(() => Effect.never),
-    ),
     Effect.provideService(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
   );
 });
@@ -263,3 +273,23 @@ it.effect('refuses a private payload field before a callback claim or external r
     Effect.provideService(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
   );
 });
+
+it.effect('returns the configuration outage before claiming or sending a notification on a rejected host hash', () =>
+  Effect.gen(function* rejectedNotificationHash() {
+    const error = yield* makeSymmyJobNotificationService([policy]).deliver(input).pipe(Effect.flip);
+    expect(error.code).toBe('notification_configuration_unavailable');
+    expect(Object.hasOwn(error, 'cause')).toBe(false);
+  }).pipe(
+    Effect.provideService(SymmyJobNotificationStore, {
+      claim: () => Effect.die('unexpected claim'),
+      settle: () => Effect.die('unexpected settlement'),
+    }),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die('unexpected delivery')),
+    ),
+    Effect.provideService(FetchHttpClient.RequestInit, { redirect: 'manual' }),
+    Effect.provide(WebCrypto.layer(webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))))),
+    Effect.provide(NodeCrypto.layer),
+  ),
+);

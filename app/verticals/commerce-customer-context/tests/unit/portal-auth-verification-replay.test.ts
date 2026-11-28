@@ -1,3 +1,4 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
 import { DateTime, Effect, Fiber, Layer, Option, Redacted } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -14,11 +15,7 @@ import {
   enrollmentVerificationIssuanceRef,
   verificationReplayLayer,
 } from '../../src/portal-auth/communications/verification-replay.ts';
-import {
-  CommerceAuthSha256,
-  commerceAuthDigestUnavailable,
-  makeCommerceAuthSha256,
-} from '../../src/portal-auth/sha256.ts';
+import { CommerceAuthSha256, makeCommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 import { handoffOverDouble, holdWithRequest } from '../support/portal-auth-communication-store.double.ts';
 
 /**
@@ -71,12 +68,12 @@ describe('The enrollment verification issuance and its replay (#1406)', () => {
   );
 
   for (const [name, digest] of [
-    ['fails', () => Effect.fail(commerceAuthDigestUnavailable(new Error('Host digest unavailable')))],
-    ['stalls', () => Effect.never],
+    ['fails', () => Promise.reject(new Error('Host digest unavailable'))],
+    ['stalls', () => Promise.withResolvers<ArrayBuffer>().promise],
   ] as const) {
     it.effect(`a host digest that ${name} reports unavailability without reserving an issuance`, () =>
       Effect.gen(function* boundedReplay() {
-        const platform = Layer.succeed(CommerceAuthSha256, makeCommerceAuthSha256(digest));
+        const platform = Layer.succeed(CommerceAuthSha256, makeCommerceAuthSha256(webCryptoDigestFixture(digest)));
         const fiber = yield* replayOutcome(replayWith('NOT_SUBMITTED', platform)).pipe(Effect.forkChild);
         yield* TestClock.adjust('5 seconds');
         const { decision, reserved } = yield* Fiber.join(fiber);

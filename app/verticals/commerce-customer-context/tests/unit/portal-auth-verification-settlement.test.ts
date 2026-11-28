@@ -1,8 +1,9 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
 import { scriptedPgClientLayer, testSqlConnection } from '@app/core-runtime/testing/scripted-pg-client';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Cause, Context, DateTime, Effect, Exit, Fiber, Layer, Option, Redacted, Schema } from 'effect';
-import { SecureRandom } from 'effect/crypto';
-import { CommerceAuthSha256, makeCommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
+import { SecureRandom, WebCrypto } from 'effect/crypto';
+import { CommerceAuthSha256 } from '../../src/portal-auth/sha256.ts';
 import { Reactivity } from 'effect/reactivity';
 import { ConnectionError, isSqlError, SqlError } from 'effect/sql/SqlError';
 import { TestClock } from 'effect/testing';
@@ -96,7 +97,9 @@ it.effect('reports a stalled host digest after five seconds as the typed token-h
           return Effect.succeed(rowsFor(statement));
         },
         Effect.void,
-        digestPlatform(makeCommerceAuthSha256(() => Effect.never)),
+        commercePortalAuthPlatformCryptoLive.pipe(
+          Layer.provide(WebCrypto.layer(webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise))),
+        ),
       );
       const fiber = yield* store.consumeEmailVerificationWithAudit(input).pipe(Effect.flip, Effect.forkChild);
       yield* TestClock.adjust('5 seconds');
@@ -107,6 +110,32 @@ it.effect('reports a stalled host digest after five seconds as the typed token-h
     }),
   ),
 );
+
+for (const [kind, host] of [
+  ['rejected', webCryptoDigestFixture(() => Promise.reject(new Error('synthetic-secret-echo')))],
+  ['missing', webCryptoDigestFixture()],
+] as const) {
+  it.effect(`both issuance probes sanitize a ${kind} host digest before persistence`, () =>
+    Effect.scoped(
+      Effect.gen(function* safeProbes() {
+        const store = yield* makeFixture(
+          () => Effect.die('unexpected persistence'),
+          Effect.void,
+          commercePortalAuthPlatformCryptoLive.pipe(Layer.provide(WebCrypto.layer(host))),
+        );
+        const probe = { providerSubjectId: 'subject', token: input.token };
+        for (const outage of yield* Effect.all([
+          Effect.flip(store.readEmailVerificationIssuanceState(probe)),
+          Effect.flip(store.readPasswordResetIssuanceState(probe)),
+        ])) {
+          expect(outage).toBeInstanceOf(CommercePortalAuthRecoveryUnavailable);
+          expect(Object.getOwnPropertyDescriptor(outage, 'cause')?.value).toStrictEqual({ kind: 'PlatformError' });
+          expect(String(outage)).not.toContain('synthetic-secret-echo');
+        }
+      }),
+    ),
+  );
+}
 
 it.effect('keeps a broken native digest primitive a defect instead of a recovery outage', () =>
   Effect.scoped(

@@ -1,3 +1,5 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Fiber, Match, Option, Redacted, Schema, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -486,3 +488,20 @@ it.layer(NodeCrypto.layer)('the S3 object storage adapter against a scripted pro
     }),
   );
 });
+
+it.effect('refuses a nonempty upload with a typed outage before sending bytes if its host hash rejects', () =>
+  Effect.gen(function* rejectedPayloadHash() {
+    const { requests, storage } = storageOn(configWith(), () => ok());
+    const error = yield* Effect.flip(
+      (yield* storage).put({ body: Stream.make(new Uint8Array([1])), contentType: 'a/b', key }),
+    );
+    expect(error).toBeInstanceOf(ObjectStorageServerError);
+    expect(Object.hasOwn(error, 'cause')).toBe(false);
+    expect(requests).toEqual([]);
+  }).pipe(
+    Effect.provideService(
+      WebCrypto.WebCrypto,
+      webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+    ),
+  ),
+);
