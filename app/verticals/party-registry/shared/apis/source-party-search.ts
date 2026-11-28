@@ -4,7 +4,7 @@ import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
 import { PartyRefSchema } from '../resources/party.ts';
-import { SourcePersonAdmissionRequestSchema } from './source-person-admission.ts';
+import { SourcePersonOccurrenceRequestSchema } from './source-person-admission.ts';
 
 /** The most source parties one search covers, and the most terms it takes. Beyond either, the search is refused upstream. */
 export const SOURCE_PARTY_SEARCH_MAX_CANDIDATES = 500;
@@ -21,7 +21,7 @@ export const SourcePartySearchTermSchema = Schema.String.check(
  * field Privacy does not allow is not matched on it. The answer holds one Party id list per term, in term order.
  */
 export const SourcePartySearchRequestSchema = Schema.Struct({
-  candidates: Schema.Array(SourcePersonAdmissionRequestSchema).check(
+  candidates: Schema.Array(SourcePersonOccurrenceRequestSchema).check(
     Schema.isMaxLength(SOURCE_PARTY_SEARCH_MAX_CANDIDATES),
   ),
   includeOrganizationName: Schema.Boolean,

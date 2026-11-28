@@ -449,6 +449,8 @@ const fixtureRuntimeInventory = [
       'processing_activities',
       'processing_purposes',
       'retention_evaluation_work',
+      'source_processing_admissions',
+      'source_processing_authorizations',
       'temporary_dsr_exports',
     ],
   },

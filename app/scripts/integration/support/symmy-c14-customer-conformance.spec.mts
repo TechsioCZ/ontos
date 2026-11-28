@@ -44,6 +44,7 @@ import {
   buildProductOwner,
   buildProductWorker,
   encodeProductComposition,
+  logOwnerDiagnostics,
   nativePorts,
   productComposition,
   startProductOwner,
@@ -806,6 +807,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
           headers: { ...headers, 'idempotency-key': idempotencyKey },
         });
         if (response.status !== 202) {
+          yield* logOwnerDiagnostics(shell.gatewayDiagnostics(), ownerDiagnostics);
           return yield* unavailable(`Actual customer admission returned ${response.status}: ${yield* response.text}`);
         }
         return yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));

@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm';
 import { ConfigProvider, DateTime, Effect, Schema, Result } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { makeTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { SourcePersonAdmissionRequestSchema } from '../../shared/apis/source-person-admission.ts';
+import { SourcePersonOccurrenceRequestSchema } from '../../shared/apis/source-person-admission.ts';
 import { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { counterparties, counterpartyRolePeriods, partyContactPoints, partyRelations } from '../../src/db/schema.ts';
 import { PartyClientSourcePrivacy } from '../../src/services/party-client-source-evidence.service.ts';
@@ -97,7 +97,7 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 tenantId,
               });
               assert.isOk(created.outcome === 'CREATED');
-              const request = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema)({
+              const request = yield* Schema.decodeUnknownEffect(SourcePersonOccurrenceRequestSchema)({
                 partyRef: created.partyRef,
                 sourceReference: { source, recordId: 'person-record', occurrenceId: 'person-revision' },
               });

@@ -2,7 +2,7 @@ import type { OperationalScope } from '@app/core-runtime';
 import type { PartyRef } from '@app/party-registry/resources/party';
 import {
   SourcePersonAdmissionResponseSchema,
-  SourcePersonAdmissionRequestSchema,
+  SourcePersonOccurrenceRequestSchema,
 } from '@app/party-registry/apis/source-person-admission';
 import { executeSourcePersonAdmissionWithAuthorization } from '@app/party-registry/apis/source-person-admission/client';
 import {
@@ -123,7 +123,7 @@ export const commerceSourceProfileOwnerProofLive = Layer.effect(
       ),
       retail: Effect.fn('CommerceSourceProfileOwnerProof.retail')(
         function* retail(scope, partyRef, _source, partySourceReference, operationRequirementKey) {
-          const request = yield* Schema.decodeUnknownEffect(SourcePersonAdmissionRequestSchema)({
+          const request = yield* Schema.decodeUnknownEffect(SourcePersonOccurrenceRequestSchema)({
             partyRef,
             sourceReference: partySourceReference,
           }).pipe(Effect.mapError(ownerProofFailure));

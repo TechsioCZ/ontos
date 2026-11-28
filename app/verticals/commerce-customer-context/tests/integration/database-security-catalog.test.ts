@@ -163,6 +163,7 @@ const grantedRoutines = [
   'read_retail_profile_by_party',
   'read_saved_address',
   'read_saved_address_source_receipt',
+  'read_source_profile_subject',
   'reconcile_portal_enrollment_outcome',
   'reconcile_profile_reconciliation_owner',
   'record_address_book_reconciliation_receipt',

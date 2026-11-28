@@ -3,11 +3,11 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/http-api';
 
-import { SourcePersonAdmissionRequestSchema } from './source-person-admission.ts';
+import { SourcePersonOccurrenceRequestSchema } from './source-person-admission.ts';
 import { PartyRefSchema } from '../resources/party.ts';
 import { PartyContactPointRefSchema } from '../resources/party-contact-point.ts';
 
-export const SourceProfileExportRequestSchema = SourcePersonAdmissionRequestSchema;
+export const SourceProfileExportRequestSchema = SourcePersonOccurrenceRequestSchema;
 export type SourceProfileExportRequest = typeof SourceProfileExportRequestSchema.Type;
 export const SourceProfileExportContactSchema = Schema.Struct({
   contactPointRef: PartyContactPointRefSchema,

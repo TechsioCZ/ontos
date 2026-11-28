@@ -13,7 +13,8 @@ export const SourcePersonAdmissionReferenceSchema = Schema.Struct({
   recordId: SourceRecordIdentitySchema,
   occurrenceId: SourceRecordIdentitySchema,
 });
-export const SourcePersonAdmissionRequestSchema = Schema.Struct({
+/** The exact occurrence a caller cites: Party checks that committed occurrence and the current PERSON state. */
+export const SourcePersonOccurrenceRequestSchema = Schema.Struct({
   /** When given, Party attests this contact belongs to the same current source person. No contact value is disclosed. */
   contactPointId: Schema.optionalKey(PartyRefSchema.fields.resourceId),
   partyRef: PartyRefSchema,
@@ -28,20 +29,17 @@ const AdmittedRecordSchema = Schema.Struct({
  * proof: for a named Party, or for an exact contact point whose Party the caller does not know. Party then attests the
  * contact point belongs to the person the admitted record identifies and returns that Party.
  */
-const ContactPointProofRequestSchema = Schema.Struct({
+export const SourcePersonContactPointRequestSchema = Schema.Struct({
   admittedRecord: AdmittedRecordSchema,
   contactPointId: PartyRefSchema.fields.resourceId,
 });
-export const SourcePersonProofRequestSchema = Schema.Union([
-  SourcePersonAdmissionRequestSchema,
+export const SourcePersonAdmissionRequestSchema = Schema.Union([
+  SourcePersonOccurrenceRequestSchema,
   Schema.Struct({ admittedRecord: AdmittedRecordSchema, partyRef: PartyRefSchema }),
-  ContactPointProofRequestSchema,
+  SourcePersonContactPointRequestSchema,
 ]);
-export type SourcePersonProofRequest = typeof SourcePersonProofRequestSchema.Type;
-/** The record a proof request is about: the Party it names, or the contact point whose Party the caller does not know. */
-export const sourcePersonProofRecordKey = (request: SourcePersonProofRequest): string =>
-  Schema.is(ContactPointProofRequestSchema)(request) ? request.contactPointId : request.partyRef.resourceId;
 export type SourcePersonAdmissionRequest = typeof SourcePersonAdmissionRequestSchema.Type;
+export type SourcePersonOccurrenceRequest = typeof SourcePersonOccurrenceRequestSchema.Type;
 export const SourcePersonAdmissionResponseSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('NOT_ADMISSIBLE') }),
   Schema.Struct({
@@ -100,7 +98,7 @@ export const SourcePersonAdmissionApi = HttpApi.make('SourcePersonAdmissionApi')
         SourcePersonAdmissionUnavailableProblemSchema,
         SourcePersonAdmissionInternalProblemSchema,
       ],
-      payload: SourcePersonProofRequestSchema,
+      payload: SourcePersonAdmissionRequestSchema,
       success: SourcePersonAdmissionResponseSchema,
     }),
   ),
