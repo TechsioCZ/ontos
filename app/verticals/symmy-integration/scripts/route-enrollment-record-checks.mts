@@ -25,6 +25,10 @@ export const ROUTE_ENROLLMENT_RECORD_CHECKS = [
   ],
 ] as const;
 
+/** The complete WHEN clause as pg_get_triggerdef prints it, including both boundaries of the predicate. */
+export const MEMBERSHIP_RESERVATION_WHEN =
+  " WHEN (((new.effect #>> '{intent,_tag}'::text[]) = 'CustomerGroupMembership'::text)) EXECUTE FUNCTION ";
+
 /**
  * A printed constraint definition with only what the printing leaves free made uniform: runs of whitespace.
  * Parentheses, operators, identifiers, literals and casts stay as printed; none of these column names needs quoting.

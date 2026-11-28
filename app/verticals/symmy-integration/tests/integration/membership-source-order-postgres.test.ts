@@ -40,6 +40,7 @@ import {
   symmyJobResourceRef,
   symmyJobIntentContentRef,
 } from '../../shared/domain/symmy-job-retention.ts';
+import { MEMBERSHIP_RESERVATION_WHEN } from '../../scripts/route-enrollment-record-checks.mts';
 import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 
@@ -580,6 +581,15 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
       expect(yield* retainedRows).toEqual(beforeUpgrade);
       expect(yield* admin.select().from(symmyMembershipSourceOrders)).toEqual([]);
       expect(yield* retainedJobs).toEqual(beforeJobs);
+      // Use PostgreSQL's actual spelling. A reversed predicate still names the tag but must fail readiness.
+      const [reservation] = yield* admin.execute<{ definition: string }>(
+        sql`select pg_get_triggerdef(oid) as definition from pg_trigger where tgname='symmy_membership_reservation_at_commit' and tgrelid='symmy_integration.job_effects'::regclass`,
+      );
+      assert.isDefined(reservation);
+      expect(reservation.definition).toContain(MEMBERSHIP_RESERVATION_WHEN);
+      expect(
+        reservation.definition.replace(" = 'CustomerGroupMembership'", " <> 'CustomerGroupMembership'"),
+      ).not.toContain(MEMBERSHIP_RESERVATION_WHEN);
       const replayLegacy = (rows = legacyRows) =>
         scoped((transaction) =>
           symmyJobStoreFactory(transaction, scope).pipe(

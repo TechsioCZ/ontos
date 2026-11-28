@@ -19,7 +19,11 @@ import {
   symmyJobRetentionTombstones,
   symmySyncAdmissions,
 } from '../src/db/schema.ts';
-import { ROUTE_ENROLLMENT_RECORD_CHECKS, normalizeConstraintDefinition } from './route-enrollment-record-checks.mts';
+import {
+  MEMBERSHIP_RESERVATION_WHEN,
+  ROUTE_ENROLLMENT_RECORD_CHECKS,
+  normalizeConstraintDefinition,
+} from './route-enrollment-record-checks.mts';
 
 class SymmySchemaVerificationError extends Schema.TaggedError<SymmySchemaVerificationError>()(
   'SymmySchemaVerificationError',
@@ -235,7 +239,7 @@ const verification = Effect.gen(function* verifySymmySchema() {
           and t.tgtype = 21 -- row-level AFTER INSERT and UPDATE
           and (select array_agg(a.attname order by a.attname) from unnest(t.tgattr) k(attnum)
             join pg_catalog.pg_attribute a on a.attrelid = t.tgrelid and a.attnum = k.attnum) = array['effect']::name[]
-          and position('CustomerGroupMembership' in pg_catalog.pg_get_triggerdef(t.oid)) > 0
+          and strpos(pg_catalog.pg_get_triggerdef(t.oid), ${MEMBERSHIP_RESERVATION_WHEN}) > 0
           and t.tgfoid = to_regprocedure('symmy_integration.require_membership_order_reservation()'))
         or (t.tgrelid = 'symmy_integration.membership_source_orders'::regclass
           and t.tgname = 'symmy_membership_order_bound_at_commit' and t.tgdeferrable and t.tginitdeferred
