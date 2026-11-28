@@ -1271,7 +1271,15 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(effectSchema))),
       ),
       (rows) => rows.length === 3 && rows.every((row) => row.state === 'settled'),
-    ).pipe(Effect.tapError(() => logCustomerJobIdentity(admin, resend.jobId)));
+    ).pipe(
+      Effect.tapError(() =>
+        Effect.all([
+          logCustomerJobIdentity(admin, resend.jobId),
+          secondWorker.diagnostic.pipe(Effect.flatMap(Effect.logError)),
+          logOwnerDiagnostics(shell.gatewayDiagnostics(), ownerDiagnostics),
+        ]),
+      ),
+    );
     expect(resent.every((effect) => Option.isSome(effect.owner_invocation_id))).toBe(true);
     expect((yield* tenantRows)[0]).toEqual({ parties: 2, profiles: 2 });
     yield* secondWorker.child.kill();
