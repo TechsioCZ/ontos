@@ -11,6 +11,6 @@
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__communications-contracts.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["src", "tests"],
+  "include": ["src", "tests", "*.config.ts"],
   "references": [{ "path": "../core-runtime" }, { "path": "../privacy-contracts" }, { "path": "../shared-contracts" }]
 }
