@@ -83,8 +83,6 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'apps/*/api/index.ts',
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
-        // Shared tooling, #1556: remove when the dev server supplies the Node FileSystem layer.
-        'packages/shared-contracts/tooling/modern-config.ts',
         'packages/core-runtime/src/db/client.ts',
         // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
         'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
@@ -123,8 +121,6 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
       seamPaths: [
         '**/http-error-seam.ts',
         '**/http-error-seam.tsx',
-        // Shared tooling, #1556: remove when the dev middleware no longer forwards native exits to Connect.
-        'packages/shared-contracts/tooling/modern-config.ts',
         // CCC ingress transaction settlement: only native SqlError becomes typed unavailability;
         // every unrelated defect and caller interruption remains unchanged (#1231, approved boundary).
         'verticals/commerce-customer-context/src/auth/gateway-assertion-redemption-runtime.ts',
@@ -1347,6 +1343,13 @@ export default defineConfig({
         'typescript/no-unsafe-call': 'off',
         'typescript/no-unsafe-member-access': 'off',
       },
+    },
+    {
+      // Shared tooling, #1556: only this Connect entry point provides the Node filesystem and forwards exits.
+      // Oxlint anchors this glob at its config, rather than guessing an owner root from a filename suffix.
+      // Remove when Modern provides the layer and handles Effect exits at the host boundary.
+      files: ['packages/shared-contracts/tooling/modern-config.ts'],
+      rules: { 'effect-native/no-effect-provide-in-library': 'off', 'effect-native/no-local-defect-seam': 'off' },
     },
     {
       // Codesmith, #1556: remove when discovery no longer needs computed imports.

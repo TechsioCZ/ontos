@@ -37,6 +37,10 @@ const wildcardExport = 'apps/demo/src/exports.ts';
 const nestedConditional = 'apps/demo/src/nested-conditional.ts';
 const developmentAdapter = 'packages/shared-contracts/tooling/modern-config.ts';
 const neighboringLibrary = 'packages/shared-contracts/tooling/library.ts';
+const nestedLookalike = 'packages/unrelated/packages/shared-contracts/tooling/modern-config.ts';
+const scaffoldEntry = 'scripts/scaffolding/action-http/scaffold.mts';
+const scaffoldNeighbor = 'apps/demo/src/load.ts';
+const computedModule = "export const load = (source: string) => import(new URL('file://' + source).href);";
 const adapterPrimitives = [
   "import { Cause, Effect } from 'effect';",
   'export const execute = Effect.runCallback;',
@@ -114,6 +118,9 @@ const staged: readonly (readonly [string, string])[] = [
   [wildcardExport, "export * from './check.ts';"],
   [developmentAdapter, adapterPrimitives],
   [neighboringLibrary, adapterPrimitives],
+  [nestedLookalike, adapterPrimitives],
+  [scaffoldEntry, computedModule],
+  [scaffoldNeighbor, computedModule],
   ...routes.map((file) => [file, 'export const value = 1;\n'] as const),
 ];
 
@@ -142,6 +149,11 @@ it('keeps the three blocking main checks disabled by the new upstream preset', (
   expect(codesFor(wildcardExport)).toContain('sonarjs(no-wildcard-import)');
 });
 
+it('allows a computed import only in the Codesmith discovery entrypoint', () => {
+  expect(codesFor(scaffoldEntry)).not.toContain('react-doctor(no-dynamic-import-path)');
+  expect(codesFor(scaffoldNeighbor)).toContain('react-doctor(no-dynamic-import-path)');
+});
+
 it('production route filename override admits exact native splat filenames and keeps nearby rejections', () => {
   // The shared run also lints files outside the route set, so the filename diagnostics are
   // selected from the staged routes rather than from the whole report.
@@ -160,6 +172,7 @@ it('production registers only the development-server adapter as an outer Effect 
   ]) {
     expect(codesFor(developmentAdapter)).not.toContain(code);
     expect(codesFor(neighboringLibrary)).toContain(code);
+    expect(codesFor(nestedLookalike)).toContain(code);
   }
 });
 

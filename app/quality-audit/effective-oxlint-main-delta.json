@@ -1,0 +1,3145 @@
+{
+  "analyzerVersions": {
+    "@effect/tsgo": {
+      "after": "0.73.2",
+      "before": "0.70.0"
+    },
+    "eslint-plugin-sonarjs": {
+      "after": "4.2.2",
+      "before": "4.2.0"
+    },
+    "oxlint-plugin-react-doctor": {
+      "after": "0.9.23",
+      "before": "0.9.12"
+    },
+    "tsrs": {
+      "after": "7.1.0-beta.tsrs3",
+      "before": "0.25.0-ts7.1.0-beta"
+    },
+    "ultracite": {
+      "after": "8.3.1",
+      "before": "7.11.0"
+    }
+  },
+  "baseCommit": "8c1f242d6441827038fb7505d3d5a8a97d2a4a0d",
+  "basePolicySha256": "52aa0cde2d1d69136c665beb3a354b8d4814a3ed7a5a59615c8dcd7ea851413f",
+  "candidatePolicySha256": "d157aaa334756f5d24f509fe7a097d1013a7f3f464bdf46038dce2e6e211b4bc",
+  "declaredDefaults": {
+    "react-doctor/class-component-missing-component-will-unmount-teardown": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/context-provider-value-from-unmemoized-local-literal": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/debounce-no-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/effect-listener-cleanup-mismatch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/effect-listener-cleanup-reference-mismatch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/effect-observer-needs-disconnect": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/effect-raf-loop-needs-cancel": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/effect-remove-listener-inline-handler": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/forwarded-set-state-in-effect": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/hook-import-rename-loses-use-prefix": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/html-label-has-single-control": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/html-no-nested-form": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-ctrl-c-handler-requires-exit-option": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-bare-process-exit": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-direct-raw-mode": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-dom-host-elements": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-dom-router": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-focus-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-layout-inside-text": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-live-hooks-in-render-to-string": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-measure-element-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-multiple-static": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-raw-text": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-no-repeated-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-prefer-use-animation": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-static-is-append-only": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-static-requires-key": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-use-reactive-window-size": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-use-string-width-for-cursor": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-use-suspend-terminal": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/ink-valid-aria-semantics": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/jsx-numeric-and-leaked-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/mobx-no-make-auto-observable-in-inheritance": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/mobx-no-observer-wrapped-memo": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/mobx-reaction-disposer-discarded": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-animate-presence-must-outlive-child": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-animate-presence-requires-key": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-animate-presence-wait-single-child": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-create-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-drag-axis-constraint-mismatch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-imperative-animation-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-keyframe-times-mismatch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-layout-on-inline-element": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-unstable-layout-id-in-iteration": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-use-transform-range-length": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-value-constructor-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/motion-value-subscription-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-arithmetic-on-optional-chained-operand": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-array-find-result-member-access-without-guard": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-array-index-deref-without-bounds-or-empty-guard": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-assertive-status": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-async-event-handler-without-reentry-guard": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-autoplay-without-muted": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-blocked-paste": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-boolean-toggle-without-functional-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-broken-image-source": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-collapsed-literal-or-chain-as-value": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-conflicting-spring-options": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-controlled-input-value-without-state-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-create-object-url-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-create-object-url-without-revoke": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-default-props": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-deprecated-keyboard-event-keycode-which": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-eager-new-in-use-state-initializer": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-effect-wrapper-discards-callback-cleanup-return": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-enter-submit-without-ime-composition-guard": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-fetch-response-used-without-status-check": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-fill-map-element-as-key": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-floating-then-in-jsx-handler": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-focusable-content-in-aria-hidden": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-hydration-branch-on-browser-global": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-impure-call-at-module-scope": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-impure-state-updater": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-indeterminate-attribute": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-inline-hoc-on-component": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-invalid-progress-range": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-loading-flag-reset-outside-finally": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-locale-format-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-match-media-in-state-initializer": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-mixed-srcset-descriptors": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-multiple-main-landmarks": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-multiple-unlabeled-navigation-landmarks": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-mutate-queried-dom-node-in-component": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-mutate-then-set-or-return-same-reference": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-mutating-array-method-on-prop-or-hook-result": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-non-literal-selector-query-without-try-catch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-non-null-assertion-on-maybe-undefined-result": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-nondeterministic-id-value-in-render-body": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-nullish-coalescing-arithmetic-precedence": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-object-keys-values-entries-on-maybe-undefined": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-object-or-array-coerced-to-string-in-template-literal": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-path-prefix-containment": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-placeholder-only-field": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-predicate-function-reference-in-boolean-position": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-promise-then-side-effect-in-effect-without-catch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-prop-callback-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-ref-current-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-responsive-hidden-accessible-name": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-set-state-after-await-in-effect": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-side-effect-in-state-updater-function": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-spread-props-over-defaults-clobbers-with-undefined": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-srcset-without-sizes": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-stale-timer-ref": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-static-motion-config-never": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unescaped-dynamic-string-in-regexp": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unguarded-browser-global-at-module-scope": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unguarded-browser-global-in-render-or-hook-init": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unguarded-numeric-input-parse": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unguarded-throwing-parse-call": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-uninformative-aria-label": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unsafe-json-parse": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-unthrottled-scroll-mutation": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-whole-object-default-losing-per-key-defaults": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/no-whole-object-dep-with-member-reads": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/pointer-capture-needs-cancel-handler": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-cap-device-pixel-ratio": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-limit-shadowed-point-lights": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-advancing-clock-in-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-allocation-in-pointer-move": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-async-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-clone-in-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-deep-use-three-selector": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-dispose-loader-cache": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-duplicate-primitive-object": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-extend-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-extend-three-namespace": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-fresh-portal-container": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-fresh-use-three-selector": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-imperative-attach-of-managed-ref": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-inline-primitive-object": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-inline-resource-prop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-internal-imports": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-manual-canvas-resize": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-mutate-loader-cache": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-mutating-pointer-event-data": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-new-in-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-null-loader-input": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-object-pointer-capture": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-recursive-raf-with-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-state-in-pointer-move": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-state-in-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-sync-readback-in-use-frame": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-unstable-args": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-no-use-frame-dependency-array": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-prefer-use-loader": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-frame-delta": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-global-effect-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-instanced-buffer-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-owned-texture-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-projection-matrix-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-render-with-positive-priority": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-require-root-unmount": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-canvas-prop-compatibility": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-gl-state": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-js-uniform-branch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-legacy-effect-composer": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-legacy-material-api": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-unregistered-pipeline-pass": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/radio-input-missing-name": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-markdown-unsanitized-raw-html": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-csp-nonce-consistency": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-descendant-routes-require-splat": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-guard-aborted-handle-error": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-internal-route-anchor": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-loader-fetch-forwards-signal": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-loader-parallel-fetch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-nested-route-requires-outlet": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-catch-middleware-next": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-client-module-in-server-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-duplicate-route-id": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-empty-leaf-route": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-invalid-absolute-child-path": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-invalid-lazy-route-properties": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-invalid-splat-path": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-loader-request-body": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-middleware-response-body-consumption": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-multiple-blockers": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-multiple-middleware-next": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-multiple-set-search-params-in-tick": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-navigate-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-nested-router": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-redirect-in-try-catch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-route-module-environment-suffix": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-router-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-session-mutation-in-loader": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-static-cookie-expires": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-unsynchronized-search-params-mutation": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-no-use-loader-data-in-error-ui": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-prefer-route-lazy": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-require-root-error-boundary": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-resource-link-requires-reload": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-return-navigation-promise-in-transition": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-server-middleware-return-response": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-session-mutation-requires-commit": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-v8-no-meta-data-field": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-v8-no-react-router-dom-import": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-v8-no-removed-future-flags": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/react-router-valid-route-object": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-calculate-metadata-fetch-signal": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-deterministic-randomness": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-no-css-animation": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-no-css-transition": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-no-css-url-assets": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-no-module-scope-delay-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-no-native-media-elements": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-no-next-image": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/remotion-stable-delay-render-handle": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/role-button-requires-complete-keyboard-activation": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/styled-components-non-transient-custom-prop-on-intrinsic-element": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-cap-device-pixel-ratio": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-limit-shadowed-point-lights": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-allocation-in-pointer-move": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-async-animation-loop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-clone-in-animation-loop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-material-recompile-in-animation-loop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-new-in-animation-loop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-object-construction-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-redundant-uniforms-need-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-state-in-animation-loop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-no-state-in-pointer-move": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-on-before-compile-require-program-cache-key": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-raw-shader-require-fragment-float-precision": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-raw-shader-require-glsl3-version": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-animation-mixer-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-controls-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-frame-delta": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-instanced-buffer-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-owned-geometry-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-owned-material-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-owned-texture-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-postprocessing-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-projection-matrix-update": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-render-target-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-require-renderer-cleanup": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-constant-out-of-bounds-index": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-derivatives-in-nonuniform-flow": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-clamp-bounds": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-constant-bit-operations": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-constant-math": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-smoothstep-edges": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-inverse-of-uniform": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-redeclared-builtins": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-redundant-frag-depth": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-no-version-directive": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-prefer-small-integer-pow": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-prefer-squared-distance-comparison": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-require-matching-uniforms": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-require-matching-varyings": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-require-position-on-all-paths": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-shader-require-uniform-bindings": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-tsl-no-js-uniform-branch": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-webgpu-no-legacy-effect-composer": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/three-webgpu-no-legacy-material-api": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/valtio-no-proxy-read-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/valtio-no-snapshot-in-callback": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/waapi-animation-in-render": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/web-animation-offsets-valid": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/webgl-no-sync-readback-in-animation-loop": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/window-open-without-noopener": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/zustand-no-fresh-selector-result": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/zustand-no-get-during-initialization": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/zustand-no-mutating-state": {
+      "after": null,
+      "before": null
+    },
+    "react-doctor/zustand-no-whole-store-destructure": {
+      "after": null,
+      "before": null
+    },
+    "sonarjs/anchor-precedence": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/arguments-order": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/assertions-in-test-cases": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/async-test-assertions": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/avoid-mutating-nested-properties-of-shallow-clones": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/bitwise-operators": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/class-prototype": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/composite-assertions": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/concise-regex": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/disabled-auto-escaping": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/dompurify-unsafe-config": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/duplicates-in-character-class": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/empty-string-repetition": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/explicit-test-skip": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/hooks-before-test-cases": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/memoize-cache-key": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-collection-size-mischeck": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-control-regex": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-debounce-throttle-in-render": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-debug-commands-in-ui-tests": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-default-utility-imports": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-duplicate-parameterized-test-case": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-duplicate-test-title": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-empty-after-reluctant": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-empty-alternatives": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-empty-character-class": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-empty-group": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-empty-parameterized-test-dataset": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-empty-test-title": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-fixed-wait-in-tests": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-floating-point-equality": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-forced-browser-interaction": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-interpolation-in-inline-snapshots": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-invalid-regexp": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-misleading-character-class": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-mixed-completion-style": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-mutate-reactive-state-in-updated-hook": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-nested-functions": {
+      "after": [
+        {
+          "threshold": 5
+        }
+      ],
+      "before": [
+        {
+          "threshold": 4
+        }
+      ]
+    },
+    "sonarjs/no-networkidle-wait": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-regex-spaces": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-require-or-define": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-small-switch": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-trivial-assertions": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-vue-class-component": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/no-vue-mixins": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/parameterized-tests": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/prefer-cypress-should": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/prefer-immediate-return": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/prefer-native-axios-alternative": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/prefer-native-jquery-alternative": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/prefer-native-lodash-alternative": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/prefer-specific-assertions": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/reduce-initial-value": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/regex-complexity": {
+      "after": [
+        {
+          "threshold": 20
+        }
+      ],
+      "before": null
+    },
+    "sonarjs/single-char-in-character-classes": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/single-character-alternation": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/slow-regex": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/sql-queries": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/super-linear-regex": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/synchronous-suite-callback": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/testing-library-prefer-query-by-disappearance": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/testing-library-query-assertion": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/unicode-aware-regex": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/unused-import": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/vitest-mock-at-module-scope": {
+      "after": [],
+      "before": null
+    },
+    "sonarjs/void-use": {
+      "after": [],
+      "before": null
+    }
+  },
+  "other": {},
+  "overrides": {
+    "added": [
+      {
+        "index": 1,
+        "value": {
+          "env": null,
+          "files": [
+            "**/*.astro"
+          ],
+          "globals": null,
+          "plugins": null,
+          "rules": {
+            "import/no-commonjs": "deny",
+            "no-restricted-globals": [
+              "deny",
+              "__dirname",
+              "__filename"
+            ]
+          }
+        }
+      },
+      {
+        "index": 86,
+        "value": {
+          "env": null,
+          "files": [
+            "packages/shared-contracts/tooling/modern-config.ts"
+          ],
+          "globals": null,
+          "plugins": null,
+          "rules": {
+            "effect-native/no-effect-provide-in-library": "allow",
+            "effect-native/no-local-defect-seam": "allow"
+          }
+        }
+      },
+      {
+        "index": 87,
+        "value": {
+          "env": null,
+          "files": [
+            "scripts/scaffolding/action-http/scaffold.mts"
+          ],
+          "globals": null,
+          "plugins": null,
+          "rules": {
+            "react-doctor/no-dynamic-import-path": "allow"
+          }
+        }
+      }
+    ],
+    "removed": [],
+    "retained": [
+      [
+        0,
+        0
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        6,
+        7
+      ],
+      [
+        7,
+        8
+      ],
+      [
+        8,
+        9
+      ],
+      [
+        9,
+        10
+      ],
+      [
+        10,
+        11
+      ],
+      [
+        11,
+        12
+      ],
+      [
+        12,
+        13
+      ],
+      [
+        13,
+        14
+      ],
+      [
+        14,
+        15
+      ],
+      [
+        15,
+        16
+      ],
+      [
+        16,
+        17
+      ],
+      [
+        17,
+        18
+      ],
+      [
+        18,
+        19
+      ],
+      [
+        19,
+        20
+      ],
+      [
+        20,
+        21
+      ],
+      [
+        21,
+        22
+      ],
+      [
+        22,
+        23
+      ],
+      [
+        23,
+        24
+      ],
+      [
+        24,
+        25
+      ],
+      [
+        25,
+        26
+      ],
+      [
+        26,
+        27
+      ],
+      [
+        27,
+        28
+      ],
+      [
+        28,
+        29
+      ],
+      [
+        29,
+        30
+      ],
+      [
+        30,
+        31
+      ],
+      [
+        31,
+        32
+      ],
+      [
+        32,
+        33
+      ],
+      [
+        33,
+        34
+      ],
+      [
+        34,
+        35
+      ],
+      [
+        35,
+        36
+      ],
+      [
+        36,
+        37
+      ],
+      [
+        37,
+        38
+      ],
+      [
+        38,
+        39
+      ],
+      [
+        39,
+        40
+      ],
+      [
+        40,
+        41
+      ],
+      [
+        41,
+        42
+      ],
+      [
+        42,
+        43
+      ],
+      [
+        43,
+        44
+      ],
+      [
+        44,
+        45
+      ],
+      [
+        45,
+        46
+      ],
+      [
+        46,
+        47
+      ],
+      [
+        47,
+        48
+      ],
+      [
+        48,
+        49
+      ],
+      [
+        49,
+        50
+      ],
+      [
+        50,
+        51
+      ],
+      [
+        51,
+        52
+      ],
+      [
+        52,
+        53
+      ],
+      [
+        53,
+        54
+      ],
+      [
+        54,
+        55
+      ],
+      [
+        55,
+        56
+      ],
+      [
+        56,
+        57
+      ],
+      [
+        57,
+        58
+      ],
+      [
+        58,
+        59
+      ],
+      [
+        59,
+        60
+      ],
+      [
+        60,
+        61
+      ],
+      [
+        61,
+        62
+      ],
+      [
+        62,
+        63
+      ],
+      [
+        63,
+        64
+      ],
+      [
+        64,
+        65
+      ],
+      [
+        65,
+        66
+      ],
+      [
+        66,
+        67
+      ],
+      [
+        67,
+        68
+      ],
+      [
+        68,
+        69
+      ],
+      [
+        69,
+        70
+      ],
+      [
+        70,
+        71
+      ],
+      [
+        71,
+        72
+      ],
+      [
+        72,
+        73
+      ],
+      [
+        73,
+        74
+      ],
+      [
+        74,
+        75
+      ],
+      [
+        75,
+        76
+      ],
+      [
+        76,
+        77
+      ],
+      [
+        77,
+        78
+      ],
+      [
+        78,
+        79
+      ],
+      [
+        79,
+        80
+      ],
+      [
+        80,
+        81
+      ],
+      [
+        81,
+        82
+      ],
+      [
+        82,
+        83
+      ],
+      [
+        83,
+        84
+      ],
+      [
+        84,
+        85
+      ],
+      [
+        85,
+        88
+      ]
+    ]
+  },
+  "rules": {
+    "effect-native/no-bare-effect-run": {
+      "after": [
+        "deny",
+        {
+          "adapterFiles": [
+            "apps/*/api/index.ts",
+            "verticals/*/api/index.ts",
+            "packages/core-runtime/src/outbox/process.ts",
+            "packages/shared-contracts/tooling/modern-config.ts"
+          ]
+        }
+      ],
+      "before": "deny"
+    },
+    "no-unmodified-loop-condition": {
+      "after": [
+        "deny",
+        {
+          "checkConditionalExpressions": true
+        }
+      ],
+      "before": "deny"
+    },
+    "no-warning-comments": {
+      "after": [
+        "deny",
+        {
+          "decoration": [
+            "*"
+          ],
+          "terms": [
+            "todo",
+            "fixme",
+            "xxx",
+            "@todo"
+          ]
+        }
+      ],
+      "before": "deny"
+    },
+    "promise/always-return": {
+      "after": "deny",
+      "before": "allow"
+    },
+    "promise/catch-or-return": {
+      "after": "deny",
+      "before": "allow"
+    },
+    "react-doctor/class-component-missing-component-will-unmount-teardown": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/context-provider-value-from-unmemoized-local-literal": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/debounce-no-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/effect-listener-cleanup-mismatch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/effect-listener-cleanup-reference-mismatch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/effect-observer-needs-disconnect": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/effect-raf-loop-needs-cancel": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/effect-remove-listener-inline-handler": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/forwarded-set-state-in-effect": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/hook-import-rename-loses-use-prefix": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/html-label-has-single-control": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/html-no-nested-form": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-ctrl-c-handler-requires-exit-option": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-bare-process-exit": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-direct-raw-mode": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-dom-host-elements": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-dom-router": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-focus-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-layout-inside-text": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-live-hooks-in-render-to-string": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-measure-element-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-multiple-static": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-raw-text": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-no-repeated-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-prefer-use-animation": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-static-is-append-only": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-static-requires-key": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-use-reactive-window-size": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-use-string-width-for-cursor": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-use-suspend-terminal": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/ink-valid-aria-semantics": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/jsx-numeric-and-leaked-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/mobx-no-make-auto-observable-in-inheritance": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/mobx-no-observer-wrapped-memo": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/mobx-reaction-disposer-discarded": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-animate-presence-must-outlive-child": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-animate-presence-requires-key": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-animate-presence-wait-single-child": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-create-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-drag-axis-constraint-mismatch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-imperative-animation-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-keyframe-times-mismatch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-layout-on-inline-element": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-unstable-layout-id-in-iteration": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-use-transform-range-length": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-value-constructor-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/motion-value-subscription-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-arithmetic-on-optional-chained-operand": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-array-find-result-member-access-without-guard": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-array-index-deref-without-bounds-or-empty-guard": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-assertive-status": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-async-event-handler-without-reentry-guard": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-autoplay-without-muted": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-blocked-paste": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-boolean-toggle-without-functional-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-broken-image-source": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-collapsed-literal-or-chain-as-value": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-conflicting-spring-options": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-controlled-input-value-without-state-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-create-object-url-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-create-object-url-without-revoke": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-default-props": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-deprecated-keyboard-event-keycode-which": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-eager-new-in-use-state-initializer": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-effect-wrapper-discards-callback-cleanup-return": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-enter-submit-without-ime-composition-guard": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-fetch-response-used-without-status-check": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-fill-map-element-as-key": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-floating-then-in-jsx-handler": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-focusable-content-in-aria-hidden": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-hydration-branch-on-browser-global": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-impure-call-at-module-scope": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-impure-state-updater": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-indeterminate-attribute": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-inline-hoc-on-component": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-invalid-progress-range": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-loading-flag-reset-outside-finally": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-locale-format-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-match-media-in-state-initializer": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-mixed-srcset-descriptors": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-multiple-main-landmarks": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-multiple-unlabeled-navigation-landmarks": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-mutate-queried-dom-node-in-component": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-mutate-then-set-or-return-same-reference": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-mutating-array-method-on-prop-or-hook-result": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-non-literal-selector-query-without-try-catch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-non-null-assertion-on-maybe-undefined-result": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-nondeterministic-id-value-in-render-body": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-nullish-coalescing-arithmetic-precedence": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-object-keys-values-entries-on-maybe-undefined": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-object-or-array-coerced-to-string-in-template-literal": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-path-prefix-containment": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-placeholder-only-field": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-predicate-function-reference-in-boolean-position": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-promise-then-side-effect-in-effect-without-catch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-prop-callback-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-ref-current-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-responsive-hidden-accessible-name": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-set-state-after-await-in-effect": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-side-effect-in-state-updater-function": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-spread-props-over-defaults-clobbers-with-undefined": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-srcset-without-sizes": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-stale-timer-ref": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-static-motion-config-never": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unescaped-dynamic-string-in-regexp": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unguarded-browser-global-at-module-scope": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unguarded-browser-global-in-render-or-hook-init": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unguarded-numeric-input-parse": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unguarded-throwing-parse-call": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-uninformative-aria-label": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unsafe-json-parse": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-unthrottled-scroll-mutation": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-whole-object-default-losing-per-key-defaults": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/no-whole-object-dep-with-member-reads": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/pointer-capture-needs-cancel-handler": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-cap-device-pixel-ratio": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-limit-shadowed-point-lights": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-advancing-clock-in-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-allocation-in-pointer-move": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-async-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-clone-in-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-deep-use-three-selector": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-dispose-loader-cache": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-duplicate-primitive-object": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-extend-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-extend-three-namespace": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-fresh-portal-container": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-fresh-use-three-selector": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-imperative-attach-of-managed-ref": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-inline-primitive-object": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-inline-resource-prop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-internal-imports": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-manual-canvas-resize": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-mutate-loader-cache": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-mutating-pointer-event-data": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-new-in-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-null-loader-input": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-object-pointer-capture": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-recursive-raf-with-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-state-in-pointer-move": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-state-in-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-sync-readback-in-use-frame": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-unstable-args": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-no-use-frame-dependency-array": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-prefer-use-loader": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-frame-delta": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-global-effect-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-instanced-buffer-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-owned-texture-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-projection-matrix-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-render-with-positive-priority": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-require-root-unmount": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-canvas-prop-compatibility": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-gl-state": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-js-uniform-branch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-legacy-effect-composer": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-legacy-material-api": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/r3f-webgpu-no-unregistered-pipeline-pass": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/radio-input-missing-name": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-markdown-unsanitized-raw-html": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-csp-nonce-consistency": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-descendant-routes-require-splat": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-guard-aborted-handle-error": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-internal-route-anchor": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-loader-fetch-forwards-signal": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-loader-parallel-fetch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-nested-route-requires-outlet": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-catch-middleware-next": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-client-module-in-server-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-duplicate-route-id": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-empty-leaf-route": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-invalid-absolute-child-path": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-invalid-lazy-route-properties": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-invalid-splat-path": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-loader-request-body": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-middleware-response-body-consumption": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-multiple-blockers": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-multiple-middleware-next": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-multiple-set-search-params-in-tick": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-navigate-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-nested-router": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-redirect-in-try-catch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-route-module-environment-suffix": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-router-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-session-mutation-in-loader": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-static-cookie-expires": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-unsynchronized-search-params-mutation": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-no-use-loader-data-in-error-ui": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-prefer-route-lazy": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-require-root-error-boundary": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-resource-link-requires-reload": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-return-navigation-promise-in-transition": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-server-middleware-return-response": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-session-mutation-requires-commit": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-v8-no-meta-data-field": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-v8-no-react-router-dom-import": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-v8-no-removed-future-flags": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/react-router-valid-route-object": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-calculate-metadata-fetch-signal": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-deterministic-randomness": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-no-css-animation": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-no-css-transition": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-no-css-url-assets": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-no-module-scope-delay-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-no-native-media-elements": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-no-next-image": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/remotion-stable-delay-render-handle": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/role-button-requires-complete-keyboard-activation": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/styled-components-non-transient-custom-prop-on-intrinsic-element": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-cap-device-pixel-ratio": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-limit-shadowed-point-lights": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-allocation-in-pointer-move": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-async-animation-loop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-clone-in-animation-loop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-material-recompile-in-animation-loop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-new-in-animation-loop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-object-construction-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-redundant-uniforms-need-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-state-in-animation-loop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-no-state-in-pointer-move": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-on-before-compile-require-program-cache-key": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-raw-shader-require-fragment-float-precision": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-raw-shader-require-glsl3-version": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-animation-mixer-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-controls-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-frame-delta": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-instanced-buffer-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-owned-geometry-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-owned-material-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-owned-texture-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-postprocessing-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-projection-matrix-update": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-render-target-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-require-renderer-cleanup": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-constant-out-of-bounds-index": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-derivatives-in-nonuniform-flow": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-clamp-bounds": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-constant-bit-operations": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-constant-math": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-invalid-smoothstep-edges": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-inverse-of-uniform": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-redeclared-builtins": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-redundant-frag-depth": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-no-version-directive": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-prefer-small-integer-pow": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-prefer-squared-distance-comparison": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-require-matching-uniforms": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-require-matching-varyings": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-require-position-on-all-paths": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-shader-require-uniform-bindings": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-tsl-no-js-uniform-branch": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-webgpu-no-legacy-effect-composer": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/three-webgpu-no-legacy-material-api": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/valtio-no-proxy-read-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/valtio-no-snapshot-in-callback": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/waapi-animation-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/web-animation-offsets-valid": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/webgl-no-sync-readback-in-animation-loop": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/window-open-without-noopener": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/zustand-no-fresh-selector-result": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/zustand-no-get-during-initialization": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/zustand-no-mutating-state": {
+      "after": "deny",
+      "before": null
+    },
+    "react-doctor/zustand-no-whole-store-destructure": {
+      "after": "deny",
+      "before": null
+    },
+    "react/jsx-no-target-blank": {
+      "after": [
+        "deny",
+        {
+          "forms": true
+        }
+      ],
+      "before": "deny"
+    },
+    "sonarjs/anchor-precedence": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/arguments-order": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/assertions-in-test-cases": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/async-test-assertions": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/avoid-mutating-nested-properties-of-shallow-clones": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/bitwise-operators": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/class-prototype": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/composite-assertions": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/concise-regex": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/disabled-auto-escaping": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/dompurify-unsafe-config": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/duplicates-in-character-class": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/empty-string-repetition": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/explicit-test-skip": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/hooks-before-test-cases": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/memoize-cache-key": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-collection-size-mischeck": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-control-regex": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-debounce-throttle-in-render": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-debug-commands-in-ui-tests": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-default-utility-imports": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-duplicate-parameterized-test-case": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-duplicate-test-title": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-empty-after-reluctant": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-empty-alternatives": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-empty-character-class": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-empty-group": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-empty-parameterized-test-dataset": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-empty-test-title": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-fixed-wait-in-tests": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-floating-point-equality": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-forced-browser-interaction": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-interpolation-in-inline-snapshots": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-invalid-regexp": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-misleading-character-class": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-mixed-completion-style": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-mutate-reactive-state-in-updated-hook": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-nested-functions": {
+      "after": [
+        "deny",
+        {
+          "threshold": 4
+        }
+      ],
+      "before": "deny"
+    },
+    "sonarjs/no-networkidle-wait": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-regex-spaces": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-require-or-define": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-small-switch": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-trivial-assertions": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-vue-class-component": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/no-vue-mixins": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/parameterized-tests": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/prefer-cypress-should": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/prefer-immediate-return": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/prefer-native-axios-alternative": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/prefer-native-jquery-alternative": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/prefer-native-lodash-alternative": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/prefer-specific-assertions": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/reduce-initial-value": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/regex-complexity": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/single-char-in-character-classes": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/single-character-alternation": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/slow-regex": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/sql-queries": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/super-linear-regex": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/synchronous-suite-callback": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/testing-library-prefer-query-by-disappearance": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/testing-library-query-assertion": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/unicode-aware-regex": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/unused-import": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/vitest-mock-at-module-scope": {
+      "after": "deny",
+      "before": null
+    },
+    "sonarjs/void-use": {
+      "after": "deny",
+      "before": null
+    },
+    "typescript/no-generated-empty-object-type": {
+      "after": "deny",
+      "before": null
+    },
+    "typescript/no-unsafe-enum-assignment": {
+      "after": "deny",
+      "before": null
+    }
+  }
+}
