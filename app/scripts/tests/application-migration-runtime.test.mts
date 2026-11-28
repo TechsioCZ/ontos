@@ -99,7 +99,11 @@ it.effect('prepares none without any database credentials or optional owner conf
 it.effect('only pending migrations bootstrap roles named by executable PostgreSQL clauses', () =>
   Effect.gen(function* nativeRoleBootstrap() {
     const ids = yield* migrationRuntimeIdentityIds(
-      'GRANT SELECT ON TABLE "audit TO !" TO party_registry_worker;',
+      [
+        'GRANT SELECT ON TABLE "audit TO !" TO party_registry_worker;',
+        'ALTER DEFAULT PRIVILEGES GRANT SELECT ON TABLES TO party_registry_runtime;',
+        'GRANT shell_gateway_issuer TO analyst;',
+      ].join('\n'),
       first.name,
     );
     const withRequirement = {
@@ -108,6 +112,8 @@ it.effect('only pending migrations bootstrap roles named by executable PostgreSQ
     };
     expect(pendingMigrationRuntimeIdentityIds(withRequirement, [first])).toEqual([
       'shared_runtime',
+      'shell_gateway_issuer',
+      'party_registry_request',
       'party_registry_worker',
     ]);
     expect(pendingMigrationRuntimeIdentityIds(withRequirement, [second])).toEqual(['shared_runtime']);
@@ -130,6 +136,14 @@ for (const [sql, expected] of [
   ['ALTER TABLE "OWNER TO shell_gateway_issuer" OWNER TO party_registry_worker;', ['party_registry_worker']],
   ['ALTER SCHEMA test OWNER TO "party_registry_runtime";', ['party_registry_request']],
   ['GRANT another_role TO party_registry_worker;', ['party_registry_worker']],
+  [
+    'ALTER DEFAULT PRIVILEGES FOR ROLE party_registry_worker IN SCHEMA shell_gateway_issuer GRANT SELECT ON TABLES TO party_registry_runtime;',
+    ['party_registry_request', 'party_registry_worker'],
+  ],
+  [
+    'GRANT party_registry_worker TO party_registry_runtime GRANTED BY shell_gateway_issuer;',
+    ['shell_gateway_issuer', 'party_registry_request', 'party_registry_worker'],
+  ],
   ['SET LOCAL ROLE party_registry_worker;', ['party_registry_worker']],
   ['ALTER POLICY p ON t RENAME TO shell_gateway_issuer;', []],
   ['REVOKE SELECT ON t FROM party_registry_worker;', []],

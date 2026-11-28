@@ -152,11 +152,12 @@ it('compares the typed Sonar preset with the shipped tsrs rules on aliases, exac
     const alias = 'packages/legacy/alias.ts';
     const exact = 'packages/exact/optional.ts';
     const mixed = 'packages/legacy/mixed.ts';
+    const party = 'verticals/party-registry/src/mixed.ts';
     const files = {
       [alias]: 'type Local = string | undefined; export interface Row { readonly value?: Local }',
       [exact]:
         'type Local = string | undefined; export interface Row { readonly alias?: Local; readonly explicit?: string | undefined }',
-      [mixed]: 'export const choose = (flag: boolean) => { if (flag) return 1; return; };',
+      [mixed]: 'export const choose = (flag: boolean) => { if (flag) { return; } return 1; };',
     };
     const projects = { 'packages/exact/tsconfig.json': project(true), 'packages/legacy/tsconfig.json': project(false) };
     for (const [name, source] of Object.entries({ ...files, ...projects })) {
@@ -186,10 +187,18 @@ it('compares the typed Sonar preset with the shipped tsrs rules on aliases, exac
     expect(native.output).toContain('Semantic lint checked 3 files');
     expect(native.status, native.output).toBe(0);
     // Check whether the *production* tsrs Oxlint backend independently closes either gap.
-    const typed = runProductionOxlint(files, projects);
+    const typed = runProductionOxlint(
+      { ...files, [party]: files[mixed] },
+      {
+        ...projects,
+        'verticals/party-registry/src/tsconfig.json': project(false),
+      },
+    );
     expect(typed.diagnostics.filter(({ filename }) => filename === alias || filename === exact)).toEqual([]);
     expect(typed.diagnostics.filter(({ filename }) => filename === mixed).map(({ code }) => code)).toContain(
       'typescript(consistent-return)',
     );
+    // Known .17 coverage gap: Party's inherited scope disables the typed rule. A future parity repair must invert this control.
+    expect(typed.diagnostics.filter(({ filename }) => filename === party)).toEqual([]);
   }, tmpdir());
 });
