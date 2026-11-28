@@ -95,11 +95,11 @@ const documentOf = (
   });
 
 const resolveRef = (node: Json | undefined, definitions: JsonObject): Json | undefined => {
-  if (!isJsonObject(node) || !isString(node.$ref)) {
+  if (!isJsonObject(node) || !isString(node['$ref'])) {
     return node;
   }
   // Effect writes the ref as a URI fragment: JSON Pointer escapes (`~1`, `~0`), then percent-encoding.
-  const path = JsonPointer.parseUriFragment(node.$ref);
+  const path = JsonPointer.parseUriFragment(node['$ref']);
   if (path?.length !== 2 || (path[0] !== '$defs' && path[0] !== 'definitions')) {
     return node;
   }
@@ -114,15 +114,15 @@ interface TaggedVariant {
 
 const variantTag = (node: JsonObject): string | undefined => {
   const { properties } = node;
-  if (!isJsonObject(properties) || !isJsonObject(properties._tag)) {
+  if (!isJsonObject(properties) || !isJsonObject(properties['_tag'])) {
     return undefined;
   }
-  const tag = properties._tag;
-  const values = tag.enum;
+  const tag = properties['_tag'];
+  const values = tag['enum'];
   if (isJsonArray(values) && values.length === 1 && isString(values[0])) {
     return values[0];
   }
-  return isString(tag.const) ? tag.const : undefined;
+  return isString(tag['const']) ? tag['const'] : undefined;
 };
 
 /** Every object with a single `_tag` literal, depth-first through anyOf/oneOf/$ref, in source order. */
@@ -135,7 +135,7 @@ const taggedVariants = (node: Json | undefined, definitions: JsonObject): Tagged
   if (tag !== undefined) {
     return [{ schema: resolved, tag }];
   }
-  return [resolved.anyOf, resolved.oneOf].flatMap((branches) =>
+  return [resolved['anyOf'], resolved['oneOf']].flatMap((branches) =>
     isJsonArray(branches) ? branches.flatMap((branch) => taggedVariants(branch, definitions)) : [],
   );
 };
@@ -145,13 +145,13 @@ const taggedVariants = (node: Json | undefined, definitions: JsonObject): Tagged
  * the Action's own `expectedRevision` schema, so the tool never admits a revision the Action rejects.
  */
 const commandInputSchema = (variant: JsonObject, revision: Json) => {
-  const sourceProperties = isJsonObject(variant.properties) ? variant.properties : {};
+  const sourceProperties = isJsonObject(variant['properties']) ? variant['properties'] : {};
   const { _tag: _omitted, ...properties } = sourceProperties;
-  const required = isJsonArray(variant.required)
-    ? variant.required.filter((name) => isString(name) && name !== '_tag')
+  const required = isJsonArray(variant['required'])
+    ? variant['required'].filter((name) => isString(name) && name !== '_tag')
     : [];
   return {
-    additionalProperties: variant.additionalProperties ?? false,
+    additionalProperties: variant['additionalProperties'] ?? false,
     properties: {
       ...properties,
       expectedRevision: {
@@ -203,7 +203,7 @@ const readEndpointsOf = (
     }
     HttpApi.reflect(value, {
       onEndpoint: ({ endpoint }) => {
-        const slug = READ_PATH.exec(endpoint.path)?.groups?.slug;
+        const slug = READ_PATH.exec(endpoint.path)?.groups?.['slug'];
         const schemas = endpoint.payload.get('application/json')?.schemas ?? [];
         const [first] = schemas;
         if (slug === undefined || first === undefined) {
@@ -264,15 +264,15 @@ const actionEndpointsOf = (
         }
         const document = yield* documentOf(payloadSchema, `Action ${actionKey}`);
         const root = resolveRef(document.schema, document.definitions);
-        const properties = isJsonObject(root) && isJsonObject(root.properties) ? root.properties : {};
+        const properties = isJsonObject(root) && isJsonObject(root['properties']) ? root['properties'] : {};
         const variants =
           'command' in properties && 'expectedRevision' in properties
-            ? taggedVariants(properties.command, document.definitions)
+            ? taggedVariants(properties['command'], document.definitions)
             : [];
         return {
           document,
           path: `/${appId}/actions/${slug}`,
-          revision: properties.expectedRevision ?? {},
+          revision: properties['expectedRevision'] ?? {},
           slug,
           variants: variants.length > 0 ? variants : undefined,
         } satisfies ActionEndpoint;

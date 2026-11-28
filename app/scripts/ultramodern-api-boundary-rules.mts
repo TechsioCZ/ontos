@@ -8,7 +8,7 @@ export const privateOwnerImportViolation = (root: string, file: string, specifie
     return undefined;
   }
   const ownerMatch = /^verticals\/(?<owner>[^/]+)\//u.exec(normalize(file));
-  const owner = ownerMatch?.groups?.owner;
+  const owner = ownerMatch?.groups?.['owner'];
   if (owner === undefined || !specifier.startsWith('.')) {
     return 'Shell/Core and consumers may not import a deployment owner file';
   }

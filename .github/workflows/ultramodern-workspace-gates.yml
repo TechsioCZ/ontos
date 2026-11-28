@@ -906,7 +906,7 @@ jobs:
           # CI checks the worktree against HEAD below; parallel hook jobs must not share writes to Git's index.
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install --no-stage-fixed' \
             <"$files"
-          # The tsrs Oxlint backend does not emit Effect language-service diagnostics.
+          # Preserve the five strict, project-scoped Effect diagnostic checks in addition to path-selected Oxlint.
           if [[ "$LINT_ROW" == 1 ]]; then
             mise exec --cd app -- pnpm lint:effect-diagnostics
           fi
