@@ -440,8 +440,11 @@ export const projectSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.
   const byKey = itemsByKey(plan);
   const describedUses = yield* Effect.forEach(
     items,
-    ({ item, requests: uses }) =>
-      rootItemOf(byKey, item).pipe(
+    ({ item, requests: uses }) => {
+      if (!uses.some(isPersonalUse)) {
+        return Effect.succeed(uses);
+      }
+      return rootItemOf(byKey, item).pipe(
         Effect.map((root) => {
           const source = itemSource(item);
           const customer = itemSource(root);
@@ -451,7 +454,8 @@ export const projectSymmyCustomerIntake = Effect.fn('SymmyCustomerIntakePrivacy.
               : request,
           );
         }),
-      ),
+      );
+    },
     { concurrency: 1 },
   );
   const requests = yield* Effect.forEach(

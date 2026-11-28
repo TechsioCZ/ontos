@@ -232,6 +232,9 @@ export const readSourcePersonAdmission = Effect.fn('SourcePersonAdmission.read')
   scope: OperationalScope,
   request: SourcePersonAdmissionRequest,
 ): Effect.fn.Return<SourcePersonAdmissionResponse, PartyPersistenceUnavailableError> {
+  if ('partyRef' in request && request.partyRef.tenantId !== scope.tenantId) {
+    return notAdmissible;
+  }
   const input: SourcePersonOccurrenceRequest | undefined =
     'sourceReference' in request ? request : yield* committedPersonReference(transaction, scope, request);
   if (input === undefined) {

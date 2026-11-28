@@ -101,6 +101,12 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
                 partyRef: created.partyRef,
                 sourceReference: { source, recordId: 'person-record', occurrenceId: 'person-revision' },
               });
+              expect(
+                yield* readSourcePersonAdmission(transaction, scope, {
+                  ...request,
+                  partyRef: { ...request.partyRef, tenantId: 'df610000-0000-4000-8000-000000000002' },
+                }),
+              ).toEqual({ outcome: 'NOT_ADMISSIBLE' });
               // A second scoped reader must not wait for the original Party transaction's identity lock.
               const duringWriter = yield* runtime.transaction((reader) =>
                 Effect.gen(function* parallelMetadataRead() {
