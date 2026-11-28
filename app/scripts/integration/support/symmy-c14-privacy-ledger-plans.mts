@@ -8,8 +8,7 @@ interface PlanRow {
 
 /**
  * On the disposable C14 database only: copy the installed indexes, not customer data. 32,768 source identities, 512
- * routes with 64 ended grants apiece, and 32,768 source bindings of as many Commerce profiles. Party's receipt
- * correlation is not measured here: it is the tenant-scoped evidence containment main's exact proof already runs.
+ * routes with 64 ended grants apiece, and 32,768 source bindings of as many Commerce profiles.
  */
 export const verifySourceLedgerPlans = (admin: PgClient.PgClient, tenantId: string, legalEntityId: string) =>
   admin.withTransaction(
@@ -32,7 +31,7 @@ export const verifySourceLedgerPlans = (admin: PgClient.PgClient, tenantId: stri
         yield* admin<PlanRow>`explain (analyze,buffers) select authorization_record from route_plan_fixture where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and source_issuer='erp' and source_namespace='customers' and source_route_ref='route:255'`;
       // The owner proof of one profile reads every binding of that profile, as read_source_profile_subject does.
       const bindings =
-        yield* admin<PlanRow>`explain (analyze,buffers) select record_id from binding_plan_fixture where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and customer_profile_id=(select customer_profile_id from binding_plan_fixture where record_id='record:21000') and profile_kind='RETAIL' order by recorded_at,issuer,namespace,record_type,record_id limit 65`;
+        yield* admin<PlanRow>`explain (analyze,buffers) select record_id from binding_plan_fixture where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and customer_profile_id=(select customer_profile_id from binding_plan_fixture where record_id='record:21000') and profile_kind='RETAIL' order by recorded_at,issuer,namespace,record_type,record_id`;
       const subjects =
         yield* admin<PlanRow>`explain (analyze,buffers) select subject_record from subject_plan_fixture where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and subject_kind='DATA_SUBJECT' and subject_record->'subject'->'partyRef'->>'resourceId'='party:21000' limit 2`;
       for (const [result, column] of [
@@ -50,3 +49,30 @@ export const verifySourceLedgerPlans = (admin: PgClient.PgClient, tenantId: stri
       }
     }),
   );
+
+/** Explain Party's committedPersonReference receipt correlation on real native fixture rows, after filling the page.
+ * The page timing is the runtime-role measurement; this isolated admin plan only explains where query time goes. */
+export const measurePartyReceiptCorrelation = Effect.fn('C14.measurePartyReceiptCorrelation')(function* measure(
+  admin: PgClient.PgClient,
+  tenantId: string,
+  legalEntityId: string,
+  recordId: string,
+  source: {
+    readonly issuer: string;
+    readonly namespace: string;
+    readonly recordType: string;
+    readonly routeRef: string;
+  },
+) {
+  const plan = yield* admin<PlanRow>`explain (analyze, buffers) select d.party_id, min(d.match_decision_id::text)
+    from party.party_match_decisions d join party.party_create_source_receipts r
+      on r.tenant_id=d.tenant_id and r.action_invocation_id=d.action_invocation_id and r.match_decision_id=d.match_decision_id
+    where d.tenant_id=${tenantId} and r.legal_entity_id=${legalEntityId} and d.outcome in ('CREATED','MATCHED')
+      and d.evidence_evaluation->'evidence' @> jsonb_build_array(jsonb_build_object('kind','CLIENT_SOURCE_ASSERTION',
+        'recordId',${recordId}::text,'source',jsonb_build_object('issuer',${source.issuer}::text,'namespace',${source.namespace}::text,
+          'recordType',${source.recordType}::text,'routeRef',${source.routeRef}::text))) group by d.party_id limit 2`;
+  const lines = plan.map((row) => row['QUERY PLAN']);
+  // EXPLAIN ANALYZE must return a real, unambiguous owner. An empty lookup is not a receipt benchmark.
+  expect(lines[0]).toMatch(/actual time=[^)]*rows=1 loops=1/u);
+  yield* Effect.logInfo({ lookup: 'party-receipt-correlation', plan: lines });
+});
