@@ -44,5 +44,5 @@ await test('all eight build shards can finish and deployment still requires thei
   )(parse(read('zerops-stage.yml')));
   equal(stage.jobs.build.strategy['fail-fast'], false);
   deepStrictEqual(stage.jobs.build.strategy.matrix.shard, [0, 1, 2, 3, 4, 5, 6, 7]);
-  deepStrictEqual(stage.jobs.deliver_app.needs, ['deliver', 'build']);
+  deepStrictEqual(stage.jobs.deliver_app.needs, ['deliver', 'build', 'lint']);
 });

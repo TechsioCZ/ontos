@@ -2,8 +2,11 @@ name: Format and lint through every pre-commit job
 description: Exhaust the selected files and hook jobs, print all failures and fixes, and require an unchanged commit.
 inputs:
   shard:
-    description: '1, 2, 3 for whole-tree slices.'
+    description: 'docs for changed Markdown; proof for global jobs only; 1, 2, 3 for whole-tree slices.'
     required: true
+  changed-paths:
+    description: NUL-separated changed paths, required only for the docs row.
+    default: ''
 runs:
   using: composite
   steps:
@@ -11,7 +14,8 @@ runs:
       shell: bash
       env:
         SHARD: ${{ inputs.shard }}
-      run: bash app/scripts/ci/lint-shard-files.sh "$SHARD" >"$RUNNER_TEMP/hook-files"
+        CHANGED_PATHS: ${{ inputs.changed-paths }}
+      run: bash app/scripts/ci/lint-shard-files.sh "$SHARD" "$CHANGED_PATHS" >"$RUNNER_TEMP/hook-files"
     # One whole-tree lint process held all type programs and lost its 16 GB runner. Bounded hook batches retain
     # that memory limit, but unlike Lefthook's internal chunks they all run after a failure (lint-files.sh).
     - name: Run every hook batch and require the exact commit

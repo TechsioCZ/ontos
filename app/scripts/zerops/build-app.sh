@@ -38,7 +38,7 @@ env_name() { printf 'ULTRAMODERN_PUBLIC_URL_%s' "$(printf '%s' "$1" | tr 'a-z-' 
 unit_dir() { [ "$1" = shell-super-app ] && printf 'apps/shell-super-app' || printf 'verticals/%s' "$1"; }
 
 all_units="shell-super-app $(node -e 'for (const m of require("./topology/application-release-intent.json").modules) console.log(m.appId)')"
-# --digests-only <file> writes the unit identity table below and builds nothing (zerops-stage.yml's unit_identities job:
+# --digests-only <file> writes the unit identity table below and builds nothing (zerops-stage.yml's planning job `deliver`:
 # the same environment and the same table as a build, so a build shard can prove its cached units still match).
 digests_out=''
 host_only=''

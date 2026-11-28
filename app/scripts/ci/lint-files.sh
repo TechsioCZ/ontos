@@ -100,7 +100,7 @@ while IFS= read -r -d '' file; do
   printf '%s\0' "$file" >>"$work/batch"
   bytes=$((bytes + cost))
 done <"$work/files"
-# Empty and all-deletion inputs have no file work; globals already ran exactly once.
+# Empty, all-deletion and proof inputs have no file work; globals already ran exactly once.
 if [[ -s "$work/batch" ]]; then run_batch; fi
 # The shell-ui-candidates global generates ignored output and fails on invalid utilities. Its success does not
 # prove a committed projection was fresh: no projection is committed. The diff below covers tracked files only.

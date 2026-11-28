@@ -111,7 +111,7 @@ export const readReleaseModules = Effect.gen(function* readReleaseModules() {
   return intent.modules.map(({ appId }): string => appId);
 });
 
-/** `all` prints every shard of the deal in one process (the delivery job's shard table), a number prints one shard. */
+/** `all` prints every shard of the deal in one process (the planning job's shard table), a number prints one shard. */
 const command = Command.make(
   'build-shard-units',
   { shard: Argument.String('shard'), shards: Argument.Int('shards') },

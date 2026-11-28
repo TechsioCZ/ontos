@@ -637,7 +637,7 @@ const stageJobs = () =>
     Schema.Struct({
       jobs: Schema.Struct({
         deliver: Schema.Struct({
-          outputs: Schema.Record(Schema.String, Schema.String),
+          outputs: Schema.Struct({ missing: Schema.String }),
           steps: Schema.Array(DeliveryStepSchema),
         }),
         deliver_app: Schema.Struct({ steps: Schema.Array(DeliveryStepSchema) }),
