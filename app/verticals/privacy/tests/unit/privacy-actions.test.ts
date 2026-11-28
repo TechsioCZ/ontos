@@ -302,7 +302,7 @@ describe('Privacy Actions', () => {
 
       expect(result.businessCode).toBe('ACCOUNT_SECURITY');
       expect(result.legalEntityId).toBe(legalEntityId);
-      expect(collector.snapshot().auditEvidence.purposeId).toBe(result.purposeRef.resourceId);
+      expect(collector.snapshot().auditEvidence['purposeId']).toBe(result.purposeRef.resourceId);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -330,7 +330,7 @@ describe('Privacy Actions', () => {
       expect(Option.isSome(retained)).toBe(true);
       expect(result.channelProof).toEqual(noticeProof);
       expect(result.outcome).toBe('PROVEN_PROVISION');
-      expect(collector.snapshot().auditEvidence.provisionId).toBe(result.provisionId);
+      expect(collector.snapshot().auditEvidence['provisionId']).toBe(result.provisionId);
     }),
   );
 

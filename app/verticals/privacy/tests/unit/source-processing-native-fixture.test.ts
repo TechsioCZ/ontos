@@ -44,7 +44,7 @@ const input = {
         target: null,
       },
     },
-  ],
+  ] as const,
   contractEvidenceRef: 'internal-fixture:explicit-contract',
   controllerRef: 'internal-fixture:controller',
   dataCategoryRefs: ['party:name'],

@@ -14,7 +14,7 @@ import type { ActionHandlerContext } from '@app/core-runtime';
 import type { AdmitSymmySyncPayload } from '../../shared/actions/admit-symmy-sync.ts';
 
 type Services = Effect.Success<ReturnType<typeof symmyJobOperationFactory>>;
-const domainEvents: Record<never, never> = {};
+const domainEvents = {};
 const rejected = (code: typeof AdmitSymmySyncRejected.fields.code.Type, cause?: unknown) => {
   const error = new AdmitSymmySyncRejected({
     code,

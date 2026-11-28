@@ -1,6 +1,6 @@
 import { NodeCrypto } from '@effect/platform-node';
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Exit, Option, Schema } from 'effect';
 import { resolvePurposeVersionTimeline } from '../../shared/domain/processing-purpose.ts';
 
 import {
@@ -65,7 +65,7 @@ const purpose = {
       versionId: '00000000-0000-4000-8000-000000000004',
       versionNumber: 1,
     },
-  ],
+  ] as const,
 };
 const scope = {
   facts: [
@@ -762,7 +762,7 @@ describe('Processing Activity registry', () => {
           activity,
           {
             ...coverage,
-            retentionCoverage: [...coverage.retentionCoverage, coverage.retentionCoverage[0]],
+            retentionCoverage: [...coverage.retentionCoverage, EffectArray.getUnsafe(coverage.retentionCoverage, 0)],
           },
           prerequisites.responsibilities,
           '2026-02-01T00:00:00Z',
@@ -774,7 +774,9 @@ describe('Processing Activity registry', () => {
           activity,
           Schema.decodeUnknownSync(ProcessingActivityAuthoritativeCoverageSchema)({
             ...coverage,
-            retentionCoverage: [{ ...coverage.retentionCoverage[0], ruleVersionId: 'retention-version-foreign' }],
+            retentionCoverage: [
+              { ...EffectArray.getUnsafe(coverage.retentionCoverage, 0), ruleVersionId: 'retention-version-foreign' },
+            ],
           }),
           prerequisites.responsibilities,
           '2026-02-01T00:00:00Z',
@@ -788,7 +790,7 @@ describe('Processing Activity registry', () => {
             ...coverage,
             retentionCoverage: [
               {
-                ...coverage.retentionCoverage[0],
+                ...EffectArray.getUnsafe(coverage.retentionCoverage, 0),
                 applicabilityDecisionRef: 'evidence:foreign',
                 asOf: '2026-02-02T00:00:00Z',
               },
@@ -824,8 +826,13 @@ describe('Processing Activity registry', () => {
         ...coverage,
         recipientTransfers: [
           {
-            ...coverage.recipientTransfers[0],
-            dataCategoryRefs: [{ ...coverage.recipientTransfers[0].dataCategoryRefs[0], moduleId: 'other.owner' }],
+            ...EffectArray.getUnsafe(coverage.recipientTransfers, 0),
+            dataCategoryRefs: [
+              {
+                ...EffectArray.getUnsafe(EffectArray.getUnsafe(coverage.recipientTransfers, 0).dataCategoryRefs, 0),
+                moduleId: 'other.owner',
+              },
+            ],
           },
         ],
       });
@@ -833,10 +840,10 @@ describe('Processing Activity registry', () => {
         ...coverage,
         recipientTransfers: [
           {
-            ...coverage.recipientTransfers[0],
+            ...EffectArray.getUnsafe(coverage.recipientTransfers, 0),
             dataCategoryRefs: [
-              ...coverage.recipientTransfers[0].dataCategoryRefs,
-              coverage.recipientTransfers[0].dataCategoryRefs[0],
+              ...EffectArray.getUnsafe(coverage.recipientTransfers, 0).dataCategoryRefs,
+              EffectArray.getUnsafe(EffectArray.getUnsafe(coverage.recipientTransfers, 0).dataCategoryRefs, 0),
             ],
           },
         ],

@@ -75,7 +75,7 @@ const verifyGatewayRedemption = Effect.gen(function* verifyTaxGatewayRedemption(
       'objects',
     )
     .pipe(Effect.mapError(() => new TaxVerificationError({ reason: 'Unable to verify Tax gateway replay evidence' })));
-  if (!redemption?.valid) {
+  if (redemption?.valid !== true) {
     return yield* new TaxVerificationError({ reason: 'Tax gateway replay evidence or grants mismatch' });
   }
   return yield* Effect.void;

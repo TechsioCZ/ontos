@@ -133,12 +133,13 @@ const fanout = (
             publish: () => Effect.die(new Error('Retention evaluation does not publish worker completions')),
           },
           legalEntityId: scopeLegalEntityId,
-          // SAFETY: The test double preserves the scoped invoker's generic output contract for the
-          // exact retention routine and records only its three owner inputs.
+          // Decode fixture rows through the same result schema as the generic scoped invoker.
           routineInvoker: {
-            invoke: (_routine, values) => {
+            invoke: (routine, values) => {
               captures.push({ legalEntityId: scopeLegalEntityId, values });
-              return Effect.succeed([results[scopeLegalEntityId]]);
+              return Schema.decodeUnknownEffect(Schema.Array(Schema.toType(routine.resultSchema)))([
+                results[scopeLegalEntityId],
+              ]).pipe(Effect.orDie);
             },
           },
           tenantId: workerContext.tenantId,

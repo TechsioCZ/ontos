@@ -32,7 +32,7 @@ const verification = Effect.scoped(
     const journals = yield* client<{
       exists: boolean;
     }>`select to_regclass('drizzle.__drizzle_migrations_projects') is not null as exists`;
-    if (!journals[0]?.exists) {
+    if (journals[0]?.exists !== true) {
       yield* new ProjectsSchemaVerificationError({ reason: 'Projects migration journal is missing' });
     }
   }),

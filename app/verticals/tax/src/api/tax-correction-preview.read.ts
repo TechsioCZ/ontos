@@ -21,7 +21,7 @@ const isOriginalRecordUnavailable = Schema.is(OriginalRecordUnavailableSchema);
 const isHistoryOwnerUnavailable = Schema.is(HistoryOwnerUnavailableSchema);
 
 /** The preview reads no TAX state, so it needs no services. */
-type TaxCorrectionPreviewServices = Record<never, never>;
+type TaxCorrectionPreviewServices = Readonly<Record<string, never>>;
 
 const taxCorrectionPreviewEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',

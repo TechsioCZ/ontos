@@ -75,7 +75,7 @@ describe('Privacy Notice Version catalog', () => {
       ['2026-10-17T10:00:00.1Z', '2026-10-17T10:00:00.100000Z'],
       ['2026-10-17T10:00:00.123456Z', '2026-10-17T10:00:00.123456000Z'],
       ['2024-02-29T23:59:59.123456789012345Z', '2024-02-29T23:59:59.123456789012345000Z'],
-    ]) {
+    ] as const) {
       expect(comparePrivacyNoticeInstants(left, right)).toBe(0);
       expect(comparePrivacyNoticeInstants(right, left)).toBe(0);
       for (const wire of [left, right]) {
@@ -92,7 +92,7 @@ describe('Privacy Notice Version catalog', () => {
       ['2026-10-17T10:00:00.123456789012345Z', '2026-10-17T10:00:00.123456789012346Z'],
       ['2026-10-17T10:00:00.999999Z', '2026-10-17T10:00:01Z'],
       ['2026-10-17T09:59:59.999999Z', '2026-10-17T10:00:00Z'],
-    ]) {
+    ] as const) {
       expect(comparePrivacyNoticeInstants(earlier, later)).toBeLessThan(0);
       expect(comparePrivacyNoticeInstants(later, earlier)).toBeGreaterThan(0);
     }
@@ -108,7 +108,7 @@ describe('Privacy Notice Version catalog', () => {
       '2026-02-29T10:00:00Z',
       '2026-04-31T10:00:00Z',
       '2026-10-17T24:00:00Z',
-    ]) {
+    ] as const) {
       expect(comparePrivacyNoticeInstants(invalid, valid)).toBeUndefined();
       expect(comparePrivacyNoticeInstants(valid, invalid)).toBeUndefined();
     }

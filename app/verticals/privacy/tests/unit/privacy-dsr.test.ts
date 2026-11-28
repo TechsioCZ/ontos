@@ -1,4 +1,4 @@
-import { Option, Schema } from 'effect';
+import { Array as EffectArray, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -598,8 +598,8 @@ describe('privacy DSR case lifecycle', () => {
         [grantedAccessDecision, unresolved],
         {
           caseRef: caseRecord.caseRef,
-          controllerRef: caseRecord.controllerObligations[0].controllerRef,
-          exactScopeRefs: caseRecord.controllerObligations[0].exactScopeRefs,
+          controllerRef: EffectArray.getUnsafe(caseRecord.controllerObligations, 0).controllerRef,
+          exactScopeRefs: EffectArray.getUnsafe(caseRecord.controllerObligations, 0).exactScopeRefs,
           right: 'ACCESS',
         },
         '2026-09-14T12:00:00Z',
@@ -642,7 +642,7 @@ describe('privacy DSR case lifecycle', () => {
         decisions: [grantedAccessDecision],
         ownerInventory: inventory,
         response,
-        tasks: [ownerTask('SUCCEEDED'), secondTask],
+        tasks: [ownerTask('SUCCEEDED'), secondTask] as const,
       };
       expect(
         validateDsrResponseCoverage(final ? { ...input, deliveryEvidence: successfulDelivery } : input),
@@ -762,7 +762,7 @@ describe('privacy DSR case lifecycle', () => {
       validateDsrResponseCoverage({
         caseRecord,
         decisions: [grantedAccessDecision],
-        ownerInventory: { ...inventory, entries: [...inventory.entries, inventory.entries[0]] },
+        ownerInventory: { ...inventory, entries: [...inventory.entries, EffectArray.getUnsafe(inventory.entries, 0)] },
         response,
         tasks: [ownerTask('SUCCEEDED'), secondTask],
       }),

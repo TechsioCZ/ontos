@@ -85,6 +85,7 @@ type ExecutionStore = ReturnType<typeof symmyJobExecutionStore>;
 type AdmissionStore = Effect.Success<ReturnType<typeof symmyJobStoreFactory>>;
 
 const retiredReceiptProbeKey = 'integration.symmy.stock-receipt.probe';
+const domainEvents = {};
 const retiredReceiptProbe = defineAction(
   {
     accessDeclaration: {
@@ -99,7 +100,7 @@ const retiredReceiptProbe = defineAction(
     actionKey: retiredReceiptProbeKey,
     auditProfile: 'standard',
     domainErrorSchema: SymmyJobStoreError,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },
@@ -117,7 +118,7 @@ const retiredReceiptProbe = defineAction(
   },
   (
     payload: typeof AdmitSymmySyncPayloadSchema.Type,
-    context: ActionHandlerContext<Record<never, never>, AdmissionStore>,
+    context: ActionHandlerContext<typeof domainEvents, AdmissionStore>,
   ) => context.services.admitSync(payload, context.actionInvocationId),
   symmyJobStoreFactory,
 );
