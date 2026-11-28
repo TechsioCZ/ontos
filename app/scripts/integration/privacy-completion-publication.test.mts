@@ -334,7 +334,7 @@ const makeFixture = Effect.fn('OperatorPublicationTest.makeFixture')(function* m
       Effect.gen(function* providerTransport() {
         yield* Ref.update(requests, (values) => [...values, `${request.method} ${url.pathname}`]);
         expect(url.origin).toBe('https://api.cloudflare.com');
-        expect(request.headers.authorization).toBe('Bearer operator-TEST-cloudflare-token');
+        expect(request.headers['authorization']).toBe('Bearer operator-TEST-cloudflare-token');
         if (url.pathname === `${retiredNamespacePath}/values/active` && request.method === 'GET') {
           return HttpClientResponse.fromWeb(request, new Response(null, { status: 404 }));
         }
@@ -758,7 +758,7 @@ it.live(
           'objects',
         )
         .pipe(
-          Effect.repeat({ until: (rows) => rows.length === 1 && rows[0]?.committing }),
+          Effect.repeat({ until: (rows) => rows.length === 1 && rows[0]?.committing === true }),
           Effect.timeout('5 seconds'),
         );
       const committedTransaction = yield* requireObservation(

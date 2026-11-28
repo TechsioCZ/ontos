@@ -228,6 +228,8 @@ const makeAnnotatedProblemDetailsSchema = <
   return Schema.TaggedStruct(tag, fields).pipe(problemDetailsRepresentation, HttpApiSchema.status(status));
 };
 
+const emptyExtensions = Object.freeze({});
+
 /**
  * Builds an RFC 9457 response schema while coupling its literal body status to its HttpApi status.
  * Endpoint contracts remain responsible for their public tag, extensions, and explicit error list.
@@ -236,7 +238,7 @@ const makeAnnotatedProblemDetailsSchema = <
 export const makeProblemDetailsSchema = <
   const Tag extends string,
   const Status extends ProblemDetailsStatus,
-  const Extensions extends Schema.Struct.Fields = Record<never, never>,
+  const Extensions extends Schema.Struct.Fields = typeof emptyExtensions,
 >(
   tag: Tag,
   status: Status,
@@ -248,7 +250,7 @@ export const makeProblemDetailsSchema = <
 export const makeRetryableProblemDetailsSchema = <
   const Tag extends string,
   const Status extends ProblemDetailsStatus,
-  const Extensions extends Schema.Struct.Fields = Record<never, never>,
+  const Extensions extends Schema.Struct.Fields = typeof emptyExtensions,
 >(
   tag: Tag,
   status: Status,

@@ -2,14 +2,20 @@
 /// <reference types="node" />
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, FileSystem, Layer, Path, Schema } from 'effect';
+import { Data, Config, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/process';
 
 import { stageNodeOutput } from './materialize-node-output.mjs';
 import { normalizeAndSealNodeRuntime } from './materialize-node-runtime-envelope.mts';
 
-class OutboxRuntimeError extends Schema.TaggedError()('OutboxRuntimeError', { message: Schema.String }) {}
+class OutboxRuntimeError extends Data.TaggedError('OutboxRuntimeError') {
+  /** @param {{ readonly message: string }} fields - OutboxRuntimeError details. */
+  constructor(fields) {
+    super(fields);
+    this.message = fields.message;
+  }
+}
 
 /** @param {string} message Error detail. */
 const failure = (message) => new OutboxRuntimeError({ message });

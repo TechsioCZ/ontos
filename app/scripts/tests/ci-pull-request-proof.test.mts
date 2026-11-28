@@ -167,8 +167,8 @@ const find = (directory: string, routes: Readonly<Record<string, Route>>, entry:
       .filter(Boolean)
       .map((call) => call.replace(/ --dir \S+$/u, ' --dir')),
     log,
-    proven: /^proven=(?<proven>\w+)$/mu.exec(outputs)?.groups?.proven,
-    run: /^run=(?<run>.+)$/mu.exec(outputs)?.groups?.run,
+    proven: /^proven=(?<proven>\w+)$/mu.exec(outputs)?.groups?.['proven'],
+    run: /^run=(?<run>.+)$/mu.exec(outputs)?.groups?.['run'],
     summary: readFileSync(summary, 'utf-8'),
   };
 };

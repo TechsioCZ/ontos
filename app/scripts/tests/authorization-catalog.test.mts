@@ -273,7 +273,7 @@ describe('access catalog source scan', () => {
     expect(carrier?.entrypoint.entrypointKey).toBe(createEntrypointKey);
     expect(carrier?.entrypoint.authorization.kind).toBe('protected');
     expect(carrier?.entrypoint.scope).toBe('tenant');
-    expect(carrier?.accessDeclaration?.key).toBe(createKey);
+    expect(carrier?.accessDeclaration?.['key']).toBe(createKey);
   });
 
   it('reads a governed read through a same-file entrypoint constant and shorthand module key', () => {
@@ -290,7 +290,7 @@ describe('access catalog source scan', () => {
     const [carrier] = scanned.carriers;
     expect(carrier?.carrier).toBe('contribution');
     expect(carrier?.entrypoint.authorization.kind).toBe('protected');
-    expect(carrier?.accessDeclaration?.key).toBe(contactsKey);
+    expect(carrier?.accessDeclaration?.['key']).toBe(contactsKey);
   });
 
   it('reads route metadata that carries the page declaration', () => {
@@ -301,14 +301,14 @@ describe('access catalog source scan', () => {
     const [carrier] = scanned.carriers;
     expect(scanned.problems).toStrictEqual([]);
     expect(carrier?.carrier).toBe('page');
-    expect(carrier?.accessDeclaration?.key).toBe('commerce.market-catalog.home.read');
+    expect(carrier?.accessDeclaration?.['key']).toBe('commerce.market-catalog.home.read');
   });
 
   it('reads the v2 protected classification and calls it missing without a declaration', () => {
     const scanned = scanAccessCatalogSource(readSource(declaredRead), privacyReadFile);
     expect(scanned.problems).toStrictEqual([]);
     expect(scanned.carriers[0]?.entrypoint.authorization).toStrictEqual({ kind: 'protected' });
-    expect(scanned.carriers[0]?.accessDeclaration?.key).toBe(consentReadKey);
+    expect(scanned.carriers[0]?.accessDeclaration?.['key']).toBe(consentReadKey);
 
     const undeclared = buildSnapshot([{ file: privacyReadFile, source: readSource('') }]);
     expect(undeclared.invalid).toStrictEqual([]);
@@ -385,7 +385,7 @@ export const listManagedRead = defineReadConditionalPermission<
 );`,
       'packages/core-runtime/src/auth/principal-administration-reads.ts',
     );
-    expect(scanned.carriers.map((carrier) => carrier.accessDeclaration?.key)).toStrictEqual([
+    expect(scanned.carriers.map((carrier) => carrier.accessDeclaration?.['key'])).toStrictEqual([
       consentReadKey,
       'core.identity.managed.list',
     ]);

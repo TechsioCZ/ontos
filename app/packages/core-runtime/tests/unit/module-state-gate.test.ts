@@ -385,7 +385,8 @@ it.effect('gates every future entrypoint category before its fake implementation
       makeModuleStateGate({
         getTenantModuleStates: (_tenantId, moduleKeys) => {
           reads += 1;
-          return Effect.succeed(records.filter((record) => moduleKeys.includes(record.moduleKey)));
+          const keys = new Set(moduleKeys);
+          return Effect.succeed(records.filter((record) => keys.has(record.moduleKey)));
         },
         listActiveTenantModules: () => Effect.succeed([]),
         listTenantModuleStates: () => Effect.succeed([]),

@@ -258,7 +258,7 @@ it.live(
 
         const [admission] = yield* admin<{ admission_invocation_id: string }>`select admission_invocation_id
           from symmy_integration.import_jobs where tenant_id=${tenantId} and job_id=${accepted.jobId}`;
-        expect(admission).toBeDefined();
+        assert.isOk(admission);
         const runtimeSql = yield* PgClient.make({ url: Redacted.make(environment.DATABASE_URL) });
         const direct = <Value, Failure>(query: Effect.Effect<Value, Failure>) =>
           runtimeSql.withTransaction(

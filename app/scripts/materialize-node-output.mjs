@@ -1,8 +1,12 @@
-import { Effect, FileSystem, Option, Path, Schema } from 'effect';
+import { Data, Effect, FileSystem, Option, Path, Schema } from 'effect';
 
-export class NodeOutputMaterializationError extends Schema.TaggedError()('NodeOutputMaterializationError', {
-  message: Schema.String,
-}) {}
+export class NodeOutputMaterializationError extends Data.TaggedError('NodeOutputMaterializationError') {
+  /** @param {{ readonly message: string }} fields - NodeOutputMaterializationError details. */
+  constructor(fields) {
+    super(fields);
+    this.message = fields.message;
+  }
+}
 
 /** @param {string} message Invalid staging boundary. */
 const failure = (message) => new NodeOutputMaterializationError({ message });
@@ -96,13 +100,13 @@ export const stageNodeOutput = ({ appId, packageDir, packageName, workspaceRoot 
       .readFileString(path.join(output, PACKAGE_JSON))
       .pipe(Effect.flatMap(Schema.decodeUnknownEffect(JsonObjectSchema)));
     const declared = yield* Schema.decodeUnknownEffect(OutputPackageSchema)(outputPackage);
-    if (declared.scripts?.serve !== undefined && !declared.scripts.serve.trim()) {
+    if (declared.scripts?.['serve'] !== undefined && !declared.scripts['serve'].trim()) {
       return yield* Effect.fail(failure('An existing runtime serve script must not be empty'));
     }
     // Match the published default materializer. Raw output intentionally has no serve script.
     const stagedPackage = {
       ...outputPackage,
-      scripts: { ...declared.scripts, serve: declared.scripts?.serve ?? 'node index.js' },
+      scripts: { ...declared.scripts, serve: declared.scripts?.['serve'] ?? 'node index.js' },
     };
     const encodedPackage = yield* Schema.encodeEffect(JsonObjectSchema)(stagedPackage);
     yield* fs.remove(runtime, { force: true, recursive: true });

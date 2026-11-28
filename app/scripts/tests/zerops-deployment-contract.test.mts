@@ -165,12 +165,12 @@ it('gives the Order runtimes the Order module credential and no other owner cred
   const environments = serviceEnvironments();
 
   for (const setup of ORDER_MODULE_SETUPS) {
-    expect(environments.get(setup)?.ONTOS_GATEWAY_MODULE_API_KEY).toBe(
+    expect(environments.get(setup)?.['ONTOS_GATEWAY_MODULE_API_KEY']).toBe(
       `\${migrator_ONTOS_GATEWAY_MODULE_API_KEY_COMMERCE_ORDER}`,
     );
   }
   // The Outbox Worker host receives each hosted owner's credential under its own per-unit name instead.
-  expect(environments.get(OUTBOX_WORKER_HOST.stageSetup)?.ONTOS_GATEWAY_MODULE_API_KEY).toBeUndefined();
+  expect(environments.get(OUTBOX_WORKER_HOST.stageSetup)?.['ONTOS_GATEWAY_MODULE_API_KEY']).toBeUndefined();
 });
 
 /** An owner's own service and, when it has an Outbox Worker, that worker. The shared host carries no module credential. */
@@ -261,7 +261,7 @@ it.live(
         const expected = ownerRuntimeSetups(unitId, setups);
         const moduleReference = `\${migrator_${moduleCredentialVariable}}`;
         const moduleHolders = [...environments]
-          .filter(([, environment]) => environment.ONTOS_GATEWAY_MODULE_API_KEY === moduleReference)
+          .filter(([, environment]) => environment['ONTOS_GATEWAY_MODULE_API_KEY'] === moduleReference)
           .map(([setup]) => setup);
         // A `worker-only` unit's request service receives no module credential; its Outbox Worker alone holds it.
         expect(moduleHolders).toStrictEqual(
@@ -311,7 +311,7 @@ it.effect('hands the stage host each hosted owner credential under its own name 
     );
     const hostEnvironment = serviceEnvironments().get(OUTBOX_WORKER_HOST.stageSetup);
 
-    expect(hostEnvironment?.ONTOS_GATEWAY_MODULE_API_KEY).toBeUndefined();
+    expect(hostEnvironment?.['ONTOS_GATEWAY_MODULE_API_KEY']).toBeUndefined();
     for (const { binding, variable } of HOSTED_OWNER_CREDENTIALS) {
       expect(hostEnvironment?.[variable]).toBe(`\${migrator_${variable}}`);
       // The host entry runs that owner's layer under its own variable; the host runtime maps the shared name onto it.
@@ -364,7 +364,7 @@ it('gives the Shell the module bindings from the migrator and no other service',
     )
     .map(([setup]) => setup);
 
-  expect(environments.get('shellsuperapp')?.ONTOS_GATEWAY_MODULE_BINDINGS).toBe(
+  expect(environments.get('shellsuperapp')?.['ONTOS_GATEWAY_MODULE_BINDINGS']).toBe(
     `\${migrator_ONTOS_GATEWAY_MODULE_BINDINGS}`,
   );
   expect(holders).toStrictEqual(['shellsuperapp']);
@@ -476,10 +476,10 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
 it('builds every Node service with the pinned toolchain and ships Node instead of downloading it at start', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const node = /^node = "(?<node>[^"]+)"$/mu.exec(readFileSync(new URL('../../.mise.toml', import.meta.url), 'utf-8'))
-    ?.groups?.node;
+    ?.groups?.['node'];
   const pnpm = /"packageManager": "pnpm@(?<pnpm>[^"+]+)"/u.exec(
     readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
-  )?.groups?.pnpm;
+  )?.groups?.['pnpm'];
   const nodeServices = zeropsYaml
     .split(/(?=^ {2}- setup:)/mu)
     .filter((block) => block.includes('install-zerops-node.sh'));
@@ -637,11 +637,11 @@ it.effect('passes a custom reviewed intent to only the remote host build in the 
     });
     const document = Schema.decodeUnknownSync(documentSchema)(parse(materialized));
     const host = document.zerops.find(({ setup }) => setup === OUTBOX_WORKER_HOST.stageSetup);
-    expect(host?.build.envVariables?.COMPOSITION_INTENT_FILE).toBe(compositionIntentFile);
+    expect(host?.build.envVariables?.['COMPOSITION_INTENT_FILE']).toBe(compositionIntentFile);
     for (const service of document.zerops) {
-      expect(service.run.envVariables?.COMPOSITION_INTENT_FILE).toBeUndefined();
+      expect(service.run.envVariables?.['COMPOSITION_INTENT_FILE']).toBeUndefined();
       if (service.setup !== OUTBOX_WORKER_HOST.stageSetup) {
-        expect(service.build.envVariables?.COMPOSITION_INTENT_FILE).toBeUndefined();
+        expect(service.build.envVariables?.['COMPOSITION_INTENT_FILE']).toBeUndefined();
       }
     }
     expect(readFileSync(zeropsYamlPath, 'utf-8')).toBe(source);
@@ -659,7 +659,7 @@ it('connects Party Registry only as its dedicated request identity', () => {
   const party = serviceEnvironments().get('party-registry') ?? {};
 
   expect(databaseUrlKeys(party)).toStrictEqual(['PARTY_REGISTRY_DATABASE_URL']);
-  expect(party.PARTY_REGISTRY_DATABASE_URL).toBe(
+  expect(party['PARTY_REGISTRY_DATABASE_URL']).toBe(
     identityUrl('party_registry_runtime', 'migrator_PARTY_REGISTRY_DB_PASSWORD'),
   );
 });
@@ -671,17 +671,17 @@ it('connects the Party Registry worker only as its worker identity and the host 
   expect(databaseUrlKeys(environments.get(PARTY_REGISTRY_WORKER_SETUP) ?? {})).toStrictEqual([
     'PARTY_REGISTRY_WORKER_DATABASE_URL',
   ]);
-  expect(environments.get(PARTY_REGISTRY_WORKER_SETUP)?.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(workerUrl);
+  expect(environments.get(PARTY_REGISTRY_WORKER_SETUP)?.['PARTY_REGISTRY_WORKER_DATABASE_URL']).toBe(workerUrl);
   const host = environments.get(OUTBOX_WORKER_HOST.stageSetup) ?? {};
   expect(databaseUrlKeys(host)).toStrictEqual(['DATABASE_URL', 'PARTY_REGISTRY_WORKER_DATABASE_URL']);
-  expect(host.PARTY_REGISTRY_WORKER_DATABASE_URL).toBe(workerUrl);
+  expect(host['PARTY_REGISTRY_WORKER_DATABASE_URL']).toBe(workerUrl);
 });
 
 it('gives the Shell its gateway issuer identity next to the shared runtime role', () => {
   const shell = serviceEnvironments().get('shellsuperapp') ?? {};
 
   expect(databaseUrlKeys(shell)).toStrictEqual(['DATABASE_URL', 'SHELL_GATEWAY_ISSUER_DATABASE_URL']);
-  expect(shell.SHELL_GATEWAY_ISSUER_DATABASE_URL).toBe(
+  expect(shell['SHELL_GATEWAY_ISSUER_DATABASE_URL']).toBe(
     identityUrl('shell_gateway_issuer', 'migrator_SHELL_GATEWAY_ISSUER_DB_PASSWORD'),
   );
 });

@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const ProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
   Schema.brand('ProviderSubjectId'),
@@ -27,7 +28,7 @@ const BindManagedApiKeyResultSchema = Schema.Struct({
 const handle = Effect.fn('BindManagedApiKeyAction.handle')(function* bindManagedApiKeyActionHandle(
   payload: BindManagedApiKeyPayload,
   context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
+    typeof domainEvents,
     { readonly bind: PrincipalManagementRepositoryService['bindApiKey'] }
   >,
 ) {
@@ -69,7 +70,7 @@ export const bindManagedApiKeyAction = defineAction(
     actionKey: 'core.identity.bind-managed-api-key',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

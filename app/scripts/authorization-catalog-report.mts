@@ -128,7 +128,8 @@ const command = Command.make(
     quiet: Flag.Boolean('quiet').pipe(Flag.withDefault(false)),
     root: Flag.String('root').pipe(Flag.optional),
   },
-  ({ json, quiet, root }) => reportAccessCatalog({ json, quiet, root: Option.getOrUndefined(root) }),
+  ({ json, quiet, root }) =>
+    reportAccessCatalog(Option.isSome(root) ? { json, quiet, root: root.value } : { json, quiet }),
 );
 
 const [, invokedPath] = process.argv;

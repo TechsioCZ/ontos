@@ -94,8 +94,8 @@ const createWorkspace = Effect.fn(function* buildWorkspace(files: ReadonlyMap<st
   const packageDirs = new Set<string>();
   for (const file of files.keys()) {
     const match = /^packages\/(?<name>[^/]+)\//u.exec(file);
-    if (match?.groups?.name !== undefined) {
-      packageDirs.add(match.groups.name);
+    if (match?.groups?.['name'] !== undefined) {
+      packageDirs.add(match.groups['name']);
     }
   }
   for (const name of packageDirs) {

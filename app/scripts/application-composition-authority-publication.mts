@@ -397,16 +397,17 @@ export const runApplicationCompositionMigration = Effect.fn('ApplicationComposit
           sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
           'objects',
         );
-        const current = schema?.initialized
-          ? (yield* database.executor
-              .select({
-                phase: applicationCompositionAuthority.phase,
-                revision: applicationCompositionAuthority.revision,
-                validUntil: applicationCompositionAuthority.validUntil,
-              })
-              .from(applicationCompositionAuthority)
-              .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
-          : undefined;
+        const current =
+          schema?.initialized === true
+            ? (yield* database.executor
+                .select({
+                  phase: applicationCompositionAuthority.phase,
+                  revision: applicationCompositionAuthority.revision,
+                  validUntil: applicationCompositionAuthority.validUntil,
+                })
+                .from(applicationCompositionAuthority)
+                .where(eq(applicationCompositionAuthority.authorityKey, 'active')))[0]
+            : undefined;
         yield* requireCapturedBaseline(current, precondition);
         // Verification may repeat after migration completion or publication, but must not
         // start another drain or reopen admission. Pending SQL never takes this path.
@@ -487,7 +488,7 @@ export const verifyInitialApplicationCompositionPublicationEnvironment = Effect.
     sql`select to_regclass('core.application_composition_authority') is not null as initialized`,
     'objects',
   );
-  if (schema?.initialized) {
+  if (schema?.initialized === true) {
     const [current] = yield* database.executor
       .select({ revision: applicationCompositionAuthority.revision })
       .from(applicationCompositionAuthority)

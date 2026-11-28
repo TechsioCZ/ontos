@@ -340,7 +340,7 @@ it.live(
             prices: [],
             purpose: 'Explicit INTERNAL_C14 contractor source group pricing',
           }),
-        ];
+        ] as const;
         const receipt = yield* submit('INTERNAL_C14_PRICE_GROUPS', groupLists);
         expect(yield* submit('INTERNAL_C14_PRICE_GROUPS', groupLists)).toEqual(receipt);
         // The same key with other content is refused before anything is read or written.
@@ -595,6 +595,7 @@ it.live(
           );
         expect(parentRows).toHaveLength(1);
         const [parentReceipt] = parentRows;
+        assert.isOk(parentReceipt);
         const newPriceId = actualRequest.priceRef.resourceId;
         expect(actualRequest.identityKey.catalogSelection).toEqual(inputs.readiness.selection);
         expect(actualRequest.identityKey.priceGroupSelector).toEqual({
@@ -837,6 +838,7 @@ it.live(
         expect(priced.prices.count).toBe(1);
         expect(priced.prices.prices).toHaveLength(1);
         const [nativePrice] = priced.prices.prices;
+        assert.isOk(nativePrice);
         expect(nativePrice.price.outcome).toBe('PRICE_DEFINITION_CURRENT');
         if (nativePrice.price.outcome !== 'PRICE_DEFINITION_CURRENT') {
           return yield* new SymmyC14ProductFixtureUnavailable({ message: 'The accepted native Price is not Current' });

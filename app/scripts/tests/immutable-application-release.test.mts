@@ -474,7 +474,7 @@ const writeNativeEnvelope = Effect.fn('test.writeNativeReleaseEnvelope')(functio
     file('worker/__modern_bff_effect.mjs', text('export const effectApi = "retained owner API";')),
     file('backend-manifest.json', json({ deliveryUnit: { ...plan, unitId: identityUnitId } })),
     file('backend-container.cjs', text('module.exports = { retainedBackend: true };')),
-  ];
+  ] as const;
   for (const support of supportFiles) {
     const destination = nodePath.join(output, support.path);
     yield* fileSystem.makeDirectory(nodePath.dirname(destination), { recursive: true });
@@ -1912,7 +1912,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             );
           }
         }
-        if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
+        if (capturedConfig['name'] === plan.assetsScriptName && options.assetsUploadError !== undefined) {
           return yield* Effect.fail({
             providerCode: options.assetsUploadError.providerCode,
             providerPath: options.assetsUploadError.providerPath ?? recoveryWorkerPath,
@@ -2049,24 +2049,24 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(fixture.commands[0]?.args).toContain('--dry-run');
       expect(fixture.commands[1]?.args).toContain('--no-bundle');
       expect(fixture.commands.every(({ args }) => !args.includes('--dispatch-namespace'))).toBe(true);
-      expect(fixture.capturedConfigs[0]?.workers_dev).toBe(true);
-      expect(fixture.capturedConfigs[1]?.workers_dev).toBe(true);
-      expect(fixture.capturedConfigs[2]?.name).toBe(fixture.plan.assetsScriptName);
-      expect(fixture.capturedConfigs[2]?.preview_urls).toBe(false);
-      expect(fixture.capturedConfigs[2]?.workers_dev).toBe(true);
+      expect(fixture.capturedConfigs[0]?.['workers_dev']).toBe(true);
+      expect(fixture.capturedConfigs[1]?.['workers_dev']).toBe(true);
+      expect(fixture.capturedConfigs[2]?.['name']).toBe(fixture.plan.assetsScriptName);
+      expect(fixture.capturedConfigs[2]?.['preview_urls']).toBe(false);
+      expect(fixture.capturedConfigs[2]?.['workers_dev']).toBe(true);
       expect(fixture.requests.some((url) => url.includes('/dispatch/'))).toBe(false);
       const backendEndpoint = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${fixture.plan.backendScriptName}`;
       expect(fixture.requests).toContain(`${backendEndpoint}/content/v2`);
       expect(fixture.requests).toContain(`${backendEndpoint}/subdomain`);
       expect(fixture.requests).toContain(`${backendEndpoint}/deployments`);
       expect(fixture.providerWrites).toEqual([{ method: 'PUT', url: `${backendEndpoint}/secrets` }]);
-      expect(fixture.capturedConfigs[1]?.rules).toContainEqual({
+      expect(fixture.capturedConfigs[1]?.['rules']).toContainEqual({
         fallthrough: true,
         globs: ['**/*.js', '**/*.mjs'],
         type: 'ESModule',
       });
-      expect(fixture.capturedConfigs[1]?.find_additional_modules).toBe(true);
-      expect(fixture.capturedConfigs[1]?.alias).toBeUndefined();
+      expect(fixture.capturedConfigs[1]?.['find_additional_modules']).toBe(true);
+      expect(fixture.capturedConfigs[1]?.['alias']).toBeUndefined();
       expect(yield* fileSystem.readFileString(nodePath.join(fixture.publicDirectory, '_headers'))).toBe(
         fixture.originalHeaders,
       );
@@ -2555,8 +2555,8 @@ it.effect('preserves the actual native entrypoint extension when the compiled Wo
       const fixture = yield* prepareDeployment({ noBundle: true });
       const receipt = yield* fixture.deploy;
       expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
-      expect(fixture.capturedConfigs[1]?.main).toMatch(/\/index\.mjs$/u);
-      expect(fixture.capturedConfigs[1]?.no_bundle).toBe(true);
+      expect(fixture.capturedConfigs[1]?.['main']).toMatch(/\/index\.mjs$/u);
+      expect(fixture.capturedConfigs[1]?.['no_bundle']).toBe(true);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -2748,7 +2748,7 @@ it.effect('requires provider confirmation that the immutable backend is enabled 
         const fixture = yield* prepareDeployment(options);
         const failure = yield* fixture.deploy.pipe(Effect.flip);
         expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-        expect(fixture.capturedConfigs[1]?.workers_dev).toBe(true);
+        expect(fixture.capturedConfigs[1]?.['workers_dev']).toBe(true);
         expect(
           fixture.requests.some((url) => url.endsWith(`/workers/scripts/${fixture.plan.backendScriptName}/subdomain`)),
         ).toBe(true);
@@ -3051,7 +3051,7 @@ const writeNodeEnvelope = Effect.fn('test.writeNodeEnvelope')(function* writeNod
     file('server/effect-api.mjs'),
     file('server/backend-manifest.json', json({ name: 'controlledOwner' })),
     file('server/backend-container.cjs'),
-  ];
+  ] as const;
   const backendFiles = kind === SHELL_RELEASE_ENVELOPE_KIND ? allBackendFiles.slice(0, 2) : allBackendFiles;
   const publicPaths = EffectArray.sort(
     assets.filter(({ path }) => path.endsWith('.js')).map(({ path }) => `public/${path}`),
@@ -3113,7 +3113,7 @@ it.effect('keeps Node API origins separate from immutable asset origins and reje
     const plan = yield* nodePlanFor();
     const environment = immutableNodeBuildEnvironment(plan);
     expect(environment.MODERN_ASSET_PREFIX).toBe(plan.assetsOrigin);
-    expect(environment.ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY).toBe(plan.backend.baseUrl);
+    expect(environment['ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY']).toBe(plan.backend.baseUrl);
     const pins = yield* validateImmutableNodePublicArtifacts(plan, nodeAssetsFor(plan));
     expect(pins.contract?.url).toBe(new URL(CONTRACT_PATH, plan.assetsOrigin).href);
     const error = yield* validateImmutableNodePublicArtifacts(
@@ -3678,7 +3678,7 @@ for (const scenario of [
           );
           expect(commands.some(({ args }) => args.includes('ensure-public-access'))).toBe(true);
           const publicAccess = commands.find(({ args }) => args.includes('ensure-public-access'));
-          const serviceVariables = publicAccess?.env?.STAGE_VARIABLES_JSON;
+          const serviceVariables = publicAccess?.env?.['STAGE_VARIABLES_JSON'];
           if (serviceVariables === undefined) {
             return yield* Effect.die('The actual public gateway requires the single planned service ID');
           }

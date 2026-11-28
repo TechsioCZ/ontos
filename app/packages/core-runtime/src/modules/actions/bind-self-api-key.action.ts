@@ -10,6 +10,7 @@ import { principalManagementRepositoryFromTransaction } from '../../auth/princip
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
+const domainEvents = {};
 const ProviderSubjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)).pipe(
   Schema.brand('ProviderSubjectId'),
 );
@@ -27,7 +28,7 @@ type Input = Parameters<BindApiKey>[0];
 type Result = ReturnType<BindApiKey>;
 const handle = Effect.fn('BindSelfApiKeyAction.handle')(function* bindSelfApiKeyActionHandle(
   payload: BindSelfApiKeyPayload,
-  context: ActionHandlerContext<Readonly<Record<never, never>>, { readonly bind: (input: Input) => Result }>,
+  context: ActionHandlerContext<typeof domainEvents, { readonly bind: (input: Input) => Result }>,
 ) {
   const result = yield* context.services.bind({
     createdByInvocationId: context.actionInvocationId,
@@ -69,7 +70,7 @@ export const bindSelfApiKeyAction = defineAction(
     actionKey: 'core.identity.bind-self-api-key',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'protected' },

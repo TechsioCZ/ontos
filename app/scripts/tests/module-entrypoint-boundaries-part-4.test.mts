@@ -646,11 +646,8 @@ it.live('publishes the CCC recovery read from its package and rejects every owne
 it.live('rejects unbound Core Read layers in generated owner HTTP roots', () =>
   Effect.gen(function* unboundOwnerReadRuntime() {
     const root = path.resolve(import.meta.dirname, '../..');
-    const [shared, handler] = yield* Effect.all(
-      [PRICING_SHARED_API_PATH, PRICING_HANDLER_PATH].map((file) =>
-        Effect.promise(() => readFile(path.join(root, file), 'utf-8')),
-      ),
-    );
+    const read = (file: string) => Effect.promise(() => readFile(path.join(root, file), 'utf-8'));
+    const [shared, handler] = yield* Effect.all([read(PRICING_SHARED_API_PATH), read(PRICING_HANDLER_PATH)]);
     expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
     const ownerRuntime = `const readRuntimeLive = makeReadRuntimeLive(ultramodernDeliveryUnit, pricingRegistration).pipe(
   Layer.provide(readRuntimeDependenciesLive),

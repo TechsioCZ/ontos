@@ -29,7 +29,7 @@ export interface SourceFile {
 
 /** Rules named by one comment's disable directive, or none when the comment is not a directive. */
 const directiveRules = (comment: string): readonly string[] => {
-  const body = DIRECTIVE.exec(comment)?.groups?.body;
+  const body = DIRECTIVE.exec(comment)?.groups?.['body'];
   if (body === undefined) {
     return [];
   }

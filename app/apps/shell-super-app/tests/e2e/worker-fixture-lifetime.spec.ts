@@ -5,7 +5,7 @@ import { Cause, Effect } from 'effect';
 // acquisition must finalize before reporting its typed timeout and must never complete.
 const stalledAcquisitionDeadline = '250 millis';
 
-const test = base.extend<Record<never, never>, { stalledAcquisition: readonly string[] }>({
+const test = base.extend<object, { stalledAcquisition: readonly string[] }>({
   stalledAcquisition: [
     async ({ browserName: _browserName }, use) => {
       const events: string[] = [];

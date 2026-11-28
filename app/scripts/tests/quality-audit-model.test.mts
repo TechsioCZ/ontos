@@ -1090,23 +1090,25 @@ it.live(
         `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('escaped-argv')}', '--bundle']; unknownMutator(argv); Process.make('mise', argv, { cwd: rootDirectory }); }`,
         `{ let cwd = rootDirectory; cwd = '/different'; ${esbuildInvocation(bad(mutableCwdCase), '{ cwd }')} }`,
         `{ const argv = ['exec', '--', 'pnpm', 'exec', 'esbuild', '${bad('member-argv')}', '--bundle']; const outer = { argv }; const projected = outer.argv; projected[5] = '${shellInput}'; Process.make('mise', argv, { cwd: rootDirectory }); }`,
-        ...[
+        ...(
           [
-            'member-options',
-            'const outer = { options }; const projected = outer.options; projected.cwd = "/different";',
-          ],
-          ['member-escape', 'const outer = { options }; const projected = outer.options; unknownMutator(projected);'],
-          ['conditional-alias', 'const projected = condition ? options : {}; unknownMutator(projected);'],
-          ['logical-alias', 'const projected = condition && options; unknownMutator(projected);'],
-          ['sequence-alias', 'const projected = (null, options); projected.cwd = "/different";'],
-          ['destructured-alias', 'const { inner } = { inner: options }; unknownMutator(inner);'],
-          [
-            'nested-computed-alias',
-            'const outer = { inner: { options } }; const projected = outer.inner["options"]; unknownMutator(projected);',
-          ],
-          ['returned-options', 'const escape = () => options; unknownMutator(escape);'],
-          ['constructor-options', 'new UnknownMutator(options);'],
-        ].map(
+            [
+              'member-options',
+              'const outer = { options }; const projected = outer.options; projected.cwd = "/different";',
+            ],
+            ['member-escape', 'const outer = { options }; const projected = outer.options; unknownMutator(projected);'],
+            ['conditional-alias', 'const projected = condition ? options : {}; unknownMutator(projected);'],
+            ['logical-alias', 'const projected = condition && options; unknownMutator(projected);'],
+            ['sequence-alias', 'const projected = (null, options); projected.cwd = "/different";'],
+            ['destructured-alias', 'const { inner } = { inner: options }; unknownMutator(inner);'],
+            [
+              'nested-computed-alias',
+              'const outer = { inner: { options } }; const projected = outer.inner["options"]; unknownMutator(projected);',
+            ],
+            ['returned-options', 'const escape = () => options; unknownMutator(escape);'],
+            ['constructor-options', 'new UnknownMutator(options);'],
+          ] as const
+        ).map(
           ([name, mutation]) =>
             `{ const options = { cwd: rootDirectory }; ${mutation} ${esbuildInvocation(bad(name), 'options')} }`,
         ),
@@ -1128,10 +1130,12 @@ it.live(
         "import { fileURLToPath as toPath } from 'node:url';",
         "const rootDirectory = toPath(new URL('../../../../', import.meta.url));",
         esbuildInvocation(receiverInput),
-        ...[
-          ['url-mutation', 'const projected = address; projected.pathname = "/different";'],
-          ['url-escape', 'unknownMutator(address);'],
-        ].map(
+        ...(
+          [
+            ['url-mutation', 'const projected = address; projected.pathname = "/different";'],
+            ['url-escape', 'unknownMutator(address);'],
+          ] as const
+        ).map(
           ([name, mutation]) =>
             `{ const address = new URL('../../../../', import.meta.url); ${mutation} ${esbuildInvocation(bad(name), '{ cwd: toPath(address) }')} }`,
         ),
@@ -1179,7 +1183,7 @@ it.live(
       [shellConsumer, crossInput, shell],
       [shellConsumer, immutableInput, shell],
       [receiverConsumer, receiverInput, receiver],
-    ]) {
+    ] as const) {
       const proof = bundled.find(
         (fact) => fact.source === source && path.resolve(root, fact.workspace, fact.target) === path.join(root, target),
       );
@@ -1818,7 +1822,7 @@ it.live(
       throw new Error('Expected result to be present');
     }
     expect(result.coverage.modeledUsages).toBe(1);
-    expect(result.coverage.nativeFindingCounts.unlisted).toBe((result.coverage.findingCounts.unlisted ?? 0) + 1);
+    expect(result.coverage.nativeFindingCounts['unlisted']).toBe((result.coverage.findingCounts['unlisted'] ?? 0) + 1);
     const modeled = Schema.decodeUnknownSync(
       Schema.fromJsonString(Schema.Array(Schema.Struct({ file: Schema.String }))),
     )(readFileSync(path.join(summary.runDirectory, 'knip/modeled-usages.json'), 'utf-8'));

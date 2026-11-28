@@ -173,7 +173,8 @@ const view = (): AccessChangesView => ({
 
 /** Core's preview of exactly the items asked for, as the scripted seam answers it. */
 const previewOf = (itemIds: readonly string[], overrides: Partial<AccessChangesPreview> = {}): AccessChangesPreview => {
-  const items = ITEMS.filter(({ id }) => itemIds.includes(id));
+  const selected = new Set(itemIds);
+  const items = ITEMS.filter(({ id }) => selected.has(id));
   return {
     addedCells: items.flatMap(({ addedCells }) => addedCells),
     individualItemIds: [],

@@ -72,8 +72,9 @@ const recordMigratorPush = Effect.fn(function* recordMigratorPush(
   push: ChildProcess.StandardCommand,
 ) {
   const { filesystem, spawner } = native;
-  const providerPath = push.args[push.args.indexOf(ZEROPS_YAML_FLAG) + 1] ?? '';
-  deployments.push({ args: push.args, provider: yield* filesystem.readFileString(providerPath), providerPath });
+  const args = yield* Schema.decodeUnknownEffect(Schema.Array(Schema.String))(push.args).pipe(Effect.orDie);
+  const providerPath = args[args.indexOf(ZEROPS_YAML_FLAG) + 1] ?? '';
+  deployments.push({ args, provider: yield* filesystem.readFileString(providerPath), providerPath });
   return yield* spawner.spawn(ChildProcess.make(nodeProcess.execPath, ['-e', '']));
 });
 
@@ -105,7 +106,7 @@ const zeropsStopProtocol = (requests: string[]) =>
     HttpClient.HttpClient,
     HttpClient.make((request, url) => {
       requests.push(`${request.method} ${url.pathname}`);
-      expect(request.headers.authorization).toBe(`Bearer ${ZEROPS_TOKEN}`);
+      expect(request.headers['authorization']).toBe(`Bearer ${ZEROPS_TOKEN}`);
       let response: Response;
       if (request.method === 'PUT' && url.pathname === `/api/rest/public/service-stack/${SERVICE_ID}/stop`) {
         response = Response.json({ id: STOP_PROCESS_ID, status: 'PENDING' });

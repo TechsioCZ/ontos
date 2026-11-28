@@ -51,7 +51,7 @@ const authorityTransport =
     const current = response(request);
     return Promise.resolve(
       new Response(current.body, {
-        headers: current.headers,
+        headers: new Headers(current.headers),
         status: current.status ?? 200,
       }),
     );

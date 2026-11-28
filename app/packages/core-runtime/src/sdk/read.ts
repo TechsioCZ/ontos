@@ -70,7 +70,8 @@ export interface CanSeeFieldsQuestion {
 export type AccessQuestion = CanListQuestion | CanRunQuestion | CanSeeFieldsQuestion;
 
 export type AccessQuestions = Readonly<Record<string, AccessQuestion>>;
-export type NoAccessQuestions = Readonly<Record<never, AccessQuestion>>;
+const emptyDeclarations = Object.freeze({});
+export type NoAccessQuestions = typeof emptyDeclarations;
 
 export const canRun = (target: AccessQuestionTarget): CanRunQuestion => Object.freeze({ kind: 'can_run', target });
 export const canList = (target: AccessQuestionTarget): CanListQuestion => Object.freeze({ kind: 'can_list', target });
@@ -105,7 +106,7 @@ export type AccessAnswers<Questions extends AccessQuestions> = {
 
 /** A read calls only read operations. */
 export type ReadCalls = Readonly<Record<string, DeclaredCall<AnyReadOperationRef>>>;
-export type NoReadCalls = Readonly<Record<never, DeclaredCall<AnyReadOperationRef>>>;
+export type NoReadCalls = typeof emptyDeclarations;
 
 /** What `run` receives: the neutral capabilities, plus what only a read has. */
 export interface ReadRunContext<

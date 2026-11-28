@@ -21,7 +21,7 @@ const entries = [
     owner: 'contacts',
     surface: 'action' as const,
   },
-];
+] as const;
 const pricingOwner = 'pricing.price-group-catalog';
 const pricingReadPermission = 'pricing.price_group.read';
 const pricingRetirePermission = 'pricing.price_group.retire';
