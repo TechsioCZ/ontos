@@ -88,7 +88,7 @@ export const recordedGatewayAdapters = (routes: RouteScript) =>
       const route = `${request.method} ${request.url}`;
       const attempt = sent.filter((entry) => entry.route === route).length;
       sent.push({
-        authorization: request.headers.authorization ?? '',
+        authorization: request.headers['authorization'] ?? '',
         body: bodyTextOf(request),
         headers: request.headers,
         route,

@@ -1,4 +1,4 @@
-/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- Intentional public aggregate for the Customer-owned Market retirement contract; expires: 2027-03-31. */
+/* eslint-disable oxc/no-barrel-file -- Intentional public aggregate for the Customer-owned Market retirement contract; expires: 2027-03-31. */
 export * from './apis/market-affected-use-assessment.ts';
 export * from './api/market-affected-use-assessment-client.ts';
 export * from './apis/market-subject-restrictions-current.ts';

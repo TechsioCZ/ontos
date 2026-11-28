@@ -32,7 +32,8 @@ describe('#1158 Provider dispatch ledger references and origin', () => {
       expect(providerRefOfText(providerRefText(ref))).toEqual(Option.some(ref));
     }
     // The object kind is part of the stored reference, so the same id of another kind never matches.
-    expect(providerRefText(refs[2] ?? refs[0])).not.toBe(`STRIPE_REFUND:pi_test_1`);
+    const intent = Option.getOrThrow(Option.fromUndefinedOr(refs.find(Predicate.isTagged('STRIPE_PAYMENT_INTENT'))));
+    expect(providerRefText(intent)).not.toBe('STRIPE_REFUND:pi_test_1');
   });
 
   it('#1158 Text the ledger did not write is never read as a provider object', () => {

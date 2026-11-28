@@ -231,7 +231,12 @@ it.effect('#1158 one tick reads at most 4 pages of 50 and requests within the ti
   Effect.gen(function* budgets() {
     // 300 due rows of one Tenant: 10 Legal Entities with 30 rows each, families interleaved.
     const rows = Array.from({ length: 300 }, (_, index) =>
-      rowOf({ family: FAMILIES[index % 3], le: Math.floor(index / 30), op: index, tenant: 1 }),
+      rowOf({
+        family: EffectArray.getUnsafe(FAMILIES, index % FAMILIES.length),
+        le: Math.floor(index / 30),
+        op: index,
+        tenant: 1,
+      }),
     );
     const { harness, sweep } = yield* makeHarness({ rows });
     const result = yield* sweep;
@@ -270,7 +275,12 @@ it.effect('#1158 the total budget caps a tick at 50 requests across Tenants and 
   Effect.gen(function* totalBudget() {
     // Six Tenants, one Legal Entity each, 12 rows each spread over three families: 72 rows, 24 per family.
     const rows = Array.from({ length: 72 }, (_, index) =>
-      rowOf({ family: FAMILIES[index % 3], le: 0, op: index, tenant: 1 + Math.floor(index / 12) }),
+      rowOf({
+        family: EffectArray.getUnsafe(FAMILIES, index % FAMILIES.length),
+        le: 0,
+        op: index,
+        tenant: 1 + Math.floor(index / 12),
+      }),
     );
     const { harness, sweep } = yield* makeHarness({ rows });
     const result = yield* sweep;
@@ -424,7 +434,7 @@ it.effect('#1158 an unapproved or unreadable release lists nothing, purges nothi
 it.effect('#1234 a slow request does not change the decisions made for later rows', () =>
   Effect.gen(function* slowCall() {
     const rows = Array.from({ length: 30 }, (_, index) =>
-      rowOf({ family: FAMILIES[index % 3], le: index % 2, op: index, tenant: 1 }),
+      rowOf({ family: EffectArray.getUnsafe(FAMILIES, index % FAMILIES.length), le: index % 2, op: index, tenant: 1 }),
     );
     const fast = yield* makeHarness({ rows });
     yield* fast.sweep;

@@ -753,7 +753,7 @@ describe('#1158 gateway operation recovery', () => {
         paymentRef: Option.some({ _tag: 'GOPAY_PAYMENT', id: '3000006529' }),
         state: 'ACKNOWLEDGED',
       });
-      const run = (lookup: Script['lookup']) =>
+      const run = (lookup: NonNullable<Script['lookup']>) =>
         recoverWith(
           { lookup, operations: [operationRow({ family: 'GOPAY' })], record: Option.some(record) },
           recoveryMessage('AUTHORITATIVE_LOOKUP', { family: 'GOPAY' }),

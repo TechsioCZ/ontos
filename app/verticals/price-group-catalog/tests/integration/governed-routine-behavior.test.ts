@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { sql } from 'drizzle-orm';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
@@ -319,10 +319,10 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
       expect(competingSuccesses).toHaveLength(1);
       expect(competingFailures).toHaveLength(1);
       expect(Schema.is(PriceGroupCodeConflict)(competingFailures[0])).toBe(true);
-      const [competingGroup] = competingSuccesses;
-      if (competingGroup === undefined) {
-        yield* Effect.die('Expected exactly one successful competing Price Group create');
-      }
+      const competingGroup = Option.getOrThrowWith(
+        Option.fromUndefinedOr(competingSuccesses[0]),
+        () => new Error('Expected exactly one successful competing Price Group create'),
+      );
       expect(competingGroup.acceptedCatalogRevision).toBe(2);
 
       const zeroCurrent = yield* Effect.flip(

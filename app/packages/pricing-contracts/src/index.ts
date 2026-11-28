@@ -1,4 +1,4 @@
-/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- Intentional public aggregate for Pricing-owned contracts; expires: 2027-03-31. */
+/* eslint-disable oxc/no-barrel-file -- Intentional public aggregate for Pricing-owned contracts; expires: 2027-03-31. */
 export * from './apis/current-supported-currencies.ts';
 export * from './apis/current-pricing-decision.ts';
 export * from './apis/price-definition.ts';

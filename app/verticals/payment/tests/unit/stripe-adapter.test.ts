@@ -280,7 +280,7 @@ describe('#1154 Stripe Checkout Session collection', () => {
       expect(created?.kind).toBe('mutate');
       expect(created?.request.url).toBe('https://api.stripe.com/v1/checkout/sessions');
       expect(created?.request.headers['idempotency-key']).toBe(COLLECT_CORRELATION.idempotencyKey);
-      expect(created?.request.headers.authorization).toBe(`Bearer ${SANDBOX_KEY}`);
+      expect(created?.request.headers['authorization']).toBe(`Bearer ${SANDBOX_KEY}`);
       expect(created === undefined ? undefined : bodyBytesOf(created.request)).toEqual(prepared.body);
     }),
   );
