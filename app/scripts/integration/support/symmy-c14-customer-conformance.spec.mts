@@ -774,9 +774,9 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     if (moduleKey === undefined) {
       return yield* unavailable('The actual independent module credential is missing');
     }
-    // The Party owner commits the first job's create-party and loses its response. The marker stays for the whole
-    // proof, so the Party receipt read stays down: the worker can settle only by sending the persisted request
-    // again under the persisted key and taking the reply Core saved with the commit.
+    // The Party owner commits the first job's create-party and loses its response. Its receipt read stays down
+    // through that recovery, so the worker must use the persisted key and Core's saved reply. Release the fault
+    // once this is proved: later, unfaulted contact receipts use the same owner read endpoint.
     const fs = yield* FileSystem.FileSystem;
     const faultMarker = `${yield* fs.makeTempDirectoryScoped({ prefix: 'INTERNAL_C14_CUSTOMER_' })}/drop-party-response`;
     yield* fs.writeFileString(faultMarker, 'INTERNAL_C14 transport fault after native Party commit');
@@ -911,6 +911,8 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     const lostVersion = yield* Ref.get(lostResponseVersion);
     assert.isTrue(Option.isSome(lostVersion));
     expect(partyEffect.version).toBe(Option.getOrThrow(lostVersion) + 2);
+    expect(yield* fs.exists(faultMarker)).toBe(true);
+    yield* fs.remove(faultMarker);
     const partyReceipt = yield* Schema.decodeUnknownEffect(partyReceiptSchema)(partyEffect.owner_receipt);
     const profileReceipt = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(profileEffect.owner_receipt);
     expect(profileReceipt.partyRef).toEqual(partyReceipt.partyRef);
