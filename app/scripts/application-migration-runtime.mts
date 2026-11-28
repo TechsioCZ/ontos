@@ -151,9 +151,10 @@ export const reconcileApplicationMigrationOwner = Effect.fn('ApplicationMigratio
     ) {
       return yield* invalid('Migration recovery observation does not match its owner and independent journal');
     }
+    const originalSchemas = new Set(original.schemasPresent);
     const sameSchemas =
       after.schemasPresent.length === original.schemasPresent.length &&
-      after.schemasPresent.every((schema) => original.schemasPresent.includes(schema));
+      after.schemasPresent.every((schema) => originalSchemas.has(schema));
     if (journalMatches(after.entries, original.entries)) {
       if (
         !sameSchemas ||
@@ -164,13 +165,14 @@ export const reconcileApplicationMigrationOwner = Effect.fn('ApplicationMigratio
       }
       return 'uncommitted' as const;
     }
+    const recoveredSchemas = new Set(after.schemasPresent);
     const expected = [...original.entries, ...before.pendingMigrations];
     if (
       before.pendingMigrations.length === 0 ||
       new Set(expected.map((entry) => entry.name)).size !== expected.length ||
       !after.journalExists ||
       !journalMatches(after.entries, expected) ||
-      original.schemasPresent.some((schema) => !after.schemasPresent.includes(schema)) ||
+      original.schemasPresent.some((schema) => !recoveredSchemas.has(schema)) ||
       after.schemasPresent.length === 0
     ) {
       return yield* invalid('Migration recovery is partial, inconsistent or differs from the planned SQL hashes');

@@ -312,9 +312,10 @@ export const deriveHostProofSnapshot = Effect.fn('OutboxWorkerHostProof.deriveSn
       return yield* fail('the generated worker host does not match native topology discovery');
     }
     const release = yield* readOutboxWorkerHostRelease(workspaceRoot);
+    const releasedIds = new Set(release.moduleAppIds);
     const topology = {
       ...inventoryTopology,
-      verticals: inventoryTopology.verticals.filter(({ id }) => release.moduleAppIds.includes(id)),
+      verticals: inventoryTopology.verticals.filter(({ id }) => releasedIds.has(id)),
     };
     const sourceRevision = yield* Effect.try({
       catch: () => fail('the native worker source revision cannot be resolved'),

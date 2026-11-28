@@ -442,6 +442,7 @@ const declaredPolicyMismatches = (
 ): readonly string[] => {
   const mismatches: string[] = [];
   const requestPolicies = expected.filter((policy) =>
+    // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Party #1556: each policy supplies a different target list, searched only once. Remove with loop-invariant receiver detection.
     policyRoles(policy.to).includes(PARTY_REGISTRY_REQUEST_IDENTITY.role),
   );
   if (requestPolicies.length !== 4) {

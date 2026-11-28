@@ -350,7 +350,8 @@ export const registeredWorkloadCallTopologyIssue = (
   calls: readonly { readonly audience: string }[],
   topologyAppIds: readonly string[],
 ): string | undefined => {
-  const unknownReceiver = calls.find((call) => !topologyAppIds.includes(call.audience));
+  const knownReceivers = new Set(topologyAppIds);
+  const unknownReceiver = calls.find((call) => !knownReceivers.has(call.audience));
   return unknownReceiver === undefined
     ? undefined
     : `registered-workload call names ${unknownReceiver.audience}, which is not a topology deployment`;

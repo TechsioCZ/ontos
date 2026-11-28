@@ -33,7 +33,7 @@ const appendOnlyTables = [
   'intent_resend_links',
 ];
 // Written ONLY by scoped routines (the pre-handoff worker's and the history's): the runtime role may read them and nothing else.
-const routineWrittenTables = [
+const routineWrittenTables = new Set([
   'delivery_attempts',
   'intent_handoff_stops',
   'provider_observations',
@@ -44,7 +44,7 @@ const routineWrittenTables = [
   'attempt_retry_links',
   'privacy_measure_handoffs',
   'privacy_execution_evidence',
-];
+]);
 const closableTable = 'template_activations';
 // The only columns the runtime role may update: closing an open activation, once. Every other column is immutable.
 const closingColumns = ['end_invocation_id', 'end_reason', 'ended_at', 'ended_by_principal_id', 'ended_kind'];
@@ -438,6 +438,7 @@ const verifyHistoryContract = Effect.fn('Communications.verifyHistoryContract')(
       found === undefined ||
       found.table !== `${COMMUNICATIONS_SCHEMA_NAME}.${table}` ||
       (exact !== undefined && found.definition !== exact) ||
+      // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Communications #1556: the database constraint definition is SQL text. Remove with typed receiver detection.
       (contains ?? []).some((fragment) => !found.definition.includes(fragment))
     );
   });
@@ -521,7 +522,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
       ) as safe
     from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = $1 and c.relkind in ('r', 'p') order by c.relname`,
-      [COMMUNICATIONS_SCHEMA_NAME, redemptionTable, appendOnlyTables, closableTable, routineWrittenTables],
+      [COMMUNICATIONS_SCHEMA_NAME, redemptionTable, appendOnlyTables, closableTable, [...routineWrittenTables]],
     )
     .pipe(Effect.mapError((cause) => failure('Unable to read the Communications table catalog', cause)));
   if (
@@ -563,7 +564,7 @@ const verify = Effect.gen(function* verifyCommunicationsSchema() {
   if (
     columns.some(
       (table) =>
-        table.insertable !== (routineWrittenTables.includes(table.name) ? 0 : table.total) ||
+        table.insertable !== (routineWrittenTables.has(table.name) ? 0 : table.total) ||
         table.referenceable !== 0 ||
         !sameList(table.updatable, table.name === closableTable ? closingColumns : []),
     )

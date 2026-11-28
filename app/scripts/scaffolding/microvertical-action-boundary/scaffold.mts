@@ -54,8 +54,10 @@ const createOrAcceptOwnedMutation = (
       .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${filePath}`, cause)));
     if (
       current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
+      // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Codesmith #1556: current is file text; remove when the rule distinguishes substring searches.
       requiredMarkers.every((marker) => current.includes(marker))
     ) {
+      // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Codesmith #1556: each contract marker is a substring of file text, not an element lookup. Remove with typed receiver detection.
       const missingContract = requiredContracts.find(({ marker }) => !current.includes(marker));
       if (missingContract !== undefined) {
         return yield* scaffoldError(

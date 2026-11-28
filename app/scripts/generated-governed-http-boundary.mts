@@ -4485,10 +4485,7 @@ const hasExactDomainProblemImport = (source: string, problem: string): boolean =
     ),
   ];
   return imports.some((candidate) =>
-    (candidate.groups?.['values'] ?? '')
-      .split(',')
-      .map((entry) => entry.trim())
-      .includes(problem),
+    (candidate.groups?.['values'] ?? '').split(',').some((entry) => entry.trim() === problem),
   );
 };
 
@@ -4514,10 +4511,12 @@ const hasHttpContractErrorEntries = (
   if (errorEntries === undefined) {
     return false;
   }
-  const domainProblems = errorEntries.filter((entry) => !problems.includes(entry));
+  const declaredProblems = new Set(problems);
+  const entries = new Set(errorEntries);
+  const domainProblems = errorEntries.filter((entry) => !declaredProblems.has(entry));
   return (
-    new Set(errorEntries).size === errorEntries.length &&
-    problems.every((problem) => errorEntries.includes(problem)) &&
+    entries.size === errorEntries.length &&
+    problems.every((problem) => entries.has(problem)) &&
     domainProblems.every((problem) =>
       problem === REQUEST_SCHEMA_PROBLEM_SCHEMA
         ? hasCanonicalRequestSchemaProblemImport(source)

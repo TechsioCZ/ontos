@@ -145,6 +145,7 @@ export const aresLookupRead = defineRead(
       } satisfies AresSubjectLookup)
       .pipe(
         Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+        // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
         Effect.catch(mapAresFailure),
       ),
   () => AresSubjectService.pipe(Effect.map((service) => ({ lookup: service.subject }))),

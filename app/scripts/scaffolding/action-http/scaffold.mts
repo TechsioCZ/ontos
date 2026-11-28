@@ -1028,7 +1028,8 @@ const canonicalClientMembers = (tokens: readonly ClientExportToken[], type: stri
   ) {
     return false;
   }
-  return new Set(names).size === names.length && expected.every((name) => names.includes(name));
+  const uniqueNames = new Set(names);
+  return uniqueNames.size === names.length && expected.every((name) => uniqueNames.has(name));
 };
 const decodeCanonicalClientExport = (entry: string, shared: boolean): Option.Option<CanonicalClientExport> => {
   const tokens = scanClientExport(entry);
@@ -1373,6 +1374,7 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
     );
     const recognizedImports = importEntries.map(decodeActionRuntimeSupportImport);
     const recognizedKinds = recognizedImports.flatMap((entry) => (Option.isSome(entry) ? [entry.value.kind] : []));
+    const kindSet = new Set(recognizedKinds);
     const layerEntries = readGeneratedSlotEntries(
       nextContent,
       GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
@@ -1382,7 +1384,7 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
     const actionEntries = layerEntries.filter((entry) => sameActionRuntimeSupport(entry, actionSupport));
     if (
       recognizedImports.some(Option.isNone) ||
-      new Set(recognizedKinds).size !== recognizedKinds.length ||
+      kindSet.size !== recognizedKinds.length ||
       layerEntries.length !== oldEntries.length + actionEntries.length ||
       oldEntries.length > 1 ||
       actionEntries.length > 1
@@ -1393,7 +1395,7 @@ const patchCanonicalActionRuntime = (content: string, vertical: OntosVerticalMet
     // The complete parsed slots were validated above; every addition below is a fixed canonical owner entry.
     for (const [index, supportImport] of supportImports.entries()) {
       const kind = index === 0 ? 'principal' : 'redemption';
-      if (!recognizedKinds.includes(kind)) {
+      if (!kindSet.has(kind)) {
         nextContent = insertSortedSlot(
           nextContent,
           GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
@@ -1710,13 +1712,14 @@ const planCustomDomainProblems = Effect.fn('ActionHttpScaffold.planCustomDomainP
   artifacts: readonly string[],
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const declaredSpecifications = new Set(specifications);
   for (const artifact of artifacts) {
     if (!(yield* fs.exists(artifact))) {
       continue;
     }
     const current = yield* fs.readFileString(artifact);
     for (const line of current.split('\n').filter((value) => value.startsWith(domainProblemMarker))) {
-      if (!specifications.includes(line.slice(domainProblemMarker.length))) {
+      if (!declaredSpecifications.has(line.slice(domainProblemMarker.length))) {
         return yield* scaffoldFailure('existing custom domain Problem requires its exact --domain-problem flag');
       }
     }

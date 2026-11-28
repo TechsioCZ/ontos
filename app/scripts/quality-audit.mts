@@ -702,9 +702,10 @@ const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(function* 
     const observed = (knip.coverage.workspaces ?? []).map(
       (workspace) => path.relative(canonicalRoot, workspace) || '.',
     );
+    const observedWorkspaces = new Set(observed);
     if (
       observed.length !== expectedWorkspaces.length ||
-      expectedWorkspaces.some((workspace) => !observed.includes(workspace))
+      expectedWorkspaces.some((workspace) => !observedWorkspaces.has(workspace))
     ) {
       return yield* failure(
         `Knip workspace coverage mismatch: expected ${expectedWorkspaces.join(', ')}, observed ${observed.join(', ')}`,

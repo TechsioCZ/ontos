@@ -1183,13 +1183,13 @@ const parseFlags = (
       return yield* failScaffolding(`flag --${PROPOSAL_ONLY_FLAG} may be supplied only once`);
     }
     const proposalOnly = command === ACTION_HTTP_COMMAND && proposalOnlyCount === 1;
-    const booleanArguments = [core ? '--core' : undefined, proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined].filter(
-      (argument) => argument !== undefined,
+    const booleanArguments = new Set(
+      [core ? '--core' : undefined, proposalOnly ? `--${PROPOSAL_ONLY_FLAG}` : undefined].filter(
+        (argument) => argument !== undefined,
+      ),
     );
     const normalizedArguments =
-      booleanArguments.length === 0
-        ? argumentsList
-        : argumentsList.filter((argument) => !booleanArguments.includes(argument));
+      booleanArguments.size === 0 ? argumentsList : argumentsList.filter((argument) => !booleanArguments.has(argument));
     for (let index = 0; index < normalizedArguments.length; index += 2) {
       const flag = normalizedArguments[index];
       const value = normalizedArguments[index + 1];

@@ -75,10 +75,12 @@ import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree } from '@oxlint/plugins';
 
 import { asNode as sharedAsNode, childrenOf, memberName as sharedMemberName } from '../shared/ast.ts';
+import { lookupVariable } from '../shared/bindings.ts';
 import { bindingPath, isGenCallee as sharedIsGenCallee } from '../shared/effect-identity.ts';
 import { bindingsWithExtraModules, collectRootNamespaces, collectNamedImports } from '../shared/imports.ts';
 import { optionRecord } from '../shared/options.ts';
 import { booleanOption as boolean, stringArray, safeRegExp } from '../shared/options.ts';
+import { provenance } from '../shared/provenance.ts';
 import { isScriptFile, isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
 
 const DEFAULT_INCLUDE: readonly string[] = ['apps/**', 'verticals/**', 'packages/**'];
@@ -97,7 +99,7 @@ const DEFAULT_EFFECT_MODULES: readonly string[] = [
  * not independent reads; a failed earlier operation must not consume the next identifier.
  */
 const DEFAULT_ORDERING_PATTERN =
-  '^(lock|acquire|begin|install|validate|verify|check|assert|ensure|require|recheck|commit|flush|transition|fail|succeed|complete|log|record|emit|publish|write|insert|update|delete|persist|claim|authenticate|authorize|reconcile|create|archive|send|notify|terminate|revoke|sync|seed|dispatch|enqueue|uuidV[47]$|randomBytes$)';
+  '^(lock|acquire|begin|install|validate|verify|check|assert|ensure|require|recheck|commit|flush|transition|fail|succeed|complete|log|record|emit|publish|write|insert|update|delete|persist|claim|authenticate|authorize|reconcile|create|archive|send|notify|terminate|revoke|sync|seed|dispatch|enqueue)';
 
 const FUNCTION_TYPES: ReadonlySet<string> = new Set([
   'ArrowFunctionExpression',
@@ -358,6 +360,86 @@ function readCallee(subject: AnyNode | null, includeFunctions: boolean): AnyNode
   return includeFunctions && callee.type === 'Identifier' ? callee : null;
 }
 
+const ENTROPY_METHODS = new Set(['randomBytes', 'uuidV4', 'uuidV7']);
+function onlyDefinition(context: Context, node: ESTree.Node) {
+  const defs = lookupVariable(context, node)?.defs;
+  return defs?.length === 1 ? defs[0] : undefined;
+}
+/** Only the exact imported service type, including type-only/renamed imports, proves entropy provenance. */
+function nativeEntropyType(context: Context, annotation: ESTree.Node | undefined): boolean {
+  if (
+    annotation?.type !== 'TSIndexedAccessType' ||
+    annotation.indexType.type !== 'TSLiteralType' ||
+    annotation.indexType.literal.type !== 'Literal' ||
+    annotation.indexType.literal.value !== 'Service' ||
+    annotation.objectType.type !== 'TSTypeReference'
+  )
+    return false;
+  const qualified = annotation.objectType.typeName;
+  if (qualified.type !== 'TSQualifiedName' || qualified.right.name !== 'SecureRandom') return false;
+  const def = onlyDefinition(context, qualified.left);
+  return (
+    def?.node.type === 'ImportSpecifier' &&
+    def.node.imported.type === 'Identifier' &&
+    def.node.imported.name === 'SecureRandom' &&
+    def.parent?.type === 'ImportDeclaration' &&
+    def.parent.source.value === 'effect/crypto'
+  );
+}
+function entropyReceiver(context: Context, receiver: ESTree.Node): boolean {
+  if (
+    receiver.type === 'MemberExpression' &&
+    !receiver.computed &&
+    receiver.object.type === 'Identifier' &&
+    receiver.property.type === 'Identifier'
+  ) {
+    const parameter = onlyDefinition(context, receiver.object);
+    const type =
+      parameter?.type === 'Parameter' && parameter.name.type === 'Identifier'
+        ? parameter.name.typeAnnotation?.typeAnnotation
+        : undefined;
+    if (type?.type !== 'TSTypeReference') return false;
+    const iface = onlyDefinition(context, type.typeName)?.node;
+    if (iface?.type !== 'TSInterfaceDeclaration') return false;
+    const propertyName = receiver.property.name;
+    return iface.body.body.some(
+      (member) =>
+        member.type === 'TSPropertySignature' &&
+        member.readonly &&
+        !member.computed &&
+        member.key.type === 'Identifier' &&
+        member.key.name === propertyName &&
+        nativeEntropyType(context, member.typeAnnotation?.typeAnnotation),
+    );
+  }
+  const def = onlyDefinition(context, receiver);
+  if (def?.type === 'Parameter' && def.name.type === 'Identifier')
+    return nativeEntropyType(context, def.name.typeAnnotation?.typeAnnotation);
+  if (
+    def?.node.type !== 'VariableDeclarator' ||
+    def.node.id.type !== 'Identifier' ||
+    def.parent?.type !== 'VariableDeclaration' ||
+    def.parent.kind !== 'const'
+  )
+    return false;
+  const init = def.node.init;
+  return (
+    init?.type === 'YieldExpression' &&
+    init.delegate &&
+    init.argument !== null &&
+    provenance(context, init.argument) === 'effect/crypto.SecureRandom.SecureRandom'
+  );
+}
+function drawsNativeEntropy(context: Context, callee: AnyNode, name: string): boolean {
+  const receiver = unwrap(callee.object);
+  return (
+    ENTROPY_METHODS.has(name) &&
+    MEMBER_TYPES.has(callee.type) &&
+    receiver !== null &&
+    entropyReceiver(context, receiver as unknown as ESTree.Node)
+  );
+}
+
 export const rule = defineRule({
   meta: {
     type: 'problem',
@@ -444,7 +526,7 @@ export const rule = defineRule({
         bound: collectPatternNames(asNode(declarator.id), visitorKeys),
         calleeName,
         calleeNode,
-        ordering: ordering.test(calleeName),
+        ordering: ordering.test(calleeName) || drawsNativeEntropy(context, calleeNode, calleeName),
         referenced: collectReferencedNames(init, visitorKeys),
       };
     };

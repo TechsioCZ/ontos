@@ -253,6 +253,7 @@ export const partyBackedPostalAddressResolver =
           : client({ contactPointRef: origin.contactPointRef }, requestCorrelation),
       ),
       Effect.map((contactPoint) => resolvePartyBackedPostalAddress(origin, contactPoint)),
+      // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
       Effect.catch(resolverFailure),
     );
   };

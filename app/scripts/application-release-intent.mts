@@ -207,11 +207,12 @@ export const applicationReleaseSelectCommand = Command.make(
               yield* fileSystem.readFileString('topology/cloudflare-placement.json'),
             )
           : { units: topologyUnits.map(({ id }) => id) };
+      const placementIds = new Set(placement.units);
       const topologyIds = new Set(topologyUnits.map(({ id }) => id));
       if (
         topology.shell.id !== SHELL_APP_ID ||
         topologyIds.size !== topologyUnits.length ||
-        new Set(placement.units).size !== placement.units.length ||
+        placementIds.size !== placement.units.length ||
         placement.units.some((id) => !topologyIds.has(id))
       ) {
         return yield* new ApplicationReleaseIntentError({
@@ -219,7 +220,7 @@ export const applicationReleaseSelectCommand = Command.make(
         });
       }
       const available = topologyUnits.flatMap((unit) =>
-        placement.units.includes(unit.id)
+        placementIds.has(unit.id)
           ? [
               {
                 id: unit.id,

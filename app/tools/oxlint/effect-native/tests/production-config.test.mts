@@ -31,6 +31,9 @@ const discardedAssignment = 'apps/demo/src/discarded-assignment.ts';
 const observedValues = 'apps/demo/src/observed-values.ts';
 const orderedProperties = 'apps/demo/src/ordered-properties.ts';
 const unorderedProperties = 'apps/demo/src/unordered-properties.ts';
+const componentStyle = 'apps/demo/src/named-component.tsx';
+const chainedPromise = 'apps/demo/src/chained-promise.ts';
+const wildcardExport = 'apps/demo/src/exports.ts';
 const nestedConditional = 'apps/demo/src/nested-conditional.ts';
 const developmentAdapter = 'packages/shared-contracts/tooling/modern-config.ts';
 const neighboringLibrary = 'packages/shared-contracts/tooling/library.ts';
@@ -106,6 +109,9 @@ const staged: readonly (readonly [string, string])[] = [
     "export const grant = (audience: string) => ({ audience, assertion: 'signed', expiresAt: 1 });\n",
   ],
   [nestedConditional, "export const choose = (outer: boolean, inner: boolean) => outer ? (inner ? 'a' : 'b') : 'c';\n"],
+  [componentStyle, 'export function Card() { return <p>Example</p>; }'],
+  [chainedPromise, 'export const read = () => Promise.resolve(1).then((value) => value + 1);'],
+  [wildcardExport, "export * from './check.ts';"],
   [developmentAdapter, adapterPrimitives],
   [neighboringLibrary, adapterPrimitives],
   ...routes.map((file) => [file, 'export const value = 1;\n'] as const),
@@ -128,6 +134,12 @@ it('production configuration loads every repository plugin and scopes its overri
   // The test import policy applies to application tests, not to e2e adapters.
   expect(codesFor(applicationTest)).toContain('eslint(no-restricted-imports)');
   expect(codesFor(e2eTest)).not.toContain('eslint(no-restricted-imports)');
+});
+
+it('keeps the three blocking main checks disabled by the new upstream preset', () => {
+  expect(codesFor(componentStyle)).toContain('react(function-component-definition)');
+  expect(codesFor(chainedPromise)).toContain('promise(prefer-await-to-then)');
+  expect(codesFor(wildcardExport)).toContain('sonarjs(no-wildcard-import)');
 });
 
 it('production route filename override admits exact native splat filenames and keeps nearby rejections', () => {
