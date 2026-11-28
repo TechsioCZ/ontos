@@ -2548,7 +2548,7 @@ it('formats and lints the run’s changed files through the pre-commit hook, and
   // A sweep goes through the hook as well: one `pnpm lint` over every file held every type program at once
   // and lost its runner.
   expect(run).not.toMatch(/pnpm lint$/mu);
-  // The tsrs Oxlint backend does not emit Effect language-service diagnostics, so the step runs them itself.
+  // The five project-scoped warning/error gates still run even when the hook selects only changed paths.
   expect(run).toContain('mise exec --cd app -- pnpm lint:effect-diagnostics');
   expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
   const select = run.slice(0, run.indexOf('mise exec'));

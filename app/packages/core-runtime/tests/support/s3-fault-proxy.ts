@@ -11,7 +11,7 @@ import { Effect, Match, Predicate } from 'effect';
 const http = process.getBuiltinModule('http');
 type Server = ReturnType<typeof http.createServer>;
 type IncomingMessage = InstanceType<typeof http.IncomingMessage>;
-type ServerResponse = InstanceType<typeof http.ServerResponse>;
+type ServerResponse = Parameters<NonNullable<Parameters<typeof http.createServer>[1]>>[1];
 type Socket = IncomingMessage['socket'];
 
 type S3FaultKind =

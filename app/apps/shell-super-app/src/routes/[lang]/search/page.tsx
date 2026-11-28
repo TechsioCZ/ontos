@@ -9,6 +9,7 @@ import { Match } from 'effect';
 import type { ShellSearchResult } from '../../../../shared/browser-api.ts';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
+import type { SearchPageModel } from './search-page-model.ts';
 
 const SearchResultItem = ({
   currentTenantId,
@@ -88,7 +89,7 @@ const SearchResultItem = ({
 
 const SearchPage = () => {
   const { t } = useModernI18n();
-  const model = useLoaderData({ from: '/$lang/search' });
+  const model: SearchPageModel = useLoaderData({ from: '/$lang/search', structuralSharing: false });
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.state === 'reload_required' || model.shell.state === 'reload_required' || controls.reloadRequired) {
     return (
