@@ -82,10 +82,15 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         const payload = yield* Schema.decodeUnknownEffect(OpenSelectionPopulationRequestSchema)({
           tenantId: input.tenantId,
         }).pipe(Effect.mapError(unavailableBecause('The requested Cart population Tenant is invalid')));
-        const snapshot = yield* loadActiveApplicationComposition(composition).pipe(
-          Effect.mapError(unavailableBecause('The active Cart population composition is unavailable')),
+        const [snapshot, requestCorrelation] = yield* Effect.all(
+          [
+            loadActiveApplicationComposition(composition).pipe(
+              Effect.mapError(unavailableBecause('The active Cart population composition is unavailable')),
+            ),
+            Effect.suspend(() => crypto.uuidV4()),
+          ],
+          { concurrency: 1 },
         );
-        const requestCorrelation = yield* crypto.uuidV4();
         // This Tenant-wide read forbids Legal Entity scope, so no legal entity is requested. The Shell
         // verifies the subject's assertion; the receiving Cart owner checks the calling module (Catalog).
         const credential = yield* acquireDelegatedGatewayContext(

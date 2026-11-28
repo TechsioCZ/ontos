@@ -310,8 +310,10 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         input: CommercePortalAuthEmailVerificationTokenRegistration & { readonly expiresAt: Date },
       ): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
         const now = yield* DateTime.nowAsDate;
-        const digest = yield* digestToken(digestService, input.token, 'verification-token-hash');
-        const verificationId = yield* crypto.uuidV4();
+        const [digest, verificationId] = yield* Effect.all(
+          [digestToken(digestService, input.token, 'verification-token-hash'), Effect.suspend(() => crypto.uuidV4())],
+          { concurrency: 1 },
+        );
         const identifier = emailVerificationIdentifier(digest);
         const reservationDigest = yield* digestText(
           digestService,
@@ -632,13 +634,12 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
         .where(eq(user.email, email))
         .limit(1)
         .pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));
-      const reconciliationId = yield* crypto.uuidV4();
       yield* insertRecoveryReconciliationRow(transaction, {
         conflictClass: 'RESET_OUTCOME_INDETERMINATE',
         createdAt: now,
         currentProviderSubjectId: currentSubjects[0] === undefined ? Option.none() : Option.some(currentSubjects[0].id),
         email,
-        id: reconciliationId,
+        id: yield* crypto.uuidV4(),
         operation: RESET_LEDGER_RECONCILIATION_OPERATION,
         providerSubjectId: row.providerSubjectId,
       }).pipe(Effect.mapError(sweepAgedDispatchedRowUnavailable));

@@ -475,8 +475,13 @@ const registerAndStage = Effect.fn('InvitationClaimAuthorityPersistence.register
     yield* validateRegistrationTenant(input);
     const rawProofBytes = yield* ownerScope.crypto.randomBytes(32);
     const rawProof = Redacted.make(bytesToHex(rawProofBytes));
-    const digest = yield* digestRawProof(ownerScope.digest, rawProof);
-    const reference = yield* ownerScope.crypto.uuidV4().pipe(Effect.flatMap(proofReference));
+    const [digest, reference] = yield* Effect.all(
+      [
+        digestRawProof(ownerScope.digest, rawProof),
+        Effect.suspend(() => ownerScope.crypto.uuidV4().pipe(Effect.flatMap(proofReference))),
+      ],
+      { concurrency: 1 },
+    );
     const [registration] = yield* ownerScope.transaction
       .invoke(registerProofRoutine, [
         input.invitationRef.resourceId,

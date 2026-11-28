@@ -3124,6 +3124,2086 @@
   },
   "defaults": {
     "@nkzw/require-use-effect-arguments": null,
+    "anti-slop-effect/no-service-constructor-imports": null,
+    "anti-slop/no-chained-type-assertions": null,
+    "anti-slop/no-conditional-empty-object-spread": null,
+    "anti-slop/no-known-value-widening": null,
+    "anti-slop/no-module-mocking": null,
+    "anti-slop/no-object-parameters": null,
+    "anti-slop/no-reflect-apply": null,
+    "anti-slop/no-reflect-get": null,
+    "anti-slop/no-runtime-typeof": [
+      {
+        "allowInTypeGuards": false
+      }
+    ],
+    "anti-slop/no-shape-in-symbol-names": null,
+    "anti-slop/no-unknown-parameters": null,
+    "anti-slop/no-unknown-returns": null,
+    "anti-slop/no-unknown-type-aliases": null,
+    "anti-slop/no-unsafe-dictionary-type": null,
+    "anti-slop/no-widen-then-assert": null,
+    "anti-slop/require-safety-comment-for-type-assertion": null,
+    "effect-native/no-ad-hoc-argv-in-scripts": [
+      {
+        "allowEntryGuardIndices": [
+          0,
+          1
+        ],
+        "allowPaths": [],
+        "forbiddenCliModules": [
+          "yargs",
+          "yargs-parser",
+          "commander",
+          "minimist",
+          "mri",
+          "cac",
+          "arg",
+          "meow",
+          "nopt",
+          "sade",
+          "citty",
+          "clipanion",
+          "command-line-args",
+          "@commander-js/extra-typings"
+        ]
+      }
+    ],
+    "effect-native/no-ambient-date": [
+      {
+        "allowDurationArithmetic": false,
+        "browserEvaluatedMethods": [
+          "evaluate",
+          "evaluateHandle",
+          "evaluateOnNewDocument",
+          "waitForFunction",
+          "addInitScript",
+          "$eval",
+          "$$eval"
+        ],
+        "dateMethods": [
+          "getTime",
+          "toISOString",
+          "setDate",
+          "setUTCDate",
+          "setHours",
+          "setUTCHours",
+          "setMonth",
+          "setFullYear",
+          "getFullYear",
+          "getMonth",
+          "getDate",
+          "getHours",
+          "getTimezoneOffset"
+        ],
+        "ignore": [],
+        "ignoreReceivers": [
+          "this",
+          "super"
+        ],
+        "ignoreScripts": false,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "productionPaths": [],
+        "testMode": "clock-only",
+        "testPaths": []
+      }
+    ],
+    "effect-native/no-ambient-process-env": [
+      {
+        "allowPaths": [],
+        "ignoreTestFiles": false,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-async-script-program": [
+      {
+        "allowPaths": [],
+        "driverEdgeCallees": [
+          "Effect.tryPromise",
+          "Effect.promise",
+          "Effect.callback"
+        ],
+        "reportTopLevelAwait": true,
+        "scriptPaths": []
+      }
+    ],
+    "effect-native/no-bare-effect-run": [
+      {
+        "adapterFiles": [
+          "apps/*/api/index.ts",
+          "verticals/*/api/index.ts",
+          "packages/core-runtime/src/outbox/process.ts"
+        ],
+        "browserGlobs": [
+          "apps/*/src/**",
+          "verticals/*/src/**"
+        ],
+        "effectModules": [
+          "effect",
+          "effect/**"
+        ],
+        "serverGlobs": [
+          "**/src/db/**",
+          "**/src/server/**",
+          "**/src/services/**",
+          "**/src/actions/**",
+          "**/*.server.ts",
+          "**/*.server.tsx"
+        ]
+      }
+    ],
+    "effect-native/no-console-in-scripts": [
+      {
+        "allowAtEntry": false,
+        "allowPaths": [],
+        "includeStdio": true,
+        "methods": [
+          "error",
+          "warn",
+          "debug",
+          "trace"
+        ],
+        "reportReferences": true
+      }
+    ],
+    "effect-native/no-dependency-parameters": [
+      {
+        "allowTypeNames": [],
+        "dependencyTypePattern": "(Service|Repository|Gateway|Resolver|Dependencies|ServiceFactory)$",
+        "expandLocalTypes": true,
+        "flagInlineServiceRecords": true,
+        "ignore": [],
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "serviceIndexKeys": [
+          "Service"
+        ]
+      }
+    ],
+    "effect-native/no-direct-node-io-in-scripts": [
+      {
+        "allowPaths": [],
+        "modules": [
+          "node:fs",
+          "fs",
+          "node:fs/promises",
+          "fs/promises",
+          "node:child_process",
+          "child_process",
+          "fs-extra",
+          "execa"
+        ],
+        "reportCalls": false
+      }
+    ],
+    "effect-native/no-dotenv-loading": [
+      {
+        "allowPaths": [
+          "scripts/initialize-local-development.mts"
+        ],
+        "ignoreTestFiles": false,
+        "scopePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-driver-failure-inspection": [
+      {
+        "ambiguousKeys": [
+          "detail",
+          "routine",
+          "schema",
+          "table",
+          "column"
+        ],
+        "causeSinks": [
+          "Cause.*",
+          "Exit.*",
+          "Effect.failCause",
+          "Effect.logError",
+          "Effect.logWarning",
+          "Effect.logDebug",
+          "Effect.annotateLogs"
+        ],
+        "decoderPaths": [],
+        "detectCauseWalk": true,
+        "exitNamePattern": "exit$",
+        "failureOperandPattern": "error|failure|cause|defect|problem|exception|reason|rejection|current|value|row|record|result|body",
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "**/.next/**",
+          "**/drizzle/**",
+          "tools/**",
+          "scripts/**",
+          "**/*.d.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "narrowedKeys": [
+          "cause",
+          "code",
+          "constraint",
+          "detail",
+          "sqlState",
+          "errno",
+          "syscall",
+          "routine",
+          "schema",
+          "table",
+          "column"
+        ],
+        "networkCodes": [
+          "ECONNREFUSED",
+          "ECONNRESET",
+          "EPIPE",
+          "ETIMEDOUT",
+          "ENOTFOUND",
+          "EAI_AGAIN",
+          "EHOSTUNREACH",
+          "ECONNABORTED",
+          "EHOSTDOWN",
+          "ENETDOWN",
+          "ENETRESET",
+          "ENETUNREACH"
+        ],
+        "prefixMethods": [
+          "startsWith",
+          "endsWith"
+        ],
+        "sqlStateAnywhere": true,
+        "sqlStatePattern": "^(?:[0-9]{2}|0[A-Z]|2[BDF]|3[BDFZ]|F0|HV|P0|XX)[0-9A-Z]{3}$"
+      }
+    ],
+    "effect-native/no-duplicate-literal-vocabulary": [
+      {
+        "factories": [
+          "Literals"
+        ],
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "minMembers": 2,
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "reportSubsets": false
+      }
+    ],
+    "effect-native/no-effect-provide-in-library": [
+      {
+        "allowOuterRunSeam": true,
+        "includeTests": false,
+        "members": [
+          "provide",
+          "provideService",
+          "provideServices",
+          "provideServiceEffect",
+          "provideReferences"
+        ],
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "verticals/*/api/index.ts",
+          "packages/core-runtime/src/outbox/process.ts"
+        ]
+      }
+    ],
+    "effect-native/no-effect-run-in-scripts": [
+      {
+        "allowPaths": [],
+        "effectModules": [
+          "Effect"
+        ],
+        "maxRunSites": 1,
+        "reportPromiseChain": true,
+        "scriptGlobs": [
+          "scripts/**",
+          "apps/*/scripts/**",
+          "verticals/*/scripts/**",
+          "packages/*/scripts/**",
+          "tools/*/scripts/**"
+        ],
+        "scriptPaths": []
+      }
+    ],
+    "effect-native/no-effect-run-in-tests": [
+      {
+        "effectModuleSources": [
+          "effect",
+          "effect/**",
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-client"
+        ],
+        "effectModules": [
+          "Effect"
+        ],
+        "ignorePaths": [
+          "**/tests/e2e/**",
+          "**/*.e2e.*",
+          "**/playwright/**"
+        ],
+        "testPaths": []
+      }
+    ],
+    "effect-native/no-environment-record-type": [
+      {
+        "allowPaths": [],
+        "ignoreTestFiles": true,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-failure-discarding-error-callback": [
+      {
+        "effectModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "flagMemberReferences": false,
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "tools/**",
+          "scripts/**"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "members": [
+          "mapError",
+          "catch",
+          "catchAll",
+          "catchCause",
+          "catchAllCause",
+          "catchDefect",
+          "orElseFail",
+          "mapBoth",
+          "match",
+          "matchEffect",
+          "matchCause",
+          "matchCauseEffect",
+          "tryPromise",
+          "try",
+          "tryMap",
+          "tryMapPromise"
+        ]
+      }
+    ],
+    "effect-native/no-focused-tests": null,
+    "effect-native/no-global-test-replacements": null,
+    "effect-native/no-hand-built-http-server-in-tests": [
+      {
+        "allowPaths": [],
+        "ignorePaths": [
+          "**/tests/e2e/**",
+          "**/*.e2e.*",
+          "**/e2e/**",
+          "**/playwright/**"
+        ],
+        "includeFetch": false,
+        "serverFactories": [
+          "createServer",
+          "createSecureServer"
+        ],
+        "serverModules": [
+          "node:http",
+          "http",
+          "node:https",
+          "https",
+          "node:net",
+          "net",
+          "node:http2",
+          "http2"
+        ],
+        "testPaths": []
+      }
+    ],
+    "effect-native/no-hand-built-problem-details": [
+      {
+        "allowPaths": [],
+        "errorIdentifierPattern": "^[A-Za-z_$]*(?:error|cause|defect|failure|exception)$",
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "**/*.d.ts",
+          "**/*.gen.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "messageKeys": [
+          "detail",
+          "title",
+          "reason",
+          "message"
+        ],
+        "reportRawDriverMessages": true,
+        "reportTagOnlyLiterals": true,
+        "schemaNamespaces": [
+          "Schema",
+          "HttpApiSchema",
+          "HttpApiEndpoint",
+          "HttpApiGroup",
+          "OpenApi",
+          "S"
+        ],
+        "statusRange": [
+          100,
+          599
+        ],
+        "tagSuffixes": [
+          "Problem"
+        ]
+      }
+    ],
+    "effect-native/no-hand-parsed-environment-value": [
+      {
+        "allowPaths": [],
+        "environmentIdentifiers": "^(env|environment|processEnv|fileEnvironment|environmentVariables|buildEnvironment)$",
+        "environmentReaders": [
+          "readEnvironment",
+          "getBuildConfigEnvironment",
+          "envValue"
+        ],
+        "ignoreTestFiles": false,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-hand-rolled-form-state": [
+      {
+        "formLibraries": [
+          "@conform-to",
+          "@effect-atom/atom-react",
+          "@felte",
+          "@hookform",
+          "@lucas-barake/effect-form",
+          "@lucas-barake/effect-form-react",
+          "@modular-forms",
+          "@rvf",
+          "@tanstack/form-core",
+          "@tanstack/react-form",
+          "ajv",
+          "class-validator",
+          "felte",
+          "final-form",
+          "formik",
+          "informed",
+          "joi",
+          "react-final-form",
+          "react-hook-form",
+          "superstruct",
+          "valibot",
+          "vest",
+          "yup",
+          "zod"
+        ],
+        "formModule": "@app/core-runtime/ui/form",
+        "kitControls": [
+          "@techsio/ui-kit/atoms/checkbox",
+          "@techsio/ui-kit/atoms/input",
+          "@techsio/ui-kit/atoms/numeric-input",
+          "@techsio/ui-kit/atoms/textarea",
+          "@techsio/ui-kit/molecules/color-select",
+          "@techsio/ui-kit/molecules/combobox",
+          "@techsio/ui-kit/molecules/date-picker",
+          "@techsio/ui-kit/molecules/form-checkbox",
+          "@techsio/ui-kit/molecules/form-input",
+          "@techsio/ui-kit/molecules/form-numeric-input",
+          "@techsio/ui-kit/molecules/form-textarea",
+          "@techsio/ui-kit/molecules/phone-input",
+          "@techsio/ui-kit/molecules/radio-card",
+          "@techsio/ui-kit/molecules/radio-group",
+          "@techsio/ui-kit/molecules/select",
+          "@techsio/ui-kit/molecules/slider",
+          "@techsio/ui-kit/molecules/switch"
+        ],
+        "uiGlobs": [
+          "apps/*/src/**",
+          "verticals/*/src/**"
+        ]
+      }
+    ],
+    "effect-native/no-hand-rolled-tagged-union": [
+      {
+        "discriminantKeys": [
+          "_tag"
+        ],
+        "ignore": [],
+        "ignoreAmbient": true,
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeClassFields": true,
+        "includeNestedTypes": true,
+        "wrapperTypes": [
+          "Readonly",
+          "ReadonlyArray",
+          "Array",
+          "NonNullable",
+          "Simplify",
+          "Mutable"
+        ]
+      }
+    ],
+    "effect-native/no-imperative-loop-in-effect-gen": [
+      {
+        "allowForOfWithoutMutation": false,
+        "effectModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "flagCounters": true,
+        "genMembers": [
+          "gen",
+          "fn",
+          "fnUntraced"
+        ],
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "tools/**",
+          "**/*.d.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false
+      }
+    ],
+    "effect-native/no-instanceof": null,
+    "effect-native/no-interface-first-codec": [
+      {
+        "allowDerivedTypeArguments": true,
+        "allowSuspend": true,
+        "checkAsExpressions": true,
+        "checkClassProperties": true,
+        "checkSatisfies": true,
+        "codecTypes": [
+          "Codec",
+          "Schema",
+          "Top",
+          "Struct"
+        ],
+        "ignore": [],
+        "ignoreTests": false,
+        "ignoreTypeArguments": [
+          "unknown",
+          "any",
+          "never"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-*"
+        ],
+        "requireSchemaInitializer": false,
+        "requireTypeArguments": true
+      }
+    ],
+    "effect-native/no-json-schema-as-document-contract": [
+      {
+        "allowPaths": [
+          "packages/core-runtime/src/outbox/**",
+          "packages/core-runtime/src/actions/collector.ts",
+          "packages/core-runtime/src/actions/events.ts",
+          "packages/core-runtime/src/actions/context.ts"
+        ],
+        "codecMembers": [
+          "asserts",
+          "decode",
+          "decodeEffect",
+          "decodeResult",
+          "decodeSync",
+          "decodeUnknown",
+          "decodeUnknownEffect",
+          "decodeUnknownResult",
+          "decodeUnknownSync",
+          "encode",
+          "encodeEffect",
+          "encodeResult",
+          "encodeSync",
+          "encodeUnknown",
+          "encodeUnknownEffect",
+          "encodeUnknownResult",
+          "encodeUnknownSync",
+          "is",
+          "standardSchemaV1",
+          "validate",
+          "validateEffect",
+          "validateResult",
+          "validateSync"
+        ],
+        "ignoreTestFiles": true,
+        "jsonMembers": [
+          "Json",
+          "JsonValue"
+        ]
+      }
+    ],
+    "effect-native/no-layer-fresh": [
+      {
+        "ignore": []
+      }
+    ],
+    "effect-native/no-layer-or-die-outside-root": [
+      {
+        "allowTestFiles": false,
+        "exclude": [],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "maxPerRoot": 1,
+        "members": [
+          "orDie",
+          "orDieWith"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "apps/*/api/server.ts",
+          "apps/*/src/entry.server.ts",
+          "apps/*/src/entry.server.tsx",
+          "verticals/*/api/index.ts",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-layer-provide-in-library": [
+      {
+        "alsoGovern": [],
+        "compositionFiles": [],
+        "ignore": [
+          "**/dist/**",
+          "**/dist-*/**",
+          "**/.output/**",
+          "**/node_modules/**",
+          "**/scripts/**",
+          "**/*.d.ts"
+        ],
+        "members": [
+          "provide",
+          "provideMerge"
+        ],
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "apps/*/api/index.tsx",
+          "verticals/*/api/index.ts",
+          "verticals/*/api/index.tsx",
+          "apps/*/src/entry.*.ts",
+          "apps/*/src/entry.*.tsx",
+          "verticals/*/src/worker-host/entry.ts"
+        ],
+        "scope": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ]
+      }
+    ],
+    "effect-native/no-literal-union-type-alias": [
+      {
+        "allowedNames": [],
+        "ignore": [],
+        "ignoreAmbient": true,
+        "ignoreNullishMembers": true,
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeEnums": true,
+        "minMembers": 2
+      }
+    ],
+    "effect-native/no-local-defect-seam": [
+      {
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "**/*.d.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "members": [
+          "Effect.catchDefect",
+          "Effect.catchAllDefect",
+          "Effect.catchSomeDefect",
+          "Effect.catchCause",
+          "Effect.catchAllCause",
+          "Effect.catchSomeCause",
+          "Effect.catchCauseIf",
+          "Effect.sandbox",
+          "Cause.hasDies",
+          "Cause.isDie",
+          "Cause.died",
+          "Cause.squash",
+          "Cause.squashWith",
+          "Cause.dieOption",
+          "Cause.findDieOption",
+          "Cause.defects",
+          "Cause.filterDefects",
+          "Cause.hasInterrupts",
+          "Cause.isInterrupted",
+          "Cause.isInterruptedOnly",
+          "Cause.findErrorOption",
+          "Cause.failureOrCause"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "seamPaths": [
+          "**/http-error-seam.ts",
+          "**/http-error-seam.tsx"
+        ]
+      }
+    ],
+    "effect-native/no-manual-config-in-scaffold-templates": [
+      {
+        "exclude": [
+          "**/dist/**",
+          "**/.output/**",
+          "**/node_modules/**",
+          "**/*.d.ts"
+        ],
+        "ignoreTestFiles": true,
+        "patterns": [
+          "\\bJSON\\s*(?:\\.\\s*parse|\\[\\s*['\"]parse['\"]\\s*\\])\\s*\\(",
+          "\\b(?:process\\s*\\.\\s*env|import\\s*\\.\\s*meta\\s*\\.\\s*env|Bun\\s*\\.\\s*env|Deno\\s*\\.\\s*env)\\b",
+          "\\b(?:environment|env|environmentVariables|processEnv|rawEnvironment|settings|secrets)\\s*(?:\\[\\s*['\"][A-Z][A-Z0-9_]{2,}['\"]\\s*\\]|\\.\\s*[A-Z][A-Z0-9_]{2,}\\b)",
+          "\\bnew\\s+URL\\s*\\(",
+          "\\bthrow\\s+(?:new\\s+)?[A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*\\s*\\(",
+          "as\\s+Record<\\s*string\\s*,\\s*unknown\\s*>",
+          "typeof\\s+[\\w$]+\\s*[!=]==\\s*['\"]object['\"]",
+          "Array\\s*\\.\\s*isArray\\s*\\(",
+          "\\b[A-Za-z_$][\\w$]*\\s*(?:\\[\\s*['\"](?:kty|crv|alg|use|kid|key_ops)['\"]\\s*\\]|\\.\\s*(?:kty|crv|alg|use|kid|key_ops)\\b)",
+          "\\b[\\w$]*[Kk]ey\\s*(?:\\[\\s*['\"][xdney]['\"]\\s*\\]|\\.\\s*[xdney]\\b)",
+          "\\bimport\\s*['\"]dotenv(?:/config)?['\"]|\\bdotenv\\s*\\.\\s*config\\s*\\("
+        ],
+        "templatePaths": [
+          "scripts/scaffolding/**",
+          "scripts/generate-*.{ts,mts,cts,tsx}",
+          "scripts/**/generate-*.{ts,mts,cts,tsx}",
+          "scripts/**/*scaffold*.{ts,mts,cts,tsx}",
+          "**/scaffolding/**",
+          "**/scaffolds/**",
+          "**/generators/**",
+          "**/codegen/**",
+          "**/templates/**",
+          "**/*.template.{ts,mts,cts,tsx,js,mjs}"
+        ]
+      }
+    ],
+    "effect-native/no-manual-cookie-serialization": [
+      {
+        "allowPaths": [],
+        "contractNames": [
+          "setCookieHeaders",
+          "setCookieHeader",
+          "cookieHeaders"
+        ],
+        "cookieNamespaces": [
+          "Cookies",
+          "Cookie",
+          "HttpServerResponse",
+          "HttpServerRespondable"
+        ],
+        "exclude": [
+          "**/dist/**",
+          "**/.output/**",
+          "**/node_modules/**",
+          "**/*.d.ts"
+        ],
+        "flagCookieStringContracts": false,
+        "ignoreTestFiles": true,
+        "paths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-manual-error-handling-in-scaffold-templates": [
+      {
+        "ignore": [],
+        "patterns": [
+          "switch\\s*\\([^;{}]*?(?:\\?*\\.\\s*_tag|\\[\\s*['\"]_tag['\"]\\s*\\])\\s*\\)",
+          "(?:\\.\\s*_tag|\\[\\s*['\"]_tag['\"]\\s*\\]|\\b_tag)\\s*[!=]==?",
+          "instanceof\\s+(?:[A-Za-z_$][\\w$]*\\s*\\.\\s*)*(?!(?:TypeError|RangeError|SyntaxError|ReferenceError|URIError|EvalError|AggregateError)\\b)[A-Za-z_$][\\w$]*(?:Error|Problem|Failure|Exception|Defect)\\b",
+          "\\.\\s*catch\\s*\\(\\s*(?:async\\s+)?(?:function\\s*)?\\(?\\s*([A-Za-z_$][\\w$]*)\\s*\\)?\\s*(?:=>)?\\s*\\{[^}]*?\\b(?:if|switch)\\s*\\([^{};]*?\\b\\1\\b"
+        ],
+        "templatePaths": [
+          "scripts/scaffolding/**/*.mts",
+          "scripts/scaffolding/**/*.ts",
+          "scripts/scaffolding/**/*.tsx"
+        ]
+      }
+    ],
+    "effect-native/no-manual-identity-annotations": [
+      {
+        "annotationMembers": [
+          "Effect.annotateLogs",
+          "Effect.annotateLogsScoped",
+          "Effect.annotateSpans",
+          "Effect.annotateSpansScoped",
+          "Effect.annotateCurrentSpan"
+        ],
+        "flagSpreadHelpers": false,
+        "identityKeys": [
+          "correlationId",
+          "traceId",
+          "traceparent",
+          "spanId",
+          "requestId",
+          "tenantId",
+          "legalEntityId",
+          "principalId",
+          "impersonatorPrincipalId",
+          "sessionId",
+          "moduleId",
+          "moduleKey",
+          "actionKey",
+          "readKey",
+          "workerKey",
+          "invocationId",
+          "actionInvocationId",
+          "deploymentId"
+        ],
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "**/*.d.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "seamFiles": [
+          "**/request-identity-seam.ts",
+          "**/request-identity-seam.tsx",
+          "**/http-instrumentation-seam.ts",
+          "**/http-instrumentation-seam.tsx"
+        ],
+        "spanMembers": [
+          "Effect.withSpan",
+          "Effect.withLogSpan"
+        ]
+      }
+    ],
+    "effect-native/no-manual-route-param-parsing": [
+      {
+        "allowTestFiles": false,
+        "exclude": [],
+        "flagStrictFalseOnly": true,
+        "flagUrlSearchParams": true,
+        "manualConstructors": [
+          "URLSearchParams",
+          "FormData"
+        ],
+        "routeGlobs": [
+          "apps/*/src/routes/**",
+          "verticals/*/src/routes/**",
+          "apps/*/src/**/routes/**",
+          "verticals/*/src/**/routes/**"
+        ],
+        "routerModules": [
+          "@modern-js/plugin-tanstack/runtime",
+          "@tanstack/react-router",
+          "@tanstack/solid-router"
+        ],
+        "untypedHooks": [
+          "useParams",
+          "useSearch",
+          "useLoaderData"
+        ]
+      }
+    ],
+    "effect-native/no-manual-tag-comparison": [
+      {
+        "adtTags": [
+          "Some",
+          "None",
+          "Success",
+          "Failure",
+          "Left",
+          "Right"
+        ],
+        "allowTags": [],
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeErrorCombinators": true,
+        "includeIndirectTags": true,
+        "includeMembershipProbes": true,
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "requireEffectImport": false
+      }
+    ],
+    "effect-native/no-native-error-construction": [
+      {
+        "errorConstructors": [
+          "Error",
+          "TypeError",
+          "RangeError",
+          "SyntaxError",
+          "ReferenceError",
+          "EvalError",
+          "URIError",
+          "AggregateError"
+        ],
+        "ignore": [
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/build/**",
+          "**/.next/**",
+          "**/generated/**",
+          "**/scripts/**",
+          "tools/**",
+          "**/*.d.ts"
+        ],
+        "ignoreConfigFiles": true,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "requireEffectImport": false
+      }
+    ],
+    "effect-native/no-native-json-parse": [
+      {
+        "allowPaths": [],
+        "ignoreTestFiles": true,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ]
+      }
+    ],
+    "effect-native/no-native-json-stringify": [
+      {
+        "allowPaths": [],
+        "ignoreTestFiles": true,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**",
+          "**/*.config.{ts,mts,cts,js,mjs,cjs}"
+        ]
+      }
+    ],
+    "effect-native/no-native-timers": [
+      {
+        "adapterFiles": [],
+        "allowNodeTestMockTimers": true,
+        "clockMembers": [
+          "currentTimeMillis",
+          "currentTimeNanos",
+          "sleep"
+        ],
+        "dateTimeMembers": [
+          "now",
+          "unsafeNow",
+          "nowUnsafe"
+        ],
+        "effectTimeMembers": [
+          "sleep",
+          "delay",
+          "timeout",
+          "timeoutFail",
+          "timeoutOption",
+          "timeoutOrElse",
+          "timeoutTo",
+          "schedule",
+          "scheduleForked",
+          "repeat",
+          "repeatOrElse",
+          "retry",
+          "retryOrElse"
+        ],
+        "globalObjects": [
+          "globalThis",
+          "window",
+          "global",
+          "self"
+        ],
+        "ignore": [
+          "**/tests/e2e/**",
+          "**/*.e2e.*",
+          "**/playwright/**"
+        ],
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeScripts": false,
+        "includeTests": true,
+        "productionPaths": [],
+        "requireTestClockInTests": true,
+        "testClockIndicators": [
+          "TestClock"
+        ],
+        "testPaths": [],
+        "timerGlobals": [
+          "setTimeout",
+          "setInterval",
+          "setImmediate",
+          "clearTimeout",
+          "clearInterval",
+          "clearImmediate",
+          "queueMicrotask"
+        ],
+        "timerModules": [
+          "node:timers",
+          "timers",
+          "node:timers/promises",
+          "timers/promises"
+        ]
+      }
+    ],
+    "effect-native/no-nested-effect-run": [
+      {
+        "allowRuntimeCapturedRuns": true,
+        "effectModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "ignore": []
+      }
+    ],
+    "effect-native/no-nullable-schema-field": [
+      {
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeOptionalKeys": false,
+        "reexportModules": [
+          "@modern-js/bff-effect/effect",
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-client-runtime",
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-edge/*",
+          "@modern-js/bff-effect/effect-server"
+        ]
+      }
+    ],
+    "effect-native/no-nullable-service-outcome": [
+      {
+        "aliasDepth": 3,
+        "checkEffect": true,
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeAsyncFunctions": true,
+        "promiseTypes": [
+          "Promise",
+          "PromiseLike"
+        ],
+        "resolveAliases": true
+      }
+    ],
+    "effect-native/no-per-operation-http-api-client": [
+      {
+        "accessorMembers": [
+          "HttpApiClient.group",
+          "HttpApiClient.endpoint"
+        ],
+        "clientModuleFiles": [],
+        "constructorMembers": [
+          "HttpApiClient.make",
+          "HttpApiClient.makeWith"
+        ],
+        "constructorNames": [
+          "makeEffectHttpApiClient"
+        ],
+        "effectReexportModules": [
+          "@modern-js/bff-effect/effect-client"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "layerConstructorMembers": [
+          "Layer.effect",
+          "Layer.sync",
+          "Layer.unwrap",
+          "Layer.suspend",
+          "Effect.cached",
+          "Effect.cachedWithTTL",
+          "Effect.cachedInvalidateWithTTL"
+        ],
+        "transparentMembers": [
+          "Effect.gen"
+        ]
+      }
+    ],
+    "effect-native/no-per-request-key-material": [
+      {
+        "effectWrappers": [
+          "cached",
+          "cachedWithTTL",
+          "cachedFunction",
+          "cachedInvalidateWithTTL",
+          "once"
+        ],
+        "generatorFiles": [
+          "scripts/**",
+          "**/generators/**",
+          "**/generator/**",
+          "**/scaffolding/**",
+          "**/scaffold/**",
+          "**/templates/**"
+        ],
+        "ignore": [],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeTests": false,
+        "joseMembers": [
+          "importJWK",
+          "importSPKI",
+          "importPKCS8",
+          "importX509",
+          "createLocalJWKSet",
+          "createRemoteJWKSet"
+        ],
+        "joseModules": [
+          "jose",
+          "jose/**"
+        ],
+        "layerBuilderWrappers": [
+          "effect",
+          "scoped",
+          "sync",
+          "unwrap",
+          "unwrapScoped"
+        ],
+        "layerWrappers": [
+          "effect",
+          "scoped",
+          "sync",
+          "unwrap",
+          "unwrapScoped",
+          "succeed"
+        ],
+        "nodeCryptoMembers": [
+          "createPublicKey",
+          "createPrivateKey",
+          "createSecretKey"
+        ],
+        "nodeCryptoModules": [
+          "node:crypto",
+          "crypto",
+          "node:crypto/**"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "scanGeneratorTemplates": true,
+        "subtleMembers": [
+          "importKey"
+        ]
+      }
+    ],
+    "effect-native/no-process-exit-outside-script-entry": [
+      {
+        "allowPaths": [],
+        "includeExitCode": true,
+        "maxExitSites": 1
+      }
+    ],
+    "effect-native/no-promise-first-scaffold-templates": [
+      {
+        "exclude": [
+          "**/dist/**",
+          "**/.output/**",
+          "**/node_modules/**",
+          "**/*.d.ts"
+        ],
+        "perCallClientPatterns": [
+          "(?:makeEffectHttpApiClient|HttpApiClient\\s*\\.\\s*make)\\s*\\("
+        ],
+        "promiseFirstPatterns": [
+          "\\basync\\b",
+          "\\bawait\\b",
+          "\\.\\s*then\\s*\\(",
+          "\\bnew\\s+Promise\\s*[<(]",
+          "\\bPromise\\s*\\.\\s*(?:all|allSettled|race|any|resolve|reject)\\s*\\(",
+          "\\bEffect\\.run(?:Promise|Sync|Fork)(?:Exit)?\\b",
+          "\\bfetch\\s*\\("
+        ],
+        "routeParamPatterns": [
+          "(?:Route|Search)Params\\s*=\\s*Readonly<\\s*Partial<\\s*Record<",
+          "(?:Route|Search)Params\\s*=\\s*(?:Readonly<\\s*)?(?:Partial<\\s*)?Record<[^>]*,\\s*string\\s*>"
+        ],
+        "strictPerCallClient": false,
+        "templatePaths": [
+          "scripts/scaffolding/**",
+          "scripts/generate-*.{ts,mts,cts,tsx}",
+          "scripts/**/generate-*.{ts,mts,cts,tsx}",
+          "scripts/**/*scaffold*.{ts,mts,cts,tsx}",
+          "**/scaffolding/**",
+          "**/scaffolds/**",
+          "**/generators/**",
+          "**/codegen/**",
+          "**/templates/**",
+          "**/*.template.{ts,mts,cts,tsx,js,mjs}"
+        ]
+      }
+    ],
+    "effect-native/no-promise-shaped-port": [
+      {
+        "allowNames": [
+          "loader",
+          "action",
+          "clientLoader",
+          "clientAction",
+          "middleware",
+          "generateMetadata",
+          "generateStaticParams",
+          "getServerSideProps",
+          "getStaticProps"
+        ],
+        "allowPaths": [
+          "**/db/client.ts",
+          "**/auth/db/client.ts"
+        ],
+        "driverCallbacks": [
+          "transaction",
+          "then",
+          "catch",
+          "finally"
+        ],
+        "effectModules": [],
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "**/*.d.ts",
+          "**/*.config.ts",
+          "**/*.config.mts",
+          "**/module-federation.config.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**",
+          "tools/**/tests/**"
+        ],
+        "includeFunctionDeclarations": true,
+        "includeTests": true,
+        "includeTsx": true,
+        "promiseTypes": [
+          "Promise",
+          "PromiseLike"
+        ]
+      }
+    ],
+    "effect-native/no-raw-effect-adt-tag-check": [
+      {
+        "adtTags": [
+          "Some",
+          "None",
+          "Success",
+          "Failure",
+          "Left",
+          "Right"
+        ],
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "requireEffectImport": true
+      }
+    ],
+    "effect-native/no-refinement-outside-schema": [
+      {
+        "allowDelegatedGuards": [],
+        "allowExternalGuardDelegation": true,
+        "allowInlineCallbacks": true,
+        "allowInstanceofGuards": false,
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "internalModules": [
+          "@app/**",
+          "@ontos/**",
+          "~/**",
+          "#*",
+          "#*/**"
+        ]
+      }
+    ],
+    "effect-native/no-route-local-error-classifier": [
+      {
+        "allowTestFiles": false,
+        "allowedNames": [],
+        "classifierInputTypes": [
+          "ErrorClassificationInput"
+        ],
+        "detectTagDiscrimination": true,
+        "errorParameterPattern": "error|failure|problem|defect|cause",
+        "includeInlineHandlers": true,
+        "namePattern": "^classify.*(?:Error|Failure|Problem|Defect|Cause)(?:$|[A-Z])",
+        "routeGlobs": [
+          "apps/*/src/routes/**",
+          "verticals/*/src/routes/**"
+        ]
+      }
+    ],
+    "effect-native/no-runtime-construction-outside-root": [
+      {
+        "exclude": [],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeTests": false,
+        "maxPerRoot": 1,
+        "members": [
+          "ManagedRuntime.make",
+          "Layer.toRuntime",
+          "Layer.toRuntimeWithMemoMap"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "verticals/*/api/index.ts",
+          "packages/core-runtime/src/outbox/process.ts",
+          "apps/*/src/runtime/**",
+          "verticals/*/src/runtime/**",
+          "scripts/*.{ts,mts,cts,js,mjs,cjs}",
+          "scripts/*/cli.mts",
+          "scripts/postgres/*.mts"
+        ]
+      }
+    ],
+    "effect-native/no-scattered-browser-effect-run": [
+      {
+        "adapterFiles": [
+          "apps/*/src/runtime/**",
+          "verticals/*/src/runtime/**"
+        ],
+        "boundaryKeys": [
+          "queryFn",
+          "mutationFn",
+          "loader",
+          "action"
+        ],
+        "browserGlobs": [
+          "apps/*/src/**",
+          "verticals/*/src/**"
+        ],
+        "effectModules": [
+          "effect",
+          "effect/*",
+          "effect/**"
+        ],
+        "includeTestFiles": false,
+        "runnerNames": [
+          "runEffectRequest",
+          "runEffectView"
+        ],
+        "serverGlobs": [
+          "**/src/db/**",
+          "**/src/server/**",
+          "**/src/services/**",
+          "**/src/actions/**",
+          "**/*.server.ts",
+          "**/*.server.tsx"
+        ]
+      }
+    ],
+    "effect-native/no-sequential-independent-yields": [
+      {
+        "effectModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "genMembers": [
+          "gen",
+          "fn",
+          "fnUntraced"
+        ],
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "tools/**",
+          "**/*.d.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeFunctionCallees": true,
+        "includeScripts": false,
+        "includeTests": false,
+        "orderingCalleePattern": "^(lock|acquire|begin|install|validate|verify|check|assert|ensure|require|recheck|commit|flush|transition|fail|succeed|complete|log|record|emit|publish|write|insert|update|delete|persist|claim|authenticate|authorize|reconcile|create|archive|send|notify|terminate|revoke|sync|seed|dispatch|enqueue)"
+      }
+    ],
+    "effect-native/no-string-timestamp-schema": [
+      {
+        "ignore": [],
+        "ignoreKeyPattern": "",
+        "ignoreTests": false,
+        "ignoreTypePattern": "(?:Copy|Labels?|Messages|Strings|Translations?|I18n)$",
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "includeTypeMembers": true,
+        "schemaModules": [
+          "effect",
+          "effect/**",
+          "@modern-js/bff-effect/effect-*"
+        ],
+        "temporalKeyPattern": "(?:At|Timestamp|Date)$|^(?:established|dissolved|born|died|issued|expires|expired|created|updated|deleted|published|placed|shipped|delivered|started|ended|completed)On$|^(?:notBefore|notAfter|validSince|validUntil|expiry|expires)$"
+      }
+    ],
+    "effect-native/no-structural-document-walking": [
+      {
+        "allowInKeys": [
+          "_tag",
+          "cause",
+          "code",
+          "constraint",
+          "detail",
+          "sqlState",
+          "errno",
+          "syscall",
+          "routine",
+          "schema",
+          "table",
+          "column"
+        ],
+        "allowPaths": [
+          "packages/core-runtime/src/actions/repository.ts"
+        ],
+        "documentIdentifiers": "^(record|raw|decoded|parsed|value|entry|input|object|json|document|payload|topology|evidence|manifest|allowlist|overlay|ownership)$",
+        "ignoreTestFiles": true,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**",
+          "**/*.config.{ts,mts,cts}"
+        ]
+      }
+    ],
+    "effect-native/no-symbol-slotted-operation-record": [
+      {
+        "allowBrandMarkers": true,
+        "allowSameFileAccessors": true,
+        "ignore": [],
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false
+      }
+    ],
+    "effect-native/no-sync-schema-codec": [
+      {
+        "allowPaths": [
+          "{apps,verticals,packages}/*/{module-federation,backend-federation,modern,rstest,drizzle,drizzle.auth,tailwind,playwright}.config.{ts,mts,js,mjs,cts,cjs}"
+        ],
+        "ignoreTestFiles": true,
+        "members": [
+          "decodeSync",
+          "decodeUnknownSync",
+          "encodeSync",
+          "encodeUnknownSync",
+          "validateSync"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-*"
+        ]
+      }
+    ],
+    "effect-native/no-threaded-correlation-parameter": [
+      {
+        "ambientKeys": [
+          "correlationId",
+          "traceId",
+          "traceparent"
+        ],
+        "ignore": [],
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "wireTypeNames": "(Problem|Headers|Payload|Response|Request|Schema)$|^(OutboxClaim|requireCorrelationId|safeCorrelationId)$"
+      }
+    ],
+    "effect-native/no-throw-in-configuration-parser": [
+      {
+        "allowPaths": [],
+        "environmentIdentifiers": "^(?:environment|env|processEnv|rawEnv|rawEnvironment|envRecord|environmentRecord|envVars|environmentVariables)$",
+        "environmentReaders": [
+          "getEnv",
+          "readEnv",
+          "requireEnv",
+          "requiredEnv",
+          "getRequiredEnv",
+          "optionalEnv",
+          "envVar",
+          "getEnvVar",
+          "readEnvVar",
+          "requireEnvVar",
+          "getEnvironmentVariable",
+          "readEnvironmentVariable",
+          "requireEnvironmentVariable"
+        ],
+        "environmentTypeNames": "(^|\\.)(Environment|ProcessEnv|StageAccountsEnvironment)$",
+        "followLocalHelpers": true,
+        "ignoreTestFiles": true,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "maxHelperDepth": 3
+      }
+    ],
+    "effect-native/no-throw-in-effect-callback": [
+      {
+        "effectModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "tools/**",
+          "**/*.config.ts",
+          "**/*.config.mts",
+          "**/*.config.mjs",
+          "**/*.d.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeTests": false,
+        "localImportPrefixes": [
+          "./",
+          "../",
+          "@app/"
+        ],
+        "mode": "effect-callbacks",
+        "namespaces": [
+          "Effect",
+          "Layer",
+          "Stream",
+          "Schedule",
+          "Cause",
+          "Exit",
+          "Option",
+          "Result",
+          "Match"
+        ]
+      }
+    ],
+    "effect-native/no-throw-in-scripts": [
+      {
+        "allowInsideEffectTry": false,
+        "allowPaths": [],
+        "allowRethrow": false
+      }
+    ],
+    "effect-native/no-unbranded-identifier-schema": [
+      {
+        "brandHelpers": [],
+        "identifierKeyPattern": "^(?:.*(?:Ids?|Keys?)|ico|dic)$",
+        "identifierSchemaNamePattern": "(?:Ids?|Ico|Keys?)Schema$",
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect",
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-client-runtime",
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-edge/*",
+          "@modern-js/bff-effect/effect-server"
+        ]
+      }
+    ],
+    "effect-native/no-unjustified-file-wide-lint-suppression": [
+      {
+        "effectSeamRules": [
+          "promise/prefer-await-to-then",
+          "promise/prefer-await-to-callbacks",
+          "promise/avoid-new",
+          "no-await-in-loop",
+          "no-promise-executor-return",
+          "typescript/no-explicit-any",
+          "typescript/no-non-null-assertion",
+          "typescript/no-floating-promises",
+          "unicorn/no-await-expression-member",
+          "complexity",
+          "max-classes-per-file"
+        ],
+        "effectSeamRulesAlwaysReport": true,
+        "expiryPattern": "\\b(?:expires?|until|remove(?:d|-when)?|removal|tracked(?: in)?|ticket|issue)\\s*[:#]\\s*\\S+",
+        "ignorePaths": [],
+        "includeEffectDiagnosticsDirectives": true,
+        "includeTsNocheck": true,
+        "minJustificationLength": 20,
+        "paths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**",
+          "tools/**"
+        ]
+      }
+    ],
+    "effect-native/no-unmanaged-mutable-state": [
+      {
+        "allowPaths": [],
+        "ignore": [
+          "**/*.config.ts",
+          "**/*.config.mts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "includeWeakRef": false,
+        "mutatingMembers": [
+          "set",
+          "add",
+          "delete",
+          "clear",
+          "push",
+          "pop",
+          "splice",
+          "unshift",
+          "shift",
+          "sort",
+          "reverse",
+          "fill",
+          "copyWithin"
+        ]
+      }
+    ],
+    "effect-native/no-unredacted-secret-field": [
+      {
+        "allowPaths": [],
+        "ignoreTestFiles": true,
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect",
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-client-runtime",
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-edge/*",
+          "@modern-js/bff-effect/effect-server"
+        ],
+        "secretConfigKeys": "(SECRET|PASSWORD|PASSPHRASE|PRIVATE|PRESHARED|_TOKEN|API_KEY|CREDENTIAL|DATABASE_[A-Z_]*URL|_DSN)",
+        "secretNames": "(^|[_-]|[a-z])(secret|password|passphrase|privateKey|privateJwk|preSharedKey|presharedkey|apiKey|accessToken|refreshToken|bearerToken|authorization|bearer|sessionToken|idToken|authToken|credential|credentials|signingKey|clientSecret|connectionString|databaseUrl)s?$"
+      }
+    ],
+    "effect-native/no-unsignaled-spy-poll": null,
+    "effect-native/no-wide-factory-signature": [
+      {
+        "factoryNamePattern": "^(make|create|build|define)[A-Z]",
+        "flagOptionBags": true,
+        "ignore": [],
+        "ignoreNames": [],
+        "includePaths": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "includeTypeSignatures": true,
+        "maxPositionalParams": 2,
+        "optionBagTypePattern": "(Options|Dependencies|Deps|Config)$"
+      }
+    ],
+    "effect-native/prefer-effect-fn-for-operations": [
+      {
+        "allowLeadingConstants": true,
+        "exemptCombinators": [],
+        "ignore": [],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "minParams": 1,
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge"
+        ]
+      }
+    ],
+    "effect-native/prefer-match-over-tag-switch": [
+      {
+        "adtTags": [
+          "Some",
+          "None",
+          "Success",
+          "Failure",
+          "Left",
+          "Right"
+        ],
+        "allowExhaustive": false,
+        "discriminantProperties": [
+          "state",
+          "status",
+          "kind",
+          "outcome",
+          "reason",
+          "role",
+          "captureMode"
+        ],
+        "exhaustiveHelpers": [
+          "absurd",
+          "assertNever"
+        ],
+        "ignore": [],
+        "ignoreTests": false,
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**",
+          "scripts/**"
+        ],
+        "minLiteralCases": 2,
+        "tagProperties": [
+          "_tag"
+        ]
+      }
+    ],
+    "effect-native/require-concurrency-option": [
+      {
+        "allowUnbounded": false,
+        "ignore": [],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "minItems": 2,
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-client",
+          "@modern-js/bff-effect/effect-edge"
+        ],
+        "streamMembers": [
+          "mapEffect",
+          "flatMap",
+          "forEach"
+        ],
+        "strictSpread": false
+      }
+    ],
+    "effect-native/require-context-service-for-service-interface": [
+      {
+        "allowLayerConstruction": true,
+        "allowNames": [],
+        "dataTypePattern": "(Input|Output|Options|Config|Record|Row|Payload|Result|Error|Problem)$",
+        "effectTypes": [
+          "Effect"
+        ],
+        "exportedOnly": true,
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/node_modules/**",
+          "tools/**",
+          "**/*.d.ts",
+          "**/*.config.ts",
+          "**/*.config.mts",
+          "**/module-federation.config.ts",
+          "**/scripts/**"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includePromiseMembers": true,
+        "includeReturnTypeAliases": true,
+        "includeTests": false,
+        "includeTsx": false,
+        "layerMembers": [
+          "effect",
+          "succeed",
+          "sync",
+          "scoped",
+          "scopedDiscard",
+          "effectDiscard"
+        ],
+        "promiseTypes": [
+          "Promise",
+          "PromiseLike"
+        ],
+        "requireTagPerContract": true,
+        "serviceNamePattern": "(Service|Repository|Gateway|Resolver|Access|Store|Port|Contract)$",
+        "tagMembers": [
+          "Service",
+          "Reference",
+          "Tag",
+          "GenericTag"
+        ],
+        "tagNamespaces": [
+          "Context",
+          "Effect"
+        ]
+      }
+    ],
+    "effect-native/require-observability-layers-at-runtime-root": [
+      {
+        "ignore": [],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "minimumLogLevelMembers": [
+          "References.MinimumLogLevel",
+          "Logger.withMinimumLogLevel",
+          "Logger.minimumLogLevel",
+          "Effect.withMinimumLogLevel"
+        ],
+        "otelModules": [
+          "@effect/opentelemetry",
+          "@effect/opentelemetry/**"
+        ],
+        "reexportModules": [
+          "@modern-js/bff-effect/effect-edge",
+          "@modern-js/bff-effect/effect-server",
+          "@modern-js/plugin-bff/server",
+          "@modern-js/bff-effect/effect"
+        ],
+        "require": {
+          "logger": true,
+          "minimumLogLevel": true,
+          "tracer": true
+        },
+        "rootFiles": [
+          "apps/*/api/index.ts",
+          "verticals/*/api/index.ts",
+          "packages/core-runtime/src/outbox/process.ts",
+          "apps/*/src/runtime/**",
+          "verticals/*/src/runtime/**"
+        ],
+        "runtimeMembers": [
+          "ManagedRuntime.make",
+          "Layer.launch",
+          "Layer.toRuntime",
+          "Layer.toRuntimeWithMemoMap"
+        ],
+        "runtimeTypeNames": [
+          "EffectBffRuntime"
+        ]
+      }
+    ],
+    "effect-native/require-timeout-on-external-effect": [
+      {
+        "crossEffectGen": true,
+        "httpMethods": [
+          "execute",
+          "get",
+          "post",
+          "put",
+          "patch",
+          "del",
+          "head",
+          "options"
+        ],
+        "ignore": [
+          "**/dist/**",
+          "**/build/**",
+          "**/.output/**",
+          "**/node_modules/**",
+          "tools/**",
+          "**/*.d.ts",
+          "**/*.config.ts",
+          "**/*.config.mts",
+          "**/module-federation.config.ts"
+        ],
+        "include": [
+          "apps/**",
+          "verticals/**",
+          "packages/**"
+        ],
+        "includeScripts": false,
+        "includeTests": false,
+        "policyHelperPattern": "(Policy|Timeout|Retry)$",
+        "portFiles": [],
+        "promiseBridges": [
+          "promise",
+          "tryPromise",
+          "tryMapPromise"
+        ],
+        "requireRetry": false,
+        "requireTimeout": true,
+        "trustPorts": false
+      }
+    ],
+    "effect-native/ui-kit-class-in-kit-stylesheet": null,
+    "effect-native/ui-kit-import-through-surface": null,
+    "effect-native/ui-kit-no-colour-literal": null,
+    "effect-native/ui-kit-no-inline-style": null,
+    "effect-native/ui-kit-no-intrinsic-control": null,
+    "effect-native/ui-kit-no-module-stylesheet": null,
     "github/a11y-aria-label-is-well-formatted": null,
     "github/a11y-no-title-attribute": null,
     "github/a11y-no-visually-hidden-interactive-element": null,

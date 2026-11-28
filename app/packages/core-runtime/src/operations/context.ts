@@ -505,8 +505,9 @@ export const makeOperationalScopeResolver = Effect.fnUntraced(function* makeOper
       if (Option.isNone(authenticationOption)) {
         return yield* operationContextUnavailable();
       }
-      const operationRef = yield* crypto.uuidV4();
-      const nonce = yield* crypto.uuidV4();
+      const [operationRef, nonce] = yield* Effect.all([crypto.uuidV4(), Effect.suspend(() => crypto.uuidV4())], {
+        concurrency: 1,
+      });
       const request: ExternalOperationAuthenticationRequest = {
         audience: input.audience,
         authBindingId,
