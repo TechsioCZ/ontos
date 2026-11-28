@@ -2,7 +2,6 @@ import type {
   ActionAuthorizationPreflightInput,
   ActionAuthorizationPreflightService,
   ActionRuntimeService,
-  DatabaseConfig,
 } from '@app/core-runtime';
 import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { AdmitSymmyJobPayloadSchema } from '../shared/domain/symmy-job-admission.ts';
@@ -28,6 +27,7 @@ import {
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
+  DatabaseConfig,
   DatabaseConfigLive,
   TenantModuleStateServiceLive,
   makeActionRuntimeLive,
@@ -50,9 +50,9 @@ import { layer as nodeCryptoLayer } from '@effect/platform-node/NodeCrypto';
 import { PgClient } from '@effect/sql-pg';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import type { Crypto } from 'effect';
 import {
   Context,
+  Crypto,
   Effect,
   Layer,
   Layer as GovernedReadLayer,
@@ -189,7 +189,11 @@ const prepareCustomerIntake = Effect.fn('SymmyCustomerIntake.prepareInvocation')
 const customerIntakePreflight = Effect.fn('SymmyCustomerIntake.preflight')(function* buildIntakePreflight(
   state: IntakePreparationState,
 ) {
-  const dependencies = yield* Effect.context<ActionAuthorizationPreflightDatabase | Crypto.Crypto>();
+  const database = yield* ActionAuthorizationPreflightDatabase;
+  const crypto = yield* Crypto.Crypto;
+  const dependencies = Context.make(ActionAuthorizationPreflightDatabase, database).pipe(
+    Context.add(Crypto.Crypto, crypto),
+  );
   const preflight: ActionAuthorizationPreflightService = {
     prepare: (source) => {
       const permit = makeActionAuthorizationPreflightPermit({
@@ -231,7 +235,10 @@ const customerIntakeActionRuntime = Layer.effect(
   Effect.gen(function* customerIntakeActionRuntime() {
     const baseContext = yield* Layer.build(governedActionRuntimeCoreLive);
     const base = Context.get(baseContext, ActionRuntime);
-    const dependencies = yield* Effect.context<DatabaseConfig | Crypto.Crypto>();
+    const configuration = yield* DatabaseConfig;
+    const crypto = yield* Crypto.Crypto;
+    // Select only dependencies: capturing Effect.context would also retain the server's resource Scope.
+    const dependencies = Context.make(DatabaseConfig, configuration).pipe(Context.add(Crypto.Crypto, crypto));
     const preparationDependencies = yield* Effect.context<ActionAuthorizationPreflightDatabase | Crypto.Crypto>();
     const runPrepared: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
