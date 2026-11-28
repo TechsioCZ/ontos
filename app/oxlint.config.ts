@@ -8,6 +8,7 @@ import react from 'ultracite/oxlint/react';
 
 import { testRestrictedImports } from './tools/oxlint/effect-native/shared/test-restricted-imports.ts';
 
+const baselineTestFiles = ['**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}', '**/__tests__/**/*.{ts,tsx,js,jsx}'];
 const selectedJsPlugins = selectJsPlugins(['github', 'sonarjs', 'react-doctor']);
 const jsPlugins = {
   ...selectedJsPlugins,
@@ -261,7 +262,22 @@ export default defineConfig({
     browser: true,
     node: true,
   },
-  extends: [core, react, jsPlugins],
+  extends: [
+    {
+      ...core,
+      overrides: [
+        { files: baselineTestFiles, rules: { 'no-empty-function': 'off', 'promise/prefer-await-to-then': 'off' } },
+        // Astro remains subject to main's module policy as well as 8.3's extra CommonJS diagnostics.
+        {
+          files: ['**/*.astro'],
+          rules: { 'import/no-commonjs': 'error', 'no-restricted-globals': ['error', '__dirname', '__filename'] },
+        },
+      ],
+    },
+    react,
+    // Keep the main naming policy on routes and pages; exact native-router filename scopes follow below.
+    { ...jsPlugins, overrides: [{ files: baselineTestFiles, rules: { 'sonarjs/no-duplicate-string': 'off' } }] },
+  ],
   ignorePatterns: [
     '.agents',
     '.codex/skills',
@@ -304,11 +320,6 @@ export default defineConfig({
     typeCheck: true,
   },
   overrides: [
-    {
-      // Preserve Ultracite 7.11's test-only Promise-chain scope; the blocking rule remains on in authored modules.
-      files: ['**/*.{test,spec,test-d,spec-d}.{ts,tsx,js,jsx}', '**/__tests__/**/*.{ts,tsx,js,jsx}'],
-      rules: { 'promise/prefer-await-to-then': 'off' },
-    },
     {
       files: ['**/*.{test,spec}.{ts,tsx,mts}'],
       rules: {
@@ -1410,6 +1421,19 @@ export default defineConfig({
     'perfectionist/sort-object-types': 'error',
     'perfectionist/sort-objects': ['error', { partitionByComment: true }],
     // Ultracite 8 disabled these three checks. Preserve the blocking 7.11 policy, including its named-component style.
+    // Main's blocking checks are the minimum across a preset upgrade. Do not inherit relaxed options.
+    'func-style': ['error', 'expression', { allowArrowFunctions: true }],
+    'jsx-a11y/aria-role': 'error',
+    'jsx-a11y/label-has-associated-control': 'error',
+    'no-negated-condition': 'error',
+    'no-unused-vars': 'error',
+    'no-use-before-define': 'error',
+    'react-doctor/no-barrel-import': 'error',
+    'sonarjs/fixme-tag': 'error',
+    'sonarjs/no-nested-functions': 'error',
+    'sonarjs/todo-tag': 'error',
+    'typescript/consistent-type-imports': 'error',
+    'unicorn/no-useless-undefined': 'error',
     'promise/prefer-await-to-then': 'error',
     'react/function-component-definition': ['error', { namedComponents: 'arrow-function' }],
     'sonarjs/no-wildcard-import': 'error',

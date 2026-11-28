@@ -49,9 +49,9 @@ const validRoutes = [
   'apps/shell-super-app/src/routes/[lang]/$.data.ts',
   'apps/shell-super-app/src/routes/[lang]/$.data.client.ts',
   'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.data.client.ts',
-  'apps/another-owner/src/routes/[lang]/$.tsx',
 ];
 const invalidRoutes = [
+  'apps/another-owner/src/routes/[lang]/$.tsx',
   'apps/shell-super-app/src/routes/[lang]/$rogue.tsx',
   'apps/shell-super-app/src/routes/[lang]/$.custom.ts',
   'apps/shell-super-app/src/routes/[lang]/page.data.custom.ts',
