@@ -482,7 +482,8 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
       for (const [seed, state, status, effectiveAt] of [
         ['a0', 'settled', 'accepted_change', '2026-11-20T00:00:00.000Z'],
         ['b0', 'settled', 'denied', '2099-01-01T00:00:00.000Z'],
-        ['c0', 'indeterminate', 'indeterminate', '2026-11-20T00:00:00.000Z'],
+        // An uncertain owner call has no outcome yet.
+        ['c0', 'indeterminate', null, '2026-11-20T00:00:00.000Z'],
         ['d0', 'settled', 'accepted_change', '2026-11-20T00:00:00.000Z'],
       ] as const) {
         const pinned = membershipEffect('internal', profileId, seed, effectiveAt, 900, internalNamespace);
@@ -490,11 +491,14 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
         yield* admin
           .update(symmyJobEffects)
           .set({
-            outcome: Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
-              effectId: pinned.effectId,
-              owner: 'commerce.customer-context',
-              status,
-            }),
+            outcome:
+              status === null
+                ? null
+                : Schema.decodeUnknownSync(SymmyEffectOutcomeSchema)({
+                    effectId: pinned.effectId,
+                    owner: 'commerce.customer-context',
+                    status,
+                  }),
             state,
           })
           .where(eq(symmyJobEffects.effectId, pinned.effectId));

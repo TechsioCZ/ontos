@@ -1,6 +1,10 @@
 -- Fail rather than queue behind live work: every lock this migration takes is held only for its own DDL.
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
+-- The history scan below runs while Symmy effect writes wait: a statement that outlasts this rolls the whole migration
+-- back instead of stretching the pause.
+SET LOCAL statement_timeout = '30s';
+--> statement-breakpoint
 CREATE TABLE "symmy_integration"."membership_source_orders" (
 	"effect_id" uuid,
 	"effective_at" timestamp with time zone NOT NULL,
@@ -485,5 +489,7 @@ BEGIN
 END; $$;
 --> statement-breakpoint
 RESET row_security;
+--> statement-breakpoint
+RESET statement_timeout;
 --> statement-breakpoint
 RESET lock_timeout;

@@ -1696,6 +1696,11 @@ const membershipRouteForKey = Effect.fn('SymmyJobStore.membershipRouteForKey')(f
   if (row === undefined) {
     return yield* routeDenied();
   }
+  // Only an ERP membership route reuses a saved plan through its selector. A route whose callers order their own
+  // memberships, and may retarget its selector, replays exactly as before.
+  if (!row.fixtureIds.includes(SYMMY_ERP_MEMBERSHIP_CONTRACT)) {
+    return match;
+  }
   const digest = yield* hash(input.replayIdempotencyKey);
   const [saved] = yield* transaction
     .select({ plan: symmyImportJobs.executionPlan })

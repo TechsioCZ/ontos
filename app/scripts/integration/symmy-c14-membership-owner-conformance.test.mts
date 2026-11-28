@@ -384,7 +384,7 @@ it.live(
         const customer = { customerId: fixture.recordId };
         const membershipKey = 'INTERNAL_C14_SELECTED_MEMBERSHIP';
         const deniedKey = 'INTERNAL_C14_MEMBERSHIP_CURRENT_PRIVACY_DENIED';
-        // Privacy authorizes the exact source of this membership and of the later one of the same lineage only.
+        // The membership source the admission derives for the first customer of this request; the grant names a sample.
         const source = {
           issuer: membershipSource.issuer,
           namespace: membershipSource.namespace,
@@ -393,14 +393,6 @@ it.live(
           recordType: 'CUSTOMER_GROUP_MEMBERSHIP',
           routeRef: sourceRouteId,
         };
-        const scope = {
-          integrationPrincipalId: integration.principalId,
-          partyId: fixture.partyReceipt.partyRef.resourceId,
-          profileId: fixture.profileReceipt.profileRef.resourceId,
-          source: fixture.sourceIdentity,
-          systemId,
-        };
-        const target = { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: scope.profileId };
         yield* enrollCustomerProfileSourceReaderNativeFixture({
           adminConnectionString: Redacted.make(isolated.connections.admin.connectionString),
           authority: {
@@ -419,47 +411,58 @@ it.live(
         });
         const unknownKey = 'INTERNAL_C14_MEMBERSHIP_UNKNOWN_CUSTOMER';
         const unknownId = 'INTERNAL_C14_NEVER_SENT_CUSTOMER';
-        // Two standing route authorizations: the customer profile read and the membership assertion.
-        // Grant templates name a sample, not any absent ID or membership asserted by this test.
-        const commonPolicy = {
+        // An ERP membership names its customer by the customer id, so the customer route's standing authorization also
+        // covers the current customer read: Shell's at admission and Commerce's again inside the membership write.
+        // Renewing the route keeps its principals and grants; the read grant names a target kind, not a customer.
+        yield* seedSourceProcessingNativeFixture({
           connections: isolated.connections,
+          contexts: [customerIntakeContext(integration.principalId, fixture.flatSource, null)],
+          contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
           controllerRef: 'internal:customer-conformance',
           dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
           governancePrincipalId: fixture.governancePrincipalId,
-          legalEntityId,
-          tenantId,
-        };
-        // What the read of the current customer profile asks Privacy for, as the original source record.
-        const profileRead = {
-          consumerModuleId: commerceModuleId,
-          operation: 'customer-profile-source.read',
-          source: fixture.flatSource,
-          target: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: scope.profileId },
-        };
-        yield* seedSourceProcessingNativeFixture({
-          ...commonPolicy,
-          contexts: [
-            customerIntakeContext(integration.principalId, fixture.flatSource, null),
-            { authMethod: 'api_key' as const, principalId: scope.integrationPrincipalId, request: profileRead },
-            { authMethod: 'system' as const, principalId: scope.systemId, request: profileRead },
+          grants: [
+            {
+              allowTargetless: false,
+              consumerModuleId: commerceModuleId,
+              operation: 'customer-profile-source.read',
+              targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+            },
           ],
-          contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
-          meaning: 'Current customer source admission and read',
+          legalEntityId,
+          meaning: 'Current customer read for the ERP membership admission and its Commerce write',
+          tenantId,
         });
-        const example = { ...source, occurrenceId: 'route-grant-example', recordId: 'unsubmitted-membership-example' };
+        // The membership route has its own standing policy, as the customer route has the one the customer fixture
+        // seeds for the customer read. No membership, person or profile binding is seeded.
+        const intakeContext = customerIntakeContext(integration.principalId, source, null);
         const dataPrivacy = yield* seedSourceProcessingNativeFixture({
-          ...commonPolicy,
-          contexts: [
-            customerIntakeContext(integration.principalId, example, target),
+          connections: isolated.connections,
+          contexts: [intakeContext, { ...intakeContext, authMethod: 'system', principalId: systemId }],
+          contractEvidenceRef: 'INTERNAL_C14_MEMBERSHIP_ROUTE_CONTRACT',
+          controllerRef: 'internal:membership-conformance',
+          dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+          governancePrincipalId: fixture.governancePrincipalId,
+          grants: [
+            {
+              allowTargetless: false,
+              consumerModuleId: 'integration.symmy',
+              operation: 'CUSTOMER_SOURCE_INTAKE',
+              targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+            },
             ...(['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
-              authMethod: 'system' as const,
-              principalId: systemId,
-              request: { consumerModuleId: commerceModuleId, operation, source: example, target },
+              allowTargetless: false,
+              consumerModuleId: commerceModuleId,
+              operation,
+              targetKinds: ['RETAIL_CUSTOMER_PROFILE'] as const,
             })),
           ],
-          contractEvidenceRef: 'INTERNAL_C14_MEMBERSHIP_ASSERTION_CONTRACT',
-          meaning: 'Membership assertions against an already admitted customer',
+          legalEntityId,
+          meaning: 'Standing membership processing for the customer that Commerce proves owns the profile',
+          tenantId,
         });
+        expect(dataPrivacy.plans).toEqual([]);
+        expect(dataPrivacy.subjectRefs).toEqual([]);
         const customersBody = HttpBody.jsonUnsafe({ customers: [customer, { customerId: unknownId }] });
         const submit = (code = selectedCode, idempotencyKey = membershipKey, body: HttpBody.HttpBody = customersBody) =>
           client.post(`${shell.baseUrl}/api/symmy/v1/customer-groups/${code}/customers/batch`, {
