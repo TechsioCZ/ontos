@@ -1,15 +1,11 @@
-import { CustomerProfileSourceRequestSchema } from '@app/commerce-customer-context/api/customer-profile-source';
 import { SavedAddressSourceReceiptResponseSchema } from '@app/commerce-customer-context/api/saved-address-source-receipt';
 import { testCoreDatabase } from '@app/core-runtime/testing/owner-evidence';
 import { writeTestTenantScopes } from '@app/core-runtime/testing/tenant-access';
 import { PgClient } from '@effect/sql-pg';
-import {
-  seedCommittedProfileSourceProcessingNativeFixture,
-  seedSourceProcessingNativeFixture,
-} from '@app/privacy/testing/source-processing-native';
+import { seedSourceProcessingNativeFixture } from '@app/privacy/testing/source-processing-native';
 import { SymmyEffectIdSchema } from '@app/shared-contracts/symmy';
 import { expect, it } from 'effect-rstest';
-import { Array as EffectArray, Duration, Effect, Order, Redacted, Schema } from 'effect';
+import { Array as EffectArray, Effect, Order, Redacted, Schema } from 'effect';
 import { HttpClient } from 'effect/http';
 import {
   customerFixtureServices as services,
@@ -18,14 +14,9 @@ import {
 } from './support/symmy-c14-customer-assignment-fixture.mts';
 import { customerContexts } from './support/symmy-c14-customer-contexts.mts';
 import type { CustomerContextScope, CustomerExpectation } from './support/symmy-c14-customer-contexts.mts';
-import { addressRecordId, customerItemSource, customersBody } from './support/symmy-c14-customer-public.mts';
+import { customersBody } from './support/symmy-c14-customer-public.mts';
 import type { PublicAddress } from './support/symmy-c14-customer-public.mts';
 import { internalCustomerSource } from './support/symmy-c14-customer-plan.mts';
-import {
-  CustomerNativeProfileInvocationSchema,
-  issueCustomerProfileFixtureRecovery,
-} from './support/symmy-c14-customer-recovery.mts';
-import { customerWorkerKey } from './support/symmy-c14-customer-rules.mts';
 import { SymmyC14ProductFixtureUnavailable, startProductWorker } from './support/symmy-c14-product-runtime.mts';
 
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
@@ -43,11 +34,6 @@ const effectSchema = Schema.Struct({
   owner_invocation_id: Schema.OptionFromNullOr(nativeInvocationIdSchema),
   owner_receipt: Schema.Unknown,
   record_id: Schema.String,
-  state: Schema.String,
-});
-const profileEffectSchema = Schema.Struct({
-  effect_id: Schema.toEncoded(SymmyEffectIdSchema),
-  owner_receipt: Schema.Unknown,
   state: Schema.String,
 });
 const profileReceiptSchema = Schema.Struct({
@@ -145,7 +131,7 @@ const contextScope = (fixture: CustomerFixture): CustomerContextScope => ({
   systemId: fixture.systemId,
 });
 
-/** The governance step between jobs: DATA policy for the profile the fixture job created and the plain intake policy. */
+/** Extend the route's grants without assigning future customers or their child records to an existing person. */
 const governExistingProfile = Effect.fn('SymmyC14PublicAddress.governExisting')(function* governExisting(
   fixture: CustomerFixture,
   expectations: readonly (readonly [string, readonly CustomerExpectation[]])[],
@@ -159,86 +145,52 @@ const governExistingProfile = Effect.fn('SymmyC14PublicAddress.governExisting')(
     legalEntityId: fixture.legalEntityId,
     tenantId: fixture.tenantId,
   };
-  // A source assertion names no owner target; what is aimed at the existing Party or profile is a DATA use.
-  yield* seedSourceProcessingNativeFixture({
+  // Target kinds are route capabilities, not fixture evidence that a source belongs to this Party or profile.
+  // The native admission and owner proofs establish each customer's identity and the ownership of its children.
+  const policy = yield* seedSourceProcessingNativeFixture({
     ...common,
     contexts: all.filter(({ request }) => request.target === null),
-    contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_SOURCE_INTAKE',
-    meaning:
-      'Independent current fixture policy allows the public customers to name their source records and create or match their Party and profile',
-  });
-  yield* seedCommittedProfileSourceProcessingNativeFixture({
-    ...common,
-    contexts: all.filter(({ request }) => request.target !== null),
     contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_SAVED_ADDRESS',
+    grants: [
+      {
+        allowTargetless: true,
+        consumerModuleId: partyModuleId,
+        operation: 'CREATE',
+        targetKinds: ['PARTY'],
+      },
+      {
+        allowTargetless: true,
+        consumerModuleId: partyModuleId,
+        operation: 'EVIDENCE_READ',
+        targetKinds: ['PARTY'],
+      },
+      {
+        allowTargetless: false,
+        consumerModuleId: partyModuleId,
+        operation: 'ADD_CONTACT_POINT',
+        targetKinds: ['PARTY'],
+      },
+      {
+        allowTargetless: false,
+        consumerModuleId: commerceModuleId,
+        operation: 'customer-profile-source.write',
+        targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+      },
+      ...(['saved-address-source.add', 'saved-address-source.receipt'] as const).map(
+        (operation) =>
+          ({
+            allowTargetless: false,
+            consumerModuleId: commerceModuleId,
+            operation,
+            targetKinds: ['RETAIL_CUSTOMER_PROFILE'],
+          }) as const,
+      ),
+    ],
     meaning:
-      'Independent current fixture policy allows the public customers to match the original source person and save Commerce-only addresses',
-    profileReceipt: fixture.proofTransport,
+      'Independent standing route policy permits customer and child-record processing with native Party and Commerce ownership proofs',
   });
-});
-
-/** The governance step for a profile the job itself created: it exists only once the profile effect settled. */
-const governCreatedProfile = Effect.fn('SymmyC14PublicAddress.governCreated')(function* governCreated(
-  fixture: CustomerFixture,
-  profileEffect: { readonly effect_id: string; readonly owner_receipt: unknown },
-  addressSource: ReturnType<typeof customerItemSource>,
-) {
-  const profile = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(profileEffect.owner_receipt);
-  const [native] =
-    yield* fixture.admin`select a.action_invocation_id as "actionInvocationId",a.action_key as "actionKey",
-    a.auth_context_ref as "authContextRef",a.idempotency_key as "idempotencyKey",a.principal_id as "principalId",a.request_hash as "requestHash"
-    from core.action_invocations a join symmy_integration.job_effects e on e.tenant_id=a.tenant_id
-    and e.owner_invocation_id=a.action_invocation_id and e.owner_executor_principal_id=a.principal_id
-    and e.owner_auth_context_ref=a.auth_context_ref and e.owner_request_hash=a.request_hash and e.effect_id::text=a.idempotency_key
-    where a.tenant_id=${fixture.tenantId} and e.effect_id=${profileEffect.effect_id} and a.legal_entity_id=${fixture.legalEntityId} and a.status='succeeded'`;
-  const nativeProfile = yield* Schema.decodeUnknownEffect(CustomerNativeProfileInvocationSchema)(native);
-  const [requirement] = yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ key: Schema.String })]))(
-    (fixture.symmy.manifest.requirements?.operations ?? []).filter(
-      ({ entrypointKey, provider }) =>
-        entrypointKey === customerWorkerKey &&
-        provider.moduleId === commerceModuleId &&
-        provider.entrypointKey === 'commerce.customer-context.api.customer-profile-source' &&
-        provider.schemaVersion === '1',
-    ),
-  );
-  const transport = yield* issueCustomerProfileFixtureRecovery({
-    compositionRevision: fixture.snapshot.composition.revision,
-    deliveryId: nativeProfile.authContextRef.slice(`job:${customerWorkerKey}:run:`.length),
-    expectedReadPrincipalId: fixture.systemId,
-    legalEntityId: fixture.legalEntityId,
-    moduleApiKey: Redacted.make(fixture.moduleKey),
-    nativeAction: nativeProfile,
-    operationRequirementKey: requirement.key,
-    request: Schema.decodeUnknownSync(CustomerProfileSourceRequestSchema)({
-      effectId: profileEffect.effect_id,
-      issuer: fixture.sourceIdentity.issuer,
-      mappingRevision: internalCustomerSource.mappingVersion,
-      mode: 'MINIMAL_RECEIPT',
-      namespace: fixture.sourceIdentity.namespace,
-      recordType: fixture.sourceIdentity.recordType,
-      route: { id: fixture.sourceRouteId, revision: internalCustomerSource.routeRevision },
-    }),
-    shellGatewayBaseUrl: fixture.environment.ONTOS_SHELL_GATEWAY_BASE_URL,
-    tenantId: fixture.tenantId,
-  });
-  const target = { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: profile.profileRef.resourceId };
-  yield* seedCommittedProfileSourceProcessingNativeFixture({
-    connections: fixture.isolated.connections,
-    contexts: ['saved-address-source.add', 'saved-address-source.receipt'].map((operation) => ({
-      authMethod: 'system' as const,
-      principalId: fixture.systemId,
-      request: { consumerModuleId: commerceModuleId, operation, source: addressSource, target },
-    })),
-    contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_PUBLIC_NEW_CUSTOMER_ADDRESS',
-    controllerRef: 'internal:customer-conformance',
-    dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-    governancePrincipalId: fixture.governancePrincipalId,
-    legalEntityId: fixture.legalEntityId,
-    meaning: 'Independent current fixture policy allows the Commerce-only address of the profile this job created',
-    profileReceipt: transport,
-    tenantId: fixture.tenantId,
-  });
-  return { profileId: profile.profileRef.resourceId };
+  expect(policy.plans).toEqual([]);
+  expect(policy.subjectRefs).toEqual([]);
 });
 
 it.live(
@@ -359,33 +311,14 @@ it.live(
         expect(yield* savedAddresses(fixture)).toEqual([streetOf(billingStreet), streetOf(deliveryStreet)]);
 
         // Scenario 2: the customer does not exist. It is created, its profile is created, then its address is saved.
-        // The address follows its customer's admitted subject; the profile the job created is then governed for reads.
+        // The address follows its customer's native admission and real owner proofs, without a fixture Data Subject.
         const created = yield* submitFor(createdKey, customersBody(person(createdRecord, 'Fresh', [billingAddress])));
-        const createdProfile = yield* observeUntil(
-          admin`select effect_id,owner_receipt,state from symmy_integration.job_effects
-            where job_id=${created.jobId} and effect_key='retail-profile'`.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(profileEffectSchema))),
-          ),
-          (rows) => rows.length === 1 && rows.every(({ state }) => state === 'settled'),
-        ).pipe(Effect.tapError(() => dumpDiagnostics(fixture, worker)));
-        const [profileEffect] = createdProfile;
+        const createdRows = yield* settle(fixture, worker, created.jobId, 3);
+        const profileEffect = createdRows.find(({ effect_key }) => effect_key === 'retail-profile');
         if (profileEffect === undefined) {
           return yield* unavailable('The new customer profile effect is required');
         }
-        const governed = yield* governCreatedProfile(
-          fixture,
-          profileEffect,
-          customerItemSource(sourceIdentity, createdKey, 'address-0-0', addressRecordId(createdRecord, billingAddress)),
-        );
-        // The worker settles the address once the profile it builds on exists.
-        for (let attempt = 0; attempt < 240; attempt += 1) {
-          const rows = yield* effectRows(fixture, created.jobId);
-          if (rows.length === 3 && rows.every(({ state }) => state === 'settled')) {
-            break;
-          }
-          yield* Effect.sleep(Duration.millis(500));
-        }
-        const createdRows = yield* effectRows(fixture, created.jobId);
+        const createdProfile = yield* Schema.decodeUnknownEffect(profileReceiptSchema)(profileEffect.owner_receipt);
         expect(createdRows.map(({ state }) => state)).toEqual(['settled', 'settled', 'settled']);
         const createdStatus = yield* jobStatus(fixture, created.jobId);
         expect(createdStatus.status).toBe('completed_all');
@@ -399,7 +332,7 @@ it.live(
         const [onNewProfile] = yield* admin<{
           count: number;
         }>`select count(*)::integer as count from commerce_customer_context.saved_addresses
-          where tenant_id=${tenantId} and customer_profile_id=${governed.profileId}`;
+          where tenant_id=${tenantId} and customer_profile_id=${createdProfile.profileRef.resourceId}`;
         expect(onNewProfile).toEqual({ count: 1 });
         yield* worker.child.kill();
         yield* worker.child.exitCode;

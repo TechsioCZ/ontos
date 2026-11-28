@@ -322,7 +322,7 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
     const sourceRouteId = yield* uuid;
     const routeId = yield* uuid;
     const customerJobKey = 'INTERNAL_C14_CUSTOMER_JOB';
-    // The owner derives the occurrence of a request from its Idempotency-Key, so Privacy is seeded for that one.
+    // Governance describes the route; the actual Privacy admission Action must admit this first customer.
     const occurrenceId = customerOccurrenceId(customerJobKey, 'customer-0');
     const recordId = 'INTERNAL_C14_NAMED_PERSON';
     const observedAt = yield* DateTime.now;
@@ -405,12 +405,19 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
             recordId: 'INTERNAL_C14_BLOCKED_INTAKE_SOURCE',
           }
         : null;
-    if (deniedSource !== null) {
-      intakeContexts.push(customerIntakeContext(integration.principalId, deniedSource, null));
-    }
-    const privacy = yield* seedSourceProcessingNativeFixture({
-      admitSources: true,
+    const privacyGovernance = {
       connections: isolated.connections,
+      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_CONTRACT_FIXTURE',
+      controllerRef: 'internal:customer-conformance',
+      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
+      governancePrincipalId,
+      legalEntityId,
+      meaning:
+        'Explicit internal fixture authorizes named source Party creation, evidence read, and Retail profile creation separately',
+      tenantId,
+    };
+    const standingPrivacy = yield* seedSourceProcessingNativeFixture({
+      ...privacyGovernance,
       contexts: [
         ...intakeContexts,
         {
@@ -439,15 +446,19 @@ export const makeSymmyC14CustomerFixture = <Failure, Requirements>(
           targetAdmission: 'CURRENT_SOURCE_PERSON',
         },
       ],
-      contractEvidenceRef: 'INTERNAL_C14_EXPLICIT_CONTRACT_FIXTURE',
-      controllerRef: 'internal:customer-conformance',
-      dataCategoryRefs: ['INTERNAL_C14_CUSTOMER_RECORD'],
-      governancePrincipalId,
-      legalEntityId,
-      meaning:
-        'Explicit internal fixture authorizes named source Party creation, evidence read, and Retail profile creation separately',
-      tenantId,
     });
+    expect(standingPrivacy.plans).toEqual([]);
+    expect(standingPrivacy.subjectRefs).toEqual([]);
+    // Only the erasure-denial control needs a pre-existing subject. Renewing this same route retains its prior
+    // principals, grants and record kinds; no positive customer subject or admission is inserted by the fixture.
+    const privacy =
+      deniedSource === null
+        ? standingPrivacy
+        : yield* seedSourceProcessingNativeFixture({
+            ...privacyGovernance,
+            admitSources: true,
+            contexts: [customerIntakeContext(integration.principalId, deniedSource, null)],
+          });
     yield* admin`insert into commerce_customer_context.customer_profile_source_routes(tenant_id,legal_entity_id,route_id,route_revision,principal_id,issuer,namespace,record_type,mapping_revision,active)
           values(${tenantId},${legalEntityId},${sourceRouteId},${internalCustomerSource.routeRevision},${systemId},${sourceIdentity.issuer},${sourceIdentity.namespace},${sourceIdentity.recordType},${internalCustomerSource.mappingVersion},true)`;
     const encodedPlan = yield* Schema.encodeEffect(SymmyInternalExecutionPlanSchema)(yield* planFor(observedAt));

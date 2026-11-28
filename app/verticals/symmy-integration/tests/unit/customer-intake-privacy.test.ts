@@ -1,4 +1,6 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { NodeCrypto } from '@effect/platform-node';
+import { computeCanonicalValueHash } from '@app/core-runtime/access/enforcement';
 import { AdmitSourceProcessingSubjectPayloadSchema } from '@app/privacy/api/admit-source-processing-subject-action';
 import { OrganizationBusinessSourceStatement } from '@app/party-registry/apis/organization-record-facts';
 import { Effect, Schema } from 'effect';
@@ -11,6 +13,8 @@ import {
   projectSymmyCustomerIntakeAdmissions,
   projectSymmyCustomerIntakeRequests,
   settleSymmyCustomerIntake,
+  customerIntakePreparationMatches,
+  requireSymmyCustomerIntakePrivacy,
 } from '../../src/services/symmy-customer-intake-privacy.ts';
 import type { SymmyCustomerIntakePrivacyCalls } from '../../src/services/symmy-customer-intake-privacy.ts';
 
@@ -407,4 +411,26 @@ it.effect('leaves no binding behind a refused plan, and binds the contact of the
     ]);
     expect([...allowed.bindings]).toEqual([['contact:one', 'customer:one']]);
   }),
+);
+
+it.effect('requires the exact post-permission preparation and rejects changed scope, invocation or intake', () =>
+  Effect.gen(function* preparationIdentity() {
+    const job = yield* customerWithContact('customer:one');
+    const intake = yield* projectSymmyCustomerIntake(scope, job);
+    const actionInvocationId = '10000000-0000-4000-8000-000000000090';
+    const prepared = { actionInvocationId, intakeHash: computeCanonicalValueHash(intake), scope };
+    const current = { actionInvocationId, intake, scope };
+    expect(customerIntakePreparationMatches(prepared, current)).toBe(true);
+    expect(customerIntakePreparationMatches(prepared, { ...current, actionInvocationId: itemId })).toBe(false);
+    expect(
+      customerIntakePreparationMatches(prepared, { ...current, scope: { ...scope, principalId: partyRef.resourceId } }),
+    ).toBe(false);
+    expect(customerIntakePreparationMatches(prepared, { ...current, scope: { ...scope, legalEntityId: itemId } })).toBe(
+      false,
+    );
+    expect(customerIntakePreparationMatches(prepared, { ...current, intake: { ...intake, requests: [] } })).toBe(false);
+    expect(yield* requireSymmyCustomerIntakePrivacy(scope, job, actionInvocationId).pipe(Effect.flip)).toMatchObject({
+      code: 'unavailable',
+    });
+  }).pipe(Effect.provide(NodeCrypto.layer)),
 );
