@@ -2,7 +2,6 @@ import { ApplyCustomerGroupMembershipSourcePayloadSchema } from '@app/commerce-c
 import { CustomerGroupMembershipSourceReceiptRequestSchema } from '@app/commerce-customer-context/api/customer-group-membership-source-receipt';
 import { executeCustomerGroupMembershipSourceReceiptWithAuthorization } from '@app/commerce-customer-context/api/customer-group-membership-source-receipt/client';
 import { enrollCustomerProfileSourceReaderNativeFixture } from '@app/commerce-customer-context/testing/customer-profile-source-reader';
-import { readbackContexts } from './support/symmy-c14-customer-contexts.mts';
 import { seedCustomerGroupMembershipSourceAuthority } from '@app/commerce-customer-context/testing/customer-group-membership-source-authority';
 import { seedCustomerGroupSourceAuthority } from '@app/commerce-customer-context/testing/customer-group-source-authority';
 import { observeCustomerGroupSourceNativeFixture } from '@app/commerce-customer-context/testing/customer-group-source-observation';
@@ -52,9 +51,10 @@ import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const planJson = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
+const commerceModuleId = 'commerce.customer-context' as const;
 const groupOperation = (entrypointKey: string) => ({
   entrypointKey,
-  moduleId: 'commerce.customer-context',
+  moduleId: commerceModuleId,
   schemaVersion: '1',
 });
 const receiptSchema = Schema.Struct({
@@ -430,13 +430,19 @@ it.live(
           legalEntityId,
           tenantId,
         };
+        // What the read of the current customer profile asks Privacy for, as the original source record.
+        const profileRead = {
+          consumerModuleId: commerceModuleId,
+          operation: 'customer-profile-source.read',
+          source: fixture.flatSource,
+          target: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, resourceId: scope.profileId },
+        };
         const dataPrivacy = yield* seedCommittedProfileSourceProcessingNativeFixture({
           ...commonPolicy,
           contexts: [
             customerIntakeContext(integration.principalId, fixture.flatSource, null),
-            ...readbackContexts(scope, fixture.flatSource).filter(
-              ({ request }) => request.operation === 'customer-profile-source.read',
-            ),
+            { authMethod: 'api_key' as const, principalId: scope.integrationPrincipalId, request: profileRead },
+            { authMethod: 'system' as const, principalId: scope.systemId, request: profileRead },
           ],
           contractEvidenceRef: 'INTERNAL_C14_CUSTOMER_READ_CONTRACT',
           meaning: 'Current customer source admission and read',
@@ -450,7 +456,7 @@ it.live(
             ...(['customer-group-membership.write', 'customer-group-membership.recover'] as const).map((operation) => ({
               authMethod: 'system' as const,
               principalId: systemId,
-              request: { consumerModuleId: 'commerce.customer-context' as const, operation, source: example, target },
+              request: { consumerModuleId: commerceModuleId, operation, source: example, target },
             })),
           ],
           contractEvidenceRef: 'INTERNAL_C14_MEMBERSHIP_ASSERTION_CONTRACT',
