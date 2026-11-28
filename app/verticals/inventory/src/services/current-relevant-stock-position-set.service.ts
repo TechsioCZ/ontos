@@ -259,7 +259,6 @@ export const currentRelevantStockPositionSetService = (dependencies: {
     ) {
       return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
     }
-    const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
-    return result;
+    return yield* evaluateRelevantStockPositionSet(input, observation, scope);
   }),
 });

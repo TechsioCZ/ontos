@@ -15,7 +15,7 @@ import { PaymentSourceClaimedAmountSchema } from '../../../shared/domain/source-
  * An unsigned base-10 integer: no sign, no exponent, no fraction, no whitespace, no leading zero.
  * The value must stay inside the safe int53 range of `PaymentAmountMinorSchema`.
  */
-const ExactMinorUnitsTextSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]{0,15})$/u)).pipe(
+const ExactMinorUnitsTextSchema = Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d{0,15})$/u)).pipe(
   Schema.decodeTo(Schema.FiniteFromString.pipe(Schema.decodeTo(PaymentAmountMinorSchema))),
 );
 

@@ -392,20 +392,20 @@ export const generateZeropsMigratorInventory = (source: string, ownerPaths: read
     return source.slice(0, stop) + added + source.slice(stop);
   });
 
-const version = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
+const version = /^\d+\.\d+\.\d+$/u;
 const PackageManifestSchema = Schema.fromJsonString(Schema.Struct({ packageManager: Schema.String }));
 
 /** Reads the Node pin from `.mise.toml` and the pnpm pin from `package.json#packageManager`. */
 export const readZeropsToolchain = (miseToml: string, packageJson: string) =>
   Effect.gen(function* readToolchain() {
-    const node = /^node = "(?<node>[^"]+)"$/mu.exec(miseToml)?.groups?.node;
+    const node = /^node = "(?<node>[^"]+)"$/mu.exec(miseToml)?.groups?.['node'];
     if (node === undefined || !version.test(node)) {
       return yield* invalid('.mise.toml must pin node = "<major>.<minor>.<patch>" under [tools]');
     }
     const { packageManager } = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(packageJson).pipe(
       Effect.mapError(() => invalid('package.json must declare packageManager')),
     );
-    const pnpm = /^pnpm@(?<pnpm>[^+]+)/u.exec(packageManager)?.groups?.pnpm;
+    const pnpm = /^pnpm@(?<pnpm>[^+]+)/u.exec(packageManager)?.groups?.['pnpm'];
     if (pnpm === undefined || !version.test(pnpm)) {
       return yield* invalid('package.json#packageManager must pin pnpm@<major>.<minor>.<patch>');
     }

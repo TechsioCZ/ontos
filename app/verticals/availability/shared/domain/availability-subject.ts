@@ -64,7 +64,7 @@ export const AvailabilitySubjectSchema = Schema.Struct({
       : 'Exact Selection, Quantity Unit and trusted Purchasing Context must share one Tenant',
   ),
   Schema.makeFilter(({ quantity }) =>
-    /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u.test(quantity.amount) && /[1-9]/u.test(quantity.amount)
+    /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(quantity.amount) && /[1-9]/u.test(quantity.amount)
       ? undefined
       : 'Requested Quantity must be a positive exact decimal in an explicit Catalog Unit',
   ),

@@ -11,7 +11,7 @@ import { AvailabilitySubjectSchema, AvailabilityUseBoundarySchema } from './avai
 
 const reference = Schema.String.check(Schema.isMinLength(1), Schema.isTrimmed());
 const reusableQuantity = Schema.Struct({
-  amount: Schema.String.check(Schema.isPattern(/^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/u)),
+  amount: Schema.String.check(Schema.isPattern(/^(?:0|[1-9]\d*)(?:\.\d+)?$/u)),
   unitRef: AvailabilitySubjectSchema.fields.quantity.fields.unitRef,
 });
 

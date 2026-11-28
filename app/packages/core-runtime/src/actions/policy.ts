@@ -83,8 +83,7 @@ const registerPolicy = <Policy extends object>(policy: Policy): Readonly<Policy>
     enumerable: false,
     value: true,
   });
-  const frozen = Object.freeze(policy);
-  return frozen;
+  return Object.freeze(policy);
 };
 
 export const denyPolicy = (reasonCode: string, reason: string): PolicyDenied => {

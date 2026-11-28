@@ -49,7 +49,7 @@ const formatDecimal = (coefficient: bigint, scale: number): string => {
   const negative = coefficient < 0n;
   const digits = (negative ? -coefficient : coefficient).toString().padStart(scale + 1, '0');
   const integer = scale === 0 ? digits : digits.slice(0, -scale);
-  const fraction = scale === 0 ? '' : digits.slice(-scale).replace(/0+$/u, '');
+  const fraction = scale === 0 ? '' : digits.slice(-scale).replace(/(?<!0)0+$/u, '');
   const fractionalSuffix = fraction.length === 0 ? '' : `.${fraction}`;
   return `${negative ? '-' : ''}${integer}${fractionalSuffix}`;
 };

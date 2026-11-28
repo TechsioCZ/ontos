@@ -66,7 +66,7 @@ export const sumQuantityTierDecimalValues = (values: readonly string[]): string 
   }
   const digits = coefficient.toString().padStart(scale + 1, '0');
   const whole = digits.slice(0, -scale);
-  const fraction = digits.slice(-scale).replace(/0+$/u, '');
+  const fraction = digits.slice(-scale).replace(/(?<!0)0+$/u, '');
   return fraction.length === 0 ? whole : `${whole}.${fraction}`;
 };
 

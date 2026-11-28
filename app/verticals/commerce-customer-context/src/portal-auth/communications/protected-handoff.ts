@@ -216,7 +216,7 @@ const makeProtectedHandoff = Effect.fn('CommercePortalAuthProtectedHandoff.make'
     endpointOf,
     forget: store.forget,
     hold,
-    issuanceOf: (issuanceRef) => store.find(issuanceRef).pipe(Effect.map(Option.map(issuanceOfStored))),
+    issuanceOf: (issuanceRef) => Effect.map(store.find(issuanceRef), Option.map(issuanceOfStored)),
     reserve: ({ flow, providerSubjectId, reservation }) =>
       Ref.update(reservations, (all) => all.pipe(HashMap.set(reservationKey(flow, providerSubjectId), reservation))),
     revealSecret,

@@ -351,10 +351,9 @@ export const symmyJobExecutionStore = (transaction: ScopedRoutineInvoker): Symmy
     if (row === undefined || row.state === 'UNAVAILABLE') {
       return yield* unavailable();
     }
-    const decoded = yield* Schema.decodeUnknownEffect(Schema.OptionFromNullOr(SymmyExecutionJobSchema))(row.job).pipe(
+    return yield* Schema.decodeUnknownEffect(Schema.OptionFromNullOr(SymmyExecutionJobSchema))(row.job).pipe(
       Effect.mapError(unavailable),
     );
-    return decoded;
   }),
   markBlocked: Effect.fn('SymmyJobExecution.markBlocked')(function* block(
     jobId: string,

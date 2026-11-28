@@ -83,7 +83,7 @@ export const assetMetadataRead = defineRead<
       const mediaAssetId = yield* resolveMediaAssetRef(input.mediaAssetRef, context.scope.tenantId).pipe(
         Effect.mapError(readFailureOf),
       );
-      const asset = yield* context.services.repository.find(mediaAssetId).pipe(Effect.mapError(readFailureOf));
+      const asset = yield* Effect.mapError(context.services.repository.find(mediaAssetId), readFailureOf);
       const result = yield* toMediaAssetMetadata(asset).pipe(Effect.mapError(readFailureOf));
       return { evidence: { resultCount: 1 }, result };
     }),

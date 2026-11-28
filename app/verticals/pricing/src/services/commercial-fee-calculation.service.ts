@@ -40,7 +40,7 @@ const formatDecimal = (coefficient: bigint, scale: number): string => {
     return digits;
   }
   const whole = digits.slice(0, -scale);
-  const fractional = digits.slice(-scale).replace(/0+$/u, '');
+  const fractional = digits.slice(-scale).replace(/(?<!0)0+$/u, '');
   return fractional.length === 0 ? whole : `${whole}.${fractional}`;
 };
 

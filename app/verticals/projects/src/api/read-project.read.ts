@@ -6,7 +6,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type { ReadLoadContext } from '@app/core-runtime';
-import { Effect, Match } from 'effect';
+import { Effect, Match, pipe } from 'effect';
 import { ReadProjectRequestSchema, ReadProjectResponseSchema } from '../../shared/apis/read-project.ts';
 import type { ProjectPersistenceUnavailable } from '../../shared/domain/project.ts';
 import { makeProjectPersistenceService } from '../services/project-persistence.service.ts';
@@ -23,7 +23,8 @@ interface Services {
   readonly find: (projectId: string) => Effect.Effect<ProjectLookup, ProjectPersistenceUnavailable>;
 }
 export const makeReadProjectHandler = (services: Services, tenantId: string) => (projectId: string) =>
-  services.find(projectId).pipe(
+  pipe(
+    services.find(projectId),
     Effect.catchTag('ProjectPersistenceUnavailable', () =>
       Effect.fail(
         new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Project persistence is unavailable' }),

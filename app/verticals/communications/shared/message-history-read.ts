@@ -37,7 +37,7 @@ export const MESSAGE_HISTORY_MAX_PAGE_SIZE = 50;
 export const TEMPLATE_PREVIEW_MARKER = 'TEMPLATE_PREVIEW_NOT_EXACT_SENT_EMAIL';
 
 /** A closed code: a letter, then letters, digits and underscores. No free text, address, link or markup fits. */
-const ClosedCodeSchema = Schema.String.check(Schema.isMaxLength(80), Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]*$/u));
+const ClosedCodeSchema = Schema.String.check(Schema.isMaxLength(80), Schema.isPattern(/^[A-Za-z]\w*$/u));
 
 const OccurrenceIdSchema = Schema.String.check(
   Schema.isMinLength(1),

@@ -176,7 +176,7 @@ export const gopayRefundHistoryRowObjectId = (rowId: GopayRefundHistoryRowId): P
   ProviderObjectIdSchema.make(`${rowId}`);
 
 /** Strictly an unsigned base-10 integer without a leading zero, as GoPay ids are rendered. */
-const GopayIdTextSchema = Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,15}$/u)).pipe(
+const GopayIdTextSchema = Schema.String.check(Schema.isPattern(/^[1-9]\d{0,15}$/u)).pipe(
   Schema.decodeTo(Schema.FiniteFromString.pipe(Schema.decodeTo(GopayIntegerIdSchema))),
 );
 

@@ -216,7 +216,7 @@ it.effect('reviews the calls of every topology vertical whose manifest declares 
       ),
     );
     const callers = manifests
-      .filter(({ manifest }) => /^\s*registeredWorkloadCalls\b/mu.test(manifest))
+      .filter(({ manifest }) => /^[\t ]*registeredWorkloadCalls\b/mu.test(manifest))
       .map(({ id }) => id);
     expect(callers.toSorted()).toEqual(Object.keys(REVIEWED_REGISTERED_WORKLOAD_CALLS).toSorted());
   }).pipe(Effect.provide(NodeServices.layer)),

@@ -385,8 +385,7 @@ const refundFinding = (status: string, extra: { readonly amount?: number } = {})
     const refund = yield* decodeStripeRefund(
       jsonText(stripeRefundObject({ ...extra, orderReference: REFUND_REFERENCE, status })),
     );
-    const finding = firstOf(yield* mapStripeRefund(refund, contextOf(refundExpected)));
-    return finding;
+    return firstOf(yield* mapStripeRefund(refund, contextOf(refundExpected)));
   });
 
 describe('#1156 Stripe refund mapping', () => {

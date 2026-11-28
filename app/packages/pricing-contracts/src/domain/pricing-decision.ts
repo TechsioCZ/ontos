@@ -31,7 +31,7 @@ export const PricingPurchaseDemandOccurrenceIdSchema = stableReference.pipe(
 );
 
 export const PricingPositiveDecimalSchema = Schema.String.check(
-  Schema.isPattern(/^(?:0\.\d*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u),
+  Schema.isPattern(/^(?:0\.0*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u),
 );
 
 const sameCatalogRef = (
@@ -196,7 +196,7 @@ export const PricingDecisionSchema = Schema.Struct({
 export type PricingDecision = typeof PricingDecisionSchema.Type;
 
 const nonNegativeDecimalPattern = /^(?:0(?:\.\d+)?|[1-9]\d*(?:\.\d+)?)$/u;
-const strictlyNegativeDecimalPattern = /^-(?:0\.\d*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u;
+const strictlyNegativeDecimalPattern = /^-(?:0\.0*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u;
 
 export const PricingNonNegativeDecimalSchema = Schema.String.check(Schema.isPattern(nonNegativeDecimalPattern));
 export const PricingStrictlyNegativeDecimalSchema = Schema.String.check(

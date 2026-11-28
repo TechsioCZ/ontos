@@ -2500,10 +2500,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             reason: 'A required Action Policy could not be evaluated',
           });
         });
-        const allowedPolicies = yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
+        return yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
           concurrency: 1,
         });
-        return allowedPolicies;
       });
 
       const authorizeAndEvaluatePolicies = Effect.fn('ActionRuntime.authorizeAndEvaluatePolicies')(

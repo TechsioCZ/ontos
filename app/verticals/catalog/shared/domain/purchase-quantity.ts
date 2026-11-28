@@ -61,7 +61,7 @@ const formatDecimal = (coefficient: bigint, scale: number): string => {
   }
   const padded = coefficient.toString().padStart(scale + 1, '0');
   const whole = padded.slice(0, -scale);
-  const fraction = padded.slice(-scale).replace(/0+$/u, '');
+  const fraction = padded.slice(-scale).replace(/(?<!0)0+$/u, '');
   return fraction.length === 0 ? whole : `${whole}.${fraction}`;
 };
 

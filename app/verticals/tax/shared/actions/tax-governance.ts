@@ -14,7 +14,7 @@ const OwnerReferenceSchema = Schema.String.check(Schema.isTrimmed(), Schema.isMi
 export const TaxRuleMeaningKindSchema = Schema.Literal('VAT_RATE');
 
 /** Exact positive base-10 decimal percent; never a binary float (#919, #938). */
-const RatePercentSchema = Schema.String.check(Schema.isPattern(/^(?:0\.\d*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u));
+const RatePercentSchema = Schema.String.check(Schema.isPattern(/^(?:0\.0*[1-9]\d*|[1-9]\d*(?:\.\d+)?)$/u));
 
 /**
  * Immutable Tax Rule Revision content with its half-open Effective Period `[effectiveFrom, effectiveTo)`

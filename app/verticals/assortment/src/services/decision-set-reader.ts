@@ -564,7 +564,7 @@ const readBoundaries = Effect.fn('AssortmentDecisionSetReader.readBoundaries')(f
     scope: 'commerce.assortment.applicable-boundaries.v1',
     state: 'COMPLETE',
   });
-  const result = yield* decode(Schema.toType(AssortmentCompleteDecisionSetV1Schema), {
+  return yield* decode(Schema.toType(AssortmentCompleteDecisionSetV1Schema), {
     boundaries,
     completeness: {
       evidence,
@@ -581,7 +581,6 @@ const readBoundaries = Effect.fn('AssortmentDecisionSetReader.readBoundaries')(f
     query,
     version: 1,
   });
-  return result;
 });
 
 const queryOrdinaryCandidateRows = (

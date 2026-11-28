@@ -41,7 +41,7 @@ const format = (coefficient: bigint, scale: number): string => {
     return coefficient.toString();
   }
   const padded = coefficient.toString().padStart(scale + 1, '0');
-  const fraction = padded.slice(-scale).replace(/0+$/u, '');
+  const fraction = padded.slice(-scale).replace(/(?<!0)0+$/u, '');
   return fraction.length === 0 ? padded.slice(0, -scale) : `${padded.slice(0, -scale)}.${fraction}`;
 };
 const sameRef = (a: CatalogResourceRef, b: CatalogResourceRef): boolean =>

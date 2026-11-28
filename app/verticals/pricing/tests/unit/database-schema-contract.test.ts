@@ -608,7 +608,7 @@ describe('Pricing Price database contract', () => {
       .filter(({ privileges }) => privileges.every((privilege) => privilege === 'select'))
       .map(({ table }) => table);
 
-    expect([...routineGrantBlock.matchAll(/^\s*'pricing\.[^']+',?$/gmu)]).toHaveLength(94);
+    expect([...routineGrantBlock.matchAll(/^[\t ]*'pricing\.[^']+',?$/gmu)]).toHaveLength(94);
     expect(routineGrantBlock).toContain('pricing.read_price_group_source_prices_v1(uuid,uuid,jsonb)');
     expect(tableGrants).toHaveLength(64);
     expect({
