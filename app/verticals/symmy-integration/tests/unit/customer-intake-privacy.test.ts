@@ -292,6 +292,27 @@ const customerWithContact = (customerRecordId: string) =>
     ],
   });
 
+it.effect('never applies customer root rules to items with no personal use', () =>
+  Effect.gen(function* noPersonalUse() {
+    // A valid effect DAG can cross its item boundary in both directions: create product, create variant, retire
+    // product. No Privacy request is projected, so collapsing it into an item graph must not invent a refusal.
+    const product = admissionItem(1, 'product', 'product:one');
+    const variant = admissionItem(2, 'variant', 'variant:one', [{ effectKey: 'party-update', itemKey: 'product' }]);
+    const [created] = product.effects;
+    assert.isOk(created !== undefined);
+    const finish = {
+      ...created,
+      dependsOn: [{ effectKey: 'party-update', itemKey: 'variant' }],
+      effectKey: 'finish',
+      ref: { ...created.ref, effectId: '10000000-0000-4000-8000-000000000299' },
+    };
+    const job = yield* Schema.decodeUnknownEffect(SymmyPinnedJobPlanSchema)({
+      items: [{ ...product, effects: [...product.effects, finish] }, variant],
+    });
+    expect(yield* projectSymmyCustomerIntake(scope, job)).toEqual({ admissions: [], requests: [] });
+  }),
+);
+
 it.effect('rejects cross-customer prerequisites in either order before proposing any binding', () =>
   Effect.gen(function* ambiguousRoot() {
     const group = personalItem(3, 'group-definition', 'group:one');
