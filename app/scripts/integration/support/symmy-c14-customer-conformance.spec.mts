@@ -26,6 +26,7 @@ import { FetchHttpClient, HttpBody, HttpClient } from 'effect/http';
 import { Reactivity } from 'effect/reactivity';
 
 import { SymmyCustomersResponseSchema } from '../../../apps/shell-super-app/api/symmy/customers-public-contract.ts';
+import { SymmyFixtureJobStatusSchema } from '../../../apps/shell-super-app/api/symmy/contract.ts';
 import {
   bindCustomerFixtureProviderKey as bindProviderKey,
   customerFixtureUuid as uuid,
@@ -1294,10 +1295,9 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
     const resendStatusResponse = yield* client.get(`${shell.baseUrl}/api/symmy/v1/jobs/${resend.jobId}`, { headers });
     expect(resendStatusResponse.status).toBe(200);
     const resendStatus = yield* resendStatusResponse.json.pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(SymmyJobStatusResponseSchema.members[0])),
+      Effect.flatMap(Schema.decodeUnknownEffect(SymmyFixtureJobStatusSchema.members[1])),
     );
     expect(resendStatus).toMatchObject({ status: 'completed_partial' });
-    assert.isOk(resendStatus.items !== undefined);
     expect(resendStatus.items.flatMap(({ effects }) => effects).some(({ status }) => status === 'denied')).toBe(true);
     expect((yield* tenantRows)[0]).toEqual({ parties: 2, profiles: 2 });
     const [contactCount] = yield* admin<{
