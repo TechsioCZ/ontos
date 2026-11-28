@@ -825,4 +825,6 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
         ),
       ),
     ),
+  // The journaled deployment runner applies the whole pre-upgrade chain twice on a fresh database.
+  120_000,
 );

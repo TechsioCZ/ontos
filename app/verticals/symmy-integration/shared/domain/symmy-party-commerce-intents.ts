@@ -187,9 +187,11 @@ type MembershipIntentPayload = Extract<
 >['payload'];
 /** The exact customer record an ERP assignment was resolved from. Only an assignment names one. */
 export const symmyMembershipCustomerSource = (payload: MembershipIntentPayload) =>
-  Match.value(payload).pipe(
-    Match.when({ operation: 'ASSIGN' }, ({ customerSource }) => customerSource),
-    Match.orElse(() => {}),
+  Option.getOrUndefined(
+    Match.value(payload).pipe(
+      Match.when({ operation: 'ASSIGN' }, ({ customerSource }) => Option.fromUndefinedOr(customerSource)),
+      Match.orElse(() => Option.none()),
+    ),
   );
 
 const invocationId = Schema.optionalKey(ResolvePartyCommandCommitPayloadSchema.fields.invocationId);

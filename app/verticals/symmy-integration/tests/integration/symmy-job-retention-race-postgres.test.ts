@@ -315,9 +315,11 @@ it.effect(
       const insertJob = (items: readonly unknown[]) =>
         Effect.gen(function* insertPlannedJob() {
           const jobId = crypto.randomUUID();
+          // A distinct 64-digit hex digest per job, as the admission stores a SHA-256.
+          const digest = jobId.replaceAll('-', '').repeat(2);
           const plan = JSON.stringify({ items });
           yield* state.admin`insert into symmy_integration.import_jobs(job_id,tenant_id,route_id,route_key,route_revision,mapping_version,principal_id,fixture_id,idempotency_digest,intent_digest,phase,execution_plan)
-          values(${jobId},${state.scope.tenantId},${routeId},'productsBatch','v1','v1',${state.scope.principalId},'internal-race',${jobId},${jobId},'admitted',${plan}::jsonb)`;
+          values(${jobId},${state.scope.tenantId},${routeId},'productsBatch','v1','v1',${state.scope.principalId},'internal-race',${digest},${digest},'admitted',${plan}::jsonb)`;
           return jobId;
         });
       const purgeJob = (jobId: string) =>

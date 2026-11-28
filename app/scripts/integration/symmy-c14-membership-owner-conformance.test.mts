@@ -75,13 +75,14 @@ const pinnedMembershipSchema = Schema.Struct({
   payload: membershipAssignmentSchema,
 });
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
+const symmyAppId = 'symmy-integration';
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
 
 const restartSymmy = Effect.fn('SymmyC14Membership.restartSymmy')(function* restartSymmy(
   fixture: CustomerFixture,
   environment: Readonly<Record<string, string>>,
 ) {
-  const appId = 'symmy-integration';
+  const appId = symmyAppId;
   const runtime = fixture.ownerRuntimes.get(appId);
   if (runtime === undefined) {
     return yield* unavailable('The actual owner receiver is missing');
@@ -478,7 +479,7 @@ it.live(
             encodeSymmySourceSelector(wrongScope, groupRecordId, group.value.groupRef.resourceId),
           );
           if (rejected.status !== 403) {
-            const symmyDiagnostic = fixture.ownerDiagnostics.get('symmy-integration');
+            const symmyDiagnostic = fixture.ownerDiagnostics.get(symmyAppId);
             return yield* unavailable(
               `Qualified Membership refusal returned ${rejected.status}: ${yield* rejected.text}; gateway ${JSON.stringify(yield* shell.gatewayDiagnostics())}; Symmy ${symmyDiagnostic === undefined ? 'diagnostic unavailable' : yield* symmyDiagnostic}`,
             );
@@ -493,8 +494,15 @@ it.live(
         expect(mixed).toBeDefined();
         const response = yield* submit();
         if (response.status !== 202) {
+          // Name which owner refused or failed: the gateway's own answers and each owner's diagnostics.
+          const owners = yield* Effect.forEach([symmyAppId, 'commerce-customer-context', 'privacy'], (appId) => {
+            const diagnostic = fixture.ownerDiagnostics.get(appId);
+            return diagnostic === undefined
+              ? Effect.succeed(`${appId}: diagnostic unavailable`)
+              : diagnostic.pipe(Effect.map((text) => `${appId}: ${text}`));
+          });
           return yield* unavailable(
-            `Actual Membership route admission returned ${response.status}: ${yield* response.text}`,
+            `Actual Membership route admission returned ${response.status}: ${yield* response.text}; gateway ${JSON.stringify(yield* shell.gatewayDiagnostics())}; ${owners.join('; ')}`,
           );
         }
         const admitted = yield* response.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));

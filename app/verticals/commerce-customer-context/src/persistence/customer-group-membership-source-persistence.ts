@@ -332,12 +332,13 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
             ? ORG_WRITE_PRIVACY_REQUIREMENT
             : WRITE_PRIVACY_REQUIREMENT;
         yield* requireModuleOperation(requirement).pipe(Effect.mapError(unavailable));
+        // Only an ERP assignment names the customer record it was resolved from.
         const customerSource = Match.value(payload).pipe(
-          Match.when({ operation: 'ASSIGN' }, (assignment) => assignment.customerSource),
-          Match.orElse(() => {}),
+          Match.when({ operation: 'ASSIGN' }, (assignment) => Option.fromUndefinedOr(assignment.customerSource)),
+          Match.orElse(() => Option.none()),
         );
-        if (customerSource !== undefined) {
-          yield* requireCurrentCustomerSource(payload, customerSource);
+        if (Option.isSome(customerSource)) {
+          yield* requireCurrentCustomerSource(payload, customerSource.value);
         }
         yield* checkPrivacy(payload, payload.source, WRITE_PRIVACY_OPERATION, requirement, payload);
         const [row] = yield* transaction
