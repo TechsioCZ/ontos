@@ -8,7 +8,6 @@ import type { PrivacyDispatchContinuationPayload } from '@app/shared-contracts';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import type { GatewayDelegationSubject } from '@app/shared-contracts/gateway-context-server';
 import { Context, Effect, Option, Schema } from 'effect';
-import type { Digest } from 'effect/crypto';
 import { SecureRandom } from 'effect/crypto';
 import type { HttpClient } from 'effect/http';
 
@@ -38,7 +37,7 @@ export interface PrivacyMeasureReporterService {
   ) => Effect.Effect<void, PrivacyMeasureReportError>;
 }
 
-type ReporterTransport = SecureRandom.SecureRandom | Digest.Digest | HttpClient.HttpClient;
+type ReporterTransport = SecureRandom.SecureRandom | HttpClient.HttpClient;
 
 /** The same operations before the worker host binds their transport (Crypto and the HTTP client). */
 export interface PrivacyMeasureReporterOperations {

@@ -1,7 +1,12 @@
+import { OpenSelectionPopulationResponseSchema } from '@app/commerce-cart-contracts/open-selection-population';
+import { verifyCartPopulation } from '../../api/cart-open-selection-population.ts';
+import { TestClock } from 'effect/testing';
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { NodeCrypto } from '@effect/platform-node';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Fiber, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
 
@@ -218,3 +223,38 @@ describe('Catalog open-selection impact', () => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 });
+
+it.effect('does not release Catalog evidence on an unavailable Cart material hash', () =>
+  Effect.gen(function* verifyOutage() {
+    const digest = '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945';
+    const response = Schema.decodeUnknownSync(Schema.toType(OpenSelectionPopulationResponseSchema))({
+      complete: true,
+      digest,
+      entries: [],
+      generation: '1',
+      observedAt: DateTime.makeUnsafe('2026-09-18T12:00:00.000Z'),
+      owner: 'commerce.cart',
+      protocol: 'CART_OPEN_SELECTION_POPULATION.v1',
+      revisionToken: `cart:v1:${tenantId}:1:${digest}`,
+      scope: 'TENANT_ALL_DURABLE_OPEN_CART_SELECTIONS',
+      selectionCount: 0,
+      tenantId,
+    });
+    expect((yield* verifyCartPopulation(response, tenantId)).revisionToken).toBe(response.revisionToken);
+    for (const host of [
+      webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    ]) {
+      const fiber = yield* verifyCartPopulation(response, tenantId).pipe(
+        Effect.provide(WebCrypto.layer(host)),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust('5 seconds');
+      expect(yield* Fiber.join(fiber)).toMatchObject({
+        code: 'cart_open_selection_population_unavailable',
+        reason: 'The Cart population material could not be verified',
+      });
+    }
+  }),
+);

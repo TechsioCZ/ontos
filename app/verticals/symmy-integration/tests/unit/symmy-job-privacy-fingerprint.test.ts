@@ -1,7 +1,7 @@
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
-import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Exit, Schema } from 'effect';
-import { Digest } from 'effect/crypto';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   fingerprintSymmyJobPrivacyHandoff,
@@ -42,24 +42,21 @@ it.effect('binds the complete immutable handoff while normalizing only unordered
     const changedDecision = yield* fingerprintSymmyJobPrivacyHandoff({ ...handoff, sourceDecisionRevision: 2 });
     expect(changedSubject).not.toBe(original);
     expect(changedDecision).not.toBe(original);
-  }).pipe(Effect.provide(NodeCrypto.layer)),
+  }),
 );
 
-it.effect('digests with unchanged SHA-256 bytes and keeps a broken native digest a defect', () =>
-  Effect.gen(function* nativeDigestChannels() {
-    expect(yield* symmyJobPrivacyDigest('abc').pipe(Effect.provide(NodeCrypto.layer))).toBe(
+it.effect('preserves SHA-256 bytes and maps a native rejection to typed unavailability', () =>
+  Effect.gen(function* digestOutage() {
+    expect(yield* symmyJobPrivacyDigest('abc')).toBe(
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
     );
-    const broken = new Error('Fixture SHA-256 primitive is broken');
-    const exit = yield* Effect.exit(
-      fingerprintSymmyJobPrivacyHandoff(handoff).pipe(
-        Effect.provideService(
-          Digest.Digest,
-          Digest.Digest.of({ digest: () => Effect.die(broken), digestHex: () => Effect.die(broken) }),
-        ),
+    const error = yield* fingerprintSymmyJobPrivacyHandoff(handoff).pipe(
+      Effect.provide(
+        WebCrypto.layer(webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure')))),
       ),
+      Effect.flip,
     );
-    expect(Exit.hasDies(exit)).toBe(true);
-    expect(Exit.hasFails(exit)).toBe(false);
+    expect(error.code).toBe('privacy_execution_unavailable');
+    expect(Object.hasOwn(error, 'cause')).toBe(false);
   }),
 );

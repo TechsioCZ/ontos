@@ -1,3 +1,4 @@
+import { sha256Bytes } from '@app/core-runtime/crypto/sha256';
 import {
   ActiveApplicationCompositionService,
   loadActiveApplicationComposition,
@@ -11,7 +12,7 @@ import {
 import { executeOpenSelectionPopulationWithAuthorization } from '@app/commerce-cart-contracts/open-selection-population/client';
 import { acquireDelegatedGatewayContext } from '@app/shared-contracts/gateway-context-server';
 import { DateTime, Effect, Layer, Schema } from 'effect';
-import { Digest, SecureRandom } from 'effect/crypto';
+import { SecureRandom, WebCrypto } from 'effect/crypto';
 
 import {
   CartOpenSelectionPopulationEvidenceSchema,
@@ -29,6 +30,40 @@ const unavailableBecause = (reason: string) => (cause: unknown) =>
 const hexadecimalDigest = (bytes: Uint8Array) =>
   Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 
+/** Decode the owner read and verify its complete canonical material before releasing Catalog evidence. */
+export const verifyCartPopulation = Effect.fn('CatalogCartOpenSelectionPopulation.verify')(function* verify(
+  population: typeof OpenSelectionPopulationResponseSchema.Type,
+  tenantId: string,
+) {
+  if (population.tenantId !== tenantId) {
+    return yield* unavailable('The Cart owner returned a population for a different Tenant');
+  }
+  const canonical = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Array(OpenSelectionPopulationEntrySchema)))(
+    population.entries,
+  ).pipe(Effect.mapError(unavailableBecause('The Cart population material is invalid')));
+  const bytes = new TextEncoder().encode(canonical);
+  if (bytes.length > 2_097_152) {
+    return yield* unavailable('The Cart population exceeds its declared V1 material limit');
+  }
+  const hashed = yield* sha256Bytes(yield* WebCrypto.WebCrypto, bytes, '5 seconds').pipe(
+    Effect.mapError(unavailableBecause('The Cart population material could not be verified')),
+  );
+  const digest = hexadecimalDigest(hashed);
+  if (
+    population.digest !== digest ||
+    population.revisionToken !== `cart:v1:${tenantId}:${population.generation}:${digest}`
+  ) {
+    return yield* unavailable('The Cart population token does not bind its complete owner material');
+  }
+  return yield* Schema.decodeUnknownEffect(CartOpenSelectionPopulationEvidenceSchema)({
+    complete: population.complete,
+    observedAt: DateTime.formatIso(population.observedAt),
+    revisionToken: population.revisionToken,
+    selections: population.entries.map(({ selection, selectionId }) => ({ selection, selectionId })),
+    tenantId: population.tenantId,
+  }).pipe(Effect.mapError(unavailableBecause('The Cart population cannot be represented by the Catalog contract')));
+});
+
 /**
  * The production bridge calls the published Cart client with a fresh delegated Shell context that acts
  * for the Catalog action's subject. Configuration, composition and owner health are consulted lazily,
@@ -39,7 +74,6 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
   Effect.gen(function* makeCartOpenSelectionPopulation() {
     const composition = yield* ActiveApplicationCompositionService;
     const crypto = yield* SecureRandom.SecureRandom;
-    const messageDigest = yield* Digest.Digest;
     return {
       read: Effect.fn('CatalogCartOpenSelectionPopulation.read')(function* read(input: {
         readonly scope: OperationalScope;
@@ -83,33 +117,7 @@ export const cartOpenSelectionPopulationLive = Layer.effect(
         const population = yield* Schema.decodeUnknownEffect(Schema.toType(OpenSelectionPopulationResponseSchema), {
           onExcessProperty: 'error',
         })(response).pipe(Effect.mapError(unavailableBecause('The Cart owner returned an invalid population')));
-        if (population.tenantId !== payload.tenantId) {
-          return yield* unavailable('The Cart owner returned a population for a different Tenant');
-        }
-        const canonical = yield* Schema.encodeEffect(
-          Schema.fromJsonString(Schema.Array(OpenSelectionPopulationEntrySchema)),
-        )(population.entries).pipe(Effect.mapError(unavailableBecause('The Cart population material is invalid')));
-        const bytes = new TextEncoder().encode(canonical);
-        if (bytes.length > 2_097_152) {
-          return yield* unavailable('The Cart population exceeds its declared V1 material limit');
-        }
-        const hashed = yield* messageDigest.digest(Digest.sha256, bytes);
-        const digest = hexadecimalDigest(new Uint8Array(hashed));
-        if (
-          population.digest !== digest ||
-          population.revisionToken !== `cart:v1:${payload.tenantId}:${population.generation}:${digest}`
-        ) {
-          return yield* unavailable('The Cart population token does not bind its complete owner material');
-        }
-        return yield* Schema.decodeUnknownEffect(CartOpenSelectionPopulationEvidenceSchema)({
-          complete: population.complete,
-          observedAt: DateTime.formatIso(population.observedAt),
-          revisionToken: population.revisionToken,
-          selections: population.entries.map(({ selection, selectionId }) => ({ selection, selectionId })),
-          tenantId: population.tenantId,
-        }).pipe(
-          Effect.mapError(unavailableBecause('The Cart population cannot be represented by the Catalog contract')),
-        );
+        return yield* verifyCartPopulation(population, payload.tenantId);
       }),
     };
   }),

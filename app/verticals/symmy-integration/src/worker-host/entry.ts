@@ -2,7 +2,7 @@
 // @ontos-outbox-worker-host-owner integration.symmy
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer } from 'effect';
-import { Digest, SecureRandom } from 'effect/crypto';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import {
   SymmyJobPrivacyDispatchGateway,
@@ -34,7 +34,7 @@ const privacyDispatchGatewayLive = Layer.effect(
   SymmyJobPrivacyDispatchGateway,
   Effect.gen(function* bindPrivacyDispatchTransport() {
     const crypto = yield* SecureRandom.SecureRandom;
-    const digest = yield* Digest.Digest;
+
     const httpClient = yield* HttpClient.HttpClient;
     const operations = yield* symmyJobPrivacyDispatchGatewayService();
     return SymmyJobPrivacyDispatchGateway.of({
@@ -42,7 +42,6 @@ const privacyDispatchGatewayLive = Layer.effect(
         operations
           .execute(handoff, context)
           .pipe(
-            Effect.provideService(Digest.Digest, digest),
             Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.provideService(HttpClient.HttpClient, httpClient),
           ),
@@ -57,7 +56,6 @@ const privacyDispatchGatewayLive = Layer.effect(
         operations
           .report(outcome, context)
           .pipe(
-            Effect.provideService(Digest.Digest, digest),
             Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.provideService(HttpClient.HttpClient, httpClient),
           ),

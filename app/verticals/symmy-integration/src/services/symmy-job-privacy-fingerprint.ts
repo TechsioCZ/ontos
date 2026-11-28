@@ -1,13 +1,20 @@
+import { sha256Bytes } from '@app/core-runtime/crypto/sha256';
 import { PrivacyMeasureHandoffSchema } from '@app/privacy/domain/privacy-measure-handoff';
 import type { PrivacyMeasureHandoff } from '@app/privacy/domain/privacy-measure-handoff';
 import { Effect, Schema } from 'effect';
-import { Digest } from 'effect/crypto';
+import { WebCrypto } from 'effect/crypto';
 import { Hex } from 'effect/encoding';
 import { SymmyJobPrivacyExecutionError } from './symmy-job-privacy-execution-error.ts';
 
 export const symmyJobPrivacyDigest = Effect.fn('SymmyJobPrivacy.digest')(function* digest(value: string) {
-  const messageDigest = yield* Digest.Digest;
-  return Hex.encode(yield* messageDigest.digest(Digest.sha256, new TextEncoder().encode(value)));
+  const host = yield* WebCrypto.WebCrypto;
+  return Hex.encode(
+    yield* sha256Bytes(host, new TextEncoder().encode(value), '5 seconds').pipe(
+      Effect.catchTag('PlatformError', () =>
+        Effect.fail(new SymmyJobPrivacyExecutionError({ code: 'privacy_execution_unavailable' })),
+      ),
+    ),
+  );
 });
 
 /** Same exact public handoff codec and set normalization as the established Privacy owner receipt pattern. */

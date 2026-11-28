@@ -1,12 +1,13 @@
+import { TestClock } from 'effect/testing';
+import { webCryptoDigestFixture } from '@app/core-runtime/testing/webcrypto-digest';
+import { WebCrypto } from 'effect/crypto';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import {
   readVerifiedGatewayPrivacyDispatch,
   RegisteredGatewayPrivacyDispatchSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Match, Option, Redacted, Schema } from 'effect';
-import { Digest } from 'effect/crypto';
+import { Effect, Fiber, Match, Option, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { expect, it } from 'effect-rstest';
 import {
@@ -37,7 +38,6 @@ const ownerScope = {
 
 it.effect('fingerprints a Communications handoff exactly as its owner does, owner scope included', () =>
   Effect.gen(function* fingerprintContract() {
-    const crypto = yield* Digest.Digest;
     const fixture = makeMeasureExecutionFixture('75000000-0000-4000-8000-000000000001');
     const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
       ...fixture.handoff,
@@ -51,21 +51,20 @@ it.effect('fingerprints a Communications handoff exactly as its owner does, owne
         requestedScopePartRefs: ['communications.attachment-link-references', 'communications.history'],
       },
     });
-    const first = yield* fingerprintCommunicationsOwnerHandoff(handoff, crypto);
+    const first = yield* fingerprintCommunicationsOwnerHandoff(handoff);
     // reference sets carry no order, and another owner scope is another handoff
-    expect(yield* fingerprintCommunicationsOwnerHandoff(reordered, crypto)).toBe(first);
+    expect(yield* fingerprintCommunicationsOwnerHandoff(reordered)).toBe(first);
     const rescoped = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
       ...handoff,
       ownerScope: { ...ownerScope, controllerRef: 'another-controller' },
     });
-    expect(yield* fingerprintCommunicationsOwnerHandoff(rescoped, crypto)).not.toBe(first);
+    expect(yield* fingerprintCommunicationsOwnerHandoff(rescoped)).not.toBe(first);
     expect(first).toMatch(/^[a-f0-9]{64}$/u);
-  }).pipe(Effect.provide(NodeCrypto.layer)),
+  }),
 );
 
 it.effect('independently reads the exact Communications outcome and rejects forged and foreign-scope receipts', () =>
   Effect.gen(function* exactCommunicationsOwnerReceipt() {
-    const crypto = yield* Digest.Digest;
     const tenantId = '75000000-0000-4000-8000-000000000001';
     const legalEntityId = '75000000-0000-4000-8000-000000000002';
     const principalId = '75000000-0000-4000-8000-000000000003';
@@ -111,7 +110,7 @@ it.effect('independently reads the exact Communications outcome and rejects forg
       status: 'RECEIVED',
       taskId: handoff.taskId,
     });
-    const receipt = { handoffFingerprint: yield* fingerprintCommunicationsOwnerHandoff(handoff, crypto), outcome };
+    const receipt = { handoffFingerprint: yield* fingerprintCommunicationsOwnerHandoff(handoff), outcome };
     let body = JSON.stringify(receipt);
     let status = 200;
     const fakeFetch: typeof globalThis.fetch = (url, init) => {
@@ -133,10 +132,19 @@ it.effect('independently reads the exact Communications outcome and rejects forg
       compositionRevision: 'a'.repeat(64),
     };
     const read = () =>
-      resolveCommunicationsOwnerExecutionReceipt(request, context, transport, crypto).pipe(
+      resolveCommunicationsOwnerExecutionReceipt(request, context, transport).pipe(
         Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
       );
     expect((yield* read()).outcome).toEqual(outcome);
+    for (const host of [
+      webCryptoDigestFixture(() => Promise.reject(new Error('private digest failure'))),
+      webCryptoDigestFixture(() => Promise.withResolvers<ArrayBuffer>().promise),
+    ]) {
+      const fiber = yield* read().pipe(Effect.provide(WebCrypto.layer(host)), Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('5 seconds');
+      const failure = yield* Fiber.join(fiber);
+      expect(failure.code).toBe('privacy_operation_persistence_unavailable');
+    }
     for (const changed of [
       { ...receipt, handoffFingerprint: 'b'.repeat(64) },
       { ...receipt, outcome: { ...outcome, attempt: 2 } },
@@ -153,7 +161,7 @@ it.effect('independently reads the exact Communications outcome and rejects forg
     body = JSON.stringify(receipt);
     expect(
       (yield* Effect.flip(
-        resolveCommunicationsOwnerExecutionReceipt(request, foreign, transport, crypto).pipe(
+        resolveCommunicationsOwnerExecutionReceipt(request, foreign, transport).pipe(
           Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
         ),
       )).code,
@@ -163,14 +171,13 @@ it.effect('independently reads the exact Communications outcome and rejects forg
     status = 503;
     body = '{}';
     expect((yield* Effect.flip(read())).code).toBe('privacy_operation_persistence_unavailable');
-  }).pipe(Effect.provide(NodeCrypto.layer)),
+  }),
 );
 
 it.effect(
   'computes the same fingerprint as the Communications owner for the same handoff (cross-owner contract literal)',
   () =>
     Effect.gen(function* crossOwnerFingerprint() {
-      const crypto = yield* Digest.Digest;
       const handoff = Schema.decodeUnknownSync(PrivacyMeasureHandoffSchema)({
         contentScopeRefs: ['communications.core.history'],
         controllerObligationRef: null,
@@ -205,10 +212,10 @@ it.effect(
         taskId: 'FICTIONAL-task-1',
         tenantId: '00000000-0000-4000-8000-0000000000a1',
       });
-      expect(yield* fingerprintCommunicationsOwnerHandoff(handoff, crypto)).toBe(
+      expect(yield* fingerprintCommunicationsOwnerHandoff(handoff)).toBe(
         'd766e8d812c4955f2c7c853cd14efe8da22fb34ea88abfb67f38e5a1fd1fdf3c',
       );
-    }).pipe(Effect.provide(NodeCrypto.layer)),
+    }),
 );
 
 type ReceiptSubject = Option.Option.Value<ReturnType<typeof communicationsReceiptSubject>>;

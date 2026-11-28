@@ -5,7 +5,6 @@ import { OutboxWorkerDeferred, OutboxWorkerTenantScope } from '@app/core-runtime
 import type { OutboxWorkerTenantScopeView } from '@app/core-runtime/outbox/worker';
 import { SymmyEffectOutcomeSchema } from '@app/shared-contracts/symmy';
 import { Clock, Config, Context, Effect, Layer, Option, Ref, Result, Schema } from 'effect';
-import type { Digest } from 'effect/crypto';
 import { SecureRandom } from 'effect/crypto';
 import type { HttpClient, FetchHttpClient } from 'effect/http';
 
@@ -53,7 +52,6 @@ const sameOperation = (left: SymmyEffectAdapter['operation'], right: SymmyEffect
   left.schemaVersion === right.schemaVersion;
 
 type WorkerRequirements =
-  | Digest.Digest
   | SymmyWorkerIdentity
   | SymmyEffectAdapters
   | SymmyJobExecutionPersistence

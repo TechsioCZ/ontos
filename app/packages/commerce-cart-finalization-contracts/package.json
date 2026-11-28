@@ -6,7 +6,8 @@
   "description": "Cart-owned immutable final candidate public schemas and governed client.",
   "exports": {
     "./final-cart-candidate": "./src/apis/final-cart-candidate.ts",
-    "./final-cart-candidate/client": "./src/api/final-cart-candidate-client.ts"
+    "./final-cart-candidate/client": "./src/api/final-cart-candidate-client.ts",
+    "./testing/final-cart-candidate": "./src/testing/final-cart-candidate.ts"
   },
   "dependencies": {
     "@app/commerce-cart-contracts": "workspace:*",

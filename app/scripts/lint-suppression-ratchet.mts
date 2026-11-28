@@ -28,7 +28,19 @@ export interface SourceFile {
 }
 
 /** Rules named by one comment's disable directive, or none when the comment is not a directive. */
-const directiveRules = (comment: string): readonly string[] => {
+const directiveRules = (comment: string, path: string): readonly string[] => {
+  // Effect directives aren't Oxlint comments. Track line-local exemptions per diagnostic AND file:
+  // removing one permitted use cannot silently make room for a new one in another owner.
+  const [directive, ...settings] = comment.trim().split(/\s+/u);
+  if (directive === '@effect-diagnostics-next-line') {
+    const end = settings.indexOf('--');
+    return (end === -1 ? settings : settings.slice(0, end)).flatMap((setting) =>
+      setting
+        .split(',')
+        .filter((item) => item.endsWith(':off'))
+        .map((item) => `effect-next-line/${item.slice(0, -4)}@${path}`),
+    );
+  }
   const body = DIRECTIVE.exec(comment)?.groups?.['body'];
   if (body === undefined) {
     return [];
@@ -39,12 +51,12 @@ const directiveRules = (comment: string): readonly string[] => {
   return rules.length > 0 ? rules : [ALL_RULES];
 };
 
-/** Count Oxlint/ESLint disable directives per rule; only real comments count, never string contents. */
+/** Count Oxlint/ESLint disable directives and file-qualified, line-local Effect exemptions; only real comments count, never string contents. */
 export const countLintSuppressions = (files: readonly SourceFile[]): Readonly<Record<string, number>> => {
   const counts = new Map<string, number>();
   for (const file of files) {
     for (const comment of parseSync(file.path, file.source).comments) {
-      for (const rule of directiveRules(comment.value)) {
+      for (const rule of directiveRules(comment.value, file.path)) {
         counts.set(rule, (counts.get(rule) ?? 0) + 1);
       }
     }

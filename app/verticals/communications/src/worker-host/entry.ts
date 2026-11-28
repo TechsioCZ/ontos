@@ -2,7 +2,7 @@
 // @ontos-outbox-worker-host-owner communications.core
 import { NodeCrypto } from '@effect/platform-node';
 import { Effect, Layer } from 'effect';
-import { Digest, SecureRandom } from 'effect/crypto';
+import { SecureRandom } from 'effect/crypto';
 import { FetchHttpClient, HttpClient } from 'effect/http';
 import {
   ActiveApplicationCompositionConfigLive,
@@ -29,26 +29,22 @@ const privacyMeasureReporterLive = Layer.effect(
   PrivacyMeasureReporter,
   Effect.gen(function* bindPrivacyReportTransport() {
     const crypto = yield* SecureRandom.SecureRandom;
-    const digest = yield* Digest.Digest;
+
     const httpClient = yield* HttpClient.HttpClient;
     const operations = yield* privacyMeasureReporterService();
     return PrivacyMeasureReporter.of({
       report: (handoff, attempt, context) =>
-        operations
-          .report(handoff, attempt, context)
-          .pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.provideService(Digest.Digest, digest),
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-          ),
+        operations.report(handoff, attempt, context).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        ),
       reportRecorded: (continuation, context) =>
-        operations
-          .reportRecorded(continuation, context)
-          .pipe(
-            Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.provideService(Digest.Digest, digest),
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-          ),
+        operations.reportRecorded(continuation, context).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        ),
     });
   }),
 );
