@@ -44,7 +44,7 @@ BEGIN
   END IF;
   -- This namespace belongs to ERP assignment, never to an unfenced direct writer.
   IF starts_with(p_payload #>> '{manager,sourceNamespace}', 'erp-membership-v1:') OR v_customer IS NOT NULL THEN
-    IF v_customer IS NULL OR p_payload->>'operation' IS DISTINCT FROM 'ASSIGN'
+    IF NOT coalesce(starts_with(p_payload #>> '{manager,sourceNamespace}', 'erp-membership-v1:'),false) OR v_customer IS NULL OR p_payload->>'operation' IS DISTINCT FROM 'ASSIGN'
       OR p_payload #>> '{manager,issuer}' IS DISTINCT FROM v_customer->>'issuer' THEN
       RETURN QUERY SELECT 'SOURCE_AUTHORITY_DENIED'::text,NULL::jsonb; RETURN;
     END IF;

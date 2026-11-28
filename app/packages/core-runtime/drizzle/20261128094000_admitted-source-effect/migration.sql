@@ -5,7 +5,7 @@ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path = pg_catalog, pg_tem
 $$;
 --> statement-breakpoint
 CREATE FUNCTION trust.hold_admitted_source_effect(p_tenant uuid, p_company uuid, p_admission uuid, p_source_action text, p_receiver text, p_payload jsonb) RETURNS boolean
-LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+LANGUAGE plpgsql VOLATILE SECURITY INVOKER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
  IF p_admission IS NULL OR p_company IS NULL OR p_company IS DISTINCT FROM nullif(current_setting('ontos.legal_entity_id',true),'')::uuid THEN RETURN false; END IF;
  -- Core verifies the installed tenant, original admission and still-live enrollment under SHARE until commit.
@@ -15,6 +15,5 @@ BEGIN
    AND i.committed_reply_json->'encoded'->'sourceEffectCommitments' @> to_jsonb(array[trust.source_effect_commitment(p_receiver,p_payload)]));
 END; $$;
 --> statement-breakpoint
-REVOKE ALL ON FUNCTION trust.hold_admitted_source_effect(uuid,uuid,uuid,text,text,jsonb) FROM PUBLIC;
---> statement-breakpoint
-GRANT EXECUTE ON FUNCTION trust.hold_admitted_source_effect(uuid,uuid,uuid,text,text,jsonb) TO ontos_runtime;
+-- Only callable from the migration-owner routines that allocate or apply an effect. No request role is a caller.
+REVOKE ALL ON FUNCTION trust.hold_admitted_source_effect(uuid,uuid,uuid,text,text,jsonb), trust.source_effect_commitment(text,jsonb) FROM PUBLIC, ontos_runtime;

@@ -226,6 +226,8 @@ it('derives trust routine executors from the identity flags', () => {
     'trust.current_tenant_id()',
     'trust.current_legal_entity_id()',
     lockAccessScopeFenceSignature,
+    'trust.source_effect_commitment(text,jsonb)',
+    'trust.hold_admitted_source_effect(uuid,uuid,uuid,text,text,jsonb)',
     'trust.verified_scope()',
     'trust.scope_payload(xid8,timestamptz,uuid,uuid)',
     'trust.scope_mac(text)',

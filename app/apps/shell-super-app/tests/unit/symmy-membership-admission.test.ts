@@ -12,7 +12,7 @@ import {
 } from '@app/symmy-integration/api/symmy-route-context';
 import { AdmitSymmyJobPayloadSchema } from '@app/symmy-integration/api/admit-symmy-job-action';
 import { SymmyGroupCustomerRowsSchema } from '@app/symmy-integration/symmy-internal-contracts';
-import { Effect, Redacted, Schema } from 'effect';
+import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/http';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -315,7 +315,27 @@ describe('membership fresh admission owner reads', () => {
         const hash = createHash('sha256').update(`customer-record\u0000${customerId}`).digest('hex');
         return `symmy-customer:${hash}`;
       });
-      yield* current.submit(...ids);
+      const claims = ids.flatMap((customerId, index) => {
+        const recordId = canonicalIds[index];
+        return recordId?.startsWith('symmy-customer:') === true
+          ? [
+              {
+                ...customerSource,
+                recordId,
+                tenantId,
+                wireDigest: createHash('sha256').update(`customer-record\u0000${customerId}`).digest('hex'),
+              },
+            ]
+          : [];
+      });
+      yield* current
+        .submit(...ids)
+        .pipe(
+          Effect.provideService(
+            ConfigProvider.ConfigProvider,
+            ConfigProvider.fromUnknown({ ONTOS_SYMMY_CUSTOMER_RECORD_PROVENANCE: JSON.stringify(claims) }),
+          ),
+        );
       expect(
         current.calls
           .slice(1, -1)

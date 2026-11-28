@@ -347,6 +347,13 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
           Match.when({ operation: 'ASSIGN' }, (assignment) => Option.fromUndefinedOr(assignment.customerSource)),
           Match.orElse(() => Option.none()),
         );
+        const reserved = payload.manager.sourceNamespace.startsWith('erp-membership-v1:');
+        if (reserved !== Option.isSome(customerSource) || (reserved && admittedBy === null)) {
+          return yield* new CustomerGroupMembershipSourceRejected({
+            code: 'SOURCE_AUTHORITY_DENIED',
+            reason: rejectionReasons.SOURCE_AUTHORITY_DENIED,
+          });
+        }
         if (Option.isSome(customerSource)) {
           // The prior positive was in Symmy's transaction. Re-evaluate both independent decisions while
           // Privacy cannot commit a change to their governing inputs. No policy is replicated in Commerce.

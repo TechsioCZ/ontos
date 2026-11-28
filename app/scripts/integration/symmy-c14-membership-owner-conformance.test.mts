@@ -763,7 +763,7 @@ it.live(
               yield* observeCustomerFixtureUntil(
                 admin<{
                   waiting: boolean;
-                }>`select exists(select from pg_stat_activity where ${holder.pid}=any(pg_blocking_pids(pid)) and query like '%hold_source_eligibility_stable%') as waiting`,
+                }>`select exists(select from pg_locks where locktype='advisory' and not granted and mode='ExclusiveLock' and ${holder.pid}=any(pg_blocking_pids(pid))) as waiting`,
                 ([row]) => row?.waiting ?? false,
               );
               yield* endSourceProcessingNativeGrant({
