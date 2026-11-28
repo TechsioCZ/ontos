@@ -58,6 +58,7 @@ import {
   CorrectPartyFactPayloadSchema,
   CreatePartyPayloadSchema,
   MatchPartyPayloadSchema,
+  PartyCommandUnprocessableProblemSchema,
   ResolvePartyCommandCommitPayloadSchema,
   UpdatePartyPayloadSchema,
 } from '@app/party-registry/api';
@@ -565,6 +566,9 @@ const ownerFailure = Effect.fn('SymmyPartyCommerceAdapters.ownerFailure')(functi
   if (Option.isSome(invocation)) {
     yield* input.recordInvocationId(invocation.value.invocationId);
     return yield* symmyJobWorkerUnavailable(cause);
+  }
+  if (Schema.is(PartyCommandUnprocessableProblemSchema)(cause)) {
+    return yield* outcome(input, 'denied');
   }
   const failure = Schema.decodeUnknownOption(ownerFailureSchema)(cause);
   if (Option.isSome(failure)) {

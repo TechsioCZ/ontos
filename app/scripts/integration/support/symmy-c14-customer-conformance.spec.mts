@@ -1280,8 +1280,32 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
         ]),
       ),
     );
-    expect(resent.every((effect) => Option.isSome(effect.owner_invocation_id))).toBe(true);
+    const resentContact = resent.find(({ effect_key }) => effect_key === 'contact-add');
+    assert.isOk(resentContact !== undefined);
+    // A new occurrence cannot ADD an already-bound source contact again. The permanent owner refusal settles,
+    // but supplies no committed receipt or native success identity; the person and profile still match normally.
+    expect(Option.isNone(resentContact.owner_invocation_id)).toBe(true);
+    expect(resentContact.owner_receipt).toBeNull();
+    expect(
+      resent
+        .filter(({ effect_key }) => effect_key !== 'contact-add')
+        .every((effect) => Option.isSome(effect.owner_invocation_id)),
+    ).toBe(true);
+    const resendStatusResponse = yield* client.get(`${shell.baseUrl}/api/symmy/v1/jobs/${resend.jobId}`, { headers });
+    expect(resendStatusResponse.status).toBe(200);
+    const resendStatus = yield* resendStatusResponse.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(SymmyJobStatusResponseSchema.members[0])),
+    );
+    expect(resendStatus).toMatchObject({ status: 'completed_partial' });
+    assert.isOk(resendStatus.items !== undefined);
+    expect(resendStatus.items.flatMap(({ effects }) => effects).some(({ status }) => status === 'denied')).toBe(true);
     expect((yield* tenantRows)[0]).toEqual({ parties: 2, profiles: 2 });
+    const [contactCount] = yield* admin<{
+      count: number;
+    }>`select count(*)::integer as count from party.party_contact_points where tenant_id=${tenantId}`;
+    assert.isOk(contactCount !== undefined);
+    expect(contactCount.count).toBe(1);
+    expect((yield* ownerWrites)[0]).toEqual({ party: 4, profile: 4 });
     yield* secondWorker.child.kill();
     yield* secondWorker.child.exitCode;
     yield* Effect.logInfo({ phase: 'customer-roundtrip-and-search-accepted' });
@@ -1307,7 +1331,7 @@ export const runCustomerConformance = Effect.fn('runCustomerConformance')(
       count: number;
     }>`select count(*)::integer as count from core.action_invocations
           where tenant_id=${tenantId} and status='succeeded' and action_key in ('party.registry.create-party','commerce.customer-context.ensure-retail-customer-profile')`;
-    expect(afterDisableWrites?.count).toBe(6);
+    expect(afterDisableWrites?.count).toBe(8);
     yield* disabledWorker.child.kill();
     yield* disabledWorker.child.exitCode;
     yield* Effect.logInfo({ phase: 'customer-scenario-complete' });

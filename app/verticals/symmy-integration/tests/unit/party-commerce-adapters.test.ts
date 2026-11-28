@@ -63,6 +63,8 @@ import {
 } from '@app/commerce-customer-context/api/customer-price-group-assignment-receipt';
 import { AssignCustomerPriceGroupResultSchema } from '@app/commerce-customer-context/actions/assign-customer-price-group';
 import {
+  AddContactPointPayloadSchema,
+  AddContactPointResultSchema,
   CreatePartyPayloadSchema,
   CreatePartyResultSchema,
   CounterpartyCustomerOnboardPayloadSchema,
@@ -72,6 +74,7 @@ import {
   PartyCommandAlreadyCommittedProblemSchema,
   PartyCommandCommitIndeterminateProblemSchema,
   PartyCommandForbiddenProblemSchema,
+  PartyCommandUnprocessableProblemSchema,
 } from '@app/party-registry/api';
 import {
   PartySourceEffectReceiptRequestSchema,
@@ -209,6 +212,11 @@ const ownerEndpoint = <Body, BodyEncoded, Success, SuccessEncoded>(
   return endpoint;
 };
 const owners = {
+  addContact: ownerEndpoint('/party-registry/actions/add-contact-point', {
+    body: AddContactPointPayloadSchema,
+    success: AddContactPointResultSchema,
+    write: true,
+  }),
   address: ownerEndpoint('/commerce-customer-context/actions/add-saved-address', {
     body: AddSavedAddressPayloadSchema,
     success: AddSavedAddressResultSchema,
@@ -746,6 +754,29 @@ const contactPointRef = {
   resourceType: 'party.registry.party-contact-point',
   tenantId,
 };
+const addContactEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
+  ...effect,
+  intent: {
+    _tag: 'AddPartyContactPoint',
+    payload: {
+      contactPoint: { preferred: true, type: 'EMAIL', value: 'Grace.Hopper@Example.test' },
+      partyRef: canonicalPartyRef,
+      privacyClassification: 'PERSONAL',
+      provenance: { authoritative: false, method: 'PROVIDER_OBSERVATION', source: 'EXTERNAL_EVIDENCE' },
+      sourceReference: {
+        occurrenceId: 'occurrence-1',
+        recordId: 'customer-1',
+        source: { issuer: 'internal-symmy', namespace: 'customers', recordType: 'CUSTOMER', routeRef: routeId },
+      },
+      validFrom: '2026-11-07T00:00:00.000Z',
+    },
+  },
+  ref: {
+    ...effect.ref,
+    operation: { entrypointKey: 'party.registry.add-contact-point', moduleId: 'party.registry', schemaVersion: '1' },
+    originalTarget: canonicalPartyRef,
+  },
+});
 const endContactEffect = Schema.decodeUnknownSync(SymmyPinnedEffectSchema)({
   ...effect,
   intent: {
@@ -788,6 +819,57 @@ const alreadyCommittedWithoutReply = () =>
   );
 
 describe('governed internal Party adapter', () => {
+  it.effect.each(PartyCommandUnprocessableProblemSchema.fields.code.literals)(
+    'settles native Party 422 refusal %s as denied without inventing a committed contact receipt',
+    (code) =>
+      Effect.gen(function* unprocessableContact() {
+        reset();
+        peer.fact = { actionInvocationId: invocationId, status: 'received' };
+        peer.addContact.fail(
+          PartyCommandUnprocessableProblemSchema,
+          PartyCommandUnprocessableProblemSchema.make({
+            code,
+            detail: 'The command is not eligible for the requested operation.',
+            status: 422,
+            title: 'Party Registry command ineligible',
+            type: 'https://ontos.dev/problems/party-command-ineligible',
+          }),
+        );
+        const adapters = yield* makeSymmyPartyCommerceAdapters;
+        const adapter = adapters.find(
+          (candidate) => candidate.operation.entrypointKey === addContactEffect.ref.operation.entrypointKey,
+        );
+        if (adapter === undefined) {
+          return yield* symmyJobWorkerUnavailable();
+        }
+        const receipts: unknown[] = [];
+        const invocations: string[] = [];
+        const result = yield* adapter.execute({
+          ...input(),
+          effect: addContactEffect,
+          recordInvocationId: (id) =>
+            Effect.sync(() => {
+              invocations.push(id);
+            }),
+          recordOwnerReceipt: (receipt) =>
+            Effect.sync(() => {
+              receipts.push(receipt);
+            }),
+        });
+        expect(result).toMatchObject({ owner: 'party.registry', status: 'denied' });
+        expect(peer.addContact.sent).toHaveLength(1);
+        expect(peer.addContact.sent[0]?.headers.get('idempotency-key')).toBe(effectId);
+        expect(peer.gateway).toHaveLength(1);
+        expect(peer.gateway[0]?.audience).toBe('party-registry');
+        expect(peer.receipt.sent).toHaveLength(0);
+        expect(peer.factReads).toBe(0);
+        expect(receipts).toEqual([]);
+        expect(invocations).toEqual([]);
+        expect(peer.fact?.status).toBe('received');
+        return yield* Effect.void;
+      }).pipe(asSymmyWorker),
+  );
+
   it.effect('preserves the original Contact end no-change receipt instead of guessing from current state', () =>
     Effect.gen(function* contactNoChange() {
       reset();
