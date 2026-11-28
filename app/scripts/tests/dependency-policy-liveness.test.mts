@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { globSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -12,6 +12,7 @@ import { isMap, isScalar, parseAllDocuments, parseDocument } from 'yaml';
 const appRoot = path.resolve(import.meta.dirname, '../..');
 
 type Manifests = Readonly<Record<string, Readonly<Record<string, string>>>>;
+type OptionalPeerProbe = (parent: SelectorPart, child: string) => boolean;
 type RequiredOverrides = Readonly<Record<string, string>>;
 
 const FrameworkIdentitySchema = Schema.fromJsonString(
@@ -143,6 +144,7 @@ const deadOverride = (
   lock: Lockfile,
   manifests: Manifests,
   required: RequiredOverrides,
+  optionalPeer: OptionalPeerProbe,
 ): readonly string[] => {
   const requiredValue = required[key];
   if (requiredValue !== undefined) {
@@ -154,6 +156,19 @@ const deadOverride = (
   }
   const target = parts.at(-1)?.name ?? key;
   const parent = parts.at(-2);
+  // A removal override erases its own edge from the lockfile. The unmodified installed parent manifest
+  // must still declare that optional peer, and the resolved graph must actually omit the edge.
+  if (
+    value === '-' &&
+    parent !== undefined &&
+    parent.version !== '' &&
+    lock.packageIds.has(`${parent.name}@${parent.version}`) &&
+    optionalPeer(parent, target)
+  ) {
+    return [...(lock.dependents.get(target) ?? [])].some((id) => matchesPackage(parent, id))
+      ? [`overrides.${key} did not remove the optional peer`]
+      : [];
+  }
   const importers = [...lock.importerEdges].filter(([, edges]) => edges.has(target)).map(([importer]) => importer);
   const dependents = [...(lock.dependents.get(target) ?? [])];
   if (dependents.length === 0 && importers.length === 0) {
@@ -221,6 +236,7 @@ const findDeadDependencyPolicy = (
   lockSource: string,
   manifests: Manifests,
   required: RequiredOverrides = {},
+  optionalPeer: OptionalPeerProbe = () => false,
 ): readonly string[] => {
   const lock = parseLockfile(lockSource);
   const workspace = Schema.decodeUnknownSync(WorkspaceSchema)(parseDocument(workspaceYaml).toJS() ?? {});
@@ -229,7 +245,7 @@ const findDeadDependencyPolicy = (
       workspace.overrides?.[key] === undefined ? [`overrides.${key} is required by the pinned framework policy`] : [],
     ),
     ...Object.entries(workspace.overrides ?? {}).flatMap(([key, value]) =>
-      deadOverride(key, value, lock, manifests, required),
+      deadOverride(key, value, lock, manifests, required, optionalPeer),
     ),
     ...Object.entries(workspace.peerDependencyRules?.allowedVersions ?? {}).flatMap(([key, value]) =>
       deadPeerRule(key, value, lock),
@@ -237,6 +253,34 @@ const findDeadDependencyPolicy = (
     ...Object.keys(workspace.packageExtensions ?? {}).flatMap((key) => deadPackageExtension(key, lock)),
     ...deadPatches(workspaceYaml, lock),
   ];
+};
+
+const publishedPeers = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      name: Schema.String,
+      peerDependencies: Ranges,
+      peerDependenciesMeta: Schema.optionalKey(
+        Schema.Record(Schema.String, Schema.Struct({ optional: Schema.optionalKey(Schema.Boolean) })),
+      ),
+      version: Schema.String,
+    }),
+  ),
+);
+const installedOptionalPeer: OptionalPeerProbe = (parent, child) => {
+  const scope = path.join(appRoot, 'node_modules/.pnpm');
+  const prefix = parent.name.replace('/', '+');
+  return globSync(`${prefix}@${parent.version}*/node_modules/${parent.name}/package.json`, { cwd: scope }).some(
+    (manifest) => {
+      const pkg = publishedPeers(readFileSync(path.join(scope, manifest), 'utf-8'));
+      return (
+        pkg.name === parent.name &&
+        pkg.version === parent.version &&
+        pkg.peerDependencies?.[child] !== undefined &&
+        pkg.peerDependenciesMeta?.[child]?.optional === true
+      );
+    },
+  );
 };
 
 const readManifests = (lockSource: string): Manifests =>
@@ -327,7 +371,9 @@ it.effect('pnpm-workspace.yaml carries no dead overrides, peer rules, extensions
     const policy = yield* Schema.decodeUnknownEffect(FrameworkPolicySchema)(source);
     const required = policy.ULTRAMODERN_WORKSPACE_POLICY.pnpm.overrides;
     expect(Object.keys(required).length).toBeGreaterThan(0);
-    expect(findDeadDependencyPolicy(workspaceYaml, lockSource, readManifests(lockSource), required)).toEqual([]);
+    expect(
+      findDeadDependencyPolicy(workspaceYaml, lockSource, readManifests(lockSource), required, installedOptionalPeer),
+    ).toEqual([]);
   }),
 );
 
