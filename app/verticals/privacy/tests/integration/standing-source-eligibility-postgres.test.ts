@@ -59,11 +59,14 @@ it.live('checks standing source-route authorization against the native Privacy l
     const subjectRefOfTenant = subjectRefOf(tenantId);
     const subjectOne = yield* nextId();
     const subjectTwo = yield* nextId();
+    const subjects = [
+      { recordId: 'client:one', subjectId: subjectOne },
+      { recordId: 'client:two', subjectId: subjectTwo },
+    ];
     let fixture = yield* prepareOwner((transaction, scope) =>
       Effect.gen(function* setupPrivacyFacts() {
         const purposes = yield* processingPurposeRepositoryForScope(transaction, scope);
         const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-        const authorizations = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
         const purpose = yield* purposes.create(tenantId, legalEntityId, yield* nextId(), {
           businessCode: 'SYMMY_INTEGRATION',
           effectiveFrom: '2026-11-01T00:00:00.000Z',
@@ -79,10 +82,6 @@ it.live('checks standing source-route authorization against the native Privacy l
           tenantId,
           versionId: firstVersion.versionId,
         });
-        const subjects = [
-          { recordId: 'client:one', subjectId: subjectOne },
-          { recordId: 'client:two', subjectId: subjectTwo },
-        ];
         for (const { recordId, subjectId } of subjects) {
           yield* repository.createSubject(
             { legalEntityId, tenantId },
@@ -146,19 +145,6 @@ it.live('checks standing source-route authorization against the native Privacy l
           },
         });
         yield* repository.assignLegalBasis(tenantId, legalEntityId, yield* nextId(), assignment);
-        yield* authorizations.create(facts.authorization, yield* nextId());
-        for (const { recordId, subjectId } of subjects) {
-          yield* authorizations.admit({
-            actionInvocationId: yield* nextId(),
-            admittedAt: facts.from,
-            authorizationId: facts.authorization.authorizationRef.resourceId,
-            sources: [
-              { role: 'SUBJECT', source: { ...facts.route, recordId } },
-              { role: 'CHILD', source: { ...facts.route, recordId: `contact:${recordId}` } },
-            ],
-            subjectId,
-          });
-        }
         return { ...facts, assignment };
       }),
     );
@@ -178,6 +164,74 @@ it.live('checks standing source-route authorization against the native Privacy l
           evaluateSourceProcessingEligibility(input, caller, services, fixture.evaluatedAt),
         ),
       );
+    const intervention = (
+      kind: 'RESTRICTION' | 'OBJECTION',
+      status: 'ACTIVE' | 'RESOLVED',
+      scopeOfUse = intendedScope,
+    ) =>
+      prepareOwner((transaction, scope) =>
+        Effect.gen(function* recordIntervention() {
+          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
+          const actionInvocationId = yield* nextId();
+          const observedAt = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
+          const ref = `fixture:${kind}:${status}:${scopeOfUse.processingScopeRef.scopeId}:${tenantId}`;
+          yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
+            actionInvocationId,
+            asOf: observedAt,
+            authorityRef: ref,
+            evidenceRefs: [ref],
+            intervention: {
+              currentness: { authoritative: true, observedAt, revision: status, sourceRef: ref },
+              interventionRef: ref,
+              kind,
+              scope: scopeOfUse,
+              status,
+            },
+            legalEntityId,
+            receiptRef: ref,
+            tenantId,
+          });
+        }),
+      );
+    // No exact source context is configured. Only the original, exact-use interventions are retained.
+    const exactScope = {
+      ...intendedScope,
+      dataCategoryRefs: ['previous:customer-name'],
+      operation: fixture.request.operation,
+      processingScopeRef: { ...intendedScope.processingScopeRef, scopeId: 'previous:exact' },
+      purposeRef: yield* nextId(),
+      purposeVersionId: yield* nextId(),
+      recipientRefs: ['previous:customer-registry'],
+    };
+    yield* intervention('RESTRICTION', 'ACTIVE', exactScope);
+    yield* prepareOwner((transaction, scope) =>
+      Effect.gen(function* firstStandingGrant() {
+        const authorizations = yield* sourceProcessingAuthorizationRepositoryForScope(transaction, scope);
+        yield* authorizations.create(fixture.authorization, yield* nextId());
+        for (const { recordId, subjectId } of subjects) {
+          yield* authorizations.admit({
+            actionInvocationId: yield* nextId(),
+            admittedAt: fixture.from,
+            authorizationId: fixture.authorization.authorizationRef.resourceId,
+            sources: [
+              { role: 'SUBJECT', source: { ...fixture.route, recordId } },
+              { role: 'CHILD', source: { ...fixture.route, recordId: `contact:${recordId}` } },
+            ],
+            subjectId,
+          });
+        }
+      }),
+    );
+    yield* intervention('RESTRICTION', 'RESOLVED', {
+      ...exactScope,
+      processingScopeRef: { ...exactScope.processingScopeRef, scopeId: 'another:exact' },
+    });
+    expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
+    yield* intervention('OBJECTION', 'ACTIVE', exactScope);
+    expect((yield* read(fixture.requestFor('client:two', 'occurrence:cutover'))).outcome).toBe('ALLOWED');
+    yield* intervention('RESTRICTION', 'RESOLVED', exactScope);
+    expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
+    yield* intervention('OBJECTION', 'RESOLVED', exactScope);
     expect((yield* read()).outcome).toBe('ALLOWED');
     const child = yield* read(fixture.requestFor('contact:client:one', 'occurrence:child'));
     expect(child.outcome === 'ALLOWED' && child.evidence.evaluatedScope.subjectRef.resourceId).toBe(subjectOne);
@@ -196,31 +250,6 @@ it.live('checks standing source-route authorization against the native Privacy l
       (yield* read({ ...fixture.request, target: { kind: 'PARTY', resourceId: 'fixture:party-target' } })).outcome,
     ).toBe('DENIED');
     expect((yield* read({ ...fixture.request, operation: 'READ' })).outcome).toBe('DENIED');
-    const intervention = (kind: 'RESTRICTION' | 'OBJECTION', status: 'ACTIVE' | 'RESOLVED') =>
-      prepareOwner((transaction, scope) =>
-        Effect.gen(function* recordIntervention() {
-          const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
-          const actionInvocationId = yield* nextId();
-          const observedAt = status === 'ACTIVE' ? fixture.from : '2026-11-02T00:00:00.000Z';
-          const ref = `fixture:${kind}:${status}:${tenantId}`;
-          yield* repository.recordProcessingIntervention(tenantId, legalEntityId, actionInvocationId, {
-            actionInvocationId,
-            asOf: observedAt,
-            authorityRef: ref,
-            evidenceRefs: [ref],
-            intervention: {
-              currentness: { authoritative: true, observedAt, revision: status, sourceRef: ref },
-              interventionRef: ref,
-              kind,
-              scope: intendedScope,
-              status,
-            },
-            legalEntityId,
-            receiptRef: ref,
-            tenantId,
-          });
-        }),
-      );
     yield* intervention('OBJECTION', 'ACTIVE');
     yield* intervention('RESTRICTION', 'ACTIVE');
     expect(yield* read()).toMatchObject({ outcome: 'DENIED', reason: 'PROCESSING_NOT_ALLOWED' });
