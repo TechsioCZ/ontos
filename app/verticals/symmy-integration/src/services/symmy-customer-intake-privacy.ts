@@ -340,9 +340,9 @@ const admitSubject = Effect.fn('SymmyCustomerIntakePrivacy.admitSubject')(functi
   scope: OperationalScope,
   payload: AdmitSourceProcessingSubjectPayload,
   idempotencyKey: string,
-  crypto: SecureRandom.SecureRandom,
+  crypto: SecureRandom.SecureRandom['Service'],
 ) {
-  const requestCorrelation = yield* crypto.uuidV4().pipe(Effect.mapError(unavailable));
+  const requestCorrelation = yield* crypto.uuidV4();
   const gateway = yield* acquireDelegatedGatewayContext(
     {
       audience: 'privacy',
@@ -553,7 +553,7 @@ const customerIntakePrivacyCalls = Effect.fn('SymmyCustomerIntakePrivacy.calls')
   return {
     admit: (payload, idempotencyKey) => admitSubject(scope, payload, idempotencyKey, crypto),
     check: Effect.fn('SymmyCustomerIntakePrivacy.check')(function* check(request) {
-      const requestCorrelation = yield* crypto.uuidV4().pipe(Effect.mapError(unavailable));
+      const requestCorrelation = yield* crypto.uuidV4();
       const gateway = yield* acquireDelegatedGatewayContext(
         {
           audience: 'privacy',

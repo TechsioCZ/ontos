@@ -3,6 +3,7 @@ import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Array as EffectArray, Effect, Layer, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/reactivity';
+import { matchesHistoryConstraint } from '../src/database/history-constraint.ts';
 import {
   COMMUNICATIONS_SCHEMA_NAME,
   COMMUNICATIONS_TABLE_INVENTORY,
@@ -437,9 +438,7 @@ const verifyHistoryContract = Effect.fn('Communications.verifyHistoryContract')(
     return (
       found === undefined ||
       found.table !== `${COMMUNICATIONS_SCHEMA_NAME}.${table}` ||
-      (exact !== undefined && found.definition !== exact) ||
-      // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Communications #1556: the database constraint definition is SQL text. Remove with typed receiver detection.
-      (contains ?? []).some((fragment) => !found.definition.includes(fragment))
+      !matchesHistoryConstraint(found.definition, exact, contains)
     );
   });
   const [contract] = yield* client

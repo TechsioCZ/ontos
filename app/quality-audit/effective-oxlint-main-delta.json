@@ -21,7 +21,7 @@
       "before": "7.11.0"
     }
   },
-  "baseCommit": "8c1f242d6441827038fb7505d3d5a8a97d2a4a0d",
+  "baseCommit": "c49606f60184386c2ef75f8a7b00bbdce97ad5a9",
   "basePolicySha256": "52aa0cde2d1d69136c665beb3a354b8d4814a3ed7a5a59615c8dcd7ea851413f",
   "candidatePolicySha256": "d157aaa334756f5d24f509fe7a097d1013a7f3f464bdf46038dce2e6e211b4bc",
   "declaredDefaults": {

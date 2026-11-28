@@ -52,13 +52,9 @@ const createOrAcceptOwnedMutation = (
     const current = yield* fileSystem
       .readFileString(filePath)
       .pipe(Effect.mapError((cause) => scaffoldError(`failed to read ${filePath}`, cause)));
-    if (
-      current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
-      // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Codesmith #1556: current is file text; remove when the rule distinguishes substring searches.
-      requiredMarkers.every((marker) => current.includes(marker))
-    ) {
-      // oxlint-disable-next-line react-doctor/js-set-map-lookups -- Codesmith #1556: each contract marker is a substring of file text, not an element lookup. Remove with typed receiver detection.
-      const missingContract = requiredContracts.find(({ marker }) => !current.includes(marker));
+    const hasMarker = (marker: string) => current.includes(marker);
+    if (current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) && requiredMarkers.every(hasMarker)) {
+      const missingContract = requiredContracts.find(({ marker }) => !hasMarker(marker));
       if (missingContract !== undefined) {
         return yield* scaffoldError(
           `incompatible generated Action boundary: ${filePath}. ${missingContract.migration}`,
