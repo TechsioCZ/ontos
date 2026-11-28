@@ -1,7 +1,7 @@
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { NodeCrypto } from '@effect/platform-node';
-import { Effect, Option, Schema } from 'effect';
+import { Array as EffectArray, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
@@ -754,7 +754,7 @@ describe('Set composition component Current basis', () => {
     expect(
       setComponentConfigurationDependencies('44444444-4444-4444-8444-444444444444', selection, {
         ...assessment,
-        unitRevisions: [{ ...assessment.unitRevisions[0], revision: 4 }],
+        unitRevisions: [{ ...EffectArray.getUnsafe(assessment.unitRevisions, 0), revision: 4 }],
       }),
     ).toMatchObject({ code: 'CONFIGURATION_UNIT_UNPROVEN', status: 'INDETERMINATE' });
   });

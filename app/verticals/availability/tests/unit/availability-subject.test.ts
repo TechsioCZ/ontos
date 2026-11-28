@@ -93,7 +93,7 @@ describe('Availability exact subject', () => {
       ['channelId', 'channelId'],
       ['marketId', 'marketId'],
       ['sellingLegalEntityId', 'legalEntityId'],
-    ]) {
+    ] as const) {
       const changed = decode({
         ...input,
         purchasingContext: {

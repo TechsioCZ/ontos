@@ -23,7 +23,9 @@ it('publishes exactly the approved fail-closed Assortment permissions', () => {
   const permissions = assortmentManifest.publicSurface.businessPermissions ?? [];
 
   expect(
-    sortPermissionPairs(permissions.map(({ allowedScopeKinds, key }) => [key, allowedScopeKinds[0]] as const)),
+    sortPermissionPairs(
+      permissions.map(({ allowedScopeKinds, key }) => [key, EffectArray.getUnsafe(allowedScopeKinds, 0)] as const),
+    ),
   ).toEqual(sortPermissionPairs(expectedPermissions));
   expect(permissions).toHaveLength(expectedPermissions.length);
 

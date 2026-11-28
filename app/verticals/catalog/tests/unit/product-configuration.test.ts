@@ -66,7 +66,7 @@ const definition: ProductConfigurationDefinitionRevision = {
     revision: Schema.decodeUnknownSync(CatalogRevisionNumberSchema)(1),
   },
 };
-const selected: ProductConfiguration = {
+const selected = {
   definition: definition.reference,
   productRef,
   values: [
@@ -74,7 +74,7 @@ const selected: ProductConfiguration = {
     { amount: '83', choiceKey: 'length', kind: 'MEASURED_VALUE', unitRef },
   ],
   variantRef: whiteVariant,
-};
+} as const satisfies ProductConfiguration;
 
 describe('Product Configuration definition and identity', () => {
   it('supports only explicit Single Choice and exact Measured Value, including optional absence', () => {
@@ -173,7 +173,7 @@ describe('Product Configuration definition and identity', () => {
           revision: 1,
           ruleId: 'length-range',
         },
-      ],
+      ] as const,
       source: 'CATALOG_OWNER_CURRENT_READ' as const,
       status: 'CONFIRMED' as const,
     };

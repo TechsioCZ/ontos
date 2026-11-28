@@ -24,7 +24,7 @@ import {
 } from '../../src/persistence/product-configuration-persistence.ts';
 import type { PublishProductConfigurationInput } from '../../src/persistence/product-configuration-persistence.ts';
 
-const input: PublishProductConfigurationInput = {
+const input = {
   actionInvocationId: '11111111-1111-4111-8111-111111111111',
   choices: [
     {
@@ -82,7 +82,7 @@ const input: PublishProductConfigurationInput = {
   principalId: '22222222-2222-4222-8222-222222222222',
   productId: '33333333-3333-4333-8333-333333333333',
   reason: 'Verified product configuration',
-};
+} as const satisfies PublishProductConfigurationInput;
 
 const openMeasuredRule = (minimum: string, maximum: string) => ({
   choiceKey: 'length',

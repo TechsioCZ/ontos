@@ -12,7 +12,7 @@ import {
 } from '@app/core-runtime';
 import type { ReadRuntimeService, TrustedPrincipalContext } from '@app/core-runtime';
 import { makeReadTestHarness } from '@app/core-runtime/testing/reads';
-import { DateTime, Effect, Schema } from 'effect';
+import { Struct, DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { catalogAuthorityBundles, catalogPublicOperationContracts } from '../../shared/api.ts';
@@ -657,13 +657,9 @@ it.layer(NodeCrypto.layer)('Catalog registered resource target agreement', (suit
           ownerRegistration: catalogRegistration,
           scope: targetScope,
         });
-        const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
-          authBindingId: targetScope.authBindingId,
-          authContextRef: targetScope.authContextRef,
-          authMethod: targetScope.authMethod,
-          principalId: targetScope.principalId,
-          tenantId: targetScope.tenantId,
-        });
+        const principal = Schema.decodeSync(TrustedPrincipalContextSchema)(
+          Struct.pick(targetScope, ['authBindingId', 'authContextRef', 'authMethod', 'principalId', 'tenantId']),
+        );
         const failure = yield* read.run(harness.runtime, principal, resourceTargetInputs()).pipe(Effect.flip);
         expect(Schema.is(OperationContextDenied)(failure)).toBe(true);
         expect(harness.snapshot().ownerQueries).toEqual([]);

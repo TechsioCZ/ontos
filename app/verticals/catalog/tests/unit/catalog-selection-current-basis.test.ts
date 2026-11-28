@@ -267,7 +267,7 @@ describe('Catalog Selection Current basis', () => {
       for (const [field, value] of [
         ['resourceType', 'commerce.catalog.product'],
         ['tenantId', '99999999-9999-4999-8999-999999999999'],
-      ]) {
+      ] as const) {
         const bad = structuredClone(configured);
         const unitRef = bad.configuration?.choices[0]?.unit?.resourceRef;
         if (unitRef === undefined) {
@@ -1058,10 +1058,11 @@ it.effect('reassesses an unchanged Set selection against component Current facts
     });
     const dialect = new PgDialect();
     const componentScope = (params: readonly unknown[], previous: boolean): boolean => {
-      if ([componentProductId, componentVariantId].some((id) => params.includes(id))) {
+      const boundIds = new Set(params);
+      if ([componentProductId, componentVariantId].some((id) => boundIds.has(id))) {
         return true;
       }
-      return [productId, variantId].some((id) => params.includes(id)) ? false : previous;
+      return [productId, variantId].some((id) => boundIds.has(id)) ? false : previous;
     };
     let readingComponent = false;
     const transaction = {
