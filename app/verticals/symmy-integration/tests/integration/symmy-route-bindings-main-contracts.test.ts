@@ -95,6 +95,23 @@ it.effect(
   () =>
     Effect.gen(function* enrolledOnMain() {
       const contracts = yield* mainContracts;
+      // Admission requires both the eligibility Read and the admission Action as operation contracts. An Action in
+      // publicSurface.actions alone is callable over HTTP but cannot satisfy requireModuleOperation.
+      const symmy = contracts.find(({ manifest }) => manifest.module.id === 'integration.symmy');
+      const intakeRequirements = (symmy?.manifest.requirements?.operations ?? []).filter(
+        ({ entrypointKey, provider }) =>
+          entrypointKey === 'integration.symmy.admit-symmy-job' && provider.moduleId === 'privacy.core',
+      );
+      expect(intakeRequirements).toHaveLength(2);
+      for (const { provider } of intakeRequirements) {
+        const owner = contracts.find(({ manifest }) => manifest.module.id === provider.moduleId);
+        expect(
+          owner?.manifest.publicSurface.operationContracts?.some(
+            ({ entrypoint, schemaVersion }) =>
+              entrypoint.entrypointKey === provider.entrypointKey && schemaVersion === provider.schemaVersion,
+          ),
+        ).toBe(true);
+      }
       expect(requiredOnly('customersBatch', contracts)).toEqual([]);
       // Every owner a customer plan reaches registers each call its requirements name, live and on recovery.
       const person = requiredOnlyPlan('customersBatch', contracts, enrolling(...personPlan));

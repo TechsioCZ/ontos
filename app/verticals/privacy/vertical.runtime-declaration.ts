@@ -13,6 +13,7 @@ import { Result, Schema } from 'effect';
 import { acknowledgePrivacyNoticeAction } from './src/actions/acknowledge-privacy-notice.action.ts';
 import { addProcessingPurposeVersionAction } from './src/actions/add-processing-purpose-version.action.ts';
 import { admitSourceProcessingSubjectAction } from './src/actions/admit-source-processing-subject.action.ts';
+import { AdmitSourceProcessingSubjectActionApi } from './shared/apis/admit-source-processing-subject-action.ts';
 import { ApplicabilityDecisionsApi } from './shared/apis/applicability-decisions.ts';
 import { assignDsrResolverAction } from './src/actions/assign-dsr-resolver.action.ts';
 import { assignLegalBasisAction } from './src/actions/assign-legal-basis.action.ts';
@@ -170,6 +171,7 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
     ],
     api: {
       // <generated-module-manifest-apis>
+      'admit-source-processing-subject-action': AdmitSourceProcessingSubjectActionApi,
       'applicability-decisions': ApplicabilityDecisionsApi,
       'current-consent': CurrentConsentApi,
       'dsr-cases': DsrCasesApi,
@@ -195,6 +197,11 @@ export const privacyRuntimeManifest: VerticalRuntimeRegistrationInput['manifest'
     },
     operationContracts: [
       // <generated-module-manifest-operation-contracts>
+      {
+        apiKey: 'admit-source-processing-subject-action',
+        operationKey: 'admitSourceProcessingSubjectAction.execute',
+        registration: admitSourceProcessingSubjectAction,
+      },
       {
         apiKey: 'measure-execution-eligibility',
         operationKey: 'measureExecutionEligibility.execute',
