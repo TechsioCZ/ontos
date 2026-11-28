@@ -40,6 +40,7 @@ import {
   symmyJobResourceRef,
   symmyJobIntentContentRef,
 } from '../../shared/domain/symmy-job-retention.ts';
+import { symmyJobExecutionStore } from '../../src/persistence/symmy-job-execution-store.ts';
 import { symmyJobStoreFactory } from '../../src/persistence/symmy-job-store.ts';
 
 const openDatabase = (connectionString: string) =>
@@ -702,6 +703,16 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
       const purgeProfile = crypto.randomUUID();
       const erasedOrder = yield* admit('retail', purgeProfile, '51');
       const following = yield* admit('retail', purgeProfile, '52');
+      const staleToken = crypto.randomUUID();
+      const [oldClaim] = yield* scoped((tx) =>
+        tx.invoke(claim, [erasedOrder.jobId, erasedOrder.effectId, staleToken, 1]),
+      );
+      assert.isDefined(oldClaim);
+      expect(oldClaim.mode).toBe('execute');
+      yield* admin
+        .update(symmyJobEffects)
+        .set({ leaseUntil: new Date(0) })
+        .where(eq(symmyJobEffects.effectId, erasedOrder.effectId));
       expect(yield* claimMode(following)).toBe('waiting');
       const policy = Schema.decodeUnknownSync(SymmyJobRetentionPolicySchema)({
         governanceLegalEntityId: legalEntityId,
@@ -728,6 +739,16 @@ export default defineWorkspaceDrizzleConfig({ out: ${JSON.stringify(migrationsFo
         ),
       ).toBe('PURGED');
       expect(yield* saved(erasedOrder.effectId)).toEqual({ state: 'settled', status: 'denied' });
+      const late = yield* scoped((tx) =>
+        symmyJobExecutionStore(tx).recordOwnerRequest(
+          erasedOrder.jobId,
+          erasedOrder.effectId,
+          staleToken,
+          oldClaim.version,
+          { authContextRef: 'expired-delivery', executorPrincipalId: principalId, requestHash: digest('51') },
+        ),
+      ).pipe(Effect.result);
+      expect(late._tag).toBe('Failure');
       expect(yield* claimMode(following)).toBe('execute');
 
       // Another profile is another lineage and never waits for this one.

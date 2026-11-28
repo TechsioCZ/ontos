@@ -2134,6 +2134,27 @@ const recoverGroup = Effect.fn('SymmyPartyCommerceAdapters.recoverGroup')(functi
   );
 });
 
+const originalMembershipHashMatches = Effect.fn('SymmyPartyCommerceAdapters.originalMembershipHashMatches')(
+  function* originalMembershipHashMatches(
+    input: SymmyEffectAdapterInput,
+    intent: Extract<SymmyPartyCommerceIntent, { readonly _tag: 'CustomerGroupMembership' }>,
+  ) {
+    if (input.originalExecutorPrincipalId === undefined || input.originalRequestHash === undefined) {
+      return false;
+    }
+    // Only the command whose request hash the original invocation was admitted under can be recovered.
+    const originalScope: SymmyPartyCommerceRequestScope = {
+      principalId: input.originalExecutorPrincipalId,
+      tenantId: input.effect.ref.occurrence.record.route.tenantId,
+    };
+    const pinnedHash = yield* prepareSymmyPartyCommerceRequestHash(
+      intent,
+      input.legalEntityId === undefined ? originalScope : { ...originalScope, legalEntityId: input.legalEntityId },
+    );
+    return pinnedHash === input.originalRequestHash;
+  },
+);
+
 const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembership')(function* recoverMembership(
   crypto: SecureRandom.SecureRandom['Service'],
   input: SymmyEffectAdapterInput,
@@ -2143,16 +2164,7 @@ const recoverMembership = Effect.fn('SymmyPartyCommerceAdapters.recoverMembershi
   if (input.originalExecutorPrincipalId === undefined || input.originalRequestHash === undefined) {
     return unavailableRecovery;
   }
-  // Only the command whose request hash the original invocation was admitted under can be recovered.
-  const originalScope: SymmyPartyCommerceRequestScope = {
-    principalId: input.originalExecutorPrincipalId,
-    tenantId: input.effect.ref.occurrence.record.route.tenantId,
-  };
-  const pinnedHash = yield* prepareSymmyPartyCommerceRequestHash(
-    intent,
-    input.legalEntityId === undefined ? originalScope : { ...originalScope, legalEntityId: input.legalEntityId },
-  );
-  if (pinnedHash !== input.originalRequestHash) {
+  if (!(yield* originalMembershipHashMatches(input, intent))) {
     return unavailableRecovery;
   }
   const query = {
@@ -2687,19 +2699,56 @@ const recoverIntent = Effect.fn('SymmyPartyCommerceAdapters.recover')(function* 
   );
 }, Effect.mapError(symmyJobWorkerUnavailable));
 
+const originalErpMembership = Effect.fn('SymmyPartyCommerceAdapters.originalErpMembership')(
+  function* originalErpMembership(input: SymmyEffectAdapterInput, operation: Operation) {
+    if (input.context === undefined || operation.tag !== 'CustomerGroupMembership') {
+      return Option.none();
+    }
+    const intent = yield* decodeIntent(input, operation);
+    return Match.value(intent).pipe(
+      Match.tag('CustomerGroupMembership', (membership) =>
+        symmyMembershipCustomerSource(membership.payload) === undefined ? Option.none() : Option.some(membership),
+      ),
+      Match.orElse(() => Option.none()),
+    );
+  },
+);
+
 const recoverWithOriginalCommand = Effect.fn('SymmyPartyCommerceAdapters.recoverOriginalCommand')(
   function* recoverWithOriginalCommand(
     crypto: SecureRandom.SecureRandom['Service'],
     operation: Operation,
     originalInput: SymmyEffectAdapterInput,
   ) {
-    const original = yield* readOriginalOwnerAttempt(originalInput);
+    const erp = yield* originalErpMembership(originalInput, operation);
+    if (
+      Option.isSome(erp) &&
+      originalInput.originalRequestHash !== undefined &&
+      !(yield* originalMembershipHashMatches(originalInput, erp.value))
+    ) {
+      return unavailableRecovery;
+    }
+    const original = yield* readOriginalOwnerAttempt(
+      originalInput,
+      Option.isSome(erp) ? { outcome: yield* outcome(originalInput, 'denied'), status: 'settled' } : undefined,
+    );
     if (original.status !== 'committed') {
       return original;
     }
     const input = yield* resolveDependencies(originalInput);
     if (input.originalInvocationId === undefined) {
       yield* input.recordInvocationId(original.invocationId);
+    }
+    if (Option.isSome(erp)) {
+      // A committed owner reply is immutable; ordinary receipt access can be revoked independently.
+      const terminal = original.sourceEffectOutcome;
+      if (terminal === undefined) {
+        return unavailableRecovery;
+      }
+      return {
+        outcome: yield* outcome(input, terminal === 'rejected' ? 'denied' : changedStatus(terminal === 'changed')),
+        status: 'settled' as const,
+      };
     }
     return yield* recoverIntent(crypto, operation, {
       ...input,
@@ -2711,7 +2760,21 @@ const recoverWithOriginalCommand = Effect.fn('SymmyPartyCommerceAdapters.recover
 export const makeSymmyPartyCommerceAdapters = Effect.gen(function* partyCommerceAdapters() {
   const crypto = yield* SecureRandom.SecureRandom;
   return operations.map((operation): SymmyEffectAdapter => ({
-    execute: (input) => executeIntent(crypto, operation, input),
+    execute: Effect.fn('SymmyPartyCommerceAdapters.executePinned')(function* executePinned(input) {
+      const answer = yield* executeIntent(crypto, operation, input);
+      if (
+        input.originalRequestHash === undefined ||
+        answer.status === 'accepted_change' ||
+        answer.status === 'accepted_no_change' ||
+        Option.isNone(yield* originalErpMembership(input, operation))
+      ) {
+        return answer;
+      }
+      // A refusal on this retry does not tell us what the already-sent request did. Only its exact
+      // terminal invocation may release the ledger; a still-open or missing invocation stays pending.
+      const original = yield* recoverWithOriginalCommand(crypto, operation, input);
+      return original.status === 'settled' ? original.outcome : yield* symmyJobWorkerUnavailable();
+    }),
     operation: { entrypointKey: operation.entrypointKey, moduleId: operation.moduleId, schemaVersion: '1' },
     recover: (input) => recoverWithOriginalCommand(crypto, operation, input),
   }));

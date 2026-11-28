@@ -516,6 +516,7 @@ it.live(
         expect(afterRace.tombstones).toBe(0);
         expect(Option.getOrNull(afterRace.fence)).toBe('open');
         expect(afterRace.owner_commands).toBe(3);
+        // Catalog recovery (commerce.catalog.create-product), not ERP membership recovery.
         // Keep the real delivery unfinished when simulating the lost acknowledgement. Core correctly
         // forbids changing a completed delivery back to pending; do not fabricate a second delivery.
         yield* fixture.worker.child.kill();

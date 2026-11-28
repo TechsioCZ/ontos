@@ -5,6 +5,7 @@ import { CustomerGroupMembershipRefSchema } from '../resources/customer-group-me
 import { CustomerGroupRefSchema } from '../resources/customer-group.ts';
 import {
   MembershipSourceAssertionSchema,
+  MembershipEffectSettlementSchema,
   MembershipSourceEffectIdSchema,
   MembershipSourceIdentitySchema,
   MembershipSourceManagerSchema,
@@ -220,6 +221,7 @@ export const OrganizationMembershipSourceResultSchema = Schema.Struct({
   processingKind: OrganizationMembershipProcessingKindSchema,
   reasonCode: OrganizationMembershipReasonCodeSchema,
   source: MembershipSourceAssertionSchema,
+  sourceEffectSettlement: Schema.optionalKey(MembershipEffectSettlementSchema),
 });
 export type OrganizationMembershipSourceResult = typeof OrganizationMembershipSourceResultSchema.Type;
 

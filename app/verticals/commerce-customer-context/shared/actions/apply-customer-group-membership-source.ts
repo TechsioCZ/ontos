@@ -2,6 +2,7 @@ import { CustomerProfileSourceAssertionSchema } from '../domain/customer-profile
 import { Schema } from 'effect';
 import {
   MembershipSourceAssertionSchema,
+  MembershipEffectSettlementSchema,
   MembershipSourceIdentitySchema,
   MembershipSourceManagerSchema,
   MembershipSourceRouteSchema,
@@ -93,6 +94,7 @@ const PersonCustomerGroupMembershipSourceResultSchema = Schema.Struct({
   processingKind: Schema.optionalKey(Schema.Never),
   reasonCode: Schema.optionalKey(Schema.Never),
   source: MembershipSourceAssertionSchema,
+  sourceEffectSettlement: Schema.optionalKey(MembershipEffectSettlementSchema),
 });
 export const ApplyCustomerGroupMembershipSourceResultSchema = Schema.Union([
   OrganizationMembershipSourceResultSchema,

@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug apply-customer-group-membership-source
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { commitActionThenReject, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 import type {
   ApplyCustomerGroupMembershipSourcePayload,
@@ -151,7 +151,11 @@ const handleApplyCustomerGroupMembershipSource = Effect.fn('ApplyCustomerGroupMe
       });
     }
     const recordedAt = yield* customerGroupRecordedAt;
-    const { replayed, result } = yield* context.services.apply(payload, context.actionInvocationId, recordedAt);
+    const applied = yield* context.services.apply(payload, context.actionInvocationId, recordedAt);
+    if ('refusal' in applied) {
+      return commitActionThenReject(applied.refusal);
+    }
+    const { replayed, result } = applied;
     if (!replayed) {
       yield* result.processingKind === 'ORG_BUSINESS_REFERENCE'
         ? Effect.forEach(result.items, (item) => recordOrganizationChange(item, result, context), {
@@ -176,7 +180,15 @@ const handleApplyCustomerGroupMembershipSource = Effect.fn('ApplyCustomerGroupMe
       targetResourceId: payload.profile.profileRef.resourceId,
       targetResourceType: payload.profile.profileRef.resourceType,
     });
-    return result;
+    return payload.operation === 'ASSIGN' && payload.customerSource !== undefined
+      ? {
+          ...result,
+          sourceEffectSettlement: {
+            changed: result.items.some((item) => item.outcome === 'ASSIGNED'),
+            key: result.source.effectId,
+          },
+        }
+      : result;
   },
 );
 

@@ -315,7 +315,11 @@ const routedOwners: readonly RoutedOwnerEndpoint[] = Object.values(owners);
 interface PeerState {
   /** Whether Core records the succeeded invocation once an owner write is acknowledged. */
   exposeCommittedAckFact: boolean;
-  fact: { actionInvocationId: string; status: string } | null;
+  fact: {
+    actionInvocationId: string;
+    sourceEffectOutcome?: 'changed' | 'unchanged' | 'rejected';
+    status: string;
+  } | null;
   factReads: number;
   readonly gateway: (typeof GatewayDelegatedContextRequestSchema.Type)[];
   readonly hashes: { authContextRef: string; hash: string }[];
@@ -2936,6 +2940,64 @@ it.effect(
         expect(peer.hashes).toHaveLength(0);
       }
     }).pipe(asSymmyWorker),
+);
+
+it.effect('settles reclaimed ERP work only from its exact fenced terminal fact', () =>
+  Effect.gen(function* reconcileErp() {
+    const owner = yield* Schema.decodeUnknownEffect(CustomerProfileSourceResponseSchema.members[1])(
+      organizationIcoCurrentProfile,
+    );
+    const erpEffect = yield* Schema.decodeUnknownEffect(SymmyPinnedEffectSchema)({
+      ...membershipEffect,
+      intent: { _tag: 'CustomerGroupMembership', payload: { ...membershipPayload, customerSource: owner.item.source } },
+    });
+    const adapter = yield* membershipAdapter;
+    const claimed = {
+      ...input(),
+      effect: erpEffect,
+      legalEntityId: sellingLegalEntityId,
+      routeKey: 'customerGroupCustomersBatch' as const,
+      selector: membershipSelector,
+    };
+    const pinned = yield* withOriginalRequest(claimed);
+    reset();
+    expect(yield* adapter.recover({ ...claimed, canExecuteNewEffects: false })).toMatchObject({
+      outcome: { status: 'denied' },
+      status: 'settled',
+    });
+    expect(yield* adapter.recover({ ...pinned, canExecuteNewEffects: false })).toEqual({ status: 'unavailable' });
+    peer.fact = { actionInvocationId: invocationId, status: 'rejected' };
+    expect(yield* adapter.recover({ ...pinned, canExecuteNewEffects: false })).toMatchObject({
+      outcome: { status: 'denied' },
+      status: 'settled',
+    });
+    for (const terminal of ['changed', 'unchanged', 'rejected', undefined] as const) {
+      reset();
+      peer.fact = { actionInvocationId: invocationId, status: 'running' };
+      expect(yield* adapter.recover(pinned)).toEqual({ status: 'retry_original_key' });
+      peer.groupDefinition.succeed(membershipCurrentGroup);
+      peer.profileReceipt.answer(() => {
+        if (terminal !== undefined) {
+          peer.fact = { actionInvocationId: invocationId, sourceEffectOutcome: terminal, status: 'succeeded' };
+        }
+        return { _tag: 'REFUSED' as const };
+      });
+      if (terminal === undefined) {
+        expect(yield* adapter.execute(pinned).pipe(Effect.flip)).toMatchObject({
+          code: 'symmy_job_worker_unavailable',
+        });
+      } else {
+        expect(yield* adapter.execute(pinned)).toMatchObject({
+          status: ({ changed: 'accepted_change', rejected: 'denied', unchanged: 'accepted_no_change' } as const)[
+            terminal
+          ],
+        });
+      }
+      expect(peer.factReads).toBe(2);
+      expect(peer.membership.sent).toHaveLength(0);
+      expect(peer.membershipReceipt.sent).toHaveLength(0);
+    }
+  }).pipe(asSymmyWorker),
 );
 
 const organizationIcoNative = Schema.decodeUnknownSync(ChangeOrganizationCustomerProfileIcoResultSchema)({

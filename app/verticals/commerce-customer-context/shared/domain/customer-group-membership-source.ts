@@ -23,6 +23,11 @@ export const MembershipSourceRouteSchema = Schema.Struct({
 export const MembershipSourceEffectIdSchema = MembershipSourceIdentitySchema.pipe(
   Schema.brand('MembershipSourceEffectId'),
 );
+// Explicit terminal fact persisted in the native Action reply, never derived from its protected receipt at recovery.
+export const MembershipEffectSettlementSchema = Schema.Struct({
+  changed: Schema.Boolean,
+  key: MembershipSourceEffectIdSchema,
+});
 const MembershipSourceAssertionIdSchema = MembershipSourceIdentitySchema.pipe(
   Schema.brand('MembershipSourceAssertionId'),
 );

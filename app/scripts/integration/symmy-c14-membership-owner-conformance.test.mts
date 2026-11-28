@@ -53,6 +53,7 @@ import { internalSyncSource } from './support/symmy-c14-sync-plans.mts';
 
 const json = Schema.encodeEffect(Schema.fromJsonString(Schema.Json));
 const planJson = Schema.encodeEffect(Schema.fromJsonString(SymmyRouteExecutionConfigurationSchema));
+const governancePurpose = 'implementation-1096-registered-workload-gateway';
 const commerceModuleId = 'commerce.customer-context' as const;
 const groupOperation = (entrypointKey: string) => ({
   entrypointKey,
@@ -80,6 +81,39 @@ const pinnedMembershipSchema = Schema.Struct({
 const unavailable = (message: string) => new SymmyC14ProductFixtureUnavailable({ message });
 const symmyAppId = 'symmy-integration';
 type CustomerFixture = Effect.Success<ReturnType<typeof makeSymmyC14CustomerFixture>>;
+
+// Two independent connections: the transaction holds its lock until the test releases the barrier.
+const holdLock = Effect.fn('SymmyC14Membership.holdLock')(function* holdLock<E>(
+  admin: PgClient.PgClient,
+  lock: Effect.Effect<unknown, E>,
+) {
+  const acquired = yield* Deferred.make<number>();
+  const release = yield* Deferred.make<boolean>();
+  const held = yield* Effect.forkScoped(
+    admin.withTransaction(
+      Effect.gen(function* barrierTransaction() {
+        yield* lock;
+        const [holder] = yield* admin<{ pid: number }>`select pg_backend_pid() as pid`;
+        assert.isDefined(holder);
+        yield* Deferred.succeed(acquired, holder.pid);
+        yield* Deferred.await(release);
+      }),
+    ),
+  );
+  const pid = yield* Effect.raceFirst(
+    Deferred.await(acquired),
+    Fiber.join(held).pipe(Effect.andThen(Effect.fail(unavailable('Barrier ended before taking lock')))),
+  );
+  return {
+    release: Deferred.succeed(release, true).pipe(Effect.andThen(Fiber.join(held))),
+    waitForPeer: observeCustomerFixtureUntil(
+      admin<{
+        waiting: boolean;
+      }>`select exists(select from pg_stat_activity where ${pid}=any(pg_blocking_pids(pid))) as waiting`,
+      ([row]) => row?.waiting === true,
+    ),
+  };
+});
 
 const restartSymmy = Effect.fn('SymmyC14Membership.restartSymmy')(function* restartSymmy(
   fixture: CustomerFixture,
@@ -758,6 +792,38 @@ it.live(
           order: 2,
           sourceRecordId: source.recordId,
         });
+        const recoveryWorker = (label: string) =>
+          startProductWorker(fixture.workerArtifact, {
+            ...environment,
+            ONTOS_C14_WORKER_CLAIM_OWNER: label,
+            ONTOS_GATEWAY_MODULE_API_KEY: fixture.moduleKey,
+          });
+        const receiptsFor = (id: string) =>
+          admin`select effect_id from commerce_customer_context.customer_group_membership_source_receipts where tenant_id=${tenantId} and legal_entity_id=${legalEntityId} and effect_id=${id}`;
+        // Invoke the native retention transition, scoped to this disposable database and exact job. The
+        // separate Privacy dispatch journey covers generation and rechecking of the signed authority.
+        const purge = (jobId: string) =>
+          admin.withTransaction(
+            Effect.gen(function* purgeExactJob() {
+              yield* admin`select set_config('ontos.tenant_id',${tenantId},true),set_config('ontos.legal_entity_id',${legalEntityId},true)`;
+              const resourceRef = `integration.symmy.job:${jobId}`;
+              const policy = yield* json({
+                ...memberPolicy,
+                governanceLegalEntityId: legalEntityId,
+                retentionMs: 1,
+                routeId: memberRouteId,
+                targetLegalEntityId: legalEntityId,
+              });
+              const approval = yield* json({
+                authorityReceiptRef: 'native-approval',
+                authorityRevision: '1',
+                contentScopeRef: `${resourceRef}#integration.symmy.job-intent`,
+                resourceRef,
+                status: 'CURRENT_APPROVED',
+              });
+              return yield* admin`select status from symmy_integration.purge_symmy_job_intents(${tenantId},${jobId},${policy}::jsonb,${approval}::jsonb)`;
+            }),
+          );
         // The worker can read the customer successfully. Hold the mutation side while it reaches Commerce,
         // commit the customer grant end, then let Commerce re-evaluate. The membership grant remains active.
         const effectState = admin<{
@@ -780,7 +846,7 @@ it.live(
             legalEntityId,
             namespace: fixture.sourceIdentity.namespace,
             ownedDatabase: isolated,
-            purpose: 'implementation-1096-registered-workload-gateway',
+            purpose: governancePurpose,
             purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(customerPrivacy.purposeRef),
             routeRef: fixture.proofTransport.request.route.id,
             tenantId,
@@ -807,6 +873,12 @@ it.live(
             ),
           ),
         );
+        // Lose the first private acknowledgement: the in-flight owner transaction still has its exact
+        // key, but this claim can no longer settle it. Recovery must use the committed refusal.
+        expect(
+          yield* admin`update symmy_integration.job_effects set lease_until=clock_timestamp()-interval '1 second' where effect_id=${deniedPinned.effectId} and state='attempting' and owner_request_hash is not null returning effect_id`,
+        ).toHaveLength(1);
+        expect(yield* purge(deniedJob.jobId)).toEqual([{ status: 'BLOCKED' }]);
         yield* Deferred.succeed(allowCommit, true);
         yield* Fiber.join(race);
         yield* Effect.logInfo(
@@ -826,11 +898,16 @@ it.live(
           ),
         );
         expect(deniedEffects).toEqual([{ state: 'settled', status: 'denied' }]);
+        expect(
+          yield* admin`select committed_reply_json->>'kind' as kind from core.action_invocations where tenant_id=${tenantId} and action_key=${membershipActionKey} and idempotency_key=${deniedPinned.effectId}`,
+        ).toEqual([{ kind: 'rejection' }]);
+        expect(yield* receiptsFor(deniedPinned.effectId)).toEqual([]);
+        expect(yield* purge(deniedJob.jobId)).toEqual([{ status: 'PURGED' }]);
         yield* deniedWorker.child.kill();
         yield* deniedWorker.child.exitCode;
         expect((yield* manual.read).memberships).toEqual(currentMemberships.memberships);
         // Restore the customer grant and prove fresh intake before independently retiring membership authority.
-        yield* enrollCustomerGrant();
+        const renewedCustomerGrant = yield* enrollCustomerGrant();
         const probe = yield* submit(selectedCode, 'INTERNAL_VERIFIED_CUSTOMER_BEFORE_RETIREMENT');
         expect(probe.status).toBe(202);
         const prepared = yield* probe.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
@@ -859,18 +936,84 @@ it.live(
             yield* admin`rollback to savepoint before_customer_route_pause`;
           }),
         );
+        // Order 3 repeats the assignment (no change). Hold its real Commerce transaction before receipt
+        // insertion. No invocation, status, result or receipt is injected. A second worker reclaims the
+        // same delivery while the first call is outstanding and sees the invocation still open.
+        const nextResponse = yield* submit(selectedCode, 'INTERNAL_ERP_FOLLOWING_LOST_ACK');
+        expect(nextResponse.status).toBe(202);
+        const next = yield* nextResponse.json.pipe(Effect.flatMap(Schema.decodeUnknownEffect(receiptSchema)));
+        const receiptLock = yield* holdLock(
+          admin,
+          admin`lock table commerce_customer_context.customer_group_membership_source_receipts in share mode`,
+        );
+        const first = yield* recoveryWorker('ERP_ORIGINAL');
+        yield* receiptLock.waitForPeer;
+        const definitionLock = yield* holdLock(
+          admin,
+          admin`lock table commerce_customer_context.customer_group_definition_source_bindings in access exclusive mode`,
+        );
+        const ownerState = admin<{
+          kind: string | null;
+          status: string;
+        }>`select status,committed_reply_json->>'kind' as kind from core.action_invocations where tenant_id=${tenantId} and action_key=${membershipActionKey} and idempotency_key=${pinnedCommand.effectId}`;
+        expect(['received', 'running']).toContain((yield* ownerState)[0]?.status);
+        expect(
+          yield* admin`update symmy_integration.job_effects set lease_until=clock_timestamp()-interval '1 second' where effect_id=${pinnedCommand.effectId} and state='attempting' and owner_request_hash is not null returning effect_id`,
+        ).toHaveLength(1);
+        expect(yield* purge(prepared.jobId)).toEqual([{ status: 'BLOCKED' }]);
+        expect(
+          yield* admin`update core.outbox_deliveries d set claim_expires_at=clock_timestamp()-interval '1 second' from core.outbox_messages m where m.outbox_message_id=d.outbox_message_id and m.tenant_id=${tenantId} and d.worker_key=${customerWorkerKey} and m.payload_json->>'jobId'=${prepared.jobId} and d.status='processing' returning d.outbox_delivery_id`,
+        ).toHaveLength(1);
+        const retry = yield* recoveryWorker('ERP_RECLAIMED');
+        // Retry passed its exact invocation lookup, before its customer read.
+        yield* definitionLock.waitForPeer;
+        yield* receiptLock.release;
+        yield* observeCustomerFixtureUntil(ownerState, (rows) => rows[0]?.kind === 'result');
+        expect(yield* receiptsFor(pinnedCommand.effectId)).toHaveLength(1);
+        yield* endSourceProcessingNativeGrant({
+          beforeCommit: () => Effect.void,
+          connections: isolated.connections,
+          governancePrincipalId: fixture.governancePrincipalId,
+          issuer: fixture.sourceIdentity.issuer,
+          legalEntityId,
+          namespace: fixture.sourceIdentity.namespace,
+          ownedDatabase: isolated,
+          purpose: governancePurpose,
+          purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(renewedCustomerGrant.purposeRef),
+          routeRef: fixture.proofTransport.request.route.id,
+          tenantId,
+        });
         const retired = yield* retireSourceProcessingNativePurpose({
           connections: isolated.connections,
           governancePrincipalId: fixture.governancePrincipalId,
           legalEntityId,
           ownedDatabase: isolated,
-          purpose: 'implementation-1096-registered-workload-gateway',
+          purpose: governancePurpose,
           purposeRef: yield* Schema.decodeUnknownEffect(ProcessingPurposeRefSchema)(dataPrivacy.purposeRef),
           tenantId,
         });
         expect(retired.lifecycle).toBe('RETIRED');
         const deniedReceipt = yield* readReceipt.pipe(Effect.flip);
         expect(Schema.is(CustomerGroupMembershipSourceReceiptNotFoundProblemSchema)(deniedReceipt)).toBe(true);
+        yield* definitionLock.release;
+        const settlement = (id: string) =>
+          admin<{
+            state: string;
+            status: string;
+          }>`select state,outcome->>'status' as status from symmy_integration.job_effects where tenant_id=${tenantId} and job_id=${id}`;
+        expect(
+          yield* observeCustomerFixtureUntil(settlement(prepared.jobId), (rows) => rows[0]?.state === 'settled'),
+        ).toEqual([{ state: 'settled', status: 'accepted_no_change' }]);
+        expect(yield* purge(prepared.jobId)).toEqual([{ status: 'PURGED' }]);
+        expect(
+          yield* observeCustomerFixtureUntil(settlement(next.jobId), (rows) => rows[0]?.state === 'settled'),
+        ).toEqual([{ state: 'settled', status: 'denied' }]);
+        expect(yield* ownerState).toEqual([{ kind: 'result', status: 'succeeded' }]);
+        yield* retry.child.kill();
+        yield* retry.child.exitCode;
+        yield* first.child.kill();
+        yield* first.child.exitCode;
+        yield* enrollCustomerGrant();
         // Even with the membership assertion authority retired, exact replay returns the original job;
         // a fresh request for the same customer cannot admit a job.
         const jobsBeforeDenial = yield* admittedJobs;
@@ -888,13 +1031,13 @@ it.live(
         expect(implicit?.count).toBe(0);
         const [writes] = yield* admin<{
           count: number;
-        }>`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and action_key=${membershipActionKey} and status='succeeded'`;
-        expect(writes?.count).toBe(1);
+        }>`select count(*)::integer as count from core.action_invocations where tenant_id=${tenantId} and action_key=${membershipActionKey} and status='succeeded' and committed_reply_json->>'kind'='result'`;
+        expect(writes?.count).toBe(2);
         yield* Effect.logInfo(
           'INTERNAL_C14 selected Membership route settled one actual native ASSIGN with exact original receipt',
         );
         return yield* Effect.void;
       }),
     ).pipe(Effect.provide(customerFixtureServices)),
-  240_000,
+  360_000,
 );

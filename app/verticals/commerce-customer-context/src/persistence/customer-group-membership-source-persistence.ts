@@ -163,7 +163,8 @@ export interface CustomerGroupMembershipSourceOperations {
     invocationId: string,
     recordedAt: string,
   ) => Effect.Effect<
-    Readonly<{ replayed: boolean; result: typeof ApplyCustomerGroupMembershipSourceResultSchema.Type }>,
+    | Readonly<{ replayed: boolean; result: typeof ApplyCustomerGroupMembershipSourceResultSchema.Type }>
+    | { readonly refusal: CustomerGroupMembershipSourceRejected },
     CustomerGroupMembershipSourceRejected
   >;
   readonly recover: (
@@ -370,7 +371,18 @@ export const customerGroupMembershipSourceServiceFactory: ReadServiceFactory<
           if (interlock?.held !== true) {
             return yield* unavailable();
           }
-          yield* requireCurrentCustomerSource(payload, customerSource.value);
+          // A definitive refusal before any mutation can be committed against this exact Action key.
+          // Unavailable infrastructure still rolls back and is never a terminal refusal.
+          const refusal = yield* requireCurrentCustomerSource(payload, customerSource.value).pipe(
+            Effect.as(Option.none<CustomerGroupMembershipSourceRejected>()),
+            Effect.catchIf(
+              (error) => error.code === 'SOURCE_AUTHORITY_DENIED' || error.code === 'TARGET_INELIGIBLE',
+              (error) => Effect.succeed(Option.some(error)),
+            ),
+          );
+          if (Option.isSome(refusal)) {
+            return { refusal: refusal.value };
+          }
         }
         yield* checkPrivacy(payload, payload.source, WRITE_PRIVACY_OPERATION, requirement, payload);
         const [row] = yield* transaction

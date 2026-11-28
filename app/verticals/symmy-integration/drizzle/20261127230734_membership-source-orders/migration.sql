@@ -481,9 +481,12 @@ BEGIN
   RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
  -- Claimers lock an effect before publishing its lease. Acquire the same row locks before deciding.
  PERFORM 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job ORDER BY e.effect_id FOR UPDATE;
- -- An expired lease or an uncertain owner call may already be committed at the owner: recovery settles it first.
+ -- With the effects locked, an expired ERP claim without a request pin cannot have sent. The transition below
+ -- invalidates its token/version before releasing the lock. An in-flight or possibly-sent command still blocks.
  IF EXISTS(SELECT 1 FROM symmy_integration.job_effects e WHERE e.tenant_id=p_tenant AND e.job_id=p_job
-   AND e.state IN ('attempting','indeterminate')) THEN
+   AND e.state IN ('attempting','indeterminate') AND NOT (e.state IN ('attempting','indeterminate') AND (e.state='indeterminate' OR e.lease_until <= clock_timestamp())
+     AND e.owner_request_hash IS NULL AND e.owner_auth_context_ref IS NULL AND e.owner_invocation_id IS NULL AND e.owner_receipt IS NULL
+     AND EXISTS(SELECT FROM symmy_integration.membership_source_orders o WHERE o.tenant_id=e.tenant_id AND o.effect_id=e.effect_id))) THEN
   RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
  v_plan:=symmy_integration.erase_symmy_plan_payload(v_job.execution_plan);
  IF v_plan IS NULL THEN RETURN QUERY SELECT 'BLOCKED'::text; RETURN; END IF;
@@ -493,7 +496,7 @@ BEGIN
   outcome=jsonb_build_object('effectId',e.effect_id,'owner',e.effect#>>'{ref,operation,moduleId}','status','denied'),
   claim_token=NULL, lease_until=NULL, version=e.version+1
  FROM symmy_integration.membership_source_orders o
- WHERE e.tenant_id=p_tenant AND e.job_id=p_job AND e.state IN ('planned','blocked')
+ WHERE e.tenant_id=p_tenant AND e.job_id=p_job AND (e.state IN ('planned','blocked','attempting','indeterminate'))
   AND o.tenant_id=e.tenant_id AND o.effect_id=e.effect_id;
  UPDATE symmy_integration.job_effects e SET effect=symmy_integration.erase_symmy_effect_payload(e.effect), resolved_effect=symmy_integration.erase_symmy_effect_payload(e.resolved_effect), effect_key='erased.'||e.effect_id::text WHERE e.tenant_id=p_tenant AND e.job_id=p_job;
  UPDATE symmy_integration.import_jobs j SET execution_plan=v_plan, fixture_id='ERASED', route_code=NULL,

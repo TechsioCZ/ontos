@@ -34,7 +34,11 @@ interface SymmyEffectAdapterInputBase {
     readonly originalPrincipalId: string;
     readonly requestHash: string;
   }) => Effect.Effect<
-    Option.Option<{ readonly actionInvocationId: string; readonly status: string }>,
+    Option.Option<{
+      readonly actionInvocationId: string;
+      readonly sourceEffectOutcome?: 'changed' | 'unchanged' | 'rejected';
+      readonly status: string;
+    }>,
     SymmyJobWorkerError
   >;
   readonly recordInvocationId: (invocationId: string) => Effect.Effect<void, SymmyJobWorkerError>;
