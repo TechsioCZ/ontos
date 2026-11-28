@@ -245,7 +245,7 @@ describe('#1154 Comgate collect', () => {
       expect(call?.kind).toBe('mutate');
       expect(call?.request.method).toBe('POST');
       expect(call?.request.url).toBe('https://payments.comgate.cz/v2.0/payment.json');
-      expect(call?.request.headers.authorization).toBe(expectedAuthorization);
+      expect(call?.request.headers['authorization']).toBe(expectedAuthorization);
     }),
   );
 
@@ -492,7 +492,7 @@ describe('#1158 Comgate lookup', () => {
         ok: false,
       });
       expect(calls).toHaveLength(3);
-      expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
+      expect(calls.every((call) => call.request.headers['authorization'] === expectedAuthorization)).toBe(true);
     }),
   );
 
@@ -516,7 +516,7 @@ describe('#1158 Comgate lookup', () => {
       const gopayRef = Schema.decodeUnknownSync(ProviderObjectRefSchema)({ _tag: 'GOPAY_PAYMENT', id: '3000006529' });
       expect(yield* adapter.readOrderReference(target, gopayRef)).toEqual(Option.none());
       expect(calls).toHaveLength(4);
-      expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
+      expect(calls.every((call) => call.request.headers['authorization'] === expectedAuthorization)).toBe(true);
     }),
   );
 });
@@ -624,7 +624,7 @@ describe('#1156 Comgate refund proof from the settlement statement', () => {
         `read:GET:${singleTransferUrl(1_234_567)}`,
       ]);
       // #1157: every statement read goes through the original binding's merchant authorization.
-      expect(calls.every((call) => call.request.headers.authorization === expectedAuthorization)).toBe(true);
+      expect(calls.every((call) => call.request.headers['authorization'] === expectedAuthorization)).toBe(true);
     }),
   );
 

@@ -123,7 +123,7 @@ const recordedGopay = (routes: Readonly<Record<string, readonly Step[]>>) =>
       const route = `${request.method} ${request.url}`;
       const attempt = sent.filter((entry) => entry.route === route).length;
       sent.push({
-        authorization: request.headers.authorization ?? '',
+        authorization: request.headers['authorization'] ?? '',
         body: bodyTextOf(request),
         contentType: request.headers['content-type'] ?? '',
         route,

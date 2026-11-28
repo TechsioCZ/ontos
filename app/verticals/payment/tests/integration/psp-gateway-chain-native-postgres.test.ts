@@ -568,7 +568,7 @@ it.live(
         const createBody = Schema.decodeUnknownSync(
           Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
         )(created.callsTo(COMGATE_CREATE)[0]?.body ?? '');
-        expect([createBody.fullName, createBody.email]).toEqual(['Test Payer', 'payer@example.test']);
+        expect([createBody['fullName'], createBody['email']]).toEqual(['Test Payer', 'payer@example.test']);
         expect(collect).not.toHaveProperty('payerContact');
         expect(yield* dispatchStateOf(harness, collect.operationId)).toEqual(
           Option.some(['ACKNOWLEDGED', null, `COMGATE_TRANSACTION:${COMGATE_TRANS_ID}`]),

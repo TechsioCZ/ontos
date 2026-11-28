@@ -84,7 +84,7 @@ const waitForCompetingRoutineLock = (admin: PgClient.PgClient, competingPid: num
             and $2::int = any(pg_blocking_pids(pid))) as blocked`,
         [competingPid, firstPid],
       );
-      if (rows[0]?.blocked) {
+      if (rows[0]?.blocked === true) {
         return;
       }
       yield* Effect.sleep('10 millis');
@@ -787,7 +787,7 @@ const proveFreshSourceDecisions = () =>
         ['2026-10-01T00:00:00.000Z', 'resolved'],
         ['2026-10-31T23:59:59.999Z', 'resolved'],
         ['2026-11-01T00:00:00.000Z', 'retired'],
-      ]) {
+      ] as const) {
         const resolution = yield* runtime.unsafe<{ readonly payload: unknown }>(
           'select payload from payment_term_catalog.resolve_reference($1,$2,$3,$4,null)',
           [tenant, legalEntity, aliasId, at],
@@ -832,7 +832,7 @@ const proveFreshSourceDecisions = () =>
       for (const [siblingTenant, siblingEntity] of [
         [randomUUID(), legalEntity],
         [tenant, randomUUID()],
-      ]) {
+      ] as const) {
         yield* inScope(runtime, siblingTenant, siblingEntity);
         expect(yield* call(runtime, siblingTenant, siblingEntity, 'get_source_statement', source)).toBeNull();
         expect(

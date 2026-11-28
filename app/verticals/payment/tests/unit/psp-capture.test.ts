@@ -290,12 +290,12 @@ const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
 });
 /** A real access decision over the registered workload bindings of the acting principal (O73). */
 const workloadGate = (kind: AccessPrincipalKind, boundKeys: readonly string[]) => {
-  const ports: AccessEnforcementPorts = {
+  const ports = {
     ...inertAccessEnforcementPorts(),
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
     workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)) },
-  };
+  } satisfies AccessEnforcementPorts;
   const gate = makeAccessDecisionService({
     authorityFor,
     check: ports.check,

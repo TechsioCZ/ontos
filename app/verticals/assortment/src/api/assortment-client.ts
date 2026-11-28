@@ -1,4 +1,4 @@
-/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- The published client entrypoint aggregates generated governed operation clients; expires: 2027-03-31. */
+/* eslint-disable oxc/no-barrel-file -- The published client entrypoint aggregates generated governed operation clients; expires: 2027-03-31. */
 import { Effect, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import type {
   HttpClientError,

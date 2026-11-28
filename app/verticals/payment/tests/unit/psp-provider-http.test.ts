@@ -164,7 +164,7 @@ describe('#1158 ProviderHttp mutation is a single attempt', () => {
       expect(response).toEqual({ bodyText: body, status: 402 });
       expect(sent).toHaveLength(1);
       expect(sent[0]?.method).toBe('POST');
-      expect(sent[0]?.headers.authorization).toBe(`Bearer ${credential}`);
+      expect(sent[0]?.headers['authorization']).toBe(`Bearer ${credential}`);
     }),
   );
 });

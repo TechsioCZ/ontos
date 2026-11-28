@@ -181,7 +181,7 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
 ) as valid`,
     'objects',
   );
-  if (!gateway?.valid) {
+  if (gateway?.valid !== true) {
     return yield* new PaymentTermCatalogVerificationError({
       reason: 'Gateway assertion redemption shape, replay identity, expiry index or exact privileges mismatch',
     });

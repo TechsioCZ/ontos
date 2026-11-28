@@ -156,7 +156,7 @@ describe('#1150 Prior return evidence reduces the remaining budget', () => {
   });
 
   it('a statement contradicts a standing return of the same source effect only when the money differs', () => {
-    const standing = [{ ...statement({ amountMinor: 60_000 }), sourceBindingKey: 'binding-a' }];
+    const standing = [{ ...statement({ amountMinor: 60_000 }), sourceBindingKey: 'binding-a' }] as const;
     expect(contradictsStandingReturn(standing, candidate(40_000))).toBe(true);
     expect(contradictsStandingReturn(standing, candidate(60_000))).toBe(false);
     expect(contradictsStandingReturn(standing, candidate(40_000, 'binding-b'))).toBe(false);

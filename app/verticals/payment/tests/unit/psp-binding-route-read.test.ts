@@ -150,12 +150,12 @@ const authorityFor: AccessEnforcementPorts['intent']['authorityFor'] = () => ({
 
 /** The real Core access decision for this Read's carrier, over the caller's kind and bound workloads (O73). */
 const decide = (kind: AccessPrincipalKind, boundKeys: readonly string[]) => {
-  const ports: AccessEnforcementPorts = {
+  const ports = {
     ...inertAccessEnforcementPorts(),
     intent: { authorityFor },
     principalKinds: { readKind: () => Effect.succeed(Option.some(kind)) },
     workloadBindings: { readActiveWorkloadKeys: () => Effect.succeed(new Set(boundKeys)) },
-  };
+  } satisfies AccessEnforcementPorts;
   const gate = bindAccessGate(
     makeAccessDecisionService({
       authorityFor,
